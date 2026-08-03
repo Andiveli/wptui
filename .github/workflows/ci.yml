@@ -19,6 +19,9 @@ jobs:
         with:
           go-version: "stable"
 
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libwayland-dev
+
       - name: Go vet and tests (rustmeow bridge)
         working-directory: whatsrust/lib
         run: |
