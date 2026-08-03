@@ -128,6 +128,27 @@ impl ClipboardWriter for SystemClipboardWriter {
     }
 }
 
+/// Clipboard that reports the system clipboard as unavailable. Used when no
+/// display server is reachable (for example on a headless machine), so the
+/// app keeps working and paste surfaces a clear error instead of panicking.
+pub struct UnavailableClipboardReader;
+
+impl ClipboardReader for UnavailableClipboardReader {
+    fn read_paste(
+        &mut self,
+    ) -> Result<crate::clipboard::ClipboardPaste, crate::clipboard::ClipboardError> {
+        Err(crate::clipboard::ClipboardError::ClipboardUnavailable)
+    }
+}
+
+pub struct UnavailableClipboardWriter;
+
+impl ClipboardWriter for UnavailableClipboardWriter {
+    fn write_text(&mut self, _text: &str) -> Result<(), ClipboardWriteError> {
+        Err(ClipboardWriteError)
+    }
+}
+
 pub trait MessageEditor {
     fn edit_message(
         &self,
