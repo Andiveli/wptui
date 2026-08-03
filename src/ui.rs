@@ -732,7 +732,8 @@ pub fn render_chats(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let composer_width = inner.width.saturating_sub(2);
     let composer_layout = composer_visual_layout(app.composer.input.lines(), composer_width);
-    let composer_cursor = composer_layout.cursor(app.composer.input.cursor());
+    let input_cursor = app.composer.input.cursor();
+    let composer_cursor = composer_layout.cursor((input_cursor.0, input_cursor.1));
     let composer_rows = composer_layout.rows.len().max(composer_cursor.0 + 1);
     let (chat_area, composer_area) = conversation_areas(
         inner,

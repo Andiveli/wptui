@@ -236,7 +236,11 @@ fn composer_renders_a_word_on_the_same_row_as_its_cursor() {
         "world   "
     );
     assert_eq!(
-        composer_visual_cursor(app.composer.input.lines(), app.composer.input.cursor(), 8),
+        composer_visual_cursor(
+            app.composer.input.lines(),
+            (app.composer.input.cursor().0, app.composer.input.cursor().1),
+            8,
+        ),
         (1, 5)
     );
     assert_eq!(app.composer.text(), "hello world");
