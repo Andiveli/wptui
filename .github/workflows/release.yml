@@ -1,0 +1,61 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset: wptui-x86_64-unknown-linux-gnu.tar.gz
+          - os: macos-latest
+            asset: wptui-aarch64-apple-darwin.tar.gz
+          - os: macos-13
+            asset: wptui-x86_64-apple-darwin.tar.gz
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.96.1
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "stable"
+
+      - name: Install system dependencies
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update
+            sudo apt-get install -y libwayland-dev libchafa-dev libglib2.0-dev
+          else
+            brew install chafa
+          fi
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Package
+        run: tar -czf ${{ matrix.asset }} -C target/release wp-tui
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.asset }}

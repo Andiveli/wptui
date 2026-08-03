@@ -73,9 +73,21 @@ terminal.
 
 ## Installation
 
-Prebuilt Linux binaries are attached to each GitHub release.
+### Prebuilt binary
 
-To build and install from source:
+Prebuilt binaries for Linux (x86_64) and macOS (Apple Silicon and Intel) are
+attached to each GitHub release. Install the one for your system with:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/Andiveli/wptui/main/install.sh | bash
+```
+
+The script downloads the matching binary from the latest release into
+`~/.local/bin` (override with `PREFIX`, e.g. `PREFIX=/opt/wptui ./install.sh`).
+Make sure the runtime libraries listed in [Requirements](#requirements) are
+present first.
+
+### Build from source
 
 ```bash
 git clone https://github.com/Andiveli/wptui.git
@@ -83,7 +95,8 @@ cd wptui
 cargo install --path .
 ```
 
-The Rust build automatically compiles the bundled Go bridge.
+The Rust build automatically compiles the bundled Go bridge. See
+[Requirements](#requirements) for the build-time libraries.
 
 ## Usage
 
