@@ -35,10 +35,40 @@ when it links or syncs, like any official client.
 
 ## Requirements
 
-- Linux or another Unix-like operating system
-- A recent stable Rust toolchain with Cargo
+### Runtime dependencies
+
+The prebuilt binary links against a few system libraries. On a desktop
+installation most of them are already present; the one you usually need to
+install explicitly is `libchafa`, which is used to render images in the
+terminal.
+
+- **Debian / Ubuntu**
+  ```
+  sudo apt install libchafa0t64 libglib2.0-0 libwayland-client0
+  ```
+- **Fedora**
+  ```
+  sudo dnf install chafa glib2 wayland
+  ```
+- **Arch Linux**
+  ```
+  sudo pacman -S chafa glib2 wayland
+  ```
+- **macOS**
+  ```
+  brew install chafa
+  ```
+  macOS uses the native file dialogs, so no Wayland libraries are needed.
+
+### Build requirements
+
+- Linux or macOS
+- A recent stable Rust toolchain with Cargo (the repository pins Rust 1.96.1
+  via `rust-toolchain.toml`)
 - Go with CGO enabled
 - A C compiler supported by CGO
+- On Linux, the development packages `libwayland-dev`, `libchafa-dev` and
+  `libglib2.0-dev`; on macOS, `chafa` from Homebrew
 - Optional: `mpv` for opening media externally
 
 ## Installation
