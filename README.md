@@ -75,7 +75,7 @@ terminal.
 
 ### Prebuilt binary
 
-Prebuilt binaries for Linux (x86_64) and macOS (Apple Silicon and Intel) are
+Prebuilt binaries for Linux (x86_64) and macOS (Apple Silicon) are
 attached to each GitHub release. Install the one for your system with:
 
 ```bash

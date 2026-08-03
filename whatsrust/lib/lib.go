@@ -250,7 +250,7 @@ func writeDownloadWithWriter(basePath, targetPath string, data []byte, write fun
 	if err != nil {
 		return err
 	}
-	if err := unix.Renameat2(parent, tempName, parent, parts[len(parts)-1], unix.RENAME_NOREPLACE); err != nil {
+	if err := renameNoReplace(parent, tempName, parts[len(parts)-1]); err != nil {
 		return err
 	}
 	tempCreated = false

@@ -18,8 +18,6 @@ jobs:
             asset: wptui-x86_64-unknown-linux-gnu.tar.gz
           - os: macos-latest
             asset: wptui-aarch64-apple-darwin.tar.gz
-          - os: macos-13
-            asset: wptui-x86_64-apple-darwin.tar.gz
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7

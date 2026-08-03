@@ -39,8 +39,6 @@ url_for_target() {
         darwin)
             case "$arch" in
                 arm64) echo "wptui-aarch64-apple-darwin.tar.gz" ;;
-                x86_64) echo "wptui-x86_64-apple-darwin.tar.gz" ;;
-                *) die "no prebuilt binary for macos/$arch; build from source (see README)" ;;
             esac
             ;;
         *) die "unsupported operating system: $os" ;;
