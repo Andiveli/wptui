@@ -8,11 +8,11 @@ experience without leaving your terminal.
 
 ## Demo
 
-Click the preview to watch the demo video (attached to the latest release):
+<div align="center">
 
-<a href="https://github.com/Andiveli/wptui/releases/latest/download/demo.mp4">
-  <img src="assets/demo-thumb.png" alt="Watch the wptui demo video" width="640">
-</a>
+https://github.com/user-attachments/assets/f08d20f9-6051-45e2-a1d2-b0a512242e9c
+
+</div>
 
 > [!WARNING]
 > This project is under active development. Features and behavior may change between versions.
