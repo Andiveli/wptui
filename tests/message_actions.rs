@@ -555,6 +555,7 @@ fn copy_and_unavailable_actions_report_outcomes_without_mutation() {
     app.messages.insert(selected.info.id.clone(), selected);
     app.message_list_state
         .set_selected_message("selected".into());
+    app.clipboard_writer = Box::new(RecordingClipboard::default());
 
     app.dispatch_action(AppAction::CopyMessage);
     assert_eq!(

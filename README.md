@@ -6,6 +6,11 @@ A keyboard-driven WhatsApp client for the terminal.
 [whatsmeow](https://github.com/tulir/whatsmeow) library, giving you a fast, Vim-flavored chat
 experience without leaving your terminal.
 
+## Demo
+
+<!-- Drop the demo video at assets/demo.mp4 (or update the src below). -->
+<video src="assets/demo.mp4" controls></video>
+
 > [!WARNING]
 > This project is under active development. Features and behavior may change between versions.
 
@@ -21,11 +26,6 @@ experience without leaving your terminal.
 - Display contact avatars and desktop notifications
 - Contextual, Vim-inspired keybindings
 - Andiveli welcome mark in the chat panel before any conversation is opened
-
-## Demo
-
-<!-- Drop the demo video at assets/demo.mp4 (or update the src below). -->
-<video src="assets/demo.mp4" controls></video>
 
 ## Data
 
