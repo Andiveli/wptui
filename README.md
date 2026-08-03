@@ -103,13 +103,13 @@ The Rust build automatically compiles the bundled Go bridge. See
 Start the client and scan the QR code displayed in the terminal:
 
 ```bash
-wptui
+wp-tui
 ```
 
 Or request a pairing code using an international-format phone number:
 
 ```bash
-wptui --phone +1234567890
+wp-tui --phone +1234567890
 ```
 
 When running through Cargo, separate application arguments with `--`:
