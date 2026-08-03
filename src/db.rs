@@ -322,7 +322,7 @@ impl DatabaseHandler {
                     action.sender.0,
                     kind,
                     action.occurred_at,
-                    action.arrival_order,
+                    action.arrival_order as i64,
                 ],
             )
             .unwrap()
@@ -425,7 +425,7 @@ impl DatabaseHandler {
                     server_action.sender.0,
                     kind,
                     server_action.occurred_at,
-                    server_action.arrival_order,
+                    server_action.arrival_order as i64,
                 ],
             )
             .unwrap();
@@ -453,7 +453,7 @@ impl DatabaseHandler {
                     sender: row.get::<_, String>(3)?.into(),
                     kind,
                     occurred_at: row.get(5)?,
-                    arrival_order: row.get(6)?,
+                    arrival_order: row.get::<_, i64>(6)? as u64,
                 })
             })
             .unwrap()
