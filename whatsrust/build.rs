@@ -31,4 +31,13 @@ fn main() {
     );
     println!("cargo::rustc-link-lib=static=go");
     // println!("cargo::rustc-link-lib=dylib=go");
+
+    // Go's cgo runtime and crypto/x509 talk to the system trust store
+    // through these frameworks when the archive is linked into a native
+    // binary.
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        println!("cargo::rustc-link-lib=framework=CoreFoundation");
+        println!("cargo::rustc-link-lib=framework=Security");
+        println!("cargo::rustc-link-lib=framework=SystemConfiguration");
+    }
 }
