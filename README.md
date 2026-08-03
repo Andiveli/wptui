@@ -8,8 +8,11 @@ experience without leaving your terminal.
 
 ## Demo
 
-<!-- Drop the demo video at assets/demo.mp4 (or update the src below). -->
-<video src="assets/demo.mp4" controls></video>
+Click the preview to watch the demo video (attached to the latest release):
+
+<a href="https://github.com/Andiveli/wptui/releases/latest/download/demo.mp4">
+  <img src="assets/demo-thumb.png" alt="Watch the wptui demo video" width="640">
+</a>
 
 > [!WARNING]
 > This project is under active development. Features and behavior may change between versions.
