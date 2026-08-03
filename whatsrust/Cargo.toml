@@ -1,0 +1,10 @@
+[package]
+name = "whatsrust"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+strum = { version = "0.27", features = ["derive"] }
+log = "0.4"
+# libc = "0.2"
+

@@ -1,0 +1,35 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+
+      - name: Go vet and tests (rustmeow bridge)
+        working-directory: whatsrust/lib
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: Format check
+        run: cargo fmt --check
+
+      - name: Build
+        run: cargo build --all-targets
+
+      - name: Test
+        run: cargo test -- --test-threads=1

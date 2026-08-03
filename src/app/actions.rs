@@ -1,0 +1,437 @@
+use ratatui::crossterm::event::KeyCode;
+
+use crate::key_handler::Key;
+use whatsrust as wr;
+
+pub const COMMON_REACTIONS: [&str; 6] = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+/// The only reaction WhatsApp allows on statuses.
+pub const STATUS_REACTION: &str = "💚";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AppAction {
+    Quit,
+    ToggleLogs,
+    ToggleSectionRail,
+    ToggleChatList,
+    FocusNext,
+    FocusPrevious,
+    SelectNext,
+    SelectPrevious,
+    JumpTop,
+    JumpBottom,
+    HalfPageDown,
+    HalfPageUp,
+    InsertMode,
+    CopyMessage,
+    ViewMessage,
+    ReactMessage,
+    ShareMessage,
+    ReplyMessage,
+    DeleteMessage,
+    EditMessage,
+    OpenChat,
+    OpenMessage,
+    DownloadMessage,
+    ViewerNext,
+    ViewerPrevious,
+    ViewerZoomIn,
+    ViewerZoomOut,
+    ViewerOpenExternal,
+    CloseAttachmentViewer,
+    CloseStatusPane,
+    OpenMessageMenu,
+    MenuNext,
+    MenuPrevious,
+    ConfirmMessageMenu,
+    CancelMessageMenu,
+    ReactionPrev,
+    ReactionNext,
+    ConfirmReaction,
+    CancelReaction,
+    SharePickerPrevious,
+    SharePickerNext,
+    ToggleShareRecipient,
+    ConfirmShare,
+    CancelShare,
+    ShareSearchBackspace,
+    ShareSearchCharacter(char),
+    UrlPickerPrevious,
+    UrlPickerNext,
+    ConfirmUrlPicker,
+    CancelUrlPicker,
+    GoToReference,
+    Composer(ComposerAction),
+}
+
+pub trait UrlOpener {
+    fn open(&mut self, plan: &crate::url::UrlLaunchPlan) -> std::io::Result<()>;
+}
+
+pub struct SystemUrlOpener;
+
+impl UrlOpener for SystemUrlOpener {
+    fn open(&mut self, plan: &crate::url::UrlLaunchPlan) -> std::io::Result<()> {
+        crate::url::execute_url_launch(plan)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ActionNotice {
+    CopiedText(String),
+    SenderDetails(String),
+    ReactedUsers(Vec<String>),
+    EditedMessage,
+    DeletedMessage,
+    Reacted,
+    Forwarded {
+        succeeded: usize,
+        failed: usize,
+        failure: wr::ForwardFailure,
+    },
+    Unavailable(String),
+    Unauthorized(String),
+    Unsupported(String),
+    Cancelled,
+}
+
+pub trait ClipboardWriter {
+    fn write_text(&mut self, text: &str) -> Result<(), ClipboardWriteError>;
+    fn written_text(&self) -> Option<&str> {
+        None
+    }
+}
+
+pub trait ClipboardReader {
+    fn read_paste(
+        &mut self,
+    ) -> Result<crate::clipboard::ClipboardPaste, crate::clipboard::ClipboardError>;
+}
+
+pub struct SystemClipboardReader(pub arboard::Clipboard);
+
+impl ClipboardReader for SystemClipboardReader {
+    fn read_paste(
+        &mut self,
+    ) -> Result<crate::clipboard::ClipboardPaste, crate::clipboard::ClipboardError> {
+        crate::clipboard::read_paste(&mut self.0)
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct ClipboardWriteError;
+
+pub struct SystemClipboardWriter(pub arboard::Clipboard);
+
+impl ClipboardWriter for SystemClipboardWriter {
+    fn write_text(&mut self, text: &str) -> Result<(), ClipboardWriteError> {
+        self.0.set_text(text).map_err(|_| ClipboardWriteError)
+    }
+}
+
+pub trait MessageEditor {
+    fn edit_message(
+        &self,
+        chat: &wr::JID,
+        message_id: &wr::MessageId,
+        replacement: &str,
+    ) -> Result<(), wr::MessageActionFailed>;
+}
+
+pub struct WhatsAppMessageEditor;
+
+impl MessageEditor for WhatsAppMessageEditor {
+    fn edit_message(
+        &self,
+        chat: &wr::JID,
+        message_id: &wr::MessageId,
+        replacement: &str,
+    ) -> Result<(), wr::MessageActionFailed> {
+        wr::edit_message(chat, message_id, replacement)
+    }
+}
+
+pub trait MessageReactor {
+    fn react_to_message(
+        &self,
+        chat: &wr::JID,
+        sender: &wr::JID,
+        message_id: &wr::MessageId,
+        reaction: &str,
+    ) -> Result<(), wr::MessageActionFailed>;
+
+    fn react_to_message_in_chat(
+        &self,
+        target: &wr::JID,
+        destination: &wr::JID,
+        sender: &wr::JID,
+        message_id: &wr::MessageId,
+        reaction: &str,
+    ) -> Result<(), wr::MessageActionFailed> {
+        if target != destination {
+            return Err(wr::MessageActionFailed);
+        }
+        self.react_to_message(target, sender, message_id, reaction)
+    }
+}
+
+pub struct WhatsAppMessageReactor;
+
+impl MessageReactor for WhatsAppMessageReactor {
+    fn react_to_message(
+        &self,
+        chat: &wr::JID,
+        sender: &wr::JID,
+        message_id: &wr::MessageId,
+        reaction: &str,
+    ) -> Result<(), wr::MessageActionFailed> {
+        wr::react_to_message(chat, sender, message_id, reaction)
+    }
+
+    fn react_to_message_in_chat(
+        &self,
+        target: &wr::JID,
+        destination: &wr::JID,
+        sender: &wr::JID,
+        message_id: &wr::MessageId,
+        reaction: &str,
+    ) -> Result<(), wr::MessageActionFailed> {
+        wr::react_to_message_in_chat(target, destination, sender, message_id, reaction)
+    }
+}
+
+pub trait MessageForwarder {
+    fn forward_message(&self, source: &wr::Message, destinations: &[wr::JID]) -> wr::ForwardReport;
+}
+
+pub struct WhatsAppMessageForwarder;
+
+impl MessageForwarder for WhatsAppMessageForwarder {
+    fn forward_message(&self, source: &wr::Message, destinations: &[wr::JID]) -> wr::ForwardReport {
+        wr::forward_message(source, destinations)
+    }
+}
+
+pub trait MessageRevoker {
+    fn revoke_message(
+        &self,
+        chat: &wr::JID,
+        sender: &wr::JID,
+        message_id: &wr::MessageId,
+    ) -> Result<(), wr::MessageActionFailed>;
+}
+
+pub struct WhatsAppMessageRevoker;
+
+impl MessageRevoker for WhatsAppMessageRevoker {
+    fn revoke_message(
+        &self,
+        chat: &wr::JID,
+        sender: &wr::JID,
+        message_id: &wr::MessageId,
+    ) -> Result<(), wr::MessageActionFailed> {
+        wr::revoke_message(chat, sender, message_id)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MessageMenuAction {
+    CopyText,
+    Reply,
+    GoToReference,
+    SenderDetails,
+    ReactedUsers,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConversationMode {
+    MessageNavigation,
+    ComposerEditing,
+    EditingMessage,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ComposerAction {
+    StartEdit,
+    Submit,
+    InsertNewline,
+    Paste,
+    Edit(Key),
+    RemoveLastAttachment,
+    CancelReply,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FocusPane {
+    SectionRail,
+    ChatList,
+    Conversation,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PaneVisibility {
+    pub section_rail: bool,
+    pub chat_list: bool,
+}
+
+impl Default for PaneVisibility {
+    fn default() -> Self {
+        Self {
+            section_rail: true,
+            chat_list: true,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Section {
+    #[default]
+    Chats,
+    Status,
+    Communities,
+}
+
+impl Section {
+    pub const ALL: [Self; 3] = [Self::Chats, Self::Status, Self::Communities];
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Chats => Self::Status,
+            Self::Status => Self::Communities,
+            Self::Communities => Self::Chats,
+        }
+    }
+
+    pub fn previous(self) -> Self {
+        match self {
+            Self::Chats => Self::Communities,
+            Self::Status => Self::Chats,
+            Self::Communities => Self::Status,
+        }
+    }
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Chats => "Chats",
+            Self::Status => "Status",
+            Self::Communities => "Communities",
+        }
+    }
+}
+
+impl FocusPane {
+    pub fn next(self, visibility: PaneVisibility) -> Self {
+        let panes = visible_panes(visibility);
+        let index = panes.iter().position(|pane| *pane == self).unwrap_or(0);
+        panes[(index + 1) % panes.len()]
+    }
+
+    pub fn previous(self, visibility: PaneVisibility) -> Self {
+        let panes = visible_panes(visibility);
+        let index = panes.iter().position(|pane| *pane == self).unwrap_or(0);
+        panes[(index + panes.len() - 1) % panes.len()]
+    }
+}
+
+fn visible_panes(visibility: PaneVisibility) -> Vec<FocusPane> {
+    let mut panes = Vec::with_capacity(3);
+    if visibility.section_rail {
+        panes.push(FocusPane::SectionRail);
+    }
+    if visibility.chat_list {
+        panes.push(FocusPane::ChatList);
+    }
+    panes.push(FocusPane::Conversation);
+    panes
+}
+
+pub fn focus_after_visibility_change(focus: FocusPane, visibility: PaneVisibility) -> FocusPane {
+    match focus {
+        FocusPane::SectionRail if !visibility.section_rail => {
+            if visibility.chat_list {
+                FocusPane::ChatList
+            } else {
+                FocusPane::Conversation
+            }
+        }
+        FocusPane::ChatList if !visibility.chat_list => {
+            if visibility.section_rail {
+                FocusPane::SectionRail
+            } else {
+                FocusPane::Conversation
+            }
+        }
+        _ => focus,
+    }
+}
+
+pub fn focus_after(focus: FocusPane, action: &AppAction, visibility: PaneVisibility) -> FocusPane {
+    match action {
+        AppAction::FocusNext => focus.next(visibility),
+        AppAction::FocusPrevious => focus.previous(visibility),
+        _ => focus,
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SequenceResolution {
+    Partial,
+    Complete(AppAction),
+    Cancelled,
+}
+
+pub fn default_bindings() -> Vec<(Vec<Key>, AppAction)> {
+    vec![
+        (vec![Key::ctrl('q')], AppAction::Quit),
+        (vec![Key::ctrl_shift('L')], AppAction::ToggleLogs),
+        (vec![Key::ctrl_shift('l')], AppAction::ToggleLogs),
+        (vec![Key::c(' '), Key::c('1')], AppAction::ToggleSectionRail),
+        (vec![Key::c(' '), Key::c('2')], AppAction::ToggleChatList),
+        (vec![Key::c('h')], AppAction::FocusPrevious),
+        (vec![Key::c('l')], AppAction::FocusNext),
+        (vec![Key::c('j')], AppAction::SelectNext),
+        (vec![Key::c('k')], AppAction::SelectPrevious),
+        (vec![Key::c('g'), Key::c('g')], AppAction::JumpTop),
+        (vec![Key::c('g'), Key::c('r')], AppAction::GoToReference),
+        (vec![Key::c('G')], AppAction::JumpBottom),
+        (vec![Key::ctrl('d')], AppAction::HalfPageDown),
+        (vec![Key::ctrl('u')], AppAction::HalfPageUp),
+        (vec![Key::c('i')], AppAction::InsertMode),
+        (vec![Key::c('y')], AppAction::CopyMessage),
+        (vec![Key::c('r')], AppAction::ReactMessage),
+        (vec![Key::c('s')], AppAction::ShareMessage),
+        (vec![Key::c('R')], AppAction::ReplyMessage),
+        (vec![Key::c('d')], AppAction::DeleteMessage),
+        (vec![Key::c('e')], AppAction::EditMessage),
+        (vec![Key::c('o')], AppAction::OpenMessage),
+        (vec![Key::c('x')], AppAction::DownloadMessage),
+        (vec![Key::c('v')], AppAction::ViewMessage),
+        (vec![Key::k(KeyCode::Enter)], AppAction::OpenMessageMenu),
+    ]
+}
+
+pub fn resolve_sequence(keys: &[Key]) -> SequenceResolution {
+    let mut partial = false;
+
+    for (binding, action) in default_bindings() {
+        if keys.len() > binding.len()
+            || !keys
+                .iter()
+                .zip(binding.iter())
+                .all(|(key, expected)| key == expected)
+        {
+            continue;
+        }
+
+        if keys.len() == binding.len() {
+            return SequenceResolution::Complete(action.clone());
+        }
+
+        partial = true;
+    }
+
+    if partial {
+        SequenceResolution::Partial
+    } else {
+        SequenceResolution::Cancelled
+    }
+}

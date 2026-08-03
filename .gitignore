@@ -1,0 +1,6 @@
+**/target
+media
+*.db
+whatsrust/lib/rustmeow
+.atl/
+.codegraph/
