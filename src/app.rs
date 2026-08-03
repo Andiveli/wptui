@@ -22,8 +22,9 @@ pub use crate::app;
 use crate::app::actions::{
     ActionNotice, ClipboardReader, ClipboardWriter, ConversationMode, FocusPane, MessageEditor,
     MessageForwarder, MessageMenuAction, MessageReactor, MessageRevoker, PaneVisibility, Section,
-    SystemClipboardReader, SystemUrlOpener, UrlOpener, WhatsAppMessageEditor,
-    WhatsAppMessageForwarder, WhatsAppMessageReactor, WhatsAppMessageRevoker,
+    SystemClipboardReader, SystemClipboardWriter, SystemUrlOpener, UnavailableClipboardReader,
+    UnavailableClipboardWriter, UrlOpener, WhatsAppMessageEditor, WhatsAppMessageForwarder,
+    WhatsAppMessageReactor, WhatsAppMessageRevoker,
 };
 use crate::app::composer::Composer;
 use crate::app::contact_avatars::ContactAvatars;
@@ -308,6 +309,27 @@ impl Default for App<'_> {
 }
 
 impl App<'_> {
+    /// Opens the system clipboard, falling back to an unavailable clipboard
+    /// when no display server is reachable (for example on a headless
+    /// machine) so the app can still run and paste surfaces a clear error.
+    fn open_clipboard_pair() -> (Box<dyn ClipboardReader>, Box<dyn ClipboardWriter>) {
+        match Clipboard::new() {
+            Ok(reader_clipboard) => {
+                let reader: Box<dyn ClipboardReader> =
+                    Box::new(SystemClipboardReader(reader_clipboard));
+                let writer: Box<dyn ClipboardWriter> = match Clipboard::new() {
+                    Ok(writer_clipboard) => Box::new(SystemClipboardWriter(writer_clipboard)),
+                    Err(_) => Box::new(UnavailableClipboardWriter),
+                };
+                (reader, writer)
+            }
+            Err(_) => (
+                Box::new(UnavailableClipboardReader),
+                Box::new(UnavailableClipboardWriter),
+            ),
+        }
+    }
+
     /// Constructs the full app with explicit storage directories instead of
     /// the user's real data/cache dirs. `App::default()` keeps using the
     /// real directories; tests use this factory with a fresh tempdir so they
@@ -335,15 +357,15 @@ impl App<'_> {
 
         let (tx, rx) = mpsc::channel::<AppInput>();
 
+        let (clipboard_reader, clipboard_writer) = Self::open_clipboard_pair();
+
         Self {
             db_handler: DatabaseHandler::new(&data_dir.join("whatsapp.db")),
             media_path: data_dir.join("media"),
             whatsmeow_db: data_dir.join("whatsmeow.db"),
 
-            clipboard_reader: Box::new(SystemClipboardReader(Clipboard::new().unwrap())),
-            clipboard_writer: Box::new(crate::app::actions::SystemClipboardWriter(
-                Clipboard::new().unwrap(),
-            )),
+            clipboard_reader,
+            clipboard_writer,
 
             messages: HashMap::new(),
             message_actions: HashMap::new(),
