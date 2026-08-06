@@ -3,31 +3,37 @@ use std::{env, path::PathBuf, process::Command};
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
-    let status = Command::new("go")
-        .env("CGO_ENABLED", "1")
-        // .env("CGO_CFLAGS", "-I./lib")
-        .args([
-            "build",
-            "-C",
-            "./lib",
-            "-buildmode=c-archive",
-            // "-buildmode=c-shared",
-            "-o",
-            out_dir.join("libgo.a").to_str().unwrap(),
-            // out_dir.join("libgo.so").to_str().unwrap(),
-        ])
-        .status()
-        .unwrap();
+    // Use the library prebuilt with Nix if available
+    let lib_path = if let Ok(go_lib) = env::var("WHATSRUST_LIBGO") {
+        PathBuf::from(go_lib)
+    } else {
+        let output = out_dir.join("libgo.a");
 
-    if !status.success() {
-        panic!("Failed to build go library:\n {:?}", status);
-    }
+        let status = Command::new("go")
+            .env("CGO_ENABLED", "1")
+            .args([
+                "build",
+                "-C",
+                "./lib",
+                "-buildmode=c-archive",
+                "-o",
+                output.to_str().unwrap(),
+            ])
+            .status()
+            .unwrap();
+
+        if !status.success() {
+            panic!("Failed to build go library");
+        }
+
+        output
+    };
 
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=lib");
     println!(
         "cargo::rustc-link-search=native={}",
-        out_dir.to_str().unwrap()
+        lib_path.parent().unwrap().display()
     );
     println!("cargo::rustc-link-lib=static=go");
     // println!("cargo::rustc-link-lib=dylib=go");
