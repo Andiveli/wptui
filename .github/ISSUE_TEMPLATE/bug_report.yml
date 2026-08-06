@@ -1,0 +1,69 @@
+name: Bug report
+description: Report a bug or unexpected behavior in wptui
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please search [open and closed issues](https://github.com/Andiveli/wptui/issues)
+        first to avoid duplicates.
+
+        This is a terminal app, so the terminal environment matters. Fill in the Environment section
+        even when you think it's irrelevant — clipboard, rendering, and keybinding behavior all
+        depend on it.
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened, and what did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Include the exact keystrokes you used. Paste any error messages verbatim (e.g. `Unavailable("...")`).
+      placeholder: |
+        1. Start wptui
+        2. Press ...
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `wp-tui --version`, or the git commit you're on.
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux (Debian/Ubuntu)
+        - Linux (Fedora)
+        - Linux (Arch)
+        - Linux (other)
+        - macOS
+        - Other
+  - type: dropdown
+    id: display-server
+    attributes:
+      label: Display server
+      description: Affects clipboard behavior.
+      options:
+        - Wayland
+        - X11
+        - Other
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal emulator
+      description: e.g. kitty, alacritty, foot, gnome-terminal, tmux over one of those.
+  - type: checkboxes
+    id: logs
+    attributes:
+      label: Logs
+      description: The app has a log view toggle with `Ctrl+Shift+L`. If the bug reproduces, please capture it with logs open and include the relevant output.
+      options:
+        - label: I reproduced the bug with logs visible (`Ctrl+Shift+L`) and will attach the relevant output
