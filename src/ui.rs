@@ -73,6 +73,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     render_attachment_viewer(frame, app);
     render_url_picker(frame, app);
     render_share_picker(frame, app);
+    render_file_picker(frame, app);
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -861,7 +862,7 @@ pub fn render_chats(frame: &mut Frame, app: &mut App, area: Rect) {
         // Show hint in the input area when not editing
         if app.conversation_mode == ConversationMode::MessageNavigation {
             let hint = format!(
-                "Press i to write in {} | Space 1 sections | Space 2 chats",
+                "Press i to write in {} (Ctrl+O attach) | Space 1 sections | Space 2 chats",
                 app.contact_name(&chat_jid)
             );
             frame.render_widget(Paragraph::new(hint).fg(border_color), input_area);
@@ -1077,6 +1078,67 @@ fn render_url_picker(frame: &mut Frame, app: &App) {
     );
     frame.render_widget(
         Paragraph::new("↑/↓ or j/k select  Enter open  Esc cancel")
+            .dark_gray()
+            .wrap(Wrap { trim: true }),
+        hint_area,
+    );
+}
+
+fn render_file_picker(frame: &mut Frame, app: &mut App) {
+    let Some(picker) = app.file_picker.as_mut() else {
+        return;
+    };
+    let modal = centered_modal_layout(frame.area());
+    if modal.is_empty() {
+        return;
+    }
+    let block = Block::bordered()
+        .title(format!(" Attach file: {} ", picker.current_dir().display()))
+        .border_set(symbols::border::ROUNDED);
+    let inner = block.inner(modal);
+    let [search_area, list_area, hint_area] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Min(1),
+        Constraint::Length(2),
+    ])
+    .areas(inner);
+    picker.set_viewport_height(list_area.height as usize);
+    let visible = picker.visible_entries();
+    let viewport = picker.viewport();
+    let items = visible[viewport.clone()]
+        .iter()
+        .enumerate()
+        .map(|(row, entry)| {
+            let index = viewport.start + row;
+            let cursor = if index == picker.selected { ">" } else { " " };
+            let mark = if !entry.is_dir && picker.is_selected(&entry.path) {
+                "[x]"
+            } else {
+                "   "
+            };
+            Line::from(format!("{cursor}{mark} {}", entry.display_name()))
+        });
+    frame.render_widget(Clear, modal);
+    frame.render_widget(block, modal);
+    let filter_line = if picker.searching {
+        format!("/{}_", picker.query)
+    } else {
+        format!("Filter: {}", picker.query)
+    };
+    frame.render_widget(
+        Paragraph::new(format!(
+            "{filter_line}  ({} selected)",
+            picker.selected_count()
+        ))
+        .dark_gray(),
+        search_area,
+    );
+    frame.render_widget(
+        Paragraph::new(items.collect::<Vec<_>>()).wrap(Wrap { trim: true }),
+        list_area,
+    );
+    frame.render_widget(
+        Paragraph::new("j/k select  h/← up  l/→ open  Spc mark  Enter attach  / search  Esc close")
             .dark_gray()
             .wrap(Wrap { trim: true }),
         hint_area,

@@ -1,6 +1,7 @@
 pub mod app;
 pub mod clipboard;
 pub mod db;
+pub mod file_picker;
 pub mod key_handler;
 pub mod media;
 pub mod ui;
