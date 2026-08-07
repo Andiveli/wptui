@@ -1349,7 +1349,11 @@ impl App<'_> {
         if !Self::is_group_chat(&chat) {
             return self.unavailable("Reply in private is only available in groups");
         }
-        let target = message.info.sender.clone();
+        // Group participants can be a LID while the real direct chat lives
+        // under its phone number; resolve so we open/send to the stored chat
+        // instead of an empty LID-keyed thread.
+        let target = wr::resolve_dm_chat(&message.info.sender)
+            .unwrap_or_else(|| message.info.sender.clone());
         let name = self.contact_name(&target).to_string();
         self.open_chat_by_jid(target);
         // Mirror the status "reply to DM" flow: switch to the Chats view,

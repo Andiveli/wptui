@@ -678,6 +678,8 @@ unsafe extern "C" {
     fn C_GetProfilePicture(jid: CJID) -> CProfilePictureResult;
     fn C_FreeProfilePicture(result: CProfilePictureResult);
     fn C_GetChatSettings(jid: CJID) -> CChatSettings;
+    fn C_ResolveDmChatId(jid: CJID) -> *mut c_char;
+    fn C_FreeResolveDmChatId(value: *mut c_char);
     fn C_Disconnect();
     fn C_Logout() -> u8;
     fn C_DrainRawPresenceDiagnostics() -> *mut c_char;
@@ -1542,5 +1544,21 @@ pub fn get_chat_settings(jid: &JID) -> ChatSettings {
         muted_until: settings.muted_until,
         pinned: settings.pinned,
         archived: settings.archived,
+    }
+}
+
+/// Resolves a group participant (or any user JID) to the canonical JID of
+/// its direct conversation: a LID is mapped to its phone number when known,
+/// matching how direct chats are keyed in the conversation list. Used so a
+/// "reply privately" opens/sends to the real stored chat, not an empty
+/// LID-keyed thread. Returns `None` only if the client is not ready or the
+/// JID is unusable.
+pub fn resolve_dm_chat(jid: &JID) -> Option<JID> {
+    unsafe {
+        take_owned_c_string(
+            C_ResolveDmChatId(CJID::from(jid)),
+            C_FreeResolveDmChatId,
+        )
+        .map(JID::from)
     }
 }
