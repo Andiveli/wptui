@@ -32,6 +32,7 @@ use crate::app::events::{AppEvent, AppInput, AttachmentViewerState, ViewerPrevie
 use crate::app::message_action_diagnostics::{MessageActionDiagnostics, identifier_for_log};
 use crate::app::presence::{PresenceDiagnostics, SelectedPresence, jid_for_log};
 use crate::db;
+use crate::file_picker::FilePickerState;
 use crate::key_handler::KeybindHandler;
 use crate::media::MediaRoot;
 use crate::ui;
@@ -270,6 +271,7 @@ pub struct App<'a> {
     pub reaction_picker: Option<(Vec<String>, usize)>,
     pub share_picker: Option<SharePicker>,
     pub url_picker: Option<(Vec<String>, usize)>,
+    pub file_picker: Option<FilePickerState>,
     pub url_opener: Box<dyn UrlOpener>,
     pub attachment_viewer: Option<AttachmentViewerState>,
     pub viewer_preview: Option<ViewerPreviewState>,
@@ -434,6 +436,7 @@ impl App<'_> {
             reaction_picker: None,
             share_picker: None,
             url_picker: None,
+            file_picker: None,
             url_opener: Box::new(SystemUrlOpener),
             attachment_viewer: None,
             viewer_preview: None,
