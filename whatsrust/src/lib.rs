@@ -153,6 +153,17 @@ struct CMessageActionEvent {
     kind: u8,
 }
 
+#[repr(C)]
+struct CChatEvent {
+    chat: CJID,
+    last_message_time: i64,
+}
+
+#[repr(C)]
+struct CLogoutResultEvent {
+    status: u8,
+}
+
 pub type MessageId = Arc<str>;
 
 #[derive(Clone, Debug)]
@@ -428,6 +439,19 @@ enum EventType {
     // Event type 4 is reserved (removed multiplexed Presence event on Go side)
     Connected = 5,
     MessageAction = 6,
+    Chat = 7,
+    LogoutResult = 8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, FromRepr)]
+#[repr(u8)]
+pub enum LogoutStatus {
+    LoggedOut = 0,
+    NotLoggedIn = 1,
+    Failed = 2,
+    /// Remote revocation failed, but the local sign-out succeeded. The device
+    /// remains linked on the phone until removed manually.
+    LocalOnly = 3,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -462,6 +486,17 @@ pub enum Event {
         occurred_at: i64,
         arrival_order: u64,
     },
+    /// A chat that exists even though the history sync batch carried no
+    /// messages for it. Lets the app populate the full chat list instead of
+    /// only the subset that shipped messages.
+    Chat {
+        jid: JID,
+        last_message_time: i64,
+    },
+    /// Terminal outcome of an asynchronous logout. The Go bridge runs the
+    /// remove-companion-device IQ off the event loop so `logout()` no longer
+    /// blocks the UI; this event drives the local cleanup on completion.
+    LogoutResult(LogoutStatus),
 }
 
 #[derive(Clone, Debug)]
@@ -644,6 +679,7 @@ unsafe extern "C" {
     fn C_FreeProfilePicture(result: CProfilePictureResult);
     fn C_GetChatSettings(jid: CJID) -> CChatSettings;
     fn C_Disconnect();
+    fn C_Logout() -> u8;
     fn C_DrainRawPresenceDiagnostics() -> *mut c_char;
     fn C_FreeRawPresenceDiagnostics(report: *mut c_char);
     fn C_SubscribePresence(jid: CJID) -> u8;
@@ -668,6 +704,13 @@ unsafe extern "C" {
 }
 
 pub struct DownloadFailed;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LogoutError {
+    NotLoggedIn,
+    Failed,
+    InvalidBridgeResult,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageActionFailed;
@@ -981,7 +1024,23 @@ impl CallbackTranslator<*const CEvent> for Event {
             EventType::MessageAction => unsafe {
                 message_action_event_from_ffi(&*(event.data as *const CMessageActionEvent))
             },
+            EventType::Chat => unsafe {
+                chat_event_from_ffi(&*(event.data as *const CChatEvent))
+            },
+            EventType::LogoutResult => unsafe {
+                let result = &(*(event.data as *const CLogoutResultEvent));
+                Event::LogoutResult(
+                    LogoutStatus::from_repr(result.status).unwrap_or(LogoutStatus::Failed),
+                )
+            },
         }
+    }
+}
+
+unsafe fn chat_event_from_ffi(event: &CChatEvent) -> Event {
+    Event::Chat {
+        jid: (&event.chat).into(),
+        last_message_time: event.last_message_time,
     }
 }
 
@@ -1194,6 +1253,14 @@ setup_handler!(connect, C_Connect, qr: *const c_char => String);
 
 pub fn disconnect() {
     unsafe { C_Disconnect() }
+}
+
+pub fn logout() {
+    // Performs a deterministic local sign-out on the Go side (disconnect +
+    // clear the persisted device). The result arrives via Event::LogoutResult
+    // so the app can remove the DB file and quit. No network round-trip, so
+    // the UI never blocks.
+    unsafe { C_Logout() };
 }
 
 unsafe fn take_owned_c_string(

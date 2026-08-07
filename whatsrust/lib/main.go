@@ -106,6 +106,15 @@ typedef struct {
 } MessageActionEvent;
 
 typedef struct {
+	JID chat;
+	int64_t lastMessageTime;
+} ChatEvent;
+
+typedef struct {
+	uint8_t status;
+} LogoutResultEvent;
+
+typedef struct {
 	uint8_t kind;
 	void* data;
 } Event;
@@ -198,7 +207,9 @@ import (
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/appstate"
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/proto/waHistorySync"
 	"go.mau.fi/whatsmeow/proto/waWeb"
+	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -567,10 +578,17 @@ func messageActionIdentifier(identifier string) string {
 }
 
 func LOG_LEVEL(level int, msg string, args ...any) {
+	formatted := fmt.Sprintf(msg, args...)
+	if os.Getenv("WPTUI_LOGS_STDERR") == "1" {
+		// Debug aid for headless capture: mirror every Go log to stderr so a
+		// run like `WPTUI_LOGS_STDERR=1 target/debug/wp-tui 2>go.log` lets the
+		// user read diagnostics after closing the TUI (Ctrl+L panel is broken).
+		fmt.Fprintf(os.Stderr, "[go %d] %s\n", level, formatted)
+	}
 	if logHandler.callback == nil {
 		return
 	}
-	cmsg := C.CString(fmt.Sprintf(msg, args...))
+	cmsg := C.CString(formatted)
 	defer C.free(unsafe.Pointer(cmsg))
 	C.callLogInfo(logHandler, cmsg, C.uint8_t(level))
 }
@@ -787,6 +805,7 @@ func C_SetPresenceHandler(callback C.PresenceHandlerCallback, data unsafe.Pointe
 //export C_NewClient
 func C_NewClient(dbPath *C.char) {
 	rawPresenceProbe.reset(os.Getenv("WPTUI_PRESENCE_DEBUG") == "1")
+	requestFullHistorySync()
 	goPath := C.GoString(dbPath)
 	dbLog := &WrLogger{}
 	container, err := sqlstore.New(context.Background(), "sqlite3", "file:"+goPath+"?_foreign_keys=on", dbLog)
@@ -801,6 +820,16 @@ func C_NewClient(dbPath *C.char) {
 
 func configurePresenceSubscriptions(client *whatsmeow.Client) {
 	client.ErrorOnSubscribePresenceWithoutToken = true
+}
+
+func requestFullHistorySync() {
+	// Ask WhatsApp to send the complete conversation + history list instead of
+	// only a recent-activity subset. WhatsApp gates history sync requests on an
+	// open phone session, and full sync must be requested before pairing
+	// (DeviceProps is transmitted during the registration handshake).
+	store.DeviceProps.RequireFullSync = proto.Bool(true)
+	store.DeviceProps.HistorySyncConfig.FullSyncDaysLimit = proto.Uint32(365)
+	store.DeviceProps.HistorySyncConfig.FullSyncSizeMbLimit = proto.Uint32(10240)
 }
 
 const viewOnceUnavailablePlaceholder = "View-once media is unavailable here. View it on your phone."
@@ -893,6 +922,8 @@ const (
 	// Event type 4 is reserved for the removed multiplexed Presence event.
 	EventTypeConnected     = 5
 	EventTypeMessageAction = 6
+	EventTypeChat          = 7
+	EventTypeLogoutResult  = 8
 )
 
 const (
@@ -2151,6 +2182,14 @@ func AddEventHandlers() {
 
 		case *events.HistorySync:
 			percent := evt.Data.GetProgress()
+			LOG_INFO(
+				"History sync: type=%s chunk=%d progress=%d conversations=%d messages=%d",
+				evt.Data.GetSyncType().String(),
+				evt.Data.GetChunkOrder(),
+				percent,
+				len(evt.Data.GetConversations()),
+				countSyncMessages(evt.Data.GetConversations()),
+			)
 			cpercent := (*C.uint8_t)(C.malloc(C.size_t(unsafe.Sizeof(uint8(0)))))
 			*cpercent = C.uint8_t(percent)
 
@@ -2173,6 +2212,24 @@ func AddEventHandlers() {
 					LOG_WARN("history message ignored source=history_sync reason=invalid_chat")
 					continue
 				}
+
+				// Register the chat itself even when the sync batch carries no
+				// messages (older/archived/muted conversations). Previously only
+				// conversations that shipped at least one message became chats,
+				// which left the chat list stuck at the messages-only subset.
+				var lastMsgTime int64
+				if ts := conversation.GetLastMsgTimestamp(); ts != 0 {
+					lastMsgTime = int64(ts)
+				}
+				chatEvent := (*C.ChatEvent)(C.malloc(C.sizeof_ChatEvent))
+				chatEvent.chat = jidToC(chatJid)
+				chatEvent.lastMessageTime = C.int64_t(lastMsgTime)
+				cevent := C.Event{
+					kind: C.uint8_t(EventTypeChat),
+					data: unsafe.Pointer(chatEvent),
+				}
+				C.callEventCallback(eventHandler, &cevent)
+
 				syncMessages := conversation.GetMessages()
 
 				for _, syncMessage := range syncMessages {
@@ -2192,6 +2249,14 @@ func AddEventHandlers() {
 			}
 		}
 	})
+}
+
+func countSyncMessages(conversations []*waHistorySync.Conversation) int {
+	total := 0
+	for _, conversation := range conversations {
+		total += len(conversation.GetMessages())
+	}
+	return total
 }
 
 type sendPresenceFunc func(context.Context, types.Presence) error
@@ -2265,6 +2330,13 @@ func handleConnected(sendPresence sendPresenceFunc, connected connectedReadyFunc
 func C_Connect(handler C.QrCallback, data unsafe.Pointer) {
 	AddEventHandlers()
 	if client.Store.ID == nil {
+		LOG_INFO(
+			"Pairing: DeviceProps require_full_sync=%t days_limit=%d size_mb=%d platform=%s",
+			store.DeviceProps.GetRequireFullSync(),
+			store.DeviceProps.GetHistorySyncConfig().GetFullSyncDaysLimit(),
+			store.DeviceProps.GetHistorySyncConfig().GetFullSyncSizeMbLimit(),
+			store.DeviceProps.GetPlatformType(),
+		)
 		qrChan, _ = client.GetQRChannel(context.Background())
 		err := client.Connect()
 		if err != nil {
@@ -2905,6 +2977,77 @@ func C_MarkAsRead(msg_id *C.char, chat_jid C.JID, sender_jid C.JID) {
 //export C_Disconnect
 func C_Disconnect() {
 	client.Disconnect()
+}
+
+const (
+	// logoutStatusLoggedOut: remote revocation succeeded and the local store
+	// was cleared (the linked device is gone from the phone too).
+	logoutStatusLoggedOut uint8 = 0
+	// logoutStatusNotLoggedIn: there is no paired session to remove.
+	logoutStatusNotLoggedIn uint8 = 1
+	// logoutStatusFailed: the remote logout request was rejected/failed and
+	// even the local fallback could not clear the store.
+	logoutStatusFailed uint8 = 2
+	// logoutStatusLocalOnly: remote revocation failed (device offline or
+	// server rejected it) but the local sign-out succeeded, so the app can
+	// return to the terminal. The device stays linked on the phone until the
+	// user removes it manually from WhatsApp → Linked devices.
+	logoutStatusLocalOnly uint8 = 3
+)
+
+//export C_Logout
+func C_Logout() C.uint8_t {
+	status := logoutStatusLoggedOut
+	if client == nil {
+		// No bridge client exists, so there is no session to remove.
+		status = logoutStatusNotLoggedIn
+	} else {
+		// True sign-out: whatsmeow sends the remove-companion-device IQ to the
+		// server (which unlinks the device in WhatsApp on the phone), then
+		// disconnects and clears the persisted store. Bounded so it can never
+		// hang the UI; the Rust side keeps driving the exit.
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		err := client.Logout(ctx)
+		cancel()
+		switch {
+		case err == nil:
+			status = logoutStatusLoggedOut
+		case errors.Is(err, whatsmeow.ErrNotLoggedIn):
+			status = logoutStatusNotLoggedIn
+		default:
+			// Remote revocation failed. Still clear the local session so the
+			// TUI deterministically returns to the terminal; report the partial
+			// outcome so the caller can warn that the device remains linked.
+			LOG_ERROR("Logout: remote revocation failed, clearing locally only: %v", err)
+			client.Disconnect()
+			if client.Store == nil {
+				status = logoutStatusLocalOnly
+			} else if err := client.Store.Delete(context.Background()); err != nil {
+				LOG_ERROR("Logout: failed to clear local store: %v", err)
+				status = logoutStatusFailed
+			} else {
+				status = logoutStatusLocalOnly
+			}
+		}
+	}
+	emitLogoutResult(status)
+	return C.uint8_t(status)
+}
+
+func emitLogoutResult(status uint8) {
+	if eventHandler.callback == nil {
+		return
+	}
+	payload := (*C.LogoutResultEvent)(C.malloc(C.sizeof_LogoutResultEvent))
+	if payload == nil {
+		return
+	}
+	payload.status = C.uint8_t(status)
+	C.callEventCallback(eventHandler, &C.Event{
+		kind: C.uint8_t(EventTypeLogoutResult),
+		data: unsafe.Pointer(payload),
+	})
+	C.free(unsafe.Pointer(payload))
 }
 
 //export C_DrainRawPresenceDiagnostics

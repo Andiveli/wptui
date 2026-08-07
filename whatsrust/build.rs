@@ -25,6 +25,11 @@ fn main() {
 
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=lib");
+    // Directory-level rerun-if-changed is unreliable for edits inside files,
+    // so also track the Go sources that feed the archive explicitly.
+    println!("cargo:rerun-if-changed=lib/main.go");
+    println!("cargo:rerun-if-changed=lib/go.mod");
+    println!("cargo:rerun-if-changed=lib/go.sum");
     println!(
         "cargo::rustc-link-search=native={}",
         out_dir.to_str().unwrap()
