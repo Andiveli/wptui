@@ -222,6 +222,7 @@ impl App<'_> {
                     self.reply_to_selected();
                 }
             }
+            AppAction::ReplyPrivately => self.reply_privately(),
             AppAction::ShareMessage => self.open_share_picker(),
             AppAction::ReactMessage => {
                 if self.selected_section == Section::Status {
