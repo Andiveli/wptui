@@ -1349,9 +1349,16 @@ impl App<'_> {
         if !Self::is_group_chat(&chat) {
             return self.unavailable("Reply in private is only available in groups");
         }
-        let target = message.info.sender;
+        let target = message.info.sender.clone();
         let name = self.contact_name(&target).to_string();
         self.open_chat_by_jid(target);
+        // Mirror the status "reply to DM" flow: switch to the Chats view,
+        // focus the conversation, quote the original message and drop the
+        // user straight into the composer for the private reply.
+        self.selected_section = Section::Chats;
+        self.composer.quote = Some(message);
+        self.conversation_mode = ConversationMode::ComposerEditing;
+        self.focus_pane = FocusPane::Conversation;
         self.action_notice = Some(ActionNotice::ReplyPrivatelyNamed(name));
     }
 
@@ -2126,6 +2133,13 @@ mod tests {
 
         assert_eq!(app.open_chat(), Some(alice.clone()));
         assert!(app.chats.contains_key(&alice));
+        assert_eq!(app.selected_section, Section::Chats);
+        assert_eq!(app.focus_pane, FocusPane::Conversation);
+        assert_eq!(app.conversation_mode, ConversationMode::ComposerEditing);
+        assert_eq!(
+            app.composer.quote.as_ref().map(|m| m.info.id.as_ref()),
+            Some("g1")
+        );
         assert!(matches!(
             app.action_notice,
             Some(ActionNotice::ReplyPrivatelyNamed(_))
