@@ -10,6 +10,7 @@ pub const STATUS_REACTION: &str = "💚";
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppAction {
     Quit,
+    Logout,
     ToggleLogs,
     ToggleSectionRail,
     ToggleChatList,
@@ -339,6 +340,17 @@ impl Section {
     }
 }
 
+/// The Logout entry pinned at the BOTTOM of the section rail, below the three
+/// content sections. It is deliberately NOT a `Section` variant: content
+/// selection (`selected_section`) drives ChatList/Conversation rendering and
+/// the "… is not available yet" placeholder, and a 4th section variant would
+/// ripple into all of that. Instead the rail cursor is modeled as
+/// `App.selected_section` (indices 0..3 content sections) plus a
+/// `App.rail_on_logout` flag meaning "the rail is on the Logout slot" (index 3).
+/// While the flag is set the content pane shows a dedicated logout placeholder
+/// and Enter triggers the existing `begin_logout_confirmation()`.
+pub const LOGOUT_RAIL_TITLE: &str = "Logout";
+
 impl FocusPane {
     pub fn next(self, visibility: PaneVisibility) -> Self {
         let panes = visible_panes(visibility);
@@ -403,6 +415,7 @@ pub enum SequenceResolution {
 pub fn default_bindings() -> Vec<(Vec<Key>, AppAction)> {
     vec![
         (vec![Key::ctrl('q')], AppAction::Quit),
+        (vec![Key::ctrl_shift('O')], AppAction::Logout),
         (vec![Key::ctrl_shift('L')], AppAction::ToggleLogs),
         (vec![Key::ctrl_shift('l')], AppAction::ToggleLogs),
         (vec![Key::c(' '), Key::c('1')], AppAction::ToggleSectionRail),

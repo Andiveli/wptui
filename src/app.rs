@@ -285,6 +285,28 @@ pub struct App<'a> {
 
     pub should_quit: bool,
 
+    /// Set while a logout confirmation is showing. When pending, the next
+    /// input key resolves the prompt (confirm/cancel) instead of normal keys.
+    pub pending_logout: bool,
+
+    /// Set once the user confirmed logout and the async bridge logout is
+    /// running off the event loop. While true, further input is ignored and
+    /// the status bar shows "Logging out…" until `Event::LogoutResult`
+    /// resolves the flow (cleanup + quit, or error).
+    pub logout_in_progress: bool,
+
+    /// Whether the section rail cursor sits on the Logout slot (below the
+    /// three content sections). When true the content pane shows a logout
+    /// placeholder instead of a chat/status/community view, and Enter on the
+    /// rail calls `begin_logout_confirmation()`. Independent of
+    /// `selected_section`, which keeps driving content selection.
+    pub rail_on_logout: bool,
+
+    /// Selection inside the logout confirmation menu (0 = Confirm logout,
+    /// 1 = Cancel), rendered as a menu strip at the top right like the
+    /// message menu. j/k move it, Enter confirms, Esc/n cancels.
+    pub logout_menu_index: usize,
+
     pub tx: mpsc::Sender<AppInput>,
     pub rx: mpsc::Receiver<AppInput>,
     input_reader_control: Arc<(Mutex<InputReaderState>, Condvar)>,
@@ -425,6 +447,10 @@ impl App<'_> {
 
             show_logs: false,
             should_quit: false,
+            pending_logout: false,
+            logout_in_progress: false,
+            rail_on_logout: false,
+            logout_menu_index: 0,
             tx,
             rx,
             input_reader_control: Arc::new((Mutex::new(InputReaderState::Running), Condvar::new())),
@@ -523,6 +549,59 @@ impl App<'_> {
                 self.sort_chats();
                 true
             }
+            wr::Event::Chat {
+                jid,
+                last_message_time,
+            } => {
+                // History sync reports chats that may carry no messages. Keep
+                // them so the chat list reflects the full account, not only
+                // conversations that shipped a message in the sync batch.
+                self.add_or_update_chat(
+                    Chat {
+                        jid,
+                        last_message_time: (last_message_time > 0).then_some(last_message_time),
+                    },
+                    |chat| {
+                        if last_message_time > 0 && Some(last_message_time) > chat.last_message_time
+                        {
+                            chat.last_message_time = Some(last_message_time);
+                        }
+                    },
+                );
+                self.sort_chats();
+                true
+            }
+            wr::Event::LogoutResult(status) => match status {
+                wr::LogoutStatus::LoggedOut | wr::LogoutStatus::NotLoggedIn => {
+                    self.finish_logout();
+                    true
+                }
+                wr::LogoutStatus::LocalOnly => {
+                    // Remote revocation failed, so WhatsApp on the phone still
+                    // lists this device. The local session is already gone;
+                    // surface it instead of silently quitting, and let the
+                    // user retry (a second logout resolves as NotLoggedIn and
+                    // finishes) or remove the device manually.
+                    log::warn!(
+                        "Logout: device was not unlinked on the phone; remove it manually in WhatsApp → Linked devices"
+                    );
+                    self.pending_logout = false;
+                    self.logout_in_progress = false;
+                    self.logout_menu_index = 0;
+                    self.unavailable(
+                        "Logged out locally, but the device is still linked on the phone — remove it in WhatsApp (Settings → Linked devices), then log out again to finish",
+                    );
+                    true
+                }
+                wr::LogoutStatus::Failed => {
+                    // Even the local cleanup failed. Surface it and keep running.
+                    self.pending_logout = false;
+                    self.logout_in_progress = false;
+                    self.logout_menu_index = 0;
+                    self.unavailable("Could not log out");
+                    true
+                }
+            },
             wr::Event::SyncProgress(percent) => {
                 self.history_sync_percent = Some(percent);
                 true
@@ -2447,5 +2526,110 @@ mod tests {
                 .iter()
                 .any(|jid| jid.0.as_ref() == STATUS_BROADCAST_CHAT)
         );
+    }
+
+    #[test]
+    fn section_rail_navigates_through_sections_into_logout_and_back() {
+        use crate::app::FocusPane;
+        use crate::app::actions::{AppAction, Section};
+
+        let mut app = TestApp::new();
+        app.focus_pane = FocusPane::SectionRail;
+        app.selected_section = Section::Chats;
+        app.rail_on_logout = false;
+
+        // j: Chats -> Status -> Communities -> Logout (flag set) -> wraps to Chats.
+        app.dispatch_action(AppAction::SelectNext);
+        assert_eq!(app.selected_section, Section::Status);
+        assert!(!app.rail_on_logout);
+        app.dispatch_action(AppAction::SelectNext);
+        assert_eq!(app.selected_section, Section::Communities);
+        assert!(!app.rail_on_logout);
+        app.dispatch_action(AppAction::SelectNext);
+        assert!(app.rail_on_logout);
+        app.dispatch_action(AppAction::SelectNext);
+        assert_eq!(app.selected_section, Section::Chats);
+        assert!(!app.rail_on_logout);
+
+        // k: Chats wraps backward up to Logout.
+        app.dispatch_action(AppAction::SelectPrevious);
+        assert!(app.rail_on_logout);
+        app.dispatch_action(AppAction::SelectPrevious);
+        assert_eq!(app.selected_section, Section::Communities);
+        assert!(!app.rail_on_logout);
+
+        // G (jump_bottom) lands on Logout; gg (jump_top) returns to Chats.
+        app.dispatch_action(AppAction::JumpBottom);
+        assert!(app.rail_on_logout);
+        app.dispatch_action(AppAction::JumpTop);
+        assert_eq!(app.selected_section, Section::Chats);
+        assert!(!app.rail_on_logout);
+    }
+
+    #[test]
+    fn pressing_enter_on_the_rail_logout_slot_begins_confirmation() {
+        use crate::app::FocusPane;
+        use crate::app::actions::{AppAction, Section};
+        use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+
+        let mut app = TestApp::new();
+        app.focus_pane = FocusPane::SectionRail;
+        app.selected_section = Section::Chats;
+        app.rail_on_logout = false;
+
+        // Enter on a normal section does not start logout confirmation.
+        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        app.on_terminal_event(Event::Key(enter));
+        assert!(!app.pending_logout);
+
+        // Move the rail to the Logout slot and press Enter: confirmation starts.
+        app.dispatch_action(AppAction::JumpBottom);
+        assert!(app.rail_on_logout);
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )));
+        assert!(app.pending_logout);
+        assert_eq!(app.focus_pane, FocusPane::SectionRail);
+        assert_eq!(app.selected_section, Section::Communities);
+    }
+
+    #[test]
+    fn logout_confirmation_menu_navigates_and_cancels() {
+        use crate::app::FocusPane;
+        use crate::app::actions::AppAction;
+        use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+
+        let mut app = TestApp::new();
+        app.focus_pane = FocusPane::SectionRail;
+        app.selected_section = crate::app::actions::Section::Chats;
+        app.dispatch_action(AppAction::JumpBottom);
+        assert!(app.rail_on_logout);
+
+        // Enter on the rail Logout slot opens the confirmation menu.
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )));
+        assert!(app.pending_logout);
+        assert_eq!(app.logout_menu_index, 0);
+
+        // j / k move the selection between Confirm and Cancel (2 items).
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            KeyCode::Char('j'),
+            KeyModifiers::NONE,
+        )));
+        assert_eq!(app.logout_menu_index, 1);
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            KeyCode::Char('k'),
+            KeyModifiers::NONE,
+        )));
+        assert_eq!(app.logout_menu_index, 0);
+
+        // Esc cancels without starting logout (no bridge call).
+        app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+        assert!(!app.pending_logout);
+        assert!(!app.logout_in_progress);
+        assert_eq!(app.logout_menu_index, 0);
     }
 }

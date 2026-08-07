@@ -1,0 +1,30 @@
+name: Feature request
+description: Suggest a new feature or improvement for wptui
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion! Please search [open and closed issues](https://github.com/Andiveli/wptui/issues)
+        first to avoid duplicates.
+
+        Note: wptui is an unofficial WhatsApp client. Requests that depend on unsupported WhatsApp
+        features (e.g. voice/video calling) may be declined as out of scope.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do that you can't do today?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How should it work? Sketch the behavior or UI.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What else have you tried or considered?

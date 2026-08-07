@@ -18,10 +18,10 @@ use message_list::{get_quoted_text, render_messages, render_status_messages};
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Layout, Position, Rect},
-    style::{Style, Stylize},
+    style::{Color, Style, Stylize},
     symbols,
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, Paragraph, StatefulWidget, Widget, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, StatefulWidget, Widget, Wrap},
 };
 use ratatui_image::{Resize, StatefulImage};
 use status_list::{StatusList, StatusListItem};
@@ -44,7 +44,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if let Some(area) = areas.section_rail {
         render_section_rail(frame, app, area);
     }
-    if app.selected_section == Section::Chats {
+    if app.rail_on_logout {
+        app.contact_avatars.clear_window();
+        if let Some(area) = areas.chat_list {
+            render_structural_placeholder(frame, app, area);
+        }
+        render_logout_placeholder(frame, app, areas.conversation);
+    } else if app.selected_section == Section::Chats {
         if let Some(area) = areas.chat_list {
             render_contacts(frame, app, area);
         } else {
@@ -111,11 +117,25 @@ pub fn navigation_areas(area: Rect, visibility: PaneVisibility) -> NavigationAre
 }
 
 fn render_section_rail(frame: &mut Frame, app: &App, area: Rect) {
-    let items = Section::ALL.map(Section::title);
-    let selected = Section::ALL
+    let mut items = Section::ALL
         .iter()
-        .position(|section| *section == app.selected_section);
-    let mut state = ratatui::widgets::ListState::default().with_selected(selected);
+        .map(|section| {
+            ListItem::new(Section::title(*section)).style(Style::default().fg(Color::White))
+        })
+        .collect::<Vec<_>>();
+    items.push(
+        ListItem::new(crate::app::actions::LOGOUT_RAIL_TITLE)
+            .style(Style::default().fg(Color::Red)),
+    );
+    let selected = if app.rail_on_logout {
+        items.len() - 1
+    } else {
+        Section::ALL
+            .iter()
+            .position(|section| *section == app.selected_section)
+            .unwrap_or(0)
+    };
+    let mut state = ratatui::widgets::ListState::default().with_selected(Some(selected));
     let list = List::new(items)
         .block(
             Block::bordered()
@@ -129,7 +149,11 @@ fn render_section_rail(frame: &mut Frame, app: &App, area: Rect) {
                 ),
         )
         .highlight_symbol("> ")
-        .highlight_style(Style::default().green());
+        .highlight_style(if app.rail_on_logout {
+            Style::default().red()
+        } else {
+            Style::default().green()
+        });
     frame.render_stateful_widget(list, area, &mut state);
 }
 
@@ -138,6 +162,43 @@ fn render_structural_placeholder(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(
         Paragraph::new(format!("{section} is not available yet."))
             .block(Block::bordered().title(section)),
+        area,
+    );
+}
+
+fn render_logout_placeholder(frame: &mut Frame, app: &App, area: Rect) {
+    let content = if app.logout_in_progress {
+        "Logging out…\n\nThis removes the device from WhatsApp and clears the local session."
+            .to_string()
+    } else if app.pending_logout {
+        // Reuse the message-menu interaction inside the pane: `>` marks the
+        // selection, j/k move it, Enter confirms, Esc cancels (y/N also work).
+        let menu_lines = ["Confirm logout", "Cancel"]
+            .iter()
+            .enumerate()
+            .map(|(index, label)| {
+                if index == app.logout_menu_index {
+                    format!("> {label}")
+                } else {
+                    format!("  {label}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "This removes the device from WhatsApp and clears the local session.\n\n{menu_lines}\n\nj/k move · Enter confirms · Esc cancels"
+        )
+    } else {
+        "Press Enter to sign out.\nThis removes the device from WhatsApp and clears the local session.".to_string()
+    };
+    frame.render_widget(
+        Paragraph::new(content)
+            .block(
+                Block::bordered()
+                    .title(crate::app::actions::LOGOUT_RAIL_TITLE)
+                    .border_style(Style::default().fg(Color::Red)),
+            )
+            .style(Style::default().fg(Color::Red)),
         area,
     );
 }
@@ -641,7 +702,30 @@ pub fn render_chats(frame: &mut Frame, app: &mut App, area: Rect) {
     // Build the status string (action_notice, picker, menu) so we can drop it
     // on the right edge of the outer block. Keeping it here instead of painting
     // a separate Paragraph avoids it sticking around after it should disappear.
-    let status = if let Some((reactions, selected)) = &app.reaction_picker {
+    let status = if app.logout_in_progress {
+        Some("Logging out…".into())
+    } else if app.pending_logout {
+        // Reuse the top-right menu strip interaction (j/k + Enter/Esc),
+        // mirroring the message menu format.
+        Some(
+            ["Confirm logout", "Cancel"]
+                .iter()
+                .enumerate()
+                .map(|(index, label)| {
+                    format!(
+                        "{} {}",
+                        if index == app.logout_menu_index {
+                            ">"
+                        } else {
+                            " "
+                        },
+                        label
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" | "),
+        )
+    } else if let Some((reactions, selected)) = &app.reaction_picker {
         Some(
             reactions
                 .iter()
