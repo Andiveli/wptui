@@ -168,7 +168,8 @@ fn render_structural_placeholder(frame: &mut Frame, app: &App, area: Rect) {
 
 fn render_logout_placeholder(frame: &mut Frame, app: &App, area: Rect) {
     let content = if app.logout_in_progress {
-        "Logging out…\n\nThis removes the device from WhatsApp and clears the local session.".to_string()
+        "Logging out…\n\nThis removes the device from WhatsApp and clears the local session."
+            .to_string()
     } else if app.pending_logout {
         // Reuse the message-menu interaction inside the pane: `>` marks the
         // selection, j/k move it, Enter confirms, Esc cancels (y/N also work).
@@ -713,7 +714,11 @@ pub fn render_chats(frame: &mut Frame, app: &mut App, area: Rect) {
                 .map(|(index, label)| {
                     format!(
                         "{} {}",
-                        if index == app.logout_menu_index { ">" } else { " " },
+                        if index == app.logout_menu_index {
+                            ">"
+                        } else {
+                            " "
+                        },
                         label
                     )
                 })

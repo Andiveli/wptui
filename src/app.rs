@@ -2615,9 +2615,15 @@ mod tests {
         assert_eq!(app.logout_menu_index, 0);
 
         // j / k move the selection between Confirm and Cancel (2 items).
-        app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE)));
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            KeyCode::Char('j'),
+            KeyModifiers::NONE,
+        )));
         assert_eq!(app.logout_menu_index, 1);
-        app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE)));
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            KeyCode::Char('k'),
+            KeyModifiers::NONE,
+        )));
         assert_eq!(app.logout_menu_index, 0);
 
         // Esc cancels without starting logout (no bridge call).
