@@ -776,6 +776,9 @@ pub fn render_chats(frame: &mut Frame, app: &mut App, area: Rect) {
                     format!("Forwarded: {succeeded} ok, {failed} failed ({reason})")
                 }
             }
+            crate::app::actions::ActionNotice::ReplyPrivatelyNamed(name) => {
+                format!("Replying to {name} privately")
+            }
             _ => format!("{notice:?}"),
         })
     };

@@ -2948,12 +2948,36 @@ func C_GetChatSettings(cjid C.JID) C.ChatSettings {
 		mutedUntil = settings.MutedUntil.Unix()
 	}
 
-	return C.ChatSettings{
+return C.ChatSettings{
 		found:       C.bool(settings.Found),
 		muted_until: C.int64_t(mutedUntil),
 		pinned:      C.bool(settings.Pinned),
 		archived:    C.bool(settings.Archived),
 	}
+}
+
+// Resolve a user JID (typically a group participant) to its canonical
+// direct-conversation id. Direct chats are stored under the phone number
+// (PN); a group participant may be a LID, so we map LID→PN when known so the
+// private reply opens the real chat instead of an empty LID-keyed thread.
+// Non-LID personal JIDs pass through unchanged. Returns NULL when the
+// client is not ready or the JID cannot be parsed.
+//
+//export C_ResolveDmChatId
+func C_ResolveDmChatId(cjid C.JID) *C.char {
+	if client == nil {
+		return nil
+	}
+	jid, err := types.ParseJID(C.GoString(cjid))
+	if err != nil || jid.IsEmpty() {
+		return nil
+	}
+	return C.CString(GetChatId(client, &jid, nil))
+}
+
+//export C_FreeResolveDmChatId
+func C_FreeResolveDmChatId(value *C.char) {
+	C.free(unsafe.Pointer(value))
 }
 
 //export C_MarkAsRead
