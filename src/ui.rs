@@ -1,11 +1,18 @@
 pub mod contact_list;
+mod layout;
 pub mod message_list;
 pub mod status_list;
 pub mod text_input;
 
+pub use layout::{
+    NavigationAreas, ViewerPreviewLayout, attachment_preview_lines, centered_modal_layout,
+    composer_cursor_position, composer_height, composer_visual_cursor, composer_visual_rows,
+    conversation_areas, navigation_areas, viewer_preview_layout,
+};
+pub(crate) use layout::{composer_visual_layout, truncate_with_ellipsis};
+
 use crate::app::App;
-use crate::app::actions::{ConversationMode, FocusPane, PaneVisibility, Section};
-use crate::app::composer::PendingAttachment;
+use crate::app::actions::{ConversationMode, FocusPane, Section};
 use crate::app::contact_avatars::prioritized_avatar_requests;
 use crate::app::events::{
     ViewerPreviewKey, ViewerPreviewState, ViewerStatus, viewer_preview_request,
@@ -74,47 +81,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     render_url_picker(frame, app);
     render_share_picker(frame, app);
     render_file_picker(frame, app);
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct NavigationAreas {
-    pub section_rail: Option<Rect>,
-    pub chat_list: Option<Rect>,
-    pub conversation: Rect,
-}
-
-pub fn navigation_areas(area: Rect, visibility: PaneVisibility) -> NavigationAreas {
-    let rail_width = if visibility.section_rail {
-        14.min(area.width)
-    } else {
-        0
-    };
-    let remaining = area.width.saturating_sub(rail_width);
-    let chat_width = if visibility.chat_list {
-        30.min(remaining)
-    } else {
-        0
-    };
-    let conversation_width = remaining.saturating_sub(chat_width);
-    let rail = Rect::new(area.x, area.y, rail_width, area.height);
-    let chat = Rect::new(
-        area.x.saturating_add(rail_width),
-        area.y,
-        chat_width,
-        area.height,
-    );
-    let conversation = Rect::new(
-        chat.x.saturating_add(chat_width),
-        area.y,
-        conversation_width,
-        area.height,
-    );
-
-    NavigationAreas {
-        section_rail: visibility.section_rail.then_some(rail),
-        chat_list: visibility.chat_list.then_some(chat),
-        conversation,
-    }
 }
 
 fn render_section_rail(frame: &mut Frame, app: &App, area: Rect) {
@@ -202,283 +168,6 @@ fn render_logout_placeholder(frame: &mut Frame, app: &App, area: Rect) {
             .style(Style::default().fg(Color::Red)),
         area,
     );
-}
-
-pub struct ViewerPreviewLayout {
-    pub modal: Rect,
-    pub body: Rect,
-    pub hint: Rect,
-    pub preview: Rect,
-}
-
-pub fn centered_modal_layout(area: Rect) -> Rect {
-    if area.is_empty() {
-        return area;
-    }
-    let width = area.width.min(72).max(1);
-    let height = area.height.min(16).max(1);
-    Rect::new(
-        area.x.saturating_add(area.width.saturating_sub(width) / 2),
-        area.y
-            .saturating_add(area.height.saturating_sub(height) / 2),
-        width,
-        height,
-    )
-}
-
-pub fn viewer_preview_layout(area: Rect, zoom_percent: u16) -> ViewerPreviewLayout {
-    let modal = Rect::new(
-        area.x.saturating_add(2),
-        area.y.saturating_add(2),
-        area.width.saturating_sub(4),
-        area.height.saturating_sub(4),
-    );
-    let inner = Block::bordered().inner(modal);
-    let [body, hint] = Layout::vertical([Constraint::Min(1), Constraint::Length(2)]).areas(inner);
-    let zoom_factor = (zoom_percent as f32 / 100.0).clamp(0.25, 4.0);
-    let pct = (85.0_f32 * zoom_factor).clamp(20.0, 100.0) / 100.0;
-    let width = ((body.width as f32) * pct).round() as u16;
-    let height = ((body.height as f32) * pct).round() as u16;
-    let preview = Rect::new(
-        body.x.saturating_add(body.width.saturating_sub(width) / 2),
-        body.y
-            .saturating_add(body.height.saturating_sub(height) / 2),
-        width,
-        height,
-    );
-    ViewerPreviewLayout {
-        modal,
-        body,
-        hint,
-        preview,
-    }
-}
-
-pub fn composer_cursor_position(input_area: Rect, cursor: (usize, usize)) -> Position {
-    let (row, column) = cursor;
-    Position::new(input_area.x + column as u16, input_area.y + row as u16)
-}
-
-pub fn composer_visual_rows(lines: &[String], width: u16) -> usize {
-    composer_visual_layout(lines, width).rows.len()
-}
-
-pub fn composer_visual_cursor(
-    lines: &[String],
-    cursor: (usize, usize),
-    width: u16,
-) -> (usize, usize) {
-    composer_visual_layout(lines, width).cursor(cursor)
-}
-
-#[derive(Clone, Copy)]
-struct ComposerCell {
-    character: char,
-    logical_column: usize,
-    width: usize,
-}
-
-struct ComposerVisualLayout {
-    rows: Vec<Vec<ComposerCell>>,
-    logical_rows: Vec<(usize, usize)>,
-    width: usize,
-}
-
-impl ComposerVisualLayout {
-    fn text(&self) -> String {
-        self.rows
-            .iter()
-            .map(|row| row.iter().map(|cell| cell.character).collect::<String>())
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    fn cursor(&self, cursor: (usize, usize)) -> (usize, usize) {
-        let logical_row = cursor.0.min(self.logical_rows.len().saturating_sub(1));
-        let logical_column = cursor.1;
-        let (first_row, row_count) = self.logical_rows[logical_row];
-
-        for (row_offset, row) in self.rows[first_row..first_row + row_count]
-            .iter()
-            .enumerate()
-        {
-            let mut column = 0;
-            for cell in row {
-                if cell.logical_column >= logical_column {
-                    return (first_row + row_offset, column);
-                }
-                column += cell.width;
-            }
-        }
-
-        let last_row = first_row + row_count - 1;
-        let column = self.rows[last_row].iter().map(|cell| cell.width).sum();
-        if column >= self.width {
-            (last_row + 1, 0)
-        } else {
-            (last_row, column)
-        }
-    }
-}
-
-fn composer_visual_layout(lines: &[String], width: u16) -> ComposerVisualLayout {
-    let mut rows = Vec::new();
-    let mut logical_rows = Vec::new();
-
-    for line in lines {
-        let first_row = rows.len();
-        let wrapped = wrap_composer_line(line, width);
-        let row_count = wrapped.len();
-        rows.extend(wrapped);
-        logical_rows.push((first_row, row_count));
-    }
-
-    if rows.is_empty() {
-        rows.push(Vec::new());
-        logical_rows.push((0, 1));
-    }
-
-    ComposerVisualLayout {
-        rows,
-        logical_rows,
-        width: width as usize,
-    }
-}
-
-fn wrap_composer_line(line: &str, width: u16) -> Vec<Vec<ComposerCell>> {
-    if width == 0 {
-        return vec![Vec::new()];
-    }
-
-    // This mirrors Ratatui's WordWrapper with `trim: false`, which Paragraph used
-    // before the composer switched to precomputed visual rows.
-    let max_width = width as usize;
-    let mut rows = Vec::new();
-    let mut pending_line: Vec<ComposerCell> = Vec::new();
-    let mut pending_word = Vec::new();
-    let mut pending_whitespace = Vec::new();
-    let mut line_width = 0;
-    let mut word_width = 0;
-    let mut whitespace_width = 0;
-    let mut non_whitespace_previous = false;
-
-    for (logical_column, character) in line.chars().enumerate() {
-        let cell = ComposerCell {
-            character,
-            logical_column,
-            width: display_width(character),
-        };
-        if cell.width > max_width {
-            continue;
-        }
-
-        let is_whitespace = character.is_whitespace();
-        let word_found = non_whitespace_previous && is_whitespace;
-        let untrimmed_overflow =
-            pending_line.is_empty() && word_width + whitespace_width + cell.width > max_width;
-
-        if word_found || untrimmed_overflow {
-            pending_line.append(&mut pending_whitespace);
-            line_width += whitespace_width;
-            pending_line.append(&mut pending_word);
-            line_width += word_width;
-            whitespace_width = 0;
-            word_width = 0;
-        }
-
-        let line_full = line_width >= max_width;
-        let pending_word_overflow =
-            cell.width > 0 && line_width + whitespace_width + word_width >= max_width;
-        if line_full || pending_word_overflow {
-            let mut remaining_width = max_width.saturating_sub(line_width);
-            rows.push(std::mem::take(&mut pending_line));
-            line_width = 0;
-
-            while let Some(whitespace) = pending_whitespace.first() {
-                if whitespace.width > remaining_width {
-                    break;
-                }
-                whitespace_width -= whitespace.width;
-                remaining_width -= whitespace.width;
-                pending_whitespace.remove(0);
-            }
-
-            if is_whitespace && pending_whitespace.is_empty() {
-                continue;
-            }
-        }
-
-        if is_whitespace {
-            whitespace_width += cell.width;
-            pending_whitespace.push(cell);
-        } else {
-            word_width += cell.width;
-            pending_word.push(cell);
-        }
-        non_whitespace_previous = !is_whitespace;
-    }
-
-    pending_line.append(&mut pending_whitespace);
-    pending_line.append(&mut pending_word);
-    if pending_line.is_empty() {
-        rows.push(Vec::new());
-    } else {
-        rows.push(pending_line);
-    }
-    rows
-}
-
-fn display_width(character: char) -> usize {
-    let mut buffer = [0; 4];
-    textwrap::core::display_width(character.encode_utf8(&mut buffer))
-}
-
-pub fn composer_height(
-    terminal_height: u16,
-    input_lines: usize,
-    quote_rows: usize,
-    attachment_rows: usize,
-) -> u16 {
-    let desired = 2_u16
-        .saturating_add(input_lines.max(1) as u16)
-        .saturating_add(quote_rows as u16)
-        .saturating_add(attachment_rows as u16);
-    desired
-        .min(12)
-        .min(terminal_height.saturating_sub(1))
-        .max(1)
-}
-
-pub fn conversation_areas(
-    area: Rect,
-    input_lines: usize,
-    quote_rows: usize,
-    attachment_rows: usize,
-) -> (Rect, Rect) {
-    let composer_height = composer_height(area.height, input_lines, quote_rows, attachment_rows);
-    let [messages, _gap, composer] = Layout::vertical([
-        Constraint::Min(1),
-        Constraint::Length(1),
-        Constraint::Length(composer_height),
-    ])
-    .areas(area);
-    (messages, composer)
-}
-
-pub fn attachment_preview_lines(attachments: &[PendingAttachment]) -> Vec<String> {
-    attachments
-        .iter()
-        .map(|attachment| {
-            let kind = match attachment.kind {
-                wr::FileKind::Image => "Image",
-                wr::FileKind::Video => "Video",
-                wr::FileKind::Audio => "Audio",
-                wr::FileKind::Document => "Document",
-                wr::FileKind::Sticker => "Sticker",
-            };
-            format!("{kind}: {}", attachment.display_name())
-        })
-        .collect()
 }
 
 fn render_logs(frame: &mut Frame, area: Rect) {
@@ -822,7 +511,7 @@ pub fn render_chats(frame: &mut Frame, app: &mut App, area: Rect) {
     let composer_layout = composer_visual_layout(app.composer.input.lines(), composer_width);
     let input_cursor = app.composer.input.cursor();
     let composer_cursor = composer_layout.cursor((input_cursor.0, input_cursor.1));
-    let composer_rows = composer_layout.rows.len().max(composer_cursor.0 + 1);
+    let composer_rows = composer_layout.row_count().max(composer_cursor.0 + 1);
     let (chat_area, composer_area) = conversation_areas(
         inner,
         composer_rows,
@@ -1143,29 +832,4 @@ fn render_file_picker(frame: &mut Frame, app: &mut App) {
             .wrap(Wrap { trim: true }),
         hint_area,
     );
-}
-
-/// Truncate `value` to at most `width` terminal cells, appending `…` when
-/// there is content left to cut. Returns `value` unchanged if it already fits.
-/// Returns an empty string for `width <= 1` so callers can detect "no usable
-/// space" without panicking.
-fn truncate_with_ellipsis(value: &str, width: usize) -> String {
-    if width <= 1 || value.is_empty() {
-        return String::new();
-    }
-    if textwrap::core::display_width(value) <= width {
-        return value.to_owned();
-    }
-    let ellipsis_cost = textwrap::core::display_width("…");
-    let budget = width.saturating_sub(ellipsis_cost);
-    let mut result = String::new();
-    for ch in value.chars() {
-        let next = format!("{result}{ch}");
-        if textwrap::core::display_width(&next) > budget {
-            break;
-        }
-        result = next;
-    }
-    result.push('…');
-    result
 }
