@@ -1848,6 +1848,7 @@ impl App<'_> {
                     msg_id.clone(),
                 )
             });
+            self.message_height_cache.mark_layout_changed();
         }
     }
 }

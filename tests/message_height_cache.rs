@@ -40,6 +40,47 @@ fn width_and_content_changes_cannot_reuse_stale_height() {
 }
 
 #[test]
+fn unchanged_text_layout_reuses_cached_height() {
+    let mut app = TestApp::new();
+    let message = text_message("unchanged", "cached text");
+
+    assert_eq!(height(&message, 20, false, &mut app), 2);
+    let first_measurements = app.message_height_cache.measurement_count();
+
+    assert_eq!(height(&message, 20, false, &mut app), 2);
+    assert_eq!(
+        app.message_height_cache.measurement_count(),
+        first_measurements
+    );
+}
+
+#[test]
+fn same_length_replacements_with_different_cell_widths_refresh_height() {
+    let mut app = TestApp::new();
+    let mut message = text_message("same-length", "aaaa");
+
+    assert_eq!(height(&message, 3, false, &mut app), 3);
+
+    message.message = MessageContent::Text("界a".into());
+    assert_eq!(height(&message, 3, false, &mut app), 2);
+}
+
+#[test]
+fn unchanged_file_caption_layout_reuses_cached_height() {
+    let mut app = TestApp::new();
+    let message = file_message("caption-cache", FileKind::Document, Some("caption"));
+
+    assert_eq!(height(&message, 20, false, &mut app), 3);
+    let first_measurements = app.message_height_cache.measurement_count();
+
+    assert_eq!(height(&message, 20, false, &mut app), 3);
+    assert_eq!(
+        app.message_height_cache.measurement_count(),
+        first_measurements
+    );
+}
+
+#[test]
 fn reply_context_presence_cannot_reuse_stale_height() {
     let mut app = TestApp::new();
     let mut message = text_message("reply", "short");

@@ -10,6 +10,107 @@ mod common;
 use common::TestApp;
 
 #[test]
+fn stable_viewport_frames_do_not_measure_the_offscreen_prefix_again() {
+    const VIEWPORT_HEIGHT: u16 = 8;
+    let bounded_measurements = u64::from(VIEWPORT_HEIGHT) * 2 + 4;
+    let messages = (0..600)
+        .map(|index| text_message(&format!("message-{index}"), "short body"))
+        .collect::<Vec<_>>();
+    let mut app = app_with_messages(&messages);
+    app.message_list_state.offset = 500;
+
+    render_buffer(&mut app, 40, VIEWPORT_HEIGHT);
+    let first_measurements = app.message_height_cache.measurement_count();
+    render_buffer(&mut app, 40, VIEWPORT_HEIGHT);
+    let delta = app.message_height_cache.measurement_count() - first_measurements;
+
+    assert!(
+        delta <= bounded_measurements,
+        "stable viewport measured {delta} additional messages; bound is {bounded_measurements}"
+    );
+}
+
+#[test]
+fn offscreen_height_invalidation_repositions_an_anchored_viewport() {
+    let messages = (0..40)
+        .map(|index| {
+            let body = format!("body-{index}");
+            text_message(&format!("message-{index}"), &body)
+        })
+        .collect::<Vec<_>>();
+    let mut app = app_with_messages(&messages);
+    app.message_list_state.offset = 20;
+    render_buffer(&mut app, 40, 8);
+    let baseline = render_rows(&mut app, 40, 8);
+
+    app.messages.get_mut("message-39").unwrap().message =
+        MessageContent::Text("a body long enough to move the viewport anchor".into());
+    app.message_height_cache.invalidate(&"message-39".into());
+    let actual = render_rows(&mut app, 40, 8);
+
+    let mut expected_app = app_with_messages(&messages);
+    expected_app.messages.get_mut("message-39").unwrap().message =
+        MessageContent::Text("a body long enough to move the viewport anchor".into());
+    expected_app.message_list_state.offset = 20;
+    let expected = render_rows(&mut expected_app, 40, 8);
+
+    assert_ne!(
+        baseline, actual,
+        "the pre-anchor height change must move rows"
+    );
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn viewport_resize_translates_anchored_rows_without_stale_coordinates() {
+    let messages = (0..60)
+        .map(|index| {
+            let body = format!("resize-body-{index}");
+            text_message(&format!("resize-message-{index}"), &body)
+        })
+        .collect::<Vec<_>>();
+
+    for (initial_height, resized_height) in [(8, 12), (12, 8)] {
+        let mut app = app_with_messages(&messages);
+        app.message_list_state.offset = 20;
+        render_rows(&mut app, 40, initial_height);
+        let actual = render_rows(&mut app, 40, resized_height);
+
+        let mut expected_app = app_with_messages(&messages);
+        expected_app.message_list_state.offset = 20;
+        let expected = render_rows(&mut expected_app, 40, resized_height);
+
+        assert_eq!(
+            actual, expected,
+            "resize {initial_height}->{resized_height}"
+        );
+    }
+}
+
+#[test]
+fn moving_selection_uses_the_viewport_anchor_for_local_prefix_work() {
+    const VIEWPORT_HEIGHT: u16 = 8;
+    let bounded_measurements = u64::from(VIEWPORT_HEIGHT) * 2 + 4;
+    let messages = (0..40)
+        .map(|index| text_message(&format!("message-{index}"), "short body"))
+        .collect::<Vec<_>>();
+    let mut app = app_with_messages(&messages);
+    app.message_list_state
+        .set_selected_message("message-20".into());
+    render_buffer(&mut app, 40, VIEWPORT_HEIGHT);
+    let first_measurements = app.message_height_cache.measurement_count();
+
+    app.message_list_state.select_next();
+    render_buffer(&mut app, 40, VIEWPORT_HEIGHT);
+    let delta = app.message_height_cache.measurement_count() - first_measurements;
+
+    assert!(
+        delta <= bounded_measurements,
+        "local selection measured {delta} additional messages; bound is {bounded_measurements}"
+    );
+}
+
+#[test]
 fn selected_message_renders_as_a_complete_rounded_card() {
     let mut app = app_with_messages(&[
         text_message("older", "plain message"),
