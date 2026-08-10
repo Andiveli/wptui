@@ -2059,6 +2059,14 @@ func dispatchIncomingMessageWithDecrypt(
 		dispatchAction(action)
 		return
 	}
+	rawMessage := evt.RawMessage
+	if rawMessage == nil && evt.SourceWebMsg != nil {
+		rawMessage = evt.SourceWebMsg.GetMessage()
+	}
+	if message, ok := unavailableViewOnceMessage(rawMessage); ok {
+		dispatchMessage(evt.Info, message, false)
+		return
+	}
 	dispatchMessage(evt.Info, evt.Message, false)
 }
 
@@ -2948,7 +2956,7 @@ func C_GetChatSettings(cjid C.JID) C.ChatSettings {
 		mutedUntil = settings.MutedUntil.Unix()
 	}
 
-return C.ChatSettings{
+	return C.ChatSettings{
 		found:       C.bool(settings.Found),
 		muted_until: C.int64_t(mutedUntil),
 		pinned:      C.bool(settings.Pinned),
