@@ -52,6 +52,8 @@ impl App<'_> {
                     }
                 } else if is_attach_file_key(&key) {
                     self.dispatch_action(AppAction::AttachFile);
+                } else if self.composer_blocked() {
+                    return;
                 } else {
                     self.dispatch_composer_action(composer_action_for_editing_key(&key));
                 }
@@ -239,7 +241,7 @@ impl App<'_> {
             AppAction::HalfPageDown => self.half_page_down(),
             AppAction::HalfPageUp => self.half_page_up(),
             AppAction::InsertMode => {
-                if self.focus_pane == FocusPane::Conversation {
+                if self.focus_pane == FocusPane::Conversation && !self.composer_blocked() {
                     self.conversation_mode = ConversationMode::ComposerEditing;
                 }
             }
@@ -336,7 +338,11 @@ impl App<'_> {
                 self.url_picker = None;
                 self.action_notice = Some(crate::app::actions::ActionNotice::Cancelled);
             }
-            AppAction::AttachFile => self.open_file_picker(),
+            AppAction::AttachFile => {
+                if !self.composer_blocked() {
+                    self.open_file_picker()
+                }
+            }
             AppAction::FilePickerPrevious => self.move_file_picker(-1),
             AppAction::FilePickerNext => self.move_file_picker(1),
             AppAction::FilePickerParent => {
@@ -595,6 +601,10 @@ impl App<'_> {
     }
 
     fn confirm_file_picker(&mut self) {
+        if self.composer_blocked() {
+            self.file_picker = None;
+            return;
+        }
         let Some(paths) = self
             .file_picker
             .as_ref()
@@ -1309,6 +1319,9 @@ impl App<'_> {
     }
 
     fn dispatch_composer_action(&mut self, action: ComposerAction) {
+        if self.composer_blocked() {
+            return;
+        }
         if self.conversation_mode == ConversationMode::EditingMessage
             && matches!(action, ComposerAction::Submit)
         {

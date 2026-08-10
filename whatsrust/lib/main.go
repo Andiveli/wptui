@@ -30,6 +30,12 @@ typedef struct {
 } ChatSettings;
 
 typedef struct {
+	uint8_t status;
+	bool is_announce;
+	bool is_admin;
+} GroupInfoResult;
+
+typedef struct {
 	ContactEntry* entries;
 	uint32_t size;
 } GetContactsResult;
@@ -632,6 +638,58 @@ func GetSelfId(client *whatsmeow.Client) string {
 		return ""
 	}
 	return StrFromJid(*client.Store.ID)
+}
+
+func participantMatchesSelf(client *whatsmeow.Client, participant types.GroupParticipant) bool {
+	if client == nil || client.Store == nil || client.Store.ID == nil {
+		return false
+	}
+	self := client.Store.ID.ToNonAD()
+	for _, candidate := range []types.JID{participant.JID, participant.PhoneNumber, participant.LID} {
+		if candidate.IsZero() {
+			continue
+		}
+		if jidsMatchSelf(self, candidate) {
+			return true
+		}
+		if candidate.Server == types.HiddenUserServer && self.Server == types.DefaultUserServer {
+			if phone, err := client.Store.LIDs.GetPNForLID(context.Background(), candidate); err == nil && phone.ToNonAD() == self {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func jidsMatchSelf(self, candidate types.JID) bool {
+	return !candidate.IsZero() && candidate.ToNonAD() == self.ToNonAD()
+}
+
+//export C_GetGroupInfo
+func C_GetGroupInfo(cjid C.JID) C.GroupInfoResult {
+	if client == nil || cjid == nil {
+		return C.GroupInfoResult{status: 2}
+	}
+	jid := cToJid(cjid).ToNonAD()
+	if jid.Server != types.GroupServer {
+		return C.GroupInfoResult{status: 1}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	info, err := client.GetGroupInfo(ctx, jid)
+	if err != nil {
+		LOG_WARN("failed to get group info for %s: %v", jid, err)
+		return C.GroupInfoResult{status: 3}
+	}
+
+	result := C.GroupInfoResult{is_announce: C.bool(info.IsAnnounce)}
+	for _, participant := range info.Participants {
+		if participantMatchesSelf(client, participant) {
+			result.is_admin = C.bool(participant.IsAdmin || participant.IsSuperAdmin)
+			break
+		}
+	}
+	return result
 }
 
 // GetChatId returns the normalized chat id (conversation key): LID→PN, broadcast→per-sender, status as-is.
@@ -2948,7 +3006,7 @@ func C_GetChatSettings(cjid C.JID) C.ChatSettings {
 		mutedUntil = settings.MutedUntil.Unix()
 	}
 
-return C.ChatSettings{
+	return C.ChatSettings{
 		found:       C.bool(settings.Found),
 		muted_until: C.int64_t(mutedUntil),
 		pinned:      C.bool(settings.Pinned),

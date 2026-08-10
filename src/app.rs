@@ -58,6 +58,7 @@ use crate::ui::text_input::TextInput;
 /// The synthetic chat that carries WhatsApp status broadcasts. Each message's
 /// `info.sender` is the contact who posted the status.
 pub const STATUS_BROADCAST_CHAT: &str = "status@broadcast";
+pub const ADMIN_ONLY_GROUP_MESSAGE: &str = "Only group admins can send messages in this group.";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum InputReaderState {
@@ -212,6 +213,7 @@ pub struct App<'a> {
     message_action_diagnostics: MessageActionDiagnostics,
     pub reactions: HashMap<wr::MessageId, HashMap<wr::JID, Arc<str>>>,
     pub chats: HashMap<wr::JID, Chat>,
+    pub group_permissions: HashMap<wr::JID, wr::GroupInfo>,
 
     // Maps JID to display name
     pub contacts: HashMap<wr::JID, Arc<str>>,
@@ -397,6 +399,7 @@ impl App<'_> {
             message_action_diagnostics: MessageActionDiagnostics::new(false),
             reactions: HashMap::new(),
             chats: HashMap::new(),
+            group_permissions: HashMap::new(),
             contacts: HashMap::new(),
             chat_messages: HashMap::new(),
 
@@ -1307,9 +1310,28 @@ impl App<'_> {
     pub fn open_selected_chat(&mut self) {
         if let Some(chat) = self.get_selected_chat() {
             self.open_chat = Some(chat.clone());
+            self.refresh_group_permission(&chat);
             self.sort_chat_messages(chat);
             self.message_list_state.reset();
         }
+    }
+
+    fn refresh_group_permission(&mut self, chat: &wr::JID) {
+        if Self::is_group_chat(chat) {
+            self.group_permissions.remove(chat);
+            if let Ok(info) = wr::get_group_info(chat) {
+                self.group_permissions.insert(chat.clone(), info);
+            }
+        }
+        self.composer.set_blocked(self.composer_blocked());
+    }
+
+    pub fn composer_blocked(&self) -> bool {
+        self.open_chat().is_some_and(|chat| {
+            self.group_permissions
+                .get(&chat)
+                .is_some_and(|info| info.is_announce && !info.is_admin)
+        })
     }
 
     pub fn is_status_chat(jid: &wr::JID) -> bool {
@@ -1332,6 +1354,7 @@ impl App<'_> {
         });
         self.sort_chats();
         self.open_chat = Some(jid.clone());
+        self.composer.set_blocked(self.composer_blocked());
         self.sort_chat_messages(jid);
         self.message_list_state.reset();
     }
