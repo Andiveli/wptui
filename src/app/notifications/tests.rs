@@ -21,15 +21,32 @@ fn message(chat: &str, text: &str) -> wr::Message {
 
 #[test]
 fn eligibility_skips_status_and_own_messages() {
-    assert!(notification_eligibility(&message("chat@g.us", "incoming")));
+    assert!(notification_eligibility(
+        &message("chat@g.us", "incoming"),
+        None
+    ));
 
     let mut own = message("chat@g.us", "own");
     own.info.is_from_me = true;
-    assert!(!notification_eligibility(&own));
-    assert!(!notification_eligibility(&message(
-        STATUS_BROADCAST_CHAT,
-        "status"
-    )));
+    assert!(!notification_eligibility(&own, None));
+    assert!(!notification_eligibility(
+        &message(STATUS_BROADCAST_CHAT, "status"),
+        None
+    ));
+}
+
+#[test]
+fn eligibility_suppresses_only_the_open_chat() {
+    let open_chat = wr::JID::from("open@g.us".to_owned());
+    let highlighted_chat = message("highlighted@g.us", "incoming");
+    let open_message = message("open@g.us", "incoming");
+
+    assert!(notification_eligibility(&highlighted_chat, None));
+    assert!(!notification_eligibility(&open_message, Some(&open_chat)));
+    assert!(notification_eligibility(
+        &message("other@g.us", "incoming"),
+        Some(&open_chat)
+    ));
 }
 
 #[test]
