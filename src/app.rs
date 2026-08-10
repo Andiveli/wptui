@@ -21,10 +21,11 @@ pub mod presence;
 pub use crate::app;
 use crate::app::actions::{
     ActionNotice, ClipboardReader, ClipboardWriter, ConversationMode, FocusPane, MessageEditor,
-    MessageForwarder, MessageMenuAction, MessageReactor, MessageRevoker, PaneVisibility, Section,
-    SystemClipboardReader, SystemClipboardWriter, SystemUrlOpener, UnavailableClipboardReader,
-    UnavailableClipboardWriter, UrlOpener, WhatsAppMessageEditor, WhatsAppMessageForwarder,
-    WhatsAppMessageReactor, WhatsAppMessageRevoker,
+    MessageForwarder, MessageMenuAction, MessageReactor, MessageRevoker, PaneVisibility,
+    ReadReceiptSender, Section, SystemClipboardReader, SystemClipboardWriter, SystemUrlOpener,
+    UnavailableClipboardReader, UnavailableClipboardWriter, UrlOpener, WhatsAppMessageEditor,
+    WhatsAppMessageForwarder, WhatsAppMessageReactor, WhatsAppMessageRevoker,
+    WhatsAppReadReceiptSender,
 };
 use crate::app::composer::Composer;
 use crate::app::contact_avatars::ContactAvatars;
@@ -266,6 +267,9 @@ pub struct App<'a> {
     pub message_reactor: Box<dyn MessageReactor>,
     pub message_forwarder: Box<dyn MessageForwarder>,
     pub message_revoker: Box<dyn MessageRevoker>,
+    read_receipt_sender: Box<dyn ReadReceiptSender>,
+    read_receipts_enabled: bool,
+    sent_read_receipts: HashSet<wr::MessageId>,
     pub action_notice: Option<ActionNotice>,
     pub message_menu: Option<(Vec<MessageMenuAction>, usize)>,
     pub reaction_picker: Option<(Vec<String>, usize)>,
@@ -431,6 +435,9 @@ impl App<'_> {
             message_reactor: Box::new(WhatsAppMessageReactor),
             message_forwarder: Box::new(WhatsAppMessageForwarder),
             message_revoker: Box::new(WhatsAppMessageRevoker),
+            read_receipt_sender: Box::new(WhatsAppReadReceiptSender),
+            read_receipts_enabled: true,
+            sent_read_receipts: HashSet::new(),
             action_notice: None,
             message_menu: None,
             reaction_picker: None,
@@ -468,6 +475,15 @@ impl App<'_> {
 
     pub fn enable_presence_diagnostics(&mut self, enabled: bool) {
         self.presence_diagnostics = PresenceDiagnostics::new(enabled);
+    }
+
+    pub fn enable_read_receipts(&mut self, enabled: bool) {
+        self.read_receipts_enabled = enabled;
+    }
+
+    #[cfg(test)]
+    fn set_read_receipt_sender(&mut self, sender: Box<dyn ReadReceiptSender>) {
+        self.read_receipt_sender = sender;
     }
 
     pub fn touch_image_cache(&mut self, path: &Arc<str>) {
@@ -1058,23 +1074,11 @@ impl App<'_> {
                     }
                 },
                 Ok(AppInput::WhatsApp(event)) => self.handle_whatsapp_event(event),
-                Ok(AppInput::Message {
-                    message: msg,
-                    is_sync,
-                }) => {
+                Ok(AppInput::Message { message, is_sync }) => {
                     if !is_sync {
-                        self.handle_notification(&msg);
+                        self.handle_notification(&message);
                     }
-
-                    self.db_handler.add_message(&msg);
-                    self.add_message(msg);
-
-                    let chat_jid = self.get_selected_chat();
-
-                    self.sort_chats();
-
-                    self.select_chat(chat_jid);
-                    !is_sync
+                    self.admit_message(message, is_sync)
                 }
                 Ok(AppInput::Presence(wr::PresenceUpdate {
                     from,
@@ -1306,8 +1310,10 @@ impl App<'_> {
     /// conversation, composer target, and presence subscription.
     pub fn open_selected_chat(&mut self) {
         if let Some(chat) = self.get_selected_chat() {
+            let viewed_chat = chat.clone();
             self.open_chat = Some(chat.clone());
             self.sort_chat_messages(chat);
+            self.mark_viewed_chat(viewed_chat);
             self.message_list_state.reset();
         }
     }
@@ -1326,6 +1332,7 @@ impl App<'_> {
     /// recipient shows up as a row; the database row is created on the first
     /// real message, so an empty conversation is never persisted.
     pub fn open_chat_by_jid(&mut self, jid: wr::JID) {
+        let viewed_chat = jid.clone();
         self.chats.entry(jid.clone()).or_insert_with(|| Chat {
             jid: jid.clone(),
             last_message_time: None,
@@ -1333,6 +1340,7 @@ impl App<'_> {
         self.sort_chats();
         self.open_chat = Some(jid.clone());
         self.sort_chat_messages(jid);
+        self.mark_viewed_chat(viewed_chat);
         self.message_list_state.reset();
     }
 
@@ -1466,6 +1474,7 @@ impl App<'_> {
             return;
         };
         self.open_status_contact = Some(contact.clone());
+        self.mark_viewed_status(&contact);
         if let Some(latest) = self.status_latest_time(&contact) {
             self.status_last_seen.insert(contact, latest);
         }
@@ -1751,6 +1760,77 @@ impl App<'_> {
         }
     }
 
+    fn admit_message(&mut self, message: wr::Message, is_sync: bool) -> bool {
+        let chat_jid = self.get_selected_chat();
+        let message_id = message.info.id.clone();
+        let message_chat = message.info.chat.clone();
+        self.db_handler.add_message(&message);
+        self.add_message(message);
+
+        if !is_sync
+            && self.open_chat.as_ref() == Some(&message_chat)
+            && !Self::is_status_chat(&message_chat)
+            && let Some(message) = self.messages.get(&message_id).cloned()
+        {
+            self.mark_viewed_message(&message);
+        }
+
+        self.sort_chats();
+        self.select_chat(chat_jid);
+        !is_sync
+    }
+
+    fn mark_viewed_message(&mut self, message: &wr::Message) {
+        if !self.read_receipts_enabled
+            || message.info.is_from_me
+            || self.sent_read_receipts.contains(&message.info.id)
+        {
+            return;
+        }
+        self.sent_read_receipts.insert(message.info.id.clone());
+        self.read_receipt_sender.mark_as_read(
+            &message.info.id,
+            &message.info.chat,
+            &message.info.sender,
+        );
+    }
+
+    fn mark_viewed_chat(&mut self, chat: wr::JID) {
+        if Self::is_status_chat(&chat) {
+            return;
+        }
+        let messages = self
+            .chat_messages
+            .get(&chat)
+            .into_iter()
+            .flatten()
+            .filter_map(|id| self.messages.get(id))
+            .filter(|message| message.info.chat == chat && !message.info.is_from_me)
+            .cloned()
+            .collect::<Vec<_>>();
+        for message in messages {
+            self.mark_viewed_message(&message);
+        }
+    }
+
+    fn mark_viewed_status(&mut self, contact: &wr::JID) {
+        let status_chat = wr::JID::from(STATUS_BROADCAST_CHAT.to_owned());
+        let messages = self
+            .status_messages(contact)
+            .into_iter()
+            .filter_map(|id| self.messages.get(&id))
+            .filter(|message| {
+                message.info.chat == status_chat
+                    && message.info.sender == *contact
+                    && !message.info.is_from_me
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        for message in messages {
+            self.mark_viewed_message(&message);
+        }
+    }
+
     /// Keeps the highlighted message stable when a new message shifts the
     /// rendered list: re-derives the selected index from the ID anchor
     /// (selected_message) instead of trusting the now-stale index. The index
@@ -2015,6 +2095,8 @@ pub fn unix_now() -> i64 {
 
 #[cfg(test)]
 mod tests {
+    use std::{cell::RefCell, rc::Rc};
+
     use super::*;
 
     /// Test-only App wrapper: points every storage path at a fresh
@@ -2068,6 +2150,35 @@ mod tests {
         fn deref_mut(&mut self) -> &mut Self::Target {
             &mut self.app
         }
+    }
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    struct SentReadReceipt {
+        message_id: wr::MessageId,
+        chat: wr::JID,
+        sender: wr::JID,
+    }
+
+    struct RecordingReadReceiptSender {
+        receipts: Rc<RefCell<Vec<SentReadReceipt>>>,
+    }
+
+    impl ReadReceiptSender for RecordingReadReceiptSender {
+        fn mark_as_read(&self, message_id: &wr::MessageId, chat: &wr::JID, sender: &wr::JID) {
+            self.receipts.borrow_mut().push(SentReadReceipt {
+                message_id: message_id.clone(),
+                chat: chat.clone(),
+                sender: sender.clone(),
+            });
+        }
+    }
+
+    fn recording_receipts(app: &mut TestApp) -> Rc<RefCell<Vec<SentReadReceipt>>> {
+        let receipts = Rc::new(RefCell::new(Vec::new()));
+        app.set_read_receipt_sender(Box::new(RecordingReadReceiptSender {
+            receipts: Rc::clone(&receipts),
+        }));
+        receipts
     }
 
     #[test]
@@ -2671,6 +2782,98 @@ mod tests {
         assert!(app.has_unseen_statuses(&alice));
         app.open_selected_status();
         assert!(!app.has_unseen_statuses(&alice));
+    }
+
+    #[test]
+    fn opening_a_chat_marks_only_incoming_messages_from_that_chat_once() {
+        let mut app = TestApp::new();
+        let receipts = recording_receipts(&mut app);
+        let chat = wr::JID::from("chat@example.test".to_owned());
+        let other_chat = wr::JID::from("other@example.test".to_owned());
+        let sender = wr::JID::from("sender@example.test".to_owned());
+
+        let mut incoming = message(&chat, "incoming", 1);
+        incoming.info.sender = sender.clone();
+        app.add_message(incoming);
+        let mut own = message(&chat, "own", 2);
+        own.info.is_from_me = true;
+        app.add_message(own);
+        app.add_message(message(&other_chat, "other", 3));
+
+        app.open_chat_by_jid(chat.clone());
+        app.open_chat_by_jid(chat.clone());
+
+        assert_eq!(
+            &*receipts.borrow(),
+            &[SentReadReceipt {
+                message_id: "incoming".into(),
+                chat,
+                sender,
+            }]
+        );
+    }
+
+    #[test]
+    fn new_incoming_message_in_open_chat_is_marked_after_admission_once() {
+        let mut app = TestApp::new();
+        let receipts = recording_receipts(&mut app);
+        let chat = wr::JID::from("chat@example.test".to_owned());
+        app.open_chat_by_jid(chat.clone());
+
+        app.admit_message(message(&chat, "incoming", 1), false);
+        app.admit_message(message(&chat, "incoming", 1), false);
+        app.admit_message(
+            message(&wr::JID::from("other@example.test".to_owned()), "other", 2),
+            false,
+        );
+        let mut own = message(&chat, "own", 3);
+        own.info.is_from_me = true;
+        app.admit_message(own, false);
+        app.admit_message(message(&chat, "sync", 4), true);
+        app.admit_message(status_message(&chat, "status", 5), false);
+
+        assert_eq!(receipts.borrow().len(), 1);
+        assert_eq!(receipts.borrow()[0].message_id.as_ref(), "incoming");
+    }
+
+    #[test]
+    fn opening_a_status_marks_only_the_selected_contact_once() {
+        let mut app = TestApp::new();
+        let receipts = recording_receipts(&mut app);
+        let alice = wr::JID::from("alice@s.whatsapp.net".to_owned());
+        let bob = wr::JID::from("bob@s.whatsapp.net".to_owned());
+        app.add_message(status_message(&alice, "alice-status", 200));
+        app.add_message(status_message(&bob, "bob-status", 100));
+        let mut own = status_message(&alice, "own-status", 300);
+        own.info.is_from_me = true;
+        app.add_message(own);
+
+        app.open_selected_status();
+        app.open_selected_status();
+
+        assert_eq!(
+            &*receipts.borrow(),
+            &[SentReadReceipt {
+                message_id: "alice-status".into(),
+                chat: wr::JID::from(STATUS_BROADCAST_CHAT.to_owned()),
+                sender: alice,
+            }]
+        );
+    }
+
+    #[test]
+    fn disabled_read_receipts_send_nothing_for_chat_arrivals_or_statuses() {
+        let mut app = TestApp::new();
+        let receipts = recording_receipts(&mut app);
+        app.enable_read_receipts(false);
+        let chat = wr::JID::from("chat@example.test".to_owned());
+        app.add_message(message(&chat, "existing", 1));
+        app.open_chat_by_jid(chat.clone());
+        app.admit_message(message(&chat, "new", 2), false);
+        app.add_message(status_message(&chat, "status", 3));
+        app.open_selected_status();
+
+        assert!(receipts.borrow().is_empty());
     }
 
     #[test]
