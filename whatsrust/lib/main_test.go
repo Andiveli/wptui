@@ -24,6 +24,17 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+func TestJidsMatchSelfNormalizesDeviceIdentity(t *testing.T) {
+	self := types.NewADJID("self", 0, 7)
+	candidate := types.NewJID("self", types.DefaultUserServer)
+	if !jidsMatchSelf(self, candidate) {
+		t.Fatal("device and user JIDs should identify the same participant")
+	}
+	if jidsMatchSelf(self, types.NewJID("other", types.DefaultUserServer)) {
+		t.Fatal("different participants must not match")
+	}
+}
+
 func TestPinnedPresenceContractAndNarrowSubscription(t *testing.T) {
 	lastSeen := time.Unix(42, 0)
 	event := &events.Presence{

@@ -819,15 +819,31 @@ pub fn render_chats(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(outer_block, area);
 
     let composer_width = inner.width.saturating_sub(2);
-    let composer_layout = composer_visual_layout(app.composer.input.lines(), composer_width);
+    let composer_blocked = app.composer_blocked();
+    let composer_layout = composer_visual_layout(
+        if composer_blocked {
+            &[]
+        } else {
+            app.composer.input.lines()
+        },
+        composer_width,
+    );
     let input_cursor = app.composer.input.cursor();
     let composer_cursor = composer_layout.cursor((input_cursor.0, input_cursor.1));
     let composer_rows = composer_layout.rows.len().max(composer_cursor.0 + 1);
     let (chat_area, composer_area) = conversation_areas(
         inner,
-        composer_rows,
-        usize::from(app.composer.quote.is_some()),
-        app.composer.pending.len(),
+        if composer_blocked { 1 } else { composer_rows },
+        if composer_blocked {
+            0
+        } else {
+            usize::from(app.composer.quote.is_some())
+        },
+        if composer_blocked {
+            0
+        } else {
+            app.composer.pending.len()
+        },
     );
 
     if app.open_chat().is_none() {
@@ -846,7 +862,9 @@ pub fn render_chats(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             ratatui::style::Color::White
         };
-        let input_title = if app.conversation_mode == ConversationMode::EditingMessage {
+        let input_title = if composer_blocked {
+            " Admin-only group "
+        } else if app.conversation_mode == ConversationMode::EditingMessage {
             " Edit message (Enter save, Esc cancel) "
         } else {
             " Message input "
@@ -859,8 +877,12 @@ pub fn render_chats(frame: &mut Frame, app: &mut App, area: Rect) {
 
         let mut input_area = input_block.inner(composer_area);
 
-        // Show hint in the input area when not editing
-        if app.conversation_mode == ConversationMode::MessageNavigation {
+        if composer_blocked {
+            frame.render_widget(
+                Paragraph::new(crate::app::ADMIN_ONLY_GROUP_MESSAGE).fg(border_color),
+                input_area,
+            );
+        } else if app.conversation_mode == ConversationMode::MessageNavigation {
             let hint = format!(
                 "Press i to write in {} (Ctrl+O attach) | Space 1 sections | Space 2 chats",
                 app.contact_name(&chat_jid)

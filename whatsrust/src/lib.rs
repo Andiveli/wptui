@@ -83,6 +83,13 @@ struct CChatSettings {
 }
 
 #[repr(C)]
+struct CGroupInfoResult {
+    status: u8,
+    is_announce: bool,
+    is_admin: bool,
+}
+
+#[repr(C)]
 struct CMessageInfo {
     id: *const c_char,
     chat: CJID,
@@ -599,10 +606,20 @@ pub struct ChatSettings {
     pub archived: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GroupInfo {
     pub jid: JID,
     pub name: Arc<str>,
+    pub is_announce: bool,
+    pub is_admin: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GroupInfoError {
+    NotGroup,
+    ClientUnavailable,
+    RequestFailed,
+    InvalidBridgeResult,
 }
 
 impl From<&CContact> for Contact {
@@ -678,6 +695,7 @@ unsafe extern "C" {
     fn C_GetProfilePicture(jid: CJID) -> CProfilePictureResult;
     fn C_FreeProfilePicture(result: CProfilePictureResult);
     fn C_GetChatSettings(jid: CJID) -> CChatSettings;
+    fn C_GetGroupInfo(jid: CJID) -> CGroupInfoResult;
     fn C_ResolveDmChatId(jid: CJID) -> *mut c_char;
     fn C_FreeResolveDmChatId(value: *mut c_char);
     fn C_Disconnect();
@@ -1026,9 +1044,7 @@ impl CallbackTranslator<*const CEvent> for Event {
             EventType::MessageAction => unsafe {
                 message_action_event_from_ffi(&*(event.data as *const CMessageActionEvent))
             },
-            EventType::Chat => unsafe {
-                chat_event_from_ffi(&*(event.data as *const CChatEvent))
-            },
+            EventType::Chat => unsafe { chat_event_from_ffi(&*(event.data as *const CChatEvent)) },
             EventType::LogoutResult => unsafe {
                 let result = &(*(event.data as *const CLogoutResultEvent));
                 Event::LogoutResult(
@@ -1547,6 +1563,62 @@ pub fn get_chat_settings(jid: &JID) -> ChatSettings {
     }
 }
 
+fn group_info_from_parts(
+    jid: &JID,
+    status: u8,
+    is_announce: bool,
+    is_admin: bool,
+) -> Result<GroupInfo, GroupInfoError> {
+    match status {
+        0 => Ok(GroupInfo {
+            jid: jid.clone(),
+            name: "".into(),
+            is_announce,
+            is_admin,
+        }),
+        1 => Err(GroupInfoError::NotGroup),
+        2 => Err(GroupInfoError::ClientUnavailable),
+        3 => Err(GroupInfoError::RequestFailed),
+        _ => Err(GroupInfoError::InvalidBridgeResult),
+    }
+}
+
+pub fn get_group_info(jid: &JID) -> Result<GroupInfo, GroupInfoError> {
+    let jid_c = CJID::from(jid);
+    let result = unsafe { C_GetGroupInfo(jid_c) };
+    group_info_from_parts(jid, result.status, result.is_announce, result.is_admin)
+}
+
+#[cfg(test)]
+mod group_info_tests {
+    use super::{GroupInfoError, JID, group_info_from_parts};
+
+    #[test]
+    fn maps_announce_and_admin_flags() {
+        let jid = JID("123@g.us".into());
+        let info = group_info_from_parts(&jid, 0, true, false).unwrap();
+
+        assert_eq!(info.jid, jid);
+        assert!(info.is_announce);
+        assert!(!info.is_admin);
+    }
+
+    #[test]
+    fn maps_bridge_failures_without_claiming_send_permission() {
+        for (status, expected) in [
+            (1, GroupInfoError::NotGroup),
+            (2, GroupInfoError::ClientUnavailable),
+            (3, GroupInfoError::RequestFailed),
+            (255, GroupInfoError::InvalidBridgeResult),
+        ] {
+            assert_eq!(
+                group_info_from_parts(&JID("chat@g.us".into()), status, false, false),
+                Err(expected)
+            );
+        }
+    }
+}
+
 /// Resolves a group participant (or any user JID) to the canonical JID of
 /// its direct conversation: a LID is mapped to its phone number when known,
 /// matching how direct chats are keyed in the conversation list. Used so a
@@ -1555,10 +1627,7 @@ pub fn get_chat_settings(jid: &JID) -> ChatSettings {
 /// JID is unusable.
 pub fn resolve_dm_chat(jid: &JID) -> Option<JID> {
     unsafe {
-        take_owned_c_string(
-            C_ResolveDmChatId(CJID::from(jid)),
-            C_FreeResolveDmChatId,
-        )
-        .map(JID::from)
+        take_owned_c_string(C_ResolveDmChatId(CJID::from(jid)), C_FreeResolveDmChatId)
+            .map(JID::from)
     }
 }
