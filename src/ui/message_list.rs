@@ -124,19 +124,12 @@ fn message_content_area(area: Rect, is_selected: bool) -> Rect {
     }
 }
 
-fn file_content_height(id: &wr::MessageId, file: &wr::FileContent, app: &mut App) -> usize {
+fn file_content_height(_id: &wr::MessageId, file: &wr::FileContent, _app: &mut App) -> usize {
     match file.kind {
-        FileKind::Image | FileKind::Sticker | FileKind::Video => match app.metadata.get(id) {
-            None => 1,
-            Some(Metadata::File(meta)) => match meta {
-                FileMeta::Downloading
-                | FileMeta::DownloadFailed
-                | FileMeta::Downloaded
-                | FileMeta::LoadFailed
-                | FileMeta::Loading => 1,
-                FileMeta::Loaded => preview_height(&file.kind),
-            },
-        },
+        // Media previews occupy their final block from the first render. The
+        // preview lifecycle changes only the contents of this block, never its
+        // geometry.
+        FileKind::Image | FileKind::Sticker | FileKind::Video => preview_height(&file.kind),
         // Audio renders a static play bar under the file line, so it takes
         // two rows. Must stay in sync with `message_height`.
         FileKind::Audio => 2,

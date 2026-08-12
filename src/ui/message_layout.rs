@@ -96,13 +96,13 @@ impl<'a> From<&LayoutInput<'a>> for OwnedLayoutInput {
                 HeightContent::File {
                     kind,
                     caption,
-                    preview_loaded,
+                    preview_loaded: _,
                     forwarding,
                     status,
                 } => OwnedHeightContent::File {
                     kind,
                     caption: caption.map(Into::into),
-                    preview_loaded,
+                    preview_loaded: false,
                     forwarding,
                     status,
                 },
@@ -138,21 +138,20 @@ impl OwnedLayoutInput {
                     OwnedHeightContent::File {
                         kind,
                         caption,
-                        preview_loaded,
+                        preview_loaded: _,
                         forwarding,
                         status,
                     },
                     HeightContent::File {
                         kind: other_kind,
                         caption: other_caption,
-                        preview_loaded: other_preview,
+                        preview_loaded: _,
                         forwarding: other_forwarding,
                         status: other_status,
                     },
                 ) => {
                     *kind == other_kind
                         && caption.as_deref() == other_caption
-                        && *preview_loaded == other_preview
                         && *forwarding == other_forwarding
                         && *status == other_status
                 }
@@ -252,7 +251,7 @@ pub(crate) fn height(
         HeightContent::File {
             kind,
             caption,
-            preview_loaded,
+            preview_loaded: _,
             forwarding,
             status,
         } => {
@@ -261,13 +260,12 @@ pub(crate) fn height(
                 |caption| inline_content_lines(caption, *status, content_width).len(),
             );
             let file_height = match kind {
-                HeightFileKind::Video if *preview_loaded => VIDEO_HEIGHT,
-                HeightFileKind::Image | HeightFileKind::Sticker if *preview_loaded => IMAGE_HEIGHT,
+                // Reserve media geometry independently of the asynchronous
+                // preview lifecycle so the message list cannot reflow.
+                HeightFileKind::Video => VIDEO_HEIGHT,
+                HeightFileKind::Image | HeightFileKind::Sticker => IMAGE_HEIGHT,
                 HeightFileKind::Audio => 2,
-                HeightFileKind::Image
-                | HeightFileKind::Video
-                | HeightFileKind::Document
-                | HeightFileKind::Sticker => 1,
+                HeightFileKind::Document => 1,
             };
             file_height + caption_height + forwarding_indicator_lines(*forwarding, content_width)
         }
@@ -335,7 +333,7 @@ mod tests {
         );
     }
     #[test]
-    fn every_file_kind_and_preview_state_has_a_deterministic_height() {
+    fn every_file_kind_and_preview_state_has_a_stable_height() {
         let kinds = [
             HeightFileKind::Image,
             HeightFileKind::Video,
@@ -358,24 +356,30 @@ mod tests {
             };
             assert_eq!(
                 height(&mut cache, &id, &input),
-                if kind == HeightFileKind::Audio { 4 } else { 3 }
+                match kind {
+                    HeightFileKind::Audio => 4,
+                    HeightFileKind::Image | HeightFileKind::Video | HeightFileKind::Sticker => 14,
+                    HeightFileKind::Document => 3,
+                }
             );
-            if matches!(
-                kind,
-                HeightFileKind::Image | HeightFileKind::Video | HeightFileKind::Sticker
-            ) {
-                let loaded = LayoutInput {
-                    content: HeightContent::File {
-                        kind,
-                        caption: Some("caption"),
-                        preview_loaded: true,
-                        forwarding: None,
-                        status: None,
-                    },
-                    ..text("")
-                };
-                assert!(height(&mut cache, &id, &loaded) > 3);
-            }
+            let loaded = LayoutInput {
+                content: HeightContent::File {
+                    kind,
+                    caption: Some("caption"),
+                    preview_loaded: true,
+                    forwarding: None,
+                    status: None,
+                },
+                ..text("")
+            };
+            assert_eq!(
+                height(&mut cache, &id, &loaded),
+                match kind {
+                    HeightFileKind::Audio => 4,
+                    HeightFileKind::Image | HeightFileKind::Video | HeightFileKind::Sticker => 14,
+                    HeightFileKind::Document => 3,
+                }
+            );
         }
     }
 }
