@@ -8,7 +8,7 @@ use ratatui::{
 use textwrap::core::display_width;
 use whatsrust as wr;
 
-use crate::app::App;
+use crate::app::{App, ChatRow};
 
 pub const CONTACT_ITEM_HEIGHT: usize = 3;
 pub const AVATAR_WIDTH: u16 = 4;
@@ -21,18 +21,26 @@ pub struct ContactListItem {
     pub initials: String,
     pub preview: String,
     pub local_time: Option<String>,
-    /// The current backend does not expose per-chat unread totals, so this remains absent.
-    pub unread_count: Option<u32>,
 }
 
 impl ContactListItem {
     pub fn from_chat(app: &App<'_>, chat: &wr::JID) -> Self {
-        let name = app.contact_name(chat).to_string();
-        let latest = app
-            .chat_messages
-            .get(chat)
-            .into_iter()
-            .flatten()
+        Self::from_row(
+            app,
+            &ChatRow {
+                label: app.contact_name(chat).to_string(),
+                members: vec![chat.clone()],
+                target: chat.clone(),
+            },
+        )
+    }
+
+    pub fn from_row(app: &App<'_>, row: &ChatRow) -> Self {
+        let name = row.label.clone();
+        let latest = row
+            .members
+            .iter()
+            .flat_map(|chat| app.chat_messages.get(chat).into_iter().flatten())
             .filter_map(|id| app.messages.get(id))
             .max_by(|left, right| {
                 left.info
@@ -40,16 +48,18 @@ impl ContactListItem {
                     .cmp(&right.info.timestamp)
                     .then_with(|| left.info.id.cmp(&right.info.id))
             });
-        let timestamp = latest
-            .map(|message| message.info.timestamp)
-            .or_else(|| app.chats.get(chat).and_then(|chat| chat.last_message_time));
+        let timestamp = latest.map(|message| message.info.timestamp).or_else(|| {
+            row.members
+                .iter()
+                .filter_map(|jid| app.chats.get(jid).and_then(|chat| chat.last_message_time))
+                .max()
+        });
 
         Self {
             initials: initials(&name),
             name,
             preview: latest.map(message_preview).unwrap_or_default(),
             local_time: timestamp.and_then(local_time),
-            unread_count: None,
         }
     }
 }
@@ -182,11 +192,7 @@ impl StatefulWidget for ContactList<'_> {
                 .saturating_add(AVATAR_WIDTH.saturating_add(AVATAR_GAP).min(area.width));
             let text_width = area.right().saturating_sub(text_x) as usize;
             let first = format_row(&item.name, item.local_time.as_deref(), text_width);
-            let unread = item
-                .unread_count
-                .filter(|count| *count > 0)
-                .map(|count| count.to_string());
-            let second = format_row(&item.preview, unread.as_deref(), text_width);
+            let second = format_row(&item.preview, None, text_width);
             if item_area.height > 0 {
                 buf.set_stringn(text_x, y, first, text_width, name_style);
             }

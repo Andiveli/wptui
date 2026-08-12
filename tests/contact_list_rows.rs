@@ -93,7 +93,7 @@ fn zero_narrow_and_one_row_areas_do_not_panic_or_move_by_terminal_row() {
 }
 
 #[test]
-fn item_uses_latest_message_preview_and_local_time_without_inventing_unread_state() {
+fn item_uses_latest_message_preview_and_local_time_without_an_unread_counter() {
     let mut app = TestApp::new();
     let chat = JID::from("chat@example.test".to_owned());
     app.contacts.insert(chat.clone(), "Alice Example".into());
@@ -109,8 +109,6 @@ fn item_uses_latest_message_preview_and_local_time_without_inventing_unread_stat
     assert_eq!(item.name, "Alice Example");
     assert_eq!(item.preview, "newest");
     assert!(item.local_time.is_some());
-    // Unread totals are optional until the backend exposes truthful per-chat read state.
-    assert_eq!(item.unread_count, None);
 }
 
 #[test]
@@ -157,7 +155,6 @@ fn item(name: &str, preview: &str) -> ContactListItem {
         initials: initials(name),
         preview: preview.to_owned(),
         local_time: None,
-        unread_count: None,
     }
 }
 
