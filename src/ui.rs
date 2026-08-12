@@ -1,3 +1,4 @@
+pub mod communities;
 pub mod contact_list;
 mod layout;
 pub mod message_list;
@@ -73,6 +74,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             render_status_contacts(frame, app, area);
         }
         render_statuses(frame, app, areas.conversation);
+    } else if app.selected_section == Section::Communities {
+        if let Some(area) = areas.chat_list {
+            communities::render(frame, app, area);
+        }
+        render_chats(frame, app, areas.conversation);
     } else {
         app.contact_avatars.clear_window();
         if let Some(area) = areas.chat_list {
@@ -87,14 +93,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 }
 
 fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
-    let chats = if app.contact_search.input.is_empty() {
-        app.sorted_chats.clone()
-    } else {
-        app.filtered_chats.clone()
-    };
-    let items = chats
+    let rows = app.visible_chat_rows();
+    let targets = rows
         .iter()
-        .map(|chat| ContactListItem::from_chat(app, chat))
+        .map(|row| row.target.clone())
+        .collect::<Vec<_>>();
+    let items = rows
+        .iter()
+        .map(|row| ContactListItem::from_row(app, row))
         .collect::<Vec<_>>();
 
     let mut list_area = area;
@@ -141,11 +147,11 @@ fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
     let visible = contact_visible_range(
         app.chat_list_state.offset(),
         contacts_area.height,
-        chats.len(),
+        rows.len(),
     );
     app.contact_avatars.schedule(
         prioritized_avatar_requests(
-            &chats,
+            &targets,
             app.chat_list_state.selected(),
             visible.start,
             visible.len(),
@@ -167,7 +173,7 @@ fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
         // Partial Kitty placements can leave terminal artifacts after a scroll.
         if avatar_area.width == AVATAR_WIDTH
             && avatar_area.height == AVATAR_HEIGHT
-            && let Some(protocol) = app.contact_avatars.protocol_mut(&chats[index])
+            && let Some(protocol) = app.contact_avatars.protocol_mut(&targets[index])
         {
             StatefulImage::default().render(avatar_area, frame.buffer_mut(), protocol);
         }

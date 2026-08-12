@@ -365,8 +365,7 @@ fn navigation_layout_supports_each_single_visible_navigation_pane() {
 
 #[test]
 fn structural_placeholders_do_not_render_chat_or_contact_content() {
-    // Status now renders real panes (see tests/status_section.rs), so only
-    // Communities keeps the structural placeholder.
+    // Communities now renders its approved hierarchy and real chat pane.
     for section in [Section::Communities] {
         let mut app = TestApp::new();
         let chat = JID::from("chat@example.test".to_owned());
@@ -388,7 +387,7 @@ fn structural_placeholders_do_not_render_chat_or_contact_content() {
             .iter()
             .map(|cell| cell.symbol())
             .collect::<String>();
-        assert!(output.contains(&format!("{} is not available yet.", section.title())));
+        assert!(output.contains("Communities"));
         assert!(!output.contains("CHAT_CONTACT_SENTINEL"));
         assert!(!output.contains("Contacts"));
         assert!(!output.contains("Message input"));

@@ -72,6 +72,23 @@ pub struct Chat {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CommunityNode {
+    pub jid: wr::JID,
+    pub name: String,
+    pub is_root: bool,
+    pub linked_groups: Vec<wr::JID>,
+}
+
+/// Presentation-only Chats row. `target` and `members` are always real chat
+/// JIDs; a community never becomes a persisted or addressable chat.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChatRow {
+    pub label: String,
+    pub members: Vec<wr::JID>,
+    pub target: wr::JID,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MessageActionKind {
     Edit { replacement: Arc<str> },
     Delete,
@@ -230,6 +247,9 @@ pub struct App<'a> {
     /// Status section: the contact whose statuses are open in the right
     /// pane. Mirrors `open_chat` for the Chats section: set on Enter.
     pub open_status_contact: Option<wr::JID>,
+    pub communities: Vec<CommunityNode>,
+    pub communities_unavailable: bool,
+    communities_loaded: bool,
 
     /// Contacts with posted statuses, sorted by latest-status recency (newest
     /// first). Derived from the `status@broadcast` chat.
@@ -404,6 +424,9 @@ impl App<'_> {
             chat_list_state: ListState::default(),
             open_chat: None,
             open_status_contact: None,
+            communities: Vec::new(),
+            communities_unavailable: false,
+            communities_loaded: false,
 
             status_contacts: Vec::new(),
             status_selection: ListState::default(),
@@ -549,6 +572,7 @@ impl App<'_> {
         match event {
             wr::Event::AppStateSyncComplete => {
                 self.get_contacts();
+                self.load_communities();
                 self.sort_chats();
                 true
             }
@@ -636,6 +660,10 @@ impl App<'_> {
                 true
             }
             wr::Event::Connected => {
+                // Connected is emitted again after reconnects.  The first
+                // probe may race group metadata hydration, so AppStateSyncComplete
+                // below remains the authoritative follow-up refresh.
+                self.load_communities();
                 self.selected_presence.ready();
                 self.presence_diagnostics
                     .record(|| "self presence available: ready".to_owned());
@@ -1283,13 +1311,208 @@ impl App<'_> {
     }
 
     pub fn get_selected_chat(&self) -> Option<wr::JID> {
-        self.chat_list_state.selected().map(|index| {
-            if self.contact_search.input.is_empty() {
-                self.sorted_chats[index].clone()
-            } else {
-                self.filtered_chats[index].clone()
+        let rows = self.visible_chat_rows();
+        self.chat_list_state
+            .selected()
+            .and_then(|index| rows.get(index))
+            .map(|row| row.target.clone())
+    }
+
+    pub fn chat_rows(&self) -> Vec<ChatRow> {
+        let mut grouped = HashSet::new();
+        let community_metadata = self
+            .communities
+            .iter()
+            .map(|node| node.jid.clone())
+            .collect::<HashSet<_>>();
+        let mut rows = Vec::new();
+        for community in self.communities.iter().filter(|node| node.is_root) {
+            let members = community
+                .linked_groups
+                .iter()
+                .filter(|jid| self.chats.contains_key(*jid))
+                .cloned()
+                .collect::<Vec<_>>();
+            if members.is_empty() {
+                continue;
             }
-        })
+            grouped.extend(members.iter().cloned());
+            let target = members
+                .iter()
+                .max_by_key(|jid| self.chat_recency(jid))
+                .expect("non-empty community members")
+                .clone();
+            rows.push(ChatRow {
+                label: community.name.clone(),
+                members,
+                target,
+            });
+        }
+        rows.extend(
+            self.sorted_chats
+                .iter()
+                .filter(|jid| !grouped.contains(*jid))
+                .filter(|jid| !community_metadata.contains(*jid))
+                .map(|jid| ChatRow {
+                    label: self.contact_name(jid).to_string(),
+                    members: vec![(*jid).clone()],
+                    target: (*jid).clone(),
+                }),
+        );
+        rows.sort_by(|left, right| {
+            self.chat_recency(&right.target)
+                .cmp(&self.chat_recency(&left.target))
+                .then_with(|| left.label.cmp(&right.label))
+                .then_with(|| left.target.0.cmp(&right.target.0))
+        });
+        rows
+    }
+
+    pub fn visible_chat_rows(&self) -> Vec<ChatRow> {
+        let query = self.contact_search.input.to_lowercase();
+        self.chat_rows()
+            .into_iter()
+            .filter(|row| {
+                query.is_empty()
+                    || row.label.to_lowercase().contains(&query)
+                    || row
+                        .members
+                        .iter()
+                        .any(|jid| self.contact_name(jid).to_lowercase().contains(&query))
+            })
+            .collect()
+    }
+
+    pub fn chat_row_item(&self, row: &ChatRow) -> crate::ui::contact_list::ContactListItem {
+        crate::ui::contact_list::ContactListItem::from_row(self, row)
+    }
+
+    fn chat_recency(&self, jid: &wr::JID) -> i64 {
+        self.chat_messages
+            .get(jid)
+            .into_iter()
+            .flatten()
+            .filter_map(|id| self.messages.get(id).map(|message| message.info.timestamp))
+            .max()
+            .or_else(|| self.chats.get(jid).and_then(|chat| chat.last_message_time))
+            .unwrap_or_default()
+    }
+
+    pub fn get_selected_community(&self) -> Option<wr::JID> {
+        self.chat_list_state
+            .selected()
+            .and_then(|index| {
+                self.communities
+                    .iter()
+                    .filter(|node| !node.is_root)
+                    .nth(index)
+            })
+            .map(|node| node.jid.clone())
+    }
+
+    fn selected_community_node_jid(&self) -> Option<wr::JID> {
+        self.chat_list_state
+            .selected()
+            .and_then(|index| {
+                self.communities
+                    .iter()
+                    .filter(|node| !node.is_root)
+                    .nth(index)
+                    .or_else(|| {
+                        self.communities
+                            .iter()
+                            .filter(|node| node.is_root)
+                            .nth(index)
+                    })
+            })
+            .map(|node| node.jid.clone())
+    }
+
+    fn select_community_node(&mut self, jid: Option<wr::JID>) {
+        let selected = jid
+            .and_then(|jid| {
+                self.selectable_community_nodes()
+                    .iter()
+                    .position(|node| node.jid == jid)
+            })
+            .or_else(|| (!self.selectable_community_nodes().is_empty()).then_some(0));
+        self.chat_list_state.select(selected);
+    }
+
+    pub(crate) fn selectable_community_nodes(&self) -> Vec<&CommunityNode> {
+        self.communities
+            .iter()
+            .filter(|node| !node.is_root)
+            .collect()
+    }
+
+    fn load_communities(&mut self) {
+        self.refresh_communities(wr::get_communities);
+    }
+
+    pub fn refresh_communities<F>(&mut self, fetch: F)
+    where
+        F: FnOnce() -> Result<Vec<wr::CommunityInfo>, wr::CommunitiesError>,
+    {
+        match fetch() {
+            Ok(records) => {
+                // Communities has its own hierarchy. Never preserve its
+                // selection through the projected Chats rows: those rows may
+                // reorder independently and roots target a different JID.
+                let selected = if self.selected_section == Section::Communities {
+                    self.selected_community_node_jid()
+                } else {
+                    None
+                };
+                // An empty successful result is meaningful: it clears a prior
+                // hierarchy and renders the normal "No communities" state.
+                self.communities = Self::build_community_nodes(&records);
+                self.communities_unavailable = false;
+                self.communities_loaded = true;
+                if self.selected_section == Section::Communities {
+                    self.select_community_node(selected);
+                }
+            }
+            Err(error) => {
+                // Do not turn a transient readiness/reconnect failure into an
+                // empty hierarchy. Keep the last successful snapshot visible.
+                warn!("Could not load communities: {error:?}");
+                self.communities_unavailable = !self.communities_loaded;
+            }
+        }
+    }
+
+    pub(crate) fn build_community_nodes(records: &[wr::CommunityInfo]) -> Vec<CommunityNode> {
+        let mut roots = records
+            .iter()
+            .filter(|record| record.is_parent)
+            .collect::<Vec<_>>();
+        roots.sort_by(|a, b| a.name.cmp(&b.name));
+        let mut nodes = Vec::new();
+        for root in roots {
+            nodes.push(CommunityNode {
+                jid: root.jid.clone(),
+                name: root.name.to_string(),
+                is_root: true,
+                linked_groups: records
+                    .iter()
+                    .filter(|record| record.parent_jid.as_ref() == Some(&root.jid))
+                    .map(|record| record.jid.clone())
+                    .collect(),
+            });
+            let mut children = records
+                .iter()
+                .filter(|record| record.parent_jid.as_ref() == Some(&root.jid))
+                .collect::<Vec<_>>();
+            children.sort_by(|a, b| a.name.cmp(&b.name));
+            nodes.extend(children.into_iter().map(|child| CommunityNode {
+                jid: child.jid.clone(),
+                name: child.name.to_string(),
+                is_root: false,
+                linked_groups: Vec::new(),
+            }));
+        }
+        nodes
     }
 
     pub fn open_chat(&self) -> Option<wr::JID> {
@@ -1705,17 +1928,15 @@ impl App<'_> {
     }
 
     pub fn select_chat(&mut self, jid: Option<wr::JID>) {
-        let target_list = if self.contact_search.input.is_empty() {
-            &self.sorted_chats
-        } else {
-            &self.filtered_chats
-        };
+        let target_list = self.visible_chat_rows();
 
         if let Some(jid) = jid
-            && let Some(index) = target_list.iter().position(|chat_jid| chat_jid == &jid)
+            && let Some(index) = target_list
+                .iter()
+                .position(|row| row.target == jid || row.members.contains(&jid))
         {
             self.chat_list_state.select(Some(index));
-        } else if !self.sorted_chats.is_empty() {
+        } else if !target_list.is_empty() {
             self.chat_list_state.select(Some(0));
         } else {
             self.chat_list_state.select(None);
@@ -1723,15 +1944,10 @@ impl App<'_> {
     }
 
     fn update_filtered_chats(&mut self) {
-        let query = self.contact_search.input.to_lowercase();
         self.filtered_chats = self
-            .sorted_chats
-            .iter()
-            .filter(|chat| {
-                let name = self.contact_name(chat).to_lowercase();
-                name.contains(&query)
-            })
-            .cloned()
+            .visible_chat_rows()
+            .into_iter()
+            .map(|row| row.target)
             .collect();
 
         if !self.filtered_chats.is_empty() {
@@ -1823,6 +2039,7 @@ impl App<'_> {
     }
 
     pub fn sort_chats(&mut self) {
+        let selected = self.get_selected_chat();
         let mut entries: Vec<_> = self.chats.values().cloned().collect();
         entries.sort_by(|a, b| {
             let a_time = a.last_message_time.unwrap_or_default();
@@ -1835,6 +2052,7 @@ impl App<'_> {
             .map(|chat| chat.jid.clone())
             .filter(|jid: &wr::JID| !jid.0.as_ref().ends_with("@broadcast"))
             .collect();
+        self.select_chat(selected);
     }
 
     pub(crate) fn sort_chat_messages(&mut self, chat_jid: wr::JID) {
@@ -2016,6 +2234,7 @@ pub fn unix_now() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::actions::AppAction;
 
     /// Test-only App wrapper: points every storage path at a fresh
     /// tempdir (so tests never open the real user database) and stops
@@ -2112,6 +2331,180 @@ mod tests {
         assert_eq!(app.open_chat(), Some(recipient.clone()));
         assert!(app.chats.contains_key(&recipient));
         assert!(app.sorted_chats.contains(&recipient));
+    }
+
+    #[test]
+    fn community_hierarchy_is_sorted_with_roots_followed_by_children() {
+        let root = wr::JID::from("root@g.us".to_owned());
+        let child = wr::JID::from("child@g.us".to_owned());
+        let records = vec![
+            wr::CommunityInfo {
+                jid: child.clone(),
+                name: "Child".into(),
+                parent_jid: Some(root.clone()),
+                is_parent: false,
+            },
+            wr::CommunityInfo {
+                jid: root.clone(),
+                name: "Community".into(),
+                parent_jid: None,
+                is_parent: true,
+            },
+        ];
+        assert_eq!(
+            App::build_community_nodes(&records),
+            vec![
+                CommunityNode {
+                    jid: root,
+                    name: "Community".into(),
+                    is_root: true,
+                    linked_groups: vec![child.clone()],
+                },
+                CommunityNode {
+                    jid: child,
+                    name: "Child".into(),
+                    is_root: false,
+                    linked_groups: Vec::new(),
+                },
+            ]
+        );
+    }
+
+    fn community(name: &str, jid: &str, is_parent: bool) -> wr::CommunityInfo {
+        wr::CommunityInfo {
+            jid: wr::JID::from(jid.to_owned()),
+            name: name.into(),
+            parent_jid: None,
+            is_parent,
+        }
+    }
+
+    #[test]
+    fn communities_load_after_readiness_event() {
+        let mut app = TestApp::new();
+        let root = community("Community", "root@g.us", true);
+
+        app.refresh_communities(|| Ok(vec![root.clone()]));
+
+        assert_eq!(app.communities.len(), 1);
+        assert!(!app.communities_unavailable);
+    }
+
+    #[test]
+    fn communities_refresh_on_restart_or_reconnect_replaces_snapshot() {
+        let mut app = TestApp::new();
+        app.refresh_communities(|| Ok(vec![community("Old", "old@g.us", true)]));
+        app.refresh_communities(|| Ok(vec![community("New", "new@g.us", true)]));
+
+        assert_eq!(app.communities[0].name, "New");
+        assert_eq!(app.communities[0].jid, wr::JID::from("new@g.us".to_owned()));
+    }
+
+    #[test]
+    fn successful_empty_communities_clears_snapshot() {
+        let mut app = TestApp::new();
+        app.refresh_communities(|| Ok(vec![community("Old", "old@g.us", true)]));
+        app.refresh_communities(|| Ok(Vec::new()));
+
+        assert!(app.communities.is_empty());
+        assert!(!app.communities_unavailable);
+    }
+
+    #[test]
+    fn transient_communities_failure_preserves_last_successful_snapshot() {
+        let mut app = TestApp::new();
+        app.refresh_communities(|| Ok(vec![community("Known", "known@g.us", true)]));
+        app.refresh_communities(|| Err(wr::CommunitiesError::BridgeUnavailable));
+
+        assert_eq!(app.communities[0].name, "Known");
+        assert!(!app.communities_unavailable);
+    }
+
+    #[test]
+    fn communities_refresh_preserves_explicit_node_across_reorder_and_target_change() {
+        let mut app = TestApp::new();
+        let selected = wr::JID::from("selected@g.us".to_owned());
+        let other = wr::JID::from("other@g.us".to_owned());
+        app.selected_section = Section::Communities;
+        app.refresh_communities(|| {
+            Ok(vec![
+                community("Selected", "selected@g.us", true),
+                wr::CommunityInfo {
+                    jid: other.clone(),
+                    name: "Other".into(),
+                    parent_jid: Some(selected.clone()),
+                    is_parent: false,
+                },
+            ])
+        });
+        app.chat_list_state.select(Some(0));
+        app.chats.insert(
+            other.clone(),
+            Chat {
+                jid: other.clone(),
+                last_message_time: None,
+            },
+        );
+        app.refresh_communities(|| {
+            Ok(vec![
+                community("Aardvark", "aardvark@g.us", true),
+                community("Selected", "selected@g.us", true),
+                wr::CommunityInfo {
+                    jid: other.clone(),
+                    name: "Other".into(),
+                    parent_jid: Some(selected.clone()),
+                    is_parent: false,
+                },
+            ])
+        });
+
+        assert_eq!(app.selected_community_node_jid(), Some(other.clone()));
+        assert_eq!(app.get_selected_community(), Some(other));
+    }
+
+    #[test]
+    fn communities_refresh_falls_back_when_selected_node_is_removed() {
+        let mut app = TestApp::new();
+        app.selected_section = Section::Communities;
+        app.refresh_communities(|| {
+            Ok(vec![
+                community("Removed", "removed@g.us", true),
+                community("Kept", "kept@g.us", true),
+            ])
+        });
+        app.chat_list_state.select(Some(0));
+        app.refresh_communities(|| Ok(vec![community("Kept", "kept@g.us", true)]));
+
+        assert_eq!(app.chat_list_state.selected(), None);
+        assert_eq!(app.selected_community_node_jid(), None);
+    }
+
+    #[test]
+    fn community_selection_moves_and_enter_opens_the_selected_group() {
+        let mut app = TestApp::new();
+        let root = wr::JID::from("root@g.us".to_owned());
+        let child = wr::JID::from("child@g.us".to_owned());
+        app.communities = vec![
+            CommunityNode {
+                jid: root,
+                name: "Community".into(),
+                is_root: true,
+                linked_groups: vec![child.clone()],
+            },
+            CommunityNode {
+                jid: child.clone(),
+                name: "Child".into(),
+                is_root: false,
+                linked_groups: Vec::new(),
+            },
+        ];
+        app.selected_section = Section::Communities;
+        app.focus_pane = FocusPane::ChatList;
+        app.chat_list_state.select(Some(0));
+        assert_eq!(app.chat_list_state.selected(), Some(0));
+        app.dispatch_action(AppAction::OpenChat);
+        assert_eq!(app.open_chat(), Some(child));
+        assert_eq!(app.focus_pane, FocusPane::Conversation);
     }
 
     #[test]

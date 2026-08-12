@@ -80,7 +80,7 @@ fn navigation_renders_labels_logs_logout_and_placeholders() {
         "Status",
         "Communities",
         "Logs",
-        "not available yet",
+        "No communities",
     ] {
         assert!(rendered.contains(expected), "missing {expected}");
     }
