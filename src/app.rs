@@ -59,6 +59,45 @@ use crate::ui::text_input::TextInput;
 /// `info.sender` is the contact who posted the status.
 pub const STATUS_BROADCAST_CHAT: &str = "status@broadcast";
 
+pub trait Clock {
+    fn unix_seconds(&self) -> Option<i64>;
+}
+
+#[derive(Debug, Default)]
+pub struct SystemClock;
+
+impl Clock for SystemClock {
+    fn unix_seconds(&self) -> Option<i64> {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .map(|duration| duration.as_secs() as i64)
+    }
+}
+
+pub struct NotificationProjection {
+    pub summary: Arc<str>,
+    pub body: String,
+}
+
+pub trait Notifier {
+    fn show(&self, notification: &NotificationProjection) -> Result<(), String>;
+}
+
+#[derive(Debug, Default)]
+pub struct NotifyRustNotifier;
+
+impl Notifier for NotifyRustNotifier {
+    fn show(&self, notification: &NotificationProjection) -> Result<(), String> {
+        Notification::new()
+            .summary(&notification.summary)
+            .body(&notification.body)
+            .show()
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum InputReaderState {
     Running,
@@ -205,6 +244,8 @@ pub struct App<'a> {
     pub db_handler: DatabaseHandler,
     pub media_path: PathBuf,
     pub whatsmeow_db: PathBuf,
+    pub clock: Box<dyn Clock>,
+    pub notifier: Box<dyn Notifier>,
 
     pub messages: HashMap<wr::MessageId, wr::Message>,
     pub message_actions: HashMap<wr::MessageId, Vec<MessageAction>>,
@@ -328,7 +369,14 @@ impl Default for App<'_> {
         let project_dirs = ProjectDirs::from("com", "nullptr", "wptui").unwrap();
         let data_dir = project_dirs.data_dir();
         let cache_dir = project_dirs.cache_dir();
-        Self::with_data_dir_and_picker(data_dir, cache_dir, picker, default_protocol_type)
+        Self::with_data_dir_and_picker_and_ports(
+            data_dir,
+            cache_dir,
+            picker,
+            default_protocol_type,
+            Box::new(SystemClock),
+            Box::new(NotifyRustNotifier),
+        )
     }
 }
 
@@ -368,14 +416,46 @@ impl App<'_> {
             Picker::halfblocks()
         });
         let default_protocol_type = picker.protocol_type();
-        Self::with_data_dir_and_picker(data_dir, cache_dir, picker, default_protocol_type)
+        Self::with_data_dir_and_picker_and_ports(
+            data_dir,
+            cache_dir,
+            picker,
+            default_protocol_type,
+            Box::new(SystemClock),
+            Box::new(NotifyRustNotifier),
+        )
     }
 
-    fn with_data_dir_and_picker(
+    pub fn with_data_dir_and_ports(
+        data_dir: &Path,
+        cache_dir: &Path,
+        clock: Box<dyn Clock>,
+        notifier: Box<dyn Notifier>,
+    ) -> Self {
+        let picker = Picker::from_query_stdio().unwrap_or_else(|err| {
+            log::warn!(
+                "Failed to query terminal image capabilities; falling back to halfblocks: {err}"
+            );
+            Picker::halfblocks()
+        });
+        let default_protocol_type = picker.protocol_type();
+        Self::with_data_dir_and_picker_and_ports(
+            data_dir,
+            cache_dir,
+            picker,
+            default_protocol_type,
+            clock,
+            notifier,
+        )
+    }
+
+    fn with_data_dir_and_picker_and_ports(
         data_dir: &Path,
         cache_dir: &Path,
         picker: Picker,
         default_protocol_type: ProtocolType,
+        clock: Box<dyn Clock>,
+        notifier: Box<dyn Notifier>,
     ) -> Self {
         fs::create_dir_all(data_dir).unwrap();
 
@@ -387,6 +467,8 @@ impl App<'_> {
             db_handler: DatabaseHandler::new(&data_dir.join("whatsapp.db")),
             media_path: data_dir.join("media"),
             whatsmeow_db: data_dir.join("whatsmeow.db"),
+            clock,
+            notifier,
 
             clipboard_reader,
             clipboard_writer,
@@ -1061,21 +1143,7 @@ impl App<'_> {
                 Ok(AppInput::Message {
                     message: msg,
                     is_sync,
-                }) => {
-                    if !is_sync {
-                        self.handle_notification(&msg);
-                    }
-
-                    self.db_handler.add_message(&msg);
-                    self.add_message(msg);
-
-                    let chat_jid = self.get_selected_chat();
-
-                    self.sort_chats();
-
-                    self.select_chat(chat_jid);
-                    !is_sync
-                }
+                }) => self.process_message(msg, is_sync),
                 Ok(AppInput::Presence(wr::PresenceUpdate {
                     from,
                     unavailable,
@@ -1226,45 +1294,51 @@ impl App<'_> {
             .unwrap_or_else(|| jid.0.clone())
     }
 
-    fn handle_notification(&self, message: &wr::Message) {
+    fn process_message(&mut self, message: wr::Message, is_sync: bool) -> bool {
+        self.process_message_with_lookup(message, is_sync, wr::get_chat_settings)
+    }
+
+    fn process_message_with_lookup(
+        &mut self,
+        message: wr::Message,
+        is_sync: bool,
+        lookup: impl FnMut(&wr::JID) -> wr::ChatSettings,
+    ) -> bool {
+        if !is_sync {
+            self.handle_notification_with_lookup(&message, lookup);
+        }
+
+        self.db_handler.add_message(&message);
+        self.add_message(message);
+
+        let chat_jid = self.get_selected_chat();
+        self.sort_chats();
+        self.select_chat(chat_jid);
+        !is_sync
+    }
+
+    fn handle_notification_with_lookup(
+        &self,
+        message: &wr::Message,
+        mut lookup: impl FnMut(&wr::JID) -> wr::ChatSettings,
+    ) {
         if !self.should_notify(message) {
             return;
         }
 
-        let chat_settings = wr::get_chat_settings(&message.info.chat);
+        let chat_settings = lookup(&message.info.chat);
         info!(
             "Chat settings for {:?}: {:?}",
             message.info.chat, chat_settings
         );
-        if chat_settings.found {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|duration| duration.as_secs() as i64)
-                .unwrap_or_default();
-            if chat_settings.muted_until > now {
-                return;
-            }
+        if chat_settings.found && notification_is_muted(true, chat_settings.muted_until, self.now())
+        {
+            return;
         }
 
-        let summary = self.contact_name(&message.info.sender);
-        let body = match &message.message {
-            wr::MessageContent::Text(text) => text.to_string(),
-            wr::MessageContent::File(file) => {
-                if let Some(caption) = &file.caption {
-                    caption.to_string()
-                } else {
-                    match file.kind {
-                        wr::FileKind::Image => "Sent an image".to_string(),
-                        wr::FileKind::Video => "Sent a video".to_string(),
-                        wr::FileKind::Audio => "Sent an audio message".to_string(),
-                        wr::FileKind::Document => "Sent a document".to_string(),
-                        wr::FileKind::Sticker => "Sent a sticker".to_string(),
-                    }
-                }
-            }
-        };
-
-        if let Err(err) = Notification::new().summary(&summary).body(&body).show() {
+        let notification =
+            notification_projection(message, self.contact_name(&message.info.sender));
+        if let Err(err) = self.notifier.show(&notification) {
             error!("Failed to show desktop notification: {err}");
         }
     }
@@ -1272,7 +1346,11 @@ impl App<'_> {
     /// Desktop notifications are suppressed for the user's own messages and
     /// for status broadcasts (statuses surface in the Status section instead).
     fn should_notify(&self, message: &wr::Message) -> bool {
-        !message.info.is_from_me && !Self::is_status_chat(&message.info.chat)
+        notification_eligibility(message)
+    }
+
+    pub(crate) fn now(&self) -> i64 {
+        now_or(0, &*self.clock)
     }
 
     fn stop_input_reader(&self) {
@@ -2006,6 +2084,38 @@ pub fn remove_status_media_files(media_path: &Path, relative_paths: &[PathBuf]) 
     remove_owned_media_files(media_path, relative_paths);
 }
 
+fn notification_eligibility(message: &wr::Message) -> bool {
+    !message.info.is_from_me && !App::is_status_chat(&message.info.chat)
+}
+
+fn notification_is_muted(found: bool, muted_until: i64, now: i64) -> bool {
+    found && muted_until > now
+}
+
+fn notification_projection(message: &wr::Message, summary: Arc<str>) -> NotificationProjection {
+    let body = match &message.message {
+        wr::MessageContent::Text(text) => text.to_string(),
+        wr::MessageContent::File(file) => {
+            if let Some(caption) = &file.caption {
+                caption.to_string()
+            } else {
+                match file.kind {
+                    wr::FileKind::Image => "Sent an image".to_string(),
+                    wr::FileKind::Video => "Sent a video".to_string(),
+                    wr::FileKind::Audio => "Sent an audio message".to_string(),
+                    wr::FileKind::Document => "Sent a document".to_string(),
+                    wr::FileKind::Sticker => "Sent a sticker".to_string(),
+                }
+            }
+        }
+    };
+    NotificationProjection { summary, body }
+}
+
+fn now_or(fallback: i64, clock: &dyn Clock) -> i64 {
+    clock.unix_seconds().unwrap_or(fallback)
+}
+
 pub fn unix_now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -2016,6 +2126,54 @@ pub fn unix_now() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Debug)]
+    struct FixedClock(Option<i64>);
+
+    impl FixedClock {
+        fn new(value: i64) -> Self {
+            Self(Some(value))
+        }
+    }
+
+    impl Clock for FixedClock {
+        fn unix_seconds(&self) -> Option<i64> {
+            self.0
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct RecordingNotifier {
+        notifications: Arc<Mutex<Vec<(String, String)>>>,
+    }
+
+    impl RecordingNotifier {
+        fn notifications(&self) -> Vec<(String, String)> {
+            self.notifications.lock().unwrap().clone()
+        }
+    }
+
+    impl Notifier for RecordingNotifier {
+        fn show(&self, notification: &NotificationProjection) -> Result<(), String> {
+            self.notifications
+                .lock()
+                .unwrap()
+                .push((notification.summary.to_string(), notification.body.clone()));
+            Ok(())
+        }
+    }
+
+    #[derive(Clone)]
+    struct FailingNotifier {
+        attempts: Arc<Mutex<usize>>,
+    }
+
+    impl Notifier for FailingNotifier {
+        fn show(&self, _notification: &NotificationProjection) -> Result<(), String> {
+            *self.attempts.lock().unwrap() += 1;
+            Err("notification failed".to_owned())
+        }
+    }
 
     /// Test-only App wrapper: points every storage path at a fresh
     /// tempdir (so tests never open the real user database) and stops
@@ -2055,6 +2213,22 @@ mod tests {
         fn drop(&mut self) {
             self.app.db_handler.stop();
         }
+    }
+
+    fn app_with_ports<C, N>(clock: C, notifier: N) -> TestApp
+    where
+        C: Clock + 'static,
+        N: Notifier + 'static,
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let app = App::with_data_dir_and_ports(
+            dir.path(),
+            dir.path(),
+            Box::new(clock),
+            Box::new(notifier),
+        );
+        app.db_handler.init();
+        TestApp { app, _dir: dir }
     }
 
     impl std::ops::Deref for TestApp {
@@ -2688,6 +2862,118 @@ mod tests {
 
         let status = status_message(&broadcast, "status", 3);
         assert!(!app.should_notify(&status));
+    }
+
+    #[test]
+    fn notification_projection_preserves_untrusted_message_text() {
+        let sender = wr::JID::from("alice@s.whatsapp.net".to_owned());
+        let message = message(&sender, "ignored", 1);
+        let projection = notification_projection(&message, Arc::from("Alice"));
+
+        assert_eq!(projection.summary.as_ref(), "Alice");
+        assert_eq!(projection.body, "ignored");
+
+        let message = wr::Message {
+            message: wr::MessageContent::Text("こんにちは\n\"quoted\"\u{0007}".into()),
+            ..message
+        };
+        let projection = notification_projection(&message, Arc::from("名前\n\"sender\""));
+        assert_eq!(projection.summary.as_ref(), "名前\n\"sender\"");
+        assert_eq!(projection.body, "こんにちは\n\"quoted\"\u{0007}");
+    }
+
+    #[test]
+    fn production_message_handler_covers_notification_policy_and_continuation() {
+        let chat = wr::JID::from("chat@g.us".to_owned());
+        let notifier = RecordingNotifier::default();
+        let mut app = app_with_ports(FixedClock::new(2_000), notifier.clone());
+
+        assert!(
+            app.process_message_with_lookup(message(&chat, "ordinary", 1), false, |_| {
+                wr::ChatSettings {
+                    found: false,
+                    ..Default::default()
+                }
+            },)
+        );
+        assert_eq!(
+            notifier.notifications(),
+            vec![("chat@g.us".to_owned(), "ordinary".to_owned())]
+        );
+        assert!(app.messages.contains_key("ordinary"));
+
+        let muted = RecordingNotifier::default();
+        let mut app = app_with_ports(FixedClock::new(2_000), muted.clone());
+        assert!(
+            app.process_message_with_lookup(message(&chat, "muted", 2), false, |_| {
+                wr::ChatSettings {
+                    found: true,
+                    muted_until: 2_001,
+                    ..Default::default()
+                }
+            },)
+        );
+        assert!(muted.notifications().is_empty());
+        assert!(app.messages.contains_key("muted"));
+
+        for (id, message) in [
+            ("own", {
+                let mut message = message(&chat, "own", 3);
+                message.info.is_from_me = true;
+                message
+            }),
+            ("status", status_message(&chat, "status", 4)),
+        ] {
+            let notifier = RecordingNotifier::default();
+            let lookup_calls = Arc::new(Mutex::new(0));
+            let calls = lookup_calls.clone();
+            let mut app = app_with_ports(FixedClock::new(2_000), notifier.clone());
+            assert!(app.process_message_with_lookup(message, false, |_| {
+                *calls.lock().unwrap() += 1;
+                Default::default()
+            }));
+            assert_eq!(*lookup_calls.lock().unwrap(), 0, "{id} lookup");
+            assert!(notifier.notifications().is_empty(), "{id} notification");
+            assert!(app.messages.contains_key(id));
+        }
+
+        let attempts = Arc::new(Mutex::new(0));
+        let failing = FailingNotifier {
+            attempts: attempts.clone(),
+        };
+        let mut app = app_with_ports(FixedClock::new(2_000), failing);
+        assert!(
+            app.process_message_with_lookup(message(&chat, "failure", 5), false, |_| {
+                Default::default()
+            },)
+        );
+        assert_eq!(*attempts.lock().unwrap(), 1);
+        assert!(app.messages.contains_key("failure"));
+
+        let sync = RecordingNotifier::default();
+        let mut app = app_with_ports(FixedClock::new(2_000), sync.clone());
+        assert!(
+            !app.process_message_with_lookup(message(&chat, "sync", 6), true, |_| panic!(
+                "sync messages must not look up chat settings"
+            ),)
+        );
+        assert!(sync.notifications().is_empty());
+        assert!(app.messages.contains_key("sync"));
+    }
+
+    #[test]
+    fn production_default_handler_keeps_message_processing_usable() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::with_data_dir(dir.path(), dir.path());
+        app.db_handler.init();
+        let chat = wr::JID::from("chat@g.us".to_owned());
+        assert!(
+            app.process_message_with_lookup(message(&chat, "default", 7), false, |_| {
+                Default::default()
+            },)
+        );
+        assert!(app.messages.contains_key("default"));
+        app.db_handler.stop();
     }
 
     #[test]
