@@ -363,3 +363,50 @@ fn chats_section_still_lists_only_real_conversations() {
             .any(|jid| jid.0.as_ref() == "status@broadcast")
     );
 }
+
+#[test]
+fn status_renderers_have_a_dedicated_owner_and_ui_keeps_composition() {
+    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/ui.rs"))
+        .expect("ui source should be readable");
+    let status_source =
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/ui/status.rs"))
+            .expect("status renderer module should exist");
+
+    assert!(status_source.contains("pub(super) fn render_status_contacts"));
+    assert!(status_source.contains("pub(super) fn render_statuses"));
+    assert!(!source.contains("fn render_status_contacts"));
+    assert!(!source.contains("fn render_statuses"));
+    assert!(source.contains("render_status_contacts(frame, app, area)"));
+    assert!(source.contains("render_statuses(frame, app, areas.conversation)"));
+}
+
+#[test]
+fn status_empty_and_opened_states_are_safe_in_tiny_supported_frames() {
+    let mut app = TestApp::new();
+    app.selected_section = Section::Status;
+    let empty_output = render(&mut app, 20, 6);
+    assert!(
+        empty_output.contains("No s"),
+        "empty state missing: {empty_output:?}"
+    );
+
+    let mut opened_app = TestApp::new();
+    opened_app.selected_section = Section::Status;
+    opened_app.focus_pane = FocusPane::ChatList;
+    let alice = JID::from("alice@s.whatsapp.net".to_owned());
+    opened_app.contacts.insert(alice.clone(), "Alice".into());
+    opened_app.add_message(status_message(
+        &alice,
+        "tiny-status",
+        unix_now(),
+        "tiny message",
+    ));
+    opened_app.status_contacts = vec![alice.clone()];
+    opened_app.status_selection.select(Some(0));
+    opened_app.open_selected_status();
+    let opened_output = render(&mut opened_app, 60, 8);
+    assert!(
+        opened_output.contains("tiny") || opened_output.contains("Alice"),
+        "opened state missing: {opened_output:?}"
+    );
+}
