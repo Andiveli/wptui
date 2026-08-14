@@ -232,9 +232,8 @@ pub fn render_chats(frame: &mut Frame, app: &mut App, area: Rect) {
         })
     };
     let selected_chat = app.open_chat();
-    let marker = app
-        .selected_presence
-        .marker(selected_chat.as_ref(), crate::app::unix_now());
+    let now = app.now();
+    let marker = app.selected_presence.marker(selected_chat.as_ref(), now);
     let marker_span = marker.map(|marker| match marker {
         crate::app::presence::PresenceMarker::Online => Span::styled("●", Style::default().green()),
         crate::app::presence::PresenceMarker::RecentlyOffline => {
