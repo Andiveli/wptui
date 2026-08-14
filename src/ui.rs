@@ -3,6 +3,7 @@ mod contacts;
 mod layout;
 pub mod message_list;
 mod navigation;
+mod status;
 pub mod status_list;
 pub mod text_input;
 
@@ -19,7 +20,7 @@ use crate::app::events::{
     ViewerPreviewKey, ViewerPreviewState, ViewerStatus, viewer_preview_request,
 };
 use contacts::render_contacts;
-use message_list::{get_quoted_text, render_messages, render_status_messages};
+use message_list::{get_quoted_text, render_messages};
 use navigation::{
     render_logout_placeholder, render_logs, render_section_rail, render_structural_placeholder,
 };
@@ -29,10 +30,10 @@ use ratatui::{
     style::{Style, Stylize},
     symbols,
     text::{Line, Span},
-    widgets::{Block, Clear, Paragraph, StatefulWidget, Widget, Wrap},
+    widgets::{Block, Clear, Paragraph, StatefulWidget, Wrap},
 };
 use ratatui_image::{Resize, StatefulImage};
-use status_list::{StatusList, StatusListItem};
+use status::{render_status_contacts, render_statuses};
 use whatsrust as wr;
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
@@ -80,62 +81,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     render_url_picker(frame, app);
     render_share_picker(frame, app);
     render_file_picker(frame, app);
-}
-
-fn render_status_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
-    let items = app
-        .status_contacts
-        .iter()
-        .map(|contact| StatusListItem::from_contact(app, contact))
-        .collect::<Vec<_>>();
-
-    let block = Block::bordered()
-        .title("Status")
-        .border_style(
-            Style::default().fg(if app.focus_pane == FocusPane::ChatList {
-                ratatui::style::Color::Green
-            } else {
-                ratatui::style::Color::White
-            }),
-        );
-    let list_area = block.inner(area);
-    block.render(area, frame.buffer_mut());
-
-    if items.is_empty() {
-        frame.render_widget(Paragraph::new("No statuses yet"), list_area);
-        return;
-    }
-    frame.render_stateful_widget(
-        StatusList::new(&items),
-        list_area,
-        &mut app.status_selection,
-    );
-}
-
-fn render_statuses(frame: &mut Frame, app: &mut App, area: Rect) {
-    let title = app
-        .open_status_contact()
-        .map(|contact| app.contact_name(&contact).to_string())
-        .unwrap_or_else(|| "Status".to_string());
-    let border_color = if app.focus_pane == FocusPane::Conversation {
-        ratatui::style::Color::Green
-    } else {
-        ratatui::style::Color::White
-    };
-    let block = Block::bordered()
-        .title(title)
-        .border_style(Style::default().fg(border_color));
-    let content_area = block.inner(area);
-    block.render(area, frame.buffer_mut());
-
-    if app.open_status_contact().is_none() {
-        frame.render_widget(
-            Paragraph::new("Select a contact to view their statuses"),
-            content_area,
-        );
-        return;
-    }
-    render_status_messages(frame, app, content_area);
 }
 
 const ANDIVELI_LOGO: [&str; 19] = [
