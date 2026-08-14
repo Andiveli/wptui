@@ -1,6 +1,11 @@
+use std::fs;
+
 use ratatui::{Terminal, backend::TestBackend};
+use whatsrust as wr;
 use wp_tui::{
     app::actions::{FocusPane, Section},
+    app::events::{AttachmentViewerState, ViewerAttachment, ViewerStatus},
+    file_picker::FilePickerState,
     ui,
 };
 
@@ -42,7 +47,7 @@ fn navigation_symbols_have_bounded_module_ownership() {
 fn draw_keeps_navigation_branch_and_overlay_order() {
     let draw_source = UI_SOURCE
         .split_once("pub fn draw")
-        .and_then(|(_, source)| source.split_once("fn render_contacts"))
+        .and_then(|(_, source)| source.split_once("pub fn render_chats"))
         .map(|(source, _)| source)
         .expect("draw source should be present");
     let order = [
@@ -102,4 +107,68 @@ fn navigation_is_safe_in_a_narrow_frame() {
     let mut terminal = Terminal::new(TestBackend::new(24, 8)).unwrap();
     terminal.draw(|frame| ui::draw(frame, &mut app)).unwrap();
     assert!(rows(&terminal).join("\n").contains("Sections"));
+}
+
+#[test]
+fn runtime_overlay_layering_keeps_logs_and_branch_below_final_file_picker() {
+    let mut app = TestApp::new();
+    app.focus_pane = FocusPane::SectionRail;
+    app.selected_section = Section::Communities;
+    app.show_logs = true;
+    app.attachment_viewer = Some(AttachmentViewerState::from_attachments(
+        vec![ViewerAttachment {
+            message_id: "overlay-message".into(),
+            kind: wr::FileKind::Document,
+            path: "attachment-marker.bin".into(),
+            status: ViewerStatus::Missing,
+        }],
+        0,
+    ));
+    app.url_picker = Some((vec!["url-marker".to_owned()], 0));
+    let recipient = "share-marker@s.whatsapp.net".to_owned().into();
+    app.share_picker = Some(wp_tui::app::SharePicker::new(
+        vec![recipient],
+        [(
+            "share-marker@s.whatsapp.net".to_owned().into(),
+            "share-marker".to_owned(),
+        )]
+        .into_iter()
+        .collect(),
+        Default::default(),
+    ));
+
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(directory.path().join("file-marker.txt"), "overlay").unwrap();
+    app.file_picker = Some(FilePickerState::open(directory.path()).unwrap());
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+    terminal.draw(|frame| ui::draw(frame, &mut app)).unwrap();
+    let rendered = rows(&terminal).join("\n");
+
+    assert!(
+        rendered.contains("Logs"),
+        "logs must remain rendered: {rendered:?}"
+    );
+    assert!(
+        rendered.contains("Communities"),
+        "selected branch must remain rendered: {rendered:?}"
+    );
+    assert!(
+        rendered.contains("Attach file:"),
+        "final file picker must win over the picker overlays: {rendered:?}"
+    );
+    assert!(
+        rendered.contains("file-marker.txt"),
+        "final picker contents must render: {rendered:?}"
+    );
+    assert!(
+        rendered.contains("attachment-marker.bin"),
+        "attachment viewer must remain layered below the final picker: {rendered:?}"
+    );
+    for covered in ["url-marker", "share-marker"] {
+        assert!(
+            !rendered.contains(covered),
+            "later overlay must cover {covered}: {rendered:?}"
+        );
+    }
 }
