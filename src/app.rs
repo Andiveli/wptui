@@ -895,7 +895,7 @@ impl App<'_> {
         }
 
         loop {
-            let now = unix_now();
+            let now = self.now();
             let msg = match self.selected_presence.redraw_after(now) {
                 Some(timeout) => match self.rx.recv_timeout(timeout) {
                     Ok(input) => Ok(input),
@@ -1150,7 +1150,7 @@ impl App<'_> {
                     last_seen,
                 })) => self
                     .selected_presence
-                    .update(&from, unavailable, last_seen, unix_now()),
+                    .update(&from, unavailable, last_seen, self.now()),
                 Ok(AppInput::Terminal(event)) => {
                     self.on_terminal_event(event);
                     true
@@ -1194,7 +1194,7 @@ impl App<'_> {
 
     fn sync_selected_presence(&mut self) {
         let selected = self.open_chat.clone();
-        let now = unix_now();
+        let now = self.now();
         if self.selected_presence.select(selected, now) {
             let selected = self
                 .selected_presence
@@ -1722,10 +1722,7 @@ impl App<'_> {
         replacement: Arc<str>,
     ) {
         self.local_action_sequence = self.local_action_sequence.saturating_add(1);
-        let occurred_at = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_secs() as i64)
-            .unwrap_or(message.info.timestamp);
+        let occurred_at = now_or(message.info.timestamp, &*self.clock);
         self.apply_message_action(MessageAction {
             action_id: format!(
                 "local-edit:{}:{}",
@@ -1743,10 +1740,7 @@ impl App<'_> {
 
     pub(crate) fn record_local_message_delete(&mut self, message: &wr::Message) {
         self.local_action_sequence = self.local_action_sequence.saturating_add(1);
-        let occurred_at = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_secs() as i64)
-            .unwrap_or(message.info.timestamp);
+        let occurred_at = now_or(message.info.timestamp, &*self.clock);
         self.apply_message_action(MessageAction {
             action_id: format!(
                 "local-delete:{}:{}",
@@ -2126,6 +2120,7 @@ pub fn unix_now() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::presence::PresenceMarker;
 
     #[derive(Debug)]
     struct FixedClock(Option<i64>);
@@ -2139,6 +2134,25 @@ mod tests {
     impl Clock for FixedClock {
         fn unix_seconds(&self) -> Option<i64> {
             self.0
+        }
+    }
+
+    #[derive(Clone)]
+    struct MutableClock(Arc<Mutex<Option<i64>>>);
+
+    impl MutableClock {
+        fn new(value: Option<i64>) -> Self {
+            Self(Arc::new(Mutex::new(value)))
+        }
+
+        fn set(&self, value: Option<i64>) {
+            *self.0.lock().unwrap() = value;
+        }
+    }
+
+    impl Clock for MutableClock {
+        fn unix_seconds(&self) -> Option<i64> {
+            *self.0.lock().unwrap()
         }
     }
 
@@ -2974,6 +2988,101 @@ mod tests {
         );
         assert!(app.messages.contains_key("default"));
         app.db_handler.stop();
+    }
+
+    #[test]
+    fn local_message_actions_use_injected_clock_and_message_timestamp_fallback() {
+        let chat = wr::JID::from("chat@g.us".to_owned());
+        let message = message(&chat, "local-action", 77);
+        let mut app = app_with_ports(FixedClock::new(1_700_000_000), RecordingNotifier::default());
+        app.record_local_message_edit(&message, "edited".into());
+        assert_eq!(
+            app.message_actions[&message.info.id][0].occurred_at,
+            1_700_000_000
+        );
+
+        let mut app = app_with_ports(FixedClock::new(1_700_000_000), RecordingNotifier::default());
+        app.record_local_message_delete(&message);
+        assert_eq!(
+            app.message_actions[&message.info.id][0].occurred_at,
+            1_700_000_000
+        );
+
+        let mut app = app_with_ports(FixedClock(None), RecordingNotifier::default());
+        app.record_local_message_delete(&message);
+        assert_eq!(app.message_actions[&message.info.id][0].occurred_at, 77);
+    }
+
+    #[test]
+    fn injected_clock_preserves_mute_boundary_and_presence_timing() {
+        let chat = wr::JID::from("alice@s.whatsapp.net".to_owned());
+        let clock = MutableClock::new(Some(1_000));
+        let mut app = app_with_ports(clock.clone(), RecordingNotifier::default());
+        app.open_chat = Some(chat.clone());
+        let now = app.now();
+        app.selected_presence.select(Some(chat.clone()), now);
+        app.selected_presence.update(&chat, true, 0, now);
+
+        assert!(!notification_is_muted(true, 1_000, app.now()));
+        let now = app.now();
+        assert_eq!(
+            app.selected_presence.marker(Some(&chat), now),
+            Some(PresenceMarker::RecentlyOffline)
+        );
+        assert_eq!(
+            app.selected_presence.redraw_after(app.now()),
+            Some(Duration::from_secs(300))
+        );
+
+        clock.set(Some(1_299));
+        let now = app.now();
+        assert_eq!(
+            app.selected_presence.marker(Some(&chat), now),
+            Some(PresenceMarker::RecentlyOffline)
+        );
+        assert_eq!(
+            app.selected_presence.redraw_after(app.now()),
+            Some(Duration::from_secs(1))
+        );
+        clock.set(Some(1_300));
+        assert!(notification_is_muted(true, 1_301, app.now()));
+        assert!(!notification_is_muted(true, 1_300, app.now()));
+        let now = app.now();
+        assert_eq!(
+            app.selected_presence.marker(Some(&chat), now),
+            Some(PresenceMarker::Offline)
+        );
+        assert_eq!(app.selected_presence.redraw_after(app.now()), None);
+
+        clock.set(None);
+        assert_eq!(app.now(), 0);
+    }
+
+    #[test]
+    fn injected_clock_reaches_presence_and_ui_marker_path() {
+        use ratatui::{Terminal, backend::TestBackend, layout::Rect};
+
+        let chat = wr::JID::from("alice@s.whatsapp.net".to_owned());
+        let mut app = app_with_ports(FixedClock::new(1_700_000_000), RecordingNotifier::default());
+        app.contacts.insert(chat.clone(), "Alice".into());
+        app.open_chat = Some(chat.clone());
+        let now = app.now();
+        app.selected_presence.select(Some(chat.clone()), now);
+        app.selected_presence.update(&chat, true, 0, now);
+
+        let mut terminal = Terminal::new(TestBackend::new(40, 8)).unwrap();
+        terminal
+            .draw(|frame| crate::ui::render_chats(frame, &mut app, Rect::new(0, 0, 40, 8)))
+            .unwrap();
+        let row = terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(40)
+            .next()
+            .unwrap();
+        let title = row.iter().map(|cell| cell.symbol()).collect::<String>();
+        assert!(title.contains("● Alice"), "rendered title: {title:?}");
     }
 
     #[test]
