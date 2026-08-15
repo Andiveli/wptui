@@ -1,11 +1,5 @@
 use super::*;
-
-fn app() -> (App<'static>, tempfile::TempDir) {
-    let dir = tempfile::tempdir().unwrap();
-    let app = App::with_data_dir(dir.path(), dir.path());
-    app.db_handler.init();
-    (app, dir)
-}
+use crate::app::test_support::TestApp;
 
 fn message(chat: &wr::JID, id: &str, timestamp: i64) -> wr::Message {
     wr::Message {
@@ -25,7 +19,7 @@ fn message(chat: &wr::JID, id: &str, timestamp: i64) -> wr::Message {
 
 #[test]
 fn contact_name_falls_back_to_the_jid() {
-    let (app, _dir) = app();
+    let app = TestApp::new();
     let jid = wr::JID::from("alice@example.test".to_owned());
 
     assert_eq!(app.contact_name(&jid).as_ref(), "alice@example.test");
@@ -33,7 +27,7 @@ fn contact_name_falls_back_to_the_jid() {
 
 #[test]
 fn adding_a_message_registers_chat_and_indexes_message() {
-    let (mut app, _dir) = app();
+    let mut app = TestApp::new();
     let chat = wr::JID::from("chat@example.test".to_owned());
 
     app.add_message(message(&chat, "message", 42));
@@ -47,7 +41,7 @@ fn adding_a_message_registers_chat_and_indexes_message() {
 
 #[test]
 fn newer_message_revision_replaces_existing_body_without_duplicate_index() {
-    let (mut app, _dir) = app();
+    let mut app = TestApp::new();
     let chat = wr::JID::from("chat@example.test".to_owned());
     app.add_message(message(&chat, "message", 10));
     app.add_message(message(&chat, "message", 20));
