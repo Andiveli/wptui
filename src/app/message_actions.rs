@@ -3,6 +3,10 @@ use std::sync::Arc;
 
 use super::{App, MessageMenuAction};
 use crate::app::media_support::remove_owned_media_files;
+use crate::app::message_action_diagnostics::identifier_for_log;
+use crate::app::notifications::now_or;
+use crate::db::MessageActionPersistence;
+use log::info;
 use whatsrust as wr;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -53,6 +57,106 @@ fn sorted_actions(mut actions: Vec<MessageAction>) -> Vec<MessageAction> {
 }
 
 impl App<'_> {
+    pub fn apply_message_action(&mut self, action: MessageAction) {
+        let target = action.target_message_id.clone();
+        let base_exists = self.messages.contains_key(&target);
+        let pending_local = self.pending_local_action_for(&action);
+        let reconciliation_attempted = pending_local.is_some();
+        let persistence = if let Some(local_action_id) = pending_local.as_deref() {
+            self.db_handler
+                .reconcile_message_action(local_action_id, &action)
+        } else {
+            self.db_handler.record_message_action(&action)
+        };
+        match persistence {
+            MessageActionPersistence::Inserted => {
+                self.message_actions
+                    .entry(target.clone())
+                    .or_default()
+                    .push(action.clone());
+            }
+            MessageActionPersistence::Reconciled => {
+                let local_action_id = pending_local
+                    .as_ref()
+                    .expect("reconciliation requires local action");
+                let actions = self.message_actions.entry(target.clone()).or_default();
+                actions.retain(|existing| existing.action_id.as_ref() != local_action_id.as_ref());
+                actions.push(action.clone());
+            }
+            MessageActionPersistence::DuplicateActionID => {}
+        }
+        if matches!(action.kind, MessageActionKind::Delete)
+            && !matches!(persistence, MessageActionPersistence::DuplicateActionID)
+        {
+            self.message_actions
+                .entry(target.clone())
+                .and_modify(|actions| {
+                    actions.retain(|existing| matches!(existing.kind, MessageActionKind::Delete))
+                });
+        }
+        let projection = (!matches!(persistence, MessageActionPersistence::DuplicateActionID))
+            .then(|| self.refresh_message_projection(&target))
+            .flatten()
+            .unwrap_or("unchanged");
+        let action_count = self.message_actions.get(&target).map_or(0, Vec::len);
+        let kind = match &action.kind {
+            MessageActionKind::Edit { .. } => "edit",
+            MessageActionKind::Delete => "delete",
+        };
+        self.message_action_diagnostics.record(|| {
+            format!(
+                "source=rust kind={kind} action_id={} target_id={} base_exists={base_exists} persistence={persistence:?} reconciliation={} action_count={action_count} projection={projection}",
+                identifier_for_log(&action.action_id),
+                identifier_for_log(&target),
+                if reconciliation_attempted { "attempted" } else { "none" },
+            )
+        });
+        info!(
+            "message action action_id={} target_id={} base_exists={} persistence={:?} action_count={}",
+            action.action_id, target, base_exists, persistence, action_count
+        );
+    }
+
+    pub(crate) fn record_local_message_edit(
+        &mut self,
+        message: &wr::Message,
+        replacement: Arc<str>,
+    ) {
+        self.local_action_sequence = self.local_action_sequence.saturating_add(1);
+        let occurred_at = now_or(message.info.timestamp, &*self.clock);
+        self.apply_message_action(MessageAction {
+            action_id: format!(
+                "local-edit:{}:{}",
+                message.info.id, self.local_action_sequence
+            )
+            .into(),
+            target_message_id: message.info.id.clone(),
+            chat: message.info.chat.clone(),
+            sender: message.info.sender.clone(),
+            kind: MessageActionKind::Edit { replacement },
+            occurred_at,
+            arrival_order: self.local_action_sequence,
+        });
+    }
+
+    pub(crate) fn record_local_message_delete(&mut self, message: &wr::Message) {
+        self.local_action_sequence = self.local_action_sequence.saturating_add(1);
+        let occurred_at = now_or(message.info.timestamp, &*self.clock);
+        self.apply_message_action(MessageAction {
+            action_id: format!(
+                "local-delete:{}:{}",
+                message.info.id, self.local_action_sequence
+            )
+            .into(),
+            target_message_id: message.info.id.clone(),
+            chat: message.info.chat.clone(),
+            sender: message.info.sender.clone(),
+            kind: MessageActionKind::Delete,
+            occurred_at,
+            arrival_order: self.local_action_sequence,
+        });
+    }
+
     pub fn selected_message(&self) -> Option<&wr::Message> {
         self.message_list_state
             .get_selected_message()
