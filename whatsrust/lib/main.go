@@ -2165,9 +2165,8 @@ func quotedMessageFromContent(messageType C.uint8_t, messageContent unsafe.Point
 
 //export C_ForwardMessage
 func C_ForwardMessage(sourceID *C.char, sourceChat C.JID, sourceSender C.JID, sourceIsFromMe C.bool, destinations **C.char, destinationCount C.size_t, forwardSource *C.uint8_t, forwardSourceLen C.size_t) C.ForwardResult {
-	result := C.ForwardResult{}
 	if sourceID == nil || sourceChat == nil || sourceSender == nil || destinations == nil || destinationCount == 0 {
-		return result
+		return C.ForwardResult{}
 	}
 	rawDestinations := unsafe.Slice(destinations, int(destinationCount))
 	destinationStrings := make([]string, 0, len(rawDestinations))
@@ -2177,37 +2176,14 @@ func C_ForwardMessage(sourceID *C.char, sourceChat C.JID, sourceSender C.JID, so
 		}
 		destinationStrings = append(destinationStrings, C.GoString(destination))
 	}
-	request, err := newForwardRequest(C.GoString(sourceChat), C.GoString(sourceSender), C.GoString(sourceID), destinationStrings)
-	if err != nil {
-		return C.ForwardResult{failed: C.uint32_t(destinationCount), failure: C.uint8_t(forwardFailureInvalidSource)}
-	}
-	if client == nil || client.Store == nil || client.Store.ID == nil {
-		return C.ForwardResult{failed: C.uint32_t(destinationCount), failure: C.uint8_t(forwardFailureSendFailed)}
-	}
-	if forwardSource == nil || forwardSourceLen == 0 {
-		return C.ForwardResult{failed: C.uint32_t(destinationCount), failure: C.uint8_t(forwardFailureSourceUnavailable)}
-	}
-	sourceMessage, failure := forwardSourceFromBytes(unsafe.Slice((*byte)(unsafe.Pointer(forwardSource)), int(forwardSourceLen)))
-	if failure != forwardFailureNone {
-		return C.ForwardResult{failed: C.uint32_t(destinationCount), failure: C.uint8_t(failure)}
-	}
-	sourceOwned := sourceOwnedByCurrentUser(bool(sourceIsFromMe), request.sourceSender, *client.Store.ID)
-	for _, destination := range request.destinations {
-		message, err := prepareForwardMessage(sourceMessage, sourceOwned)
-		if err != nil {
-			result.failed++
-			continue
-		}
-		response, err := client.SendMessage(context.Background(), destination, message)
-		if err != nil {
-			LOG_WARN("forward send failed: %v", err)
-			result.failed++
-			continue
-		}
-		result.succeeded++
-		HandleMessage(types.MessageInfo{MessageSource: types.MessageSource{Chat: destination, Sender: *client.Store.ID, IsFromMe: true}, ID: response.ID, Timestamp: response.Timestamp}, message, false)
-	}
-	return result
+	return forwardMessages(
+		C.GoString(sourceID),
+		C.GoString(sourceChat),
+		C.GoString(sourceSender),
+		bool(sourceIsFromMe),
+		destinationStrings,
+		forwardingSourceBytes(forwardSource, forwardSourceLen),
+	).cResult()
 }
 
 //export C_SendMessage
