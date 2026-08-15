@@ -216,15 +216,6 @@ var presenceHandler C.PresenceHandler
 
 var messageActionArrivalOrder uint64
 
-const messageActionCensusLimit = 100
-
-type messageActionCensus struct {
-	mu      sync.Mutex
-	nextSeq uint64
-	entries []string
-}
-
-var eventCensus messageActionCensus
 var messageCallbackMu sync.Mutex
 
 const (
@@ -254,18 +245,6 @@ func messageActionCensusDiagnostic(rawEvt any) {
 		return
 	}
 	messageActionCensusAppend(messageActionCensusLine(rawEvt))
-}
-
-func messageActionCensusAppend(entry string) {
-	eventCensus.mu.Lock()
-	eventCensus.nextSeq++
-	entry = fmt.Sprintf("census=event seq=%d %s", eventCensus.nextSeq, entry)
-	if len(eventCensus.entries) == messageActionCensusLimit {
-		eventCensus.entries = eventCensus.entries[1:]
-	}
-	eventCensus.entries = append(eventCensus.entries, entry)
-	eventCensus.mu.Unlock()
-	messageActionDiagnostic("%s", entry)
 }
 
 func messageActionCensusLine(rawEvt any) string {
