@@ -726,23 +726,6 @@ func parseActionJID(raw string) (types.JID, error) {
 	return jid, nil
 }
 
-// contactDisplayName returns the display name for a contact (same order as Rust get_contact_name).
-func contactDisplayName(c types.ContactInfo) string {
-	if c.FullName != "" {
-		return c.FullName
-	}
-	if c.FirstName != "" {
-		return c.FirstName
-	}
-	if c.PushName != "" {
-		return "~ " + c.PushName
-	}
-	if c.BusinessName != "" {
-		return "+ " + c.BusinessName
-	}
-	return ""
-}
-
 //export C_SetLogHandler
 func C_SetLogHandler(callback C.LogHandlerCallback, data unsafe.Pointer) {
 	logHandler = C.LogHandler{
@@ -2713,55 +2696,23 @@ func C_RevokeMessage(chatJID C.JID, senderJID C.JID, messageID *C.char) C.uint8_
 	return 0
 }
 
-// TODO: Free the memory allocated for C.JID and C.Contact
-
 //export C_GetContacts
 func C_GetContacts() C.GetContactsResult {
+	if client == nil || client.Store == nil {
+		return contactEntriesToC(nil)
+	}
 	ctx := context.Background()
-	var entries []C.ContactEntry
+	entries := lookupContactEntries(ctx, client)
 
-	// Contacts (with LID aliases so group senders keyed by LID resolve to a name).
-	contacts, err := client.Store.Contacts.GetAllContacts(ctx)
-	if err != nil {
-		panic(err)
-	}
-	for jid, contact := range contacts {
-		name := contactDisplayName(contact)
-		if name == "" {
-			continue
-		}
-		cName := C.CString(name)
-		entries = append(entries, C.ContactEntry{jid: jidToC(jid), name: cName})
-		if jid.Server != types.HiddenUserServer {
-			if lid, _ := client.Store.LIDs.GetLIDForPN(ctx, jid); !lid.IsEmpty() {
-				entries = append(entries, C.ContactEntry{jid: jidToC(lid), name: cName})
-			}
-		}
-	}
-
-	// Groups.
+	// Groups remain in this bridge wrapper; contacts.go owns only contact lookup.
 	groups, err := client.GetJoinedGroups(ctx)
 	if err != nil {
 		panic(err)
 	}
 	for _, group := range groups {
-		entries = append(entries, C.ContactEntry{
-			jid:  jidToC(group.JID),
-			name: C.CString(group.GroupName.Name),
-		})
+		entries = append(entries, contactEntry{jid: group.JID, name: group.GroupName.Name})
 	}
-
-	n := len(entries)
-	c_entries := C.malloc(C.size_t(n) * C.size_t(unsafe.Sizeof(C.ContactEntry{})))
-	entryList := unsafe.Slice((*C.ContactEntry)(c_entries), n)
-	for i := range n {
-		entryList[i] = entries[i]
-	}
-
-	return C.GetContactsResult{
-		entries: (*C.ContactEntry)(c_entries),
-		size:    C.uint32_t(n),
-	}
+	return contactEntriesToC(entries)
 }
 
 // C_GetCommunities transfers ownership of entries and every pointed-to string
