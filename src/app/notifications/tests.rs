@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use super::*;
+use crate::app::test_support::FixedClock;
 
 fn message(chat: &str, text: &str) -> wr::Message {
     wr::Message {
@@ -52,14 +53,6 @@ fn projection_preserves_untrusted_message_text() {
     let projection = notification_projection(&message, Arc::from("名前\n\"sender\""));
     assert_eq!(projection.summary.as_ref(), "名前\n\"sender\"");
     assert_eq!(projection.body, "こんにちは\n\"quoted\"\u{0007}");
-}
-
-struct FixedClock(Option<i64>);
-
-impl Clock for FixedClock {
-    fn unix_seconds(&self) -> Option<i64> {
-        self.0
-    }
 }
 
 #[test]

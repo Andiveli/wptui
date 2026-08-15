@@ -8,6 +8,8 @@ use whatsrust as wr;
 pub const STATUS_BROADCAST_CHAT: &str = "status@broadcast";
 
 #[cfg(test)]
+mod integration_tests;
+#[cfg(test)]
 mod tests;
 
 impl App<'_> {

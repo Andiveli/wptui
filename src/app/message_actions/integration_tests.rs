@@ -1,14 +1,6 @@
 use super::*;
-use crate::app::Clock;
-use crate::app::test_support::{TestApp, message};
+use crate::app::test_support::{FixedClock, TestApp, message};
 use std::sync::Arc;
-#[derive(Debug)]
-struct FixedClock(Option<i64>);
-impl Clock for FixedClock {
-    fn unix_seconds(&self) -> Option<i64> {
-        self.0
-    }
-}
 fn app_with_clock(clock: Option<i64>) -> TestApp {
     let mut app = TestApp::new();
     app.clock = Box::new(FixedClock(clock));
