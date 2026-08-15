@@ -282,6 +282,7 @@ mod tests {
     use super::*;
     use crate::app::notifications::notification_is_muted;
     use crate::app::presence::PresenceMarker;
+    use crate::app::test_support::{TestApp, message};
     use std::time::Duration;
 
     #[derive(Debug)]
@@ -333,242 +334,11 @@ mod tests {
         }
     }
 
-    /// Test-only App wrapper: points every storage path at a fresh
-    /// tempdir (so tests never open the real user database) and stops
-    /// the DatabaseHandler background writer thread on drop (so a leaked
-    /// thread can never panic while holding the process-global write lock
-    /// and poison later tests).
-    struct TestApp {
-        app: App<'static>,
-        _dir: tempfile::TempDir,
-    }
-
-    impl TestApp {
-        fn new() -> Self {
-            let dir = tempfile::tempdir().unwrap();
-            let app: App<'static> = App::with_data_dir(dir.path(), dir.path());
-            // Full schema up front: the background writer thread drains the
-            // queues asynchronously and must never hit a missing table.
-            app.db_handler.init();
-            Self { app, _dir: dir }
-        }
-
-        fn with_database(path: &std::path::Path) -> Self {
-            let dir = tempfile::tempdir().unwrap();
-            let mut app: App<'static> = App::with_data_dir(dir.path(), dir.path());
-            app.db_handler.init();
-            std::mem::replace(
-                &mut app.db_handler,
-                DatabaseHandler::new(&path.join("app.db")),
-            )
-            .stop();
-            app.db_handler.init();
-            Self { app, _dir: dir }
-        }
-    }
-
-    impl Drop for TestApp {
-        fn drop(&mut self) {
-            self.app.db_handler.stop();
-        }
-    }
-
-    fn app_with_ports<C, N>(clock: C, notifier: N) -> TestApp
-    where
-        C: Clock + 'static,
-        N: Notifier + 'static,
-    {
-        let dir = tempfile::tempdir().unwrap();
-        let app = App::with_data_dir_and_ports(
-            dir.path(),
-            dir.path(),
-            Box::new(clock),
-            Box::new(notifier),
-        );
-        app.db_handler.init();
-        TestApp { app, _dir: dir }
-    }
-
-    impl std::ops::Deref for TestApp {
-        type Target = App<'static>;
-        fn deref(&self) -> &Self::Target {
-            &self.app
-        }
-    }
-
-    impl std::ops::DerefMut for TestApp {
-        fn deref_mut(&mut self) -> &mut Self::Target {
-            &mut self.app
-        }
-    }
-
-    #[test]
-    fn actions_replay_in_stable_order_and_delete_wins_the_display_status() {
-        let directory = tempfile::tempdir().unwrap();
-        let mut app = app_with_database(directory.path());
-        let chat = wr::JID::from("chat@example.test".to_owned());
-        app.add_message(message(&chat, "target", 1));
-        for (id, replacement, order) in [("edit-2", "second", 2), ("edit-1", "first", 1)] {
-            app.apply_message_action(MessageAction {
-                action_id: id.into(),
-                target_message_id: "target".into(),
-                chat: chat.clone(),
-                sender: chat.clone(),
-                kind: MessageActionKind::Edit {
-                    replacement: replacement.into(),
-                },
-                occurred_at: 2,
-                arrival_order: order,
-            });
-        }
-        app.apply_message_action(MessageAction {
-            action_id: "delete".into(),
-            target_message_id: "target".into(),
-            chat: chat.clone(),
-            sender: chat,
-            kind: MessageActionKind::Delete,
-            occurred_at: 3,
-            arrival_order: 3,
-        });
-
-        assert!(
-            matches!(&app.messages["target"].message, wr::MessageContent::Text(text) if text.as_ref() == "This message was deleted."),
-            "a deleted message must not retain its latest effective body"
-        );
-        assert_eq!(
-            app.message_status(&"target".into()),
-            MessageStatus {
-                edited: false,
-                deleted: true
-            }
-        );
-        assert_eq!(
-            app.sorted_message_actions(&"target".into())
-                .iter()
-                .map(|action| action.action_id.as_ref())
-                .collect::<Vec<_>>(),
-            ["delete"]
-        );
-        app.db_handler.stop();
-    }
-
-    #[test]
-    fn action_before_base_message_is_applied_when_the_base_arrives() {
-        let directory = tempfile::tempdir().unwrap();
-        let mut app = app_with_database(directory.path());
-        let chat = wr::JID::from("chat@example.test".to_owned());
-        app.apply_message_action(MessageAction {
-            action_id: "edit".into(),
-            target_message_id: "target".into(),
-            chat: chat.clone(),
-            sender: chat.clone(),
-            kind: MessageActionKind::Edit {
-                replacement: "replacement".into(),
-            },
-            occurred_at: 2,
-            arrival_order: 1,
-        });
-        app.add_message(message(&chat, "target", 1));
-
-        assert!(
-            matches!(&app.messages["target"].message, wr::MessageContent::Text(text) if text.as_ref() == "replacement")
-        );
-        app.db_handler.stop();
-    }
-
-    #[test]
-    fn local_edit_is_projected_persisted_and_not_duplicated_by_its_inbound_echo() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("app.db");
-        let chat = wr::JID::from("chat@example.test".to_owned());
-        let mut original = message(&chat, "target", 1);
-        original.info.is_from_me = true;
-        let mut app = app_with_database(directory.path());
-        app.db_handler.add_message(&original);
-        app.add_message(original.clone());
-
-        app.record_local_message_edit(&original, "replacement".into());
-        assert!(matches!(
-            &app.messages["target"].message,
-            wr::MessageContent::Text(text) if text.as_ref() == "replacement"
-        ));
-        assert!(app.message_status(&"target".into()).edited);
-        assert_eq!(app.message_actions["target"].len(), 1);
-
-        app.apply_message_action(MessageAction {
-            action_id: "server-edit".into(),
-            target_message_id: "target".into(),
-            chat: chat.clone(),
-            sender: chat.clone(),
-            kind: MessageActionKind::Edit {
-                replacement: "replacement".into(),
-            },
-            occurred_at: 2,
-            arrival_order: 2,
-        });
-        assert_eq!(app.message_actions["target"].len(), 1);
-        app.db_handler.stop();
-
-        let mut reloaded = TestApp::new();
-        std::mem::replace(&mut reloaded.db_handler, DatabaseHandler::new(&path)).stop();
-        reloaded.load_data_from_db();
-        assert!(matches!(
-            &reloaded.messages["target"].message,
-            wr::MessageContent::Text(text) if text.as_ref() == "replacement"
-        ));
-        assert!(reloaded.message_status(&"target".into()).edited);
-        assert_eq!(reloaded.message_actions["target"].len(), 1);
-        reloaded.db_handler.stop();
-    }
-
-    fn message(chat: &wr::JID, id: &str, timestamp: i64) -> wr::Message {
-        wr::Message {
-            info: wr::MessageInfo {
-                id: id.into(),
-                chat: chat.clone(),
-                sender: chat.clone(),
-                timestamp,
-                forwarding: Default::default(),
-                is_from_me: false,
-                quote_id: None,
-                read_by: 0,
-            },
-            message: wr::MessageContent::Text(id.into()),
-        }
-    }
-
-    fn app_with_database(path: &std::path::Path) -> TestApp {
-        TestApp::with_database(path)
-    }
-
-    #[test]
-    fn local_message_actions_use_injected_clock_and_message_timestamp_fallback() {
-        let chat = wr::JID::from("chat@g.us".to_owned());
-        let message = message(&chat, "local-action", 77);
-        let mut app = app_with_ports(FixedClock::new(1_700_000_000), RecordingNotifier::default());
-        app.record_local_message_edit(&message, "edited".into());
-        assert_eq!(
-            app.message_actions[&message.info.id][0].occurred_at,
-            1_700_000_000
-        );
-
-        let mut app = app_with_ports(FixedClock::new(1_700_000_000), RecordingNotifier::default());
-        app.record_local_message_delete(&message);
-        assert_eq!(
-            app.message_actions[&message.info.id][0].occurred_at,
-            1_700_000_000
-        );
-
-        let mut app = app_with_ports(FixedClock(None), RecordingNotifier::default());
-        app.record_local_message_delete(&message);
-        assert_eq!(app.message_actions[&message.info.id][0].occurred_at, 77);
-    }
-
     #[test]
     fn injected_clock_preserves_mute_boundary_and_presence_timing() {
         let chat = wr::JID::from("alice@s.whatsapp.net".to_owned());
         let clock = MutableClock::new(Some(1_000));
-        let mut app = app_with_ports(clock.clone(), RecordingNotifier::default());
+        let mut app = TestApp::with_ports(clock.clone(), RecordingNotifier::default());
         app.open_chat = Some(chat.clone());
         let now = app.now();
         app.selected_presence.select(Some(chat.clone()), now);
@@ -614,7 +384,8 @@ mod tests {
         use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 
         let chat = wr::JID::from("alice@s.whatsapp.net".to_owned());
-        let mut app = app_with_ports(FixedClock::new(1_700_000_000), RecordingNotifier::default());
+        let mut app =
+            TestApp::with_ports(FixedClock::new(1_700_000_000), RecordingNotifier::default());
         app.contacts.insert(chat.clone(), "Alice".into());
         app.open_chat = Some(chat.clone());
         let now = app.now();
