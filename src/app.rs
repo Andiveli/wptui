@@ -1,4 +1,3 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::{
@@ -8,6 +7,7 @@ use std::{
 };
 
 pub mod actions;
+pub mod bootstrap;
 pub mod chat_opening;
 pub mod chat_ordering;
 pub mod chat_projection;
@@ -72,9 +72,7 @@ use crate::key_handler::KeybindHandler;
 // use crate::key_handler;
 
 use crate::ui::message_list::{MessageHeightCache, MessageListState};
-use arboard::Clipboard;
 use db::DatabaseHandler;
-use directories::ProjectDirs;
 use log::info;
 use ratatui::widgets::ListState;
 use ratatui_image::picker::{Picker, ProtocolType};
@@ -226,73 +224,18 @@ pub struct App<'a> {
 
 impl Default for App<'_> {
     fn default() -> Self {
-        let picker = Picker::from_query_stdio().unwrap_or_else(|err| {
-            // Fallback for non-interactive environments (e.g. CI, piped stdio).
-            log::warn!(
-                "Failed to query terminal image capabilities; falling back to halfblocks: {err}"
-            );
-            Picker::halfblocks()
-        });
-        let default_protocol_type = picker.protocol_type();
-
-        let project_dirs = ProjectDirs::from("com", "nullptr", "wptui").unwrap();
-        let data_dir = project_dirs.data_dir();
-        let cache_dir = project_dirs.cache_dir();
-        Self::with_data_dir_and_picker_and_ports(
-            data_dir,
-            cache_dir,
-            picker,
-            default_protocol_type,
-            Box::new(SystemClock),
-            Box::new(NotifyRustNotifier),
-        )
+        bootstrap::default_app()
     }
 }
 
 impl App<'_> {
-    /// Opens the system clipboard, falling back to an unavailable clipboard
-    /// when no display server is reachable (for example on a headless
-    /// machine) so the app can still run and paste surfaces a clear error.
-    fn open_clipboard_pair() -> (Box<dyn ClipboardReader>, Box<dyn ClipboardWriter>) {
-        match Clipboard::new() {
-            Ok(reader_clipboard) => {
-                let reader: Box<dyn ClipboardReader> =
-                    Box::new(SystemClipboardReader(reader_clipboard));
-                let writer: Box<dyn ClipboardWriter> = match Clipboard::new() {
-                    Ok(writer_clipboard) => Box::new(SystemClipboardWriter(writer_clipboard)),
-                    Err(_) => Box::new(UnavailableClipboardWriter),
-                };
-                (reader, writer)
-            }
-            Err(_) => (
-                Box::new(UnavailableClipboardReader),
-                Box::new(UnavailableClipboardWriter),
-            ),
-        }
-    }
-
     /// Constructs the full app with explicit storage directories instead of
     /// the user's real data/cache dirs. `App::default()` keeps using the
     /// real directories; tests use this factory with a fresh tempdir so they
     /// never open or write the real user database
     /// (`~/.local/share/wptui/whatsapp.db`).
     pub fn with_data_dir(data_dir: &Path, cache_dir: &Path) -> Self {
-        let picker = Picker::from_query_stdio().unwrap_or_else(|err| {
-            // Fallback for non-interactive environments (e.g. CI, piped stdio).
-            log::warn!(
-                "Failed to query terminal image capabilities; falling back to halfblocks: {err}"
-            );
-            Picker::halfblocks()
-        });
-        let default_protocol_type = picker.protocol_type();
-        Self::with_data_dir_and_picker_and_ports(
-            data_dir,
-            cache_dir,
-            picker,
-            default_protocol_type,
-            Box::new(SystemClock),
-            Box::new(NotifyRustNotifier),
-        )
+        bootstrap::with_data_dir(data_dir, cache_dir)
     }
 
     pub fn with_data_dir_and_ports(
@@ -301,118 +244,7 @@ impl App<'_> {
         clock: Box<dyn Clock>,
         notifier: Box<dyn Notifier>,
     ) -> Self {
-        let picker = Picker::from_query_stdio().unwrap_or_else(|err| {
-            log::warn!(
-                "Failed to query terminal image capabilities; falling back to halfblocks: {err}"
-            );
-            Picker::halfblocks()
-        });
-        let default_protocol_type = picker.protocol_type();
-        Self::with_data_dir_and_picker_and_ports(
-            data_dir,
-            cache_dir,
-            picker,
-            default_protocol_type,
-            clock,
-            notifier,
-        )
-    }
-
-    fn with_data_dir_and_picker_and_ports(
-        data_dir: &Path,
-        cache_dir: &Path,
-        picker: Picker,
-        default_protocol_type: ProtocolType,
-        clock: Box<dyn Clock>,
-        notifier: Box<dyn Notifier>,
-    ) -> Self {
-        fs::create_dir_all(data_dir).unwrap();
-
-        let (tx, rx) = mpsc::channel::<AppInput>();
-
-        let (clipboard_reader, clipboard_writer) = Self::open_clipboard_pair();
-
-        Self {
-            db_handler: DatabaseHandler::new(&data_dir.join("whatsapp.db")),
-            media_path: data_dir.join("media"),
-            whatsmeow_db: data_dir.join("whatsmeow.db"),
-            clock,
-            notifier,
-
-            clipboard_reader,
-            clipboard_writer,
-
-            messages: HashMap::new(),
-            message_actions: HashMap::new(),
-            local_action_sequence: 0,
-            message_action_diagnostics: MessageActionDiagnostics::new(false),
-            reactions: HashMap::new(),
-            chats: HashMap::new(),
-            group_permissions: HashMap::new(),
-            contacts: HashMap::new(),
-            chat_messages: HashMap::new(),
-
-            sorted_chats: Vec::new(),
-            chat_list_state: ListState::default(),
-            open_chat: None,
-            open_status_contact: None,
-            communities: Vec::new(),
-            communities_unavailable: false,
-            communities_loaded: false,
-
-            status_contacts: Vec::new(),
-            status_selection: ListState::default(),
-            status_last_seen: HashMap::new(),
-
-            message_list_state: MessageListState::default(),
-            metadata: HashMap::new(),
-            history_sync_percent: None,
-            selected_presence: SelectedPresence::default(),
-            presence_diagnostics: PresenceDiagnostics::default(),
-            image_cache: HashMap::new(),
-            image_cache_order: VecDeque::new(),
-            audio_durations: HashMap::new(),
-            message_height_cache: MessageHeightCache::default(),
-            default_protocol_type,
-            composer: Composer::default(),
-            picker: Arc::new(Mutex::new(picker)),
-            contact_avatars: ContactAvatars::new(cache_dir.join("contact-avatars")),
-            focus_pane: FocusPane::ChatList,
-            pane_visibility: PaneVisibility::default(),
-            selected_section: Section::default(),
-            conversation_mode: ConversationMode::MessageNavigation,
-            edit_message: None,
-            message_editor: Box::new(WhatsAppMessageEditor),
-            message_reactor: Box::new(WhatsAppMessageReactor),
-            message_forwarder: Box::new(WhatsAppMessageForwarder),
-            message_revoker: Box::new(WhatsAppMessageRevoker),
-            action_notice: None,
-            message_menu: None,
-            reaction_picker: None,
-            share_picker: None,
-            url_picker: None,
-            file_picker: None,
-            url_opener: Box::new(SystemUrlOpener),
-            attachment_viewer: None,
-            viewer_preview: None,
-            viewer_zoom: 100,
-
-            kh: KeybindHandler::default(),
-
-            contact_search_active: false,
-            contact_search: TextInput::new(),
-            filtered_chats: Vec::new(),
-
-            show_logs: false,
-            should_quit: false,
-            pending_logout: false,
-            logout_in_progress: false,
-            rail_on_logout: false,
-            logout_menu_index: 0,
-            tx,
-            rx,
-            input_reader: InputReader::new(),
-        }
+        bootstrap::with_data_dir_and_ports(data_dir, cache_dir, clock, notifier)
     }
 }
 
