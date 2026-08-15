@@ -1,40 +1,7 @@
 use std::sync::{Arc, Mutex};
 
-use super::super::{App, STATUS_BROADCAST_CHAT};
+use super::super::{STATUS_BROADCAST_CHAT, test_support::TestApp};
 use whatsrust as wr;
-
-struct TestApp {
-    app: App<'static>,
-    _dir: tempfile::TempDir,
-}
-
-impl TestApp {
-    fn new() -> Self {
-        let dir = tempfile::tempdir().unwrap();
-        let app = App::with_data_dir(dir.path(), dir.path());
-        app.db_handler.init();
-        Self { app, _dir: dir }
-    }
-}
-
-impl Drop for TestApp {
-    fn drop(&mut self) {
-        self.app.db_handler.stop();
-    }
-}
-
-impl std::ops::Deref for TestApp {
-    type Target = App<'static>;
-    fn deref(&self) -> &Self::Target {
-        &self.app
-    }
-}
-
-impl std::ops::DerefMut for TestApp {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.app
-    }
-}
 
 fn message(chat: &wr::JID, id: &str, timestamp: i64) -> wr::Message {
     wr::Message {
