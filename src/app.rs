@@ -32,6 +32,7 @@ pub mod private_reply;
 pub mod runtime_callbacks;
 pub mod share_picker;
 pub mod status_projection;
+pub mod terminal_session;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod whatsapp_events;
@@ -66,6 +67,7 @@ use crate::app::presence::{PresenceDiagnostics, SelectedPresence};
 use crate::app::runtime_callbacks::register as register_runtime_callbacks;
 pub use crate::app::share_picker::SharePicker;
 pub use crate::app::status_projection::STATUS_BROADCAST_CHAT;
+use crate::app::terminal_session::TerminalSession;
 use crate::db;
 use crate::file_picker::FilePickerState;
 use crate::key_handler::KeybindHandler;
@@ -466,8 +468,8 @@ impl App<'_> {
         // });
         info!("Connected, initializing terminal UI");
 
-        let mut terminal = match ratatui::try_init() {
-            Ok(terminal) => terminal,
+        let mut terminal_session = match TerminalSession::try_new() {
+            Ok(session) => session,
             Err(e) => {
                 error!("Failed to initialize terminal UI: {e}");
                 eprintln!("Failed to initialize terminal UI: {e}");
@@ -478,13 +480,16 @@ impl App<'_> {
             }
         };
 
-        self.input_reader.start(self.tx.clone());
+        terminal_session.start_input_reader(&mut self.input_reader, self.tx.clone());
 
         self.sync_selected_presence();
-        if let Err(error) = terminal.draw(|frame| ui::draw(frame, self)) {
+        if let Err(error) = terminal_session
+            .terminal_mut()
+            .draw(|frame| ui::draw(frame, self))
+        {
             error!("Failed to draw terminal UI: {error}");
-            self.stop_input_reader();
-            ratatui::restore();
+            terminal_session.stop_input_reader(&mut self.input_reader);
+            terminal_session.restore();
             wr::disconnect();
             let _ = self
                 .message_action_diagnostics
@@ -744,7 +749,10 @@ impl App<'_> {
             self.sync_selected_presence();
 
             if should_draw {
-                if let Err(error) = terminal.draw(|frame| ui::draw(frame, self)) {
+                if let Err(error) = terminal_session
+                    .terminal_mut()
+                    .draw(|frame| ui::draw(frame, self))
+                {
                     error!("Failed to draw terminal UI: {error}");
                     break;
                 }
@@ -755,8 +763,8 @@ impl App<'_> {
             }
         }
 
-        self.stop_input_reader();
-        ratatui::restore();
+        terminal_session.stop_input_reader(&mut self.input_reader);
+        terminal_session.restore();
         wr::disconnect();
         let stderr = std::io::stderr();
         let mut stderr = stderr.lock();
@@ -769,10 +777,6 @@ impl App<'_> {
 
     pub(crate) fn now(&self) -> i64 {
         now_or(0, &*self.clock)
-    }
-
-    fn stop_input_reader(&mut self) {
-        self.input_reader.stop();
     }
 
     /// The status contact currently open in the Status section's right
