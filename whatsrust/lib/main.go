@@ -202,9 +202,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"go.mau.fi/whatsmeow"
-	"go.mau.fi/whatsmeow/appstate"
 	"go.mau.fi/whatsmeow/proto/waE2E"
-	"go.mau.fi/whatsmeow/proto/waHistorySync"
 	"go.mau.fi/whatsmeow/proto/waWeb"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -1769,16 +1767,7 @@ func AddEventHandlers() {
 			LOG_DEBUG("MarkChatAsRead %v", evt.JID)
 
 		case *events.AppStateSyncComplete:
-			LOG_INFO("AppStateSyncComplete %v", evt)
-			if evt.Name == appstate.WAPatchRegular {
-				LOG_INFO("AppStateSyncComplete (WAPatchRegular) %v", evt)
-
-				cevent := C.Event{
-					kind: C.uint8_t(EventTypeAppStateSyncComplete),
-					data: nil,
-				}
-				C.callEventCallback(eventHandler, &cevent)
-			}
+			dispatchAppStateSyncComplete(evt)
 
 		case *events.Message:
 			dispatchIncomingMessage(evt, dispatchMessageActionEvent, HandleMessage)
@@ -1790,82 +1779,18 @@ func AddEventHandlers() {
 			}
 
 		case *events.HistorySync:
-			percent := evt.Data.GetProgress()
-			LOG_INFO(
-				"History sync: type=%s chunk=%d progress=%d conversations=%d messages=%d",
-				evt.Data.GetSyncType().String(),
-				evt.Data.GetChunkOrder(),
-				percent,
-				len(evt.Data.GetConversations()),
-				countSyncMessages(evt.Data.GetConversations()),
-			)
-			cpercent := (*C.uint8_t)(C.malloc(C.size_t(unsafe.Sizeof(uint8(0)))))
-			*cpercent = C.uint8_t(percent)
-
-			cevent := C.Event{
-				kind: C.uint8_t(EventTypeSyncProgress),
-				data: unsafe.Pointer(cpercent),
-			}
-
-			C.callEventCallback(eventHandler, &cevent)
-
-			C.free(unsafe.Pointer(cpercent))
-
-			conversations := evt.Data.GetConversations()
-			// The default history downloader may store secrets asynchronously. Store
-			// them synchronously here before parsing encrypted history edits.
-			client.DangerousInternals().StoreHistoricalMessageSecrets(context.Background(), conversations)
-			for _, conversation := range conversations {
-				chatJid, err := types.ParseJID(conversation.GetID())
-				if err != nil {
-					LOG_WARN("history message ignored source=history_sync reason=invalid_chat")
-					continue
-				}
-
-				// Register the chat itself even when the sync batch carries no
-				// messages (older/archived/muted conversations). Previously only
-				// conversations that shipped at least one message became chats,
-				// which left the chat list stuck at the messages-only subset.
-				var lastMsgTime int64
-				if ts := conversation.GetLastMsgTimestamp(); ts != 0 {
-					lastMsgTime = int64(ts)
-				}
-				chatEvent := (*C.ChatEvent)(C.malloc(C.sizeof_ChatEvent))
-				chatEvent.chat = jidToC(chatJid)
-				chatEvent.lastMessageTime = C.int64_t(lastMsgTime)
-				cevent := C.Event{
-					kind: C.uint8_t(EventTypeChat),
-					data: unsafe.Pointer(chatEvent),
-				}
-				C.callEventCallback(eventHandler, &cevent)
-
-				syncMessages := conversation.GetMessages()
-
-				for _, syncMessage := range syncMessages {
-					webMessageInfo := syncMessage.Message
-					if webMessageInfo == nil {
-						continue
-					}
-					parsed, err := client.ParseWebMessage(chatJid, webMessageInfo)
-					if err != nil {
-						LOG_WARN("history message ignored source=history_sync reason=parse_failed")
-						continue
-					}
+			dispatchHistorySync(
+				evt,
+				client.DangerousInternals().StoreHistoricalMessageSecrets,
+				client.ParseWebMessage,
+				func(parsed *events.Message) {
 					dispatchIncomingMessage(parsed, dispatchMessageActionEvent, func(info types.MessageInfo, message *waE2E.Message, _ bool) {
 						HandleMessage(info, message, true)
 					})
-				}
-			}
+				},
+			)
 		}
 	})
-}
-
-func countSyncMessages(conversations []*waHistorySync.Conversation) int {
-	total := 0
-	for _, conversation := range conversations {
-		total += len(conversation.GetMessages())
-	}
-	return total
 }
 
 //export C_TestEmitPresenceEvent
