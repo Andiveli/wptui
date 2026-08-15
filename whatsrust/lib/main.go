@@ -1750,9 +1750,7 @@ func AddEventHandlers() {
 		case *events.Connected:
 			handleConnected(
 				client.SendPresence,
-				func() {
-					C.callEventCallback(eventHandler, &C.Event{kind: C.uint8_t(EventTypeConnected), data: nil})
-				},
+				dispatchConnectedEvent,
 				LOG_WARN,
 			)
 
@@ -1940,19 +1938,3 @@ func C_MarkAsRead(msg_id *C.char, chat_jid C.JID, sender_jid C.JID) {
 }
 
 func main() {} // Required for CGO
-
-func emitLogoutResult(status uint8) {
-	if eventHandler.callback == nil {
-		return
-	}
-	payload := (*C.LogoutResultEvent)(C.malloc(C.sizeof_LogoutResultEvent))
-	if payload == nil {
-		return
-	}
-	payload.status = C.uint8_t(status)
-	C.callEventCallback(eventHandler, &C.Event{
-		kind: C.uint8_t(EventTypeLogoutResult),
-		data: unsafe.Pointer(payload),
-	})
-	C.free(unsafe.Pointer(payload))
-}
