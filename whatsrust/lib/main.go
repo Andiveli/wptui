@@ -2115,54 +2115,6 @@ func C_PairPhone(phone *C.char) *C.char {
 	return cCode
 }
 
-func quotedContextInfo(id, sender, chat string) *waE2E.ContextInfo {
-	return &waE2E.ContextInfo{StanzaID: &id, Participant: &sender, RemoteJID: &chat}
-}
-
-func quotedTextMessage(text string) *waE2E.Message {
-	return &waE2E.Message{Conversation: &text}
-}
-
-func quotedFileMessage(kind uint8, caption string) *waE2E.Message {
-	var captionPtr *string
-	if caption != "" {
-		captionPtr = &caption
-	}
-	switch kind {
-	case FileTypeImage:
-		return &waE2E.Message{ImageMessage: &waE2E.ImageMessage{Caption: captionPtr}}
-	case FileTypeVideo:
-		return &waE2E.Message{VideoMessage: &waE2E.VideoMessage{Caption: captionPtr}}
-	case FileTypeAudio:
-		return &waE2E.Message{AudioMessage: &waE2E.AudioMessage{}}
-	case FileTypeDocument:
-		return &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{Caption: captionPtr}}
-	case FileTypeSticker:
-		return &waE2E.Message{StickerMessage: &waE2E.StickerMessage{}}
-	default:
-		return nil
-	}
-}
-
-func quotedMessageFromContent(messageType C.uint8_t, messageContent unsafe.Pointer) *waE2E.Message {
-	if messageContent == nil {
-		return nil
-	}
-	switch messageType {
-	case C.uint8_t(MessageTypeText):
-		return quotedTextMessage(C.GoString((*C.TextMessage)(messageContent).text))
-	case C.uint8_t(MessageTypeFile):
-		file := (*C.FileMessage)(messageContent)
-		caption := ""
-		if file.caption != nil {
-			caption = C.GoString(file.caption)
-		}
-		return quotedFileMessage(uint8(file.kind), caption)
-	default:
-		return nil
-	}
-}
-
 //export C_ForwardMessage
 func C_ForwardMessage(sourceID *C.char, sourceChat C.JID, sourceSender C.JID, sourceIsFromMe C.bool, destinations **C.char, destinationCount C.size_t, forwardSource *C.uint8_t, forwardSourceLen C.size_t) C.ForwardResult {
 	if sourceID == nil || sourceChat == nil || sourceSender == nil || destinations == nil || destinationCount == 0 {
@@ -2184,40 +2136,6 @@ func C_ForwardMessage(sourceID *C.char, sourceChat C.JID, sourceSender C.JID, so
 		destinationStrings,
 		forwardingSourceBytes(forwardSource, forwardSourceLen),
 	).cResult()
-}
-
-//export C_SendMessage
-func C_SendMessage(cjid C.JID, messageType C.uint8_t, messageContent unsafe.Pointer, quoteId *C.char, quoteSender C.JID, quoteChat C.JID, quoteMessageType C.uint8_t, quoteMessageContent unsafe.Pointer) {
-	if cjid == nil || messageContent == nil || client == nil || client.Store == nil || client.Store.ID == nil {
-		LOG_WARN("message send rejected: client or message is unavailable")
-		return
-	}
-	jid := cToJid(cjid)
-
-	contextInfo := &waE2E.ContextInfo{}
-	if quoteId != nil {
-		contextInfo = quotedContextInfo(C.GoString(quoteId), C.GoString(quoteSender), C.GoString(quoteChat))
-		contextInfo.QuotedMessage = quotedMessageFromContent(quoteMessageType, quoteMessageContent)
-	}
-
-	message := ContentToWaE2EMessage(messageType, messageContent, contextInfo)
-
-	sendResponse, err := client.SendMessage(context.Background(), jid, message)
-	if err != nil {
-		LOG_WARN("message send failed: %v", err)
-		return
-	} else {
-		var messageInfo types.MessageInfo
-		messageInfo.Chat = jid
-		messageInfo.IsFromMe = true
-		messageInfo.Sender = *client.Store.ID
-
-		messageInfo.ID = sendResponse.ID
-		messageInfo.Timestamp = sendResponse.Timestamp
-
-		LOG_INFO("Message sent: %s %s", messageInfo.ID, messageInfo.Chat)
-		HandleMessage(messageInfo, message, false)
-	}
 }
 
 //export C_ReactToMessage
