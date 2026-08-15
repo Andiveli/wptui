@@ -17,6 +17,7 @@ pub mod events;
 pub mod inputs;
 pub mod message_action_diagnostics;
 pub mod presence;
+pub mod share_picker;
 
 pub use crate::app;
 use crate::app::actions::{
@@ -31,6 +32,7 @@ use crate::app::contact_avatars::ContactAvatars;
 use crate::app::events::{AppEvent, AppInput, AttachmentViewerState, ViewerPreviewState};
 use crate::app::message_action_diagnostics::{MessageActionDiagnostics, identifier_for_log};
 use crate::app::presence::{PresenceDiagnostics, SelectedPresence, jid_for_log};
+pub use crate::app::share_picker::SharePicker;
 use crate::db;
 use crate::file_picker::FilePickerState;
 use crate::key_handler::KeybindHandler;
@@ -165,97 +167,6 @@ pub enum FileMeta {
 
 pub enum Metadata {
     File(FileMeta),
-}
-
-pub struct SharePicker {
-    contacts: Vec<wr::JID>,
-    labels: HashMap<wr::JID, String>,
-    pub query: String,
-    pub selected: usize,
-    pub offset: usize,
-    viewport_height: usize,
-    selected_contacts: HashSet<wr::JID>,
-}
-
-impl SharePicker {
-    pub fn new(
-        mut contacts: Vec<wr::JID>,
-        labels: HashMap<wr::JID, String>,
-        recency: HashMap<wr::JID, i64>,
-    ) -> Self {
-        contacts.sort_by(|left, right| {
-            recency
-                .get(right)
-                .unwrap_or(&i64::MIN)
-                .cmp(recency.get(left).unwrap_or(&i64::MIN))
-                .then_with(|| left.0.cmp(&right.0))
-        });
-        Self {
-            contacts,
-            labels,
-            query: String::new(),
-            selected: 0,
-            offset: 0,
-            viewport_height: 1,
-            selected_contacts: HashSet::new(),
-        }
-    }
-    pub fn visible_contacts(&self) -> Vec<&wr::JID> {
-        let query = self.query.to_lowercase();
-        self.contacts
-            .iter()
-            .filter(|jid| {
-                query.is_empty()
-                    || jid.0.to_lowercase().contains(&query)
-                    || self
-                        .labels
-                        .get(*jid)
-                        .is_some_and(|name| name.to_lowercase().contains(&query))
-            })
-            .collect()
-    }
-    pub fn selected_count(&self) -> usize {
-        self.selected_contacts.len()
-    }
-    pub fn is_selected(&self, jid: &wr::JID) -> bool {
-        self.selected_contacts.contains(jid)
-    }
-    pub fn destinations(&self) -> Vec<wr::JID> {
-        self.contacts
-            .iter()
-            .filter(|jid| self.is_selected(jid))
-            .cloned()
-            .collect()
-    }
-    pub fn viewport(&self) -> std::ops::Range<usize> {
-        let end = self.visible_contacts().len();
-        let height = self.viewport_height.max(1).min(end);
-        let start = self.offset.min(end.saturating_sub(height));
-        start..start.saturating_add(height)
-    }
-    fn clamp_selection(&mut self) {
-        self.selected = self
-            .selected
-            .min(self.visible_contacts().len().saturating_sub(1));
-        self.offset = self.offset.min(self.selected);
-    }
-    pub fn set_viewport_height(&mut self, height: usize) {
-        self.viewport_height = height.max(1);
-        self.keep_selected_visible();
-    }
-    pub fn keep_selected_visible(&mut self) {
-        let height = self.viewport_height.max(1);
-        if self.selected < self.offset {
-            self.offset = self.selected;
-        }
-        if self.selected >= self.offset.saturating_add(height) {
-            self.offset = self.selected + 1 - height;
-        }
-    }
-    pub fn reset_search_position(&mut self) {
-        self.selected = 0;
-        self.offset = 0;
-    }
 }
 
 pub struct App<'a> {
