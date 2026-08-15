@@ -62,6 +62,41 @@ fn viewer_layout_centers_and_clamps_preview_after_resize() {
 }
 
 #[test]
+fn viewer_layout_clamps_zoom_below_the_minimum() {
+    let minimum = viewer_preview_layout(ratatui::layout::Rect::new(0, 0, 100, 40), 25);
+    let below_minimum = viewer_preview_layout(ratatui::layout::Rect::new(0, 0, 100, 40), 0);
+
+    assert_eq!(below_minimum, minimum);
+    assert_eq!(
+        below_minimum.preview,
+        ratatui::layout::Rect::new(40, 15, 20, 7)
+    );
+}
+
+#[test]
+fn viewer_layout_keeps_tiny_and_empty_areas_inside_the_parent() {
+    for area in [
+        ratatui::layout::Rect::new(0, 0, 0, 0),
+        ratatui::layout::Rect::new(0, 0, 3, 3),
+        ratatui::layout::Rect::new(5, 7, 4, 2),
+    ] {
+        let layout = viewer_preview_layout(area, 400);
+        let inside = |rect: ratatui::layout::Rect| {
+            rect.is_empty()
+                || (rect.x >= area.x
+                    && rect.y >= area.y
+                    && rect.right() <= area.right()
+                    && rect.bottom() <= area.bottom())
+        };
+
+        assert!(inside(layout.modal));
+        assert!(inside(layout.body));
+        assert!(inside(layout.hint));
+        assert!(inside(layout.preview));
+    }
+}
+
+#[test]
 fn composer_cursor_position_is_relative_to_the_final_input_area() {
     assert_eq!(
         composer_cursor_position(ratatui::layout::Rect::new(10, 20, 30, 4), (2, 7)),

@@ -60,6 +60,45 @@ use crate::ui::text_input::TextInput;
 pub const STATUS_BROADCAST_CHAT: &str = "status@broadcast";
 pub const ADMIN_ONLY_GROUP_MESSAGE: &str = "Only group admins can send messages in this group.";
 
+pub trait Clock {
+    fn unix_seconds(&self) -> Option<i64>;
+}
+
+#[derive(Debug, Default)]
+pub struct SystemClock;
+
+impl Clock for SystemClock {
+    fn unix_seconds(&self) -> Option<i64> {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .map(|duration| duration.as_secs() as i64)
+    }
+}
+
+pub struct NotificationProjection {
+    pub summary: Arc<str>,
+    pub body: String,
+}
+
+pub trait Notifier {
+    fn show(&self, notification: &NotificationProjection) -> Result<(), String>;
+}
+
+#[derive(Debug, Default)]
+pub struct NotifyRustNotifier;
+
+impl Notifier for NotifyRustNotifier {
+    fn show(&self, notification: &NotificationProjection) -> Result<(), String> {
+        Notification::new()
+            .summary(&notification.summary)
+            .body(&notification.body)
+            .show()
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum InputReaderState {
     Running,
@@ -70,6 +109,23 @@ enum InputReaderState {
 pub struct Chat {
     pub jid: wr::JID,
     pub last_message_time: Option<i64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CommunityNode {
+    pub jid: wr::JID,
+    pub name: String,
+    pub is_root: bool,
+    pub linked_groups: Vec<wr::JID>,
+}
+
+/// Presentation-only Chats row. `target` and `members` are always real chat
+/// JIDs; a community never becomes a persisted or addressable chat.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChatRow {
+    pub label: String,
+    pub members: Vec<wr::JID>,
+    pub target: wr::JID,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -206,6 +262,8 @@ pub struct App<'a> {
     pub db_handler: DatabaseHandler,
     pub media_path: PathBuf,
     pub whatsmeow_db: PathBuf,
+    pub clock: Box<dyn Clock>,
+    pub notifier: Box<dyn Notifier>,
 
     pub messages: HashMap<wr::MessageId, wr::Message>,
     pub message_actions: HashMap<wr::MessageId, Vec<MessageAction>>,
@@ -232,6 +290,9 @@ pub struct App<'a> {
     /// Status section: the contact whose statuses are open in the right
     /// pane. Mirrors `open_chat` for the Chats section: set on Enter.
     pub open_status_contact: Option<wr::JID>,
+    pub communities: Vec<CommunityNode>,
+    pub communities_unavailable: bool,
+    communities_loaded: bool,
 
     /// Contacts with posted statuses, sorted by latest-status recency (newest
     /// first). Derived from the `status@broadcast` chat.
@@ -330,7 +391,14 @@ impl Default for App<'_> {
         let project_dirs = ProjectDirs::from("com", "nullptr", "wptui").unwrap();
         let data_dir = project_dirs.data_dir();
         let cache_dir = project_dirs.cache_dir();
-        Self::with_data_dir_and_picker(data_dir, cache_dir, picker, default_protocol_type)
+        Self::with_data_dir_and_picker_and_ports(
+            data_dir,
+            cache_dir,
+            picker,
+            default_protocol_type,
+            Box::new(SystemClock),
+            Box::new(NotifyRustNotifier),
+        )
     }
 }
 
@@ -370,14 +438,46 @@ impl App<'_> {
             Picker::halfblocks()
         });
         let default_protocol_type = picker.protocol_type();
-        Self::with_data_dir_and_picker(data_dir, cache_dir, picker, default_protocol_type)
+        Self::with_data_dir_and_picker_and_ports(
+            data_dir,
+            cache_dir,
+            picker,
+            default_protocol_type,
+            Box::new(SystemClock),
+            Box::new(NotifyRustNotifier),
+        )
     }
 
-    fn with_data_dir_and_picker(
+    pub fn with_data_dir_and_ports(
+        data_dir: &Path,
+        cache_dir: &Path,
+        clock: Box<dyn Clock>,
+        notifier: Box<dyn Notifier>,
+    ) -> Self {
+        let picker = Picker::from_query_stdio().unwrap_or_else(|err| {
+            log::warn!(
+                "Failed to query terminal image capabilities; falling back to halfblocks: {err}"
+            );
+            Picker::halfblocks()
+        });
+        let default_protocol_type = picker.protocol_type();
+        Self::with_data_dir_and_picker_and_ports(
+            data_dir,
+            cache_dir,
+            picker,
+            default_protocol_type,
+            clock,
+            notifier,
+        )
+    }
+
+    fn with_data_dir_and_picker_and_ports(
         data_dir: &Path,
         cache_dir: &Path,
         picker: Picker,
         default_protocol_type: ProtocolType,
+        clock: Box<dyn Clock>,
+        notifier: Box<dyn Notifier>,
     ) -> Self {
         fs::create_dir_all(data_dir).unwrap();
 
@@ -389,6 +489,8 @@ impl App<'_> {
             db_handler: DatabaseHandler::new(&data_dir.join("whatsapp.db")),
             media_path: data_dir.join("media"),
             whatsmeow_db: data_dir.join("whatsmeow.db"),
+            clock,
+            notifier,
 
             clipboard_reader,
             clipboard_writer,
@@ -407,6 +509,9 @@ impl App<'_> {
             chat_list_state: ListState::default(),
             open_chat: None,
             open_status_contact: None,
+            communities: Vec::new(),
+            communities_unavailable: false,
+            communities_loaded: false,
 
             status_contacts: Vec::new(),
             status_selection: ListState::default(),
@@ -552,6 +657,7 @@ impl App<'_> {
         match event {
             wr::Event::AppStateSyncComplete => {
                 self.get_contacts();
+                self.load_communities();
                 self.sort_chats();
                 true
             }
@@ -639,6 +745,10 @@ impl App<'_> {
                 true
             }
             wr::Event::Connected => {
+                // Connected is emitted again after reconnects.  The first
+                // probe may race group metadata hydration, so AppStateSyncComplete
+                // below remains the authoritative follow-up refresh.
+                self.load_communities();
                 self.selected_presence.ready();
                 self.presence_diagnostics
                     .record(|| "self presence available: ready".to_owned());
@@ -816,7 +926,7 @@ impl App<'_> {
         }
 
         loop {
-            let now = unix_now();
+            let now = self.now();
             let msg = match self.selected_presence.redraw_after(now) {
                 Some(timeout) => match self.rx.recv_timeout(timeout) {
                     Ok(input) => Ok(input),
@@ -1064,28 +1174,14 @@ impl App<'_> {
                 Ok(AppInput::Message {
                     message: msg,
                     is_sync,
-                }) => {
-                    if !is_sync {
-                        self.handle_notification(&msg);
-                    }
-
-                    self.db_handler.add_message(&msg);
-                    self.add_message(msg);
-
-                    let chat_jid = self.get_selected_chat();
-
-                    self.sort_chats();
-
-                    self.select_chat(chat_jid);
-                    !is_sync
-                }
+                }) => self.process_message(msg, is_sync),
                 Ok(AppInput::Presence(wr::PresenceUpdate {
                     from,
                     unavailable,
                     last_seen,
                 })) => self
                     .selected_presence
-                    .update(&from, unavailable, last_seen, unix_now()),
+                    .update(&from, unavailable, last_seen, self.now()),
                 Ok(AppInput::Terminal(event)) => {
                     self.on_terminal_event(event);
                     true
@@ -1129,7 +1225,7 @@ impl App<'_> {
 
     fn sync_selected_presence(&mut self) {
         let selected = self.open_chat.clone();
-        let now = unix_now();
+        let now = self.now();
         if self.selected_presence.select(selected, now) {
             let selected = self
                 .selected_presence
@@ -1229,45 +1325,51 @@ impl App<'_> {
             .unwrap_or_else(|| jid.0.clone())
     }
 
-    fn handle_notification(&self, message: &wr::Message) {
+    fn process_message(&mut self, message: wr::Message, is_sync: bool) -> bool {
+        self.process_message_with_lookup(message, is_sync, wr::get_chat_settings)
+    }
+
+    fn process_message_with_lookup(
+        &mut self,
+        message: wr::Message,
+        is_sync: bool,
+        lookup: impl FnMut(&wr::JID) -> wr::ChatSettings,
+    ) -> bool {
+        if !is_sync {
+            self.handle_notification_with_lookup(&message, lookup);
+        }
+
+        self.db_handler.add_message(&message);
+        self.add_message(message);
+
+        let chat_jid = self.get_selected_chat();
+        self.sort_chats();
+        self.select_chat(chat_jid);
+        !is_sync
+    }
+
+    fn handle_notification_with_lookup(
+        &self,
+        message: &wr::Message,
+        mut lookup: impl FnMut(&wr::JID) -> wr::ChatSettings,
+    ) {
         if !self.should_notify(message) {
             return;
         }
 
-        let chat_settings = wr::get_chat_settings(&message.info.chat);
+        let chat_settings = lookup(&message.info.chat);
         info!(
             "Chat settings for {:?}: {:?}",
             message.info.chat, chat_settings
         );
-        if chat_settings.found {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|duration| duration.as_secs() as i64)
-                .unwrap_or_default();
-            if chat_settings.muted_until > now {
-                return;
-            }
+        if chat_settings.found && notification_is_muted(true, chat_settings.muted_until, self.now())
+        {
+            return;
         }
 
-        let summary = self.contact_name(&message.info.sender);
-        let body = match &message.message {
-            wr::MessageContent::Text(text) => text.to_string(),
-            wr::MessageContent::File(file) => {
-                if let Some(caption) = &file.caption {
-                    caption.to_string()
-                } else {
-                    match file.kind {
-                        wr::FileKind::Image => "Sent an image".to_string(),
-                        wr::FileKind::Video => "Sent a video".to_string(),
-                        wr::FileKind::Audio => "Sent an audio message".to_string(),
-                        wr::FileKind::Document => "Sent a document".to_string(),
-                        wr::FileKind::Sticker => "Sent a sticker".to_string(),
-                    }
-                }
-            }
-        };
-
-        if let Err(err) = Notification::new().summary(&summary).body(&body).show() {
+        let notification =
+            notification_projection(message, self.contact_name(&message.info.sender));
+        if let Err(err) = self.notifier.show(&notification) {
             error!("Failed to show desktop notification: {err}");
         }
     }
@@ -1275,7 +1377,11 @@ impl App<'_> {
     /// Desktop notifications are suppressed for the user's own messages and
     /// for status broadcasts (statuses surface in the Status section instead).
     fn should_notify(&self, message: &wr::Message) -> bool {
-        !message.info.is_from_me && !Self::is_status_chat(&message.info.chat)
+        notification_eligibility(message)
+    }
+
+    pub(crate) fn now(&self) -> i64 {
+        now_or(0, &*self.clock)
     }
 
     fn stop_input_reader(&self) {
@@ -1286,13 +1392,208 @@ impl App<'_> {
     }
 
     pub fn get_selected_chat(&self) -> Option<wr::JID> {
-        self.chat_list_state.selected().map(|index| {
-            if self.contact_search.input.is_empty() {
-                self.sorted_chats[index].clone()
-            } else {
-                self.filtered_chats[index].clone()
+        let rows = self.visible_chat_rows();
+        self.chat_list_state
+            .selected()
+            .and_then(|index| rows.get(index))
+            .map(|row| row.target.clone())
+    }
+
+    pub fn chat_rows(&self) -> Vec<ChatRow> {
+        let mut grouped = HashSet::new();
+        let community_metadata = self
+            .communities
+            .iter()
+            .map(|node| node.jid.clone())
+            .collect::<HashSet<_>>();
+        let mut rows = Vec::new();
+        for community in self.communities.iter().filter(|node| node.is_root) {
+            let members = community
+                .linked_groups
+                .iter()
+                .filter(|jid| self.chats.contains_key(*jid))
+                .cloned()
+                .collect::<Vec<_>>();
+            if members.is_empty() {
+                continue;
             }
-        })
+            grouped.extend(members.iter().cloned());
+            let target = members
+                .iter()
+                .max_by_key(|jid| self.chat_recency(jid))
+                .expect("non-empty community members")
+                .clone();
+            rows.push(ChatRow {
+                label: community.name.clone(),
+                members,
+                target,
+            });
+        }
+        rows.extend(
+            self.sorted_chats
+                .iter()
+                .filter(|jid| !grouped.contains(*jid))
+                .filter(|jid| !community_metadata.contains(*jid))
+                .map(|jid| ChatRow {
+                    label: self.contact_name(jid).to_string(),
+                    members: vec![(*jid).clone()],
+                    target: (*jid).clone(),
+                }),
+        );
+        rows.sort_by(|left, right| {
+            self.chat_recency(&right.target)
+                .cmp(&self.chat_recency(&left.target))
+                .then_with(|| left.label.cmp(&right.label))
+                .then_with(|| left.target.0.cmp(&right.target.0))
+        });
+        rows
+    }
+
+    pub fn visible_chat_rows(&self) -> Vec<ChatRow> {
+        let query = self.contact_search.input.to_lowercase();
+        self.chat_rows()
+            .into_iter()
+            .filter(|row| {
+                query.is_empty()
+                    || row.label.to_lowercase().contains(&query)
+                    || row
+                        .members
+                        .iter()
+                        .any(|jid| self.contact_name(jid).to_lowercase().contains(&query))
+            })
+            .collect()
+    }
+
+    pub fn chat_row_item(&self, row: &ChatRow) -> crate::ui::contact_list::ContactListItem {
+        crate::ui::contact_list::ContactListItem::from_row(self, row)
+    }
+
+    fn chat_recency(&self, jid: &wr::JID) -> i64 {
+        self.chat_messages
+            .get(jid)
+            .into_iter()
+            .flatten()
+            .filter_map(|id| self.messages.get(id).map(|message| message.info.timestamp))
+            .max()
+            .or_else(|| self.chats.get(jid).and_then(|chat| chat.last_message_time))
+            .unwrap_or_default()
+    }
+
+    pub fn get_selected_community(&self) -> Option<wr::JID> {
+        self.chat_list_state
+            .selected()
+            .and_then(|index| {
+                self.communities
+                    .iter()
+                    .filter(|node| !node.is_root)
+                    .nth(index)
+            })
+            .map(|node| node.jid.clone())
+    }
+
+    fn selected_community_node_jid(&self) -> Option<wr::JID> {
+        self.chat_list_state
+            .selected()
+            .and_then(|index| {
+                self.communities
+                    .iter()
+                    .filter(|node| !node.is_root)
+                    .nth(index)
+                    .or_else(|| {
+                        self.communities
+                            .iter()
+                            .filter(|node| node.is_root)
+                            .nth(index)
+                    })
+            })
+            .map(|node| node.jid.clone())
+    }
+
+    fn select_community_node(&mut self, jid: Option<wr::JID>) {
+        let selected = jid
+            .and_then(|jid| {
+                self.selectable_community_nodes()
+                    .iter()
+                    .position(|node| node.jid == jid)
+            })
+            .or_else(|| (!self.selectable_community_nodes().is_empty()).then_some(0));
+        self.chat_list_state.select(selected);
+    }
+
+    pub(crate) fn selectable_community_nodes(&self) -> Vec<&CommunityNode> {
+        self.communities
+            .iter()
+            .filter(|node| !node.is_root)
+            .collect()
+    }
+
+    fn load_communities(&mut self) {
+        self.refresh_communities(wr::get_communities);
+    }
+
+    pub fn refresh_communities<F>(&mut self, fetch: F)
+    where
+        F: FnOnce() -> Result<Vec<wr::CommunityInfo>, wr::CommunitiesError>,
+    {
+        match fetch() {
+            Ok(records) => {
+                // Communities has its own hierarchy. Never preserve its
+                // selection through the projected Chats rows: those rows may
+                // reorder independently and roots target a different JID.
+                let selected = if self.selected_section == Section::Communities {
+                    self.selected_community_node_jid()
+                } else {
+                    None
+                };
+                // An empty successful result is meaningful: it clears a prior
+                // hierarchy and renders the normal "No communities" state.
+                self.communities = Self::build_community_nodes(&records);
+                self.communities_unavailable = false;
+                self.communities_loaded = true;
+                if self.selected_section == Section::Communities {
+                    self.select_community_node(selected);
+                }
+            }
+            Err(error) => {
+                // Do not turn a transient readiness/reconnect failure into an
+                // empty hierarchy. Keep the last successful snapshot visible.
+                warn!("Could not load communities: {error:?}");
+                self.communities_unavailable = !self.communities_loaded;
+            }
+        }
+    }
+
+    pub(crate) fn build_community_nodes(records: &[wr::CommunityInfo]) -> Vec<CommunityNode> {
+        let mut roots = records
+            .iter()
+            .filter(|record| record.is_parent)
+            .collect::<Vec<_>>();
+        roots.sort_by(|a, b| a.name.cmp(&b.name));
+        let mut nodes = Vec::new();
+        for root in roots {
+            nodes.push(CommunityNode {
+                jid: root.jid.clone(),
+                name: root.name.to_string(),
+                is_root: true,
+                linked_groups: records
+                    .iter()
+                    .filter(|record| record.parent_jid.as_ref() == Some(&root.jid))
+                    .map(|record| record.jid.clone())
+                    .collect(),
+            });
+            let mut children = records
+                .iter()
+                .filter(|record| record.parent_jid.as_ref() == Some(&root.jid))
+                .collect::<Vec<_>>();
+            children.sort_by(|a, b| a.name.cmp(&b.name));
+            nodes.extend(children.into_iter().map(|child| CommunityNode {
+                jid: child.jid.clone(),
+                name: child.name.to_string(),
+                is_root: false,
+                linked_groups: Vec::new(),
+            }));
+        }
+        nodes
     }
 
     pub fn open_chat(&self) -> Option<wr::JID> {
@@ -1667,10 +1968,7 @@ impl App<'_> {
         replacement: Arc<str>,
     ) {
         self.local_action_sequence = self.local_action_sequence.saturating_add(1);
-        let occurred_at = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_secs() as i64)
-            .unwrap_or(message.info.timestamp);
+        let occurred_at = now_or(message.info.timestamp, &*self.clock);
         self.apply_message_action(MessageAction {
             action_id: format!(
                 "local-edit:{}:{}",
@@ -1688,10 +1986,7 @@ impl App<'_> {
 
     pub(crate) fn record_local_message_delete(&mut self, message: &wr::Message) {
         self.local_action_sequence = self.local_action_sequence.saturating_add(1);
-        let occurred_at = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_secs() as i64)
-            .unwrap_or(message.info.timestamp);
+        let occurred_at = now_or(message.info.timestamp, &*self.clock);
         self.apply_message_action(MessageAction {
             action_id: format!(
                 "local-delete:{}:{}",
@@ -1728,17 +2023,15 @@ impl App<'_> {
     }
 
     pub fn select_chat(&mut self, jid: Option<wr::JID>) {
-        let target_list = if self.contact_search.input.is_empty() {
-            &self.sorted_chats
-        } else {
-            &self.filtered_chats
-        };
+        let target_list = self.visible_chat_rows();
 
         if let Some(jid) = jid
-            && let Some(index) = target_list.iter().position(|chat_jid| chat_jid == &jid)
+            && let Some(index) = target_list
+                .iter()
+                .position(|row| row.target == jid || row.members.contains(&jid))
         {
             self.chat_list_state.select(Some(index));
-        } else if !self.sorted_chats.is_empty() {
+        } else if !target_list.is_empty() {
             self.chat_list_state.select(Some(0));
         } else {
             self.chat_list_state.select(None);
@@ -1746,15 +2039,10 @@ impl App<'_> {
     }
 
     fn update_filtered_chats(&mut self) {
-        let query = self.contact_search.input.to_lowercase();
         self.filtered_chats = self
-            .sorted_chats
-            .iter()
-            .filter(|chat| {
-                let name = self.contact_name(chat).to_lowercase();
-                name.contains(&query)
-            })
-            .cloned()
+            .visible_chat_rows()
+            .into_iter()
+            .map(|row| row.target)
             .collect();
 
         if !self.filtered_chats.is_empty() {
@@ -1846,6 +2134,7 @@ impl App<'_> {
     }
 
     pub fn sort_chats(&mut self) {
+        let selected = self.get_selected_chat();
         let mut entries: Vec<_> = self.chats.values().cloned().collect();
         entries.sort_by(|a, b| {
             let a_time = a.last_message_time.unwrap_or_default();
@@ -1858,6 +2147,7 @@ impl App<'_> {
             .map(|chat| chat.jid.clone())
             .filter(|jid: &wr::JID| !jid.0.as_ref().ends_with("@broadcast"))
             .collect();
+        self.select_chat(selected);
     }
 
     pub(crate) fn sort_chat_messages(&mut self, chat_jid: wr::JID) {
@@ -2029,6 +2319,38 @@ pub fn remove_status_media_files(media_path: &Path, relative_paths: &[PathBuf]) 
     remove_owned_media_files(media_path, relative_paths);
 }
 
+fn notification_eligibility(message: &wr::Message) -> bool {
+    !message.info.is_from_me && !App::is_status_chat(&message.info.chat)
+}
+
+fn notification_is_muted(found: bool, muted_until: i64, now: i64) -> bool {
+    found && muted_until > now
+}
+
+fn notification_projection(message: &wr::Message, summary: Arc<str>) -> NotificationProjection {
+    let body = match &message.message {
+        wr::MessageContent::Text(text) => text.to_string(),
+        wr::MessageContent::File(file) => {
+            if let Some(caption) = &file.caption {
+                caption.to_string()
+            } else {
+                match file.kind {
+                    wr::FileKind::Image => "Sent an image".to_string(),
+                    wr::FileKind::Video => "Sent a video".to_string(),
+                    wr::FileKind::Audio => "Sent an audio message".to_string(),
+                    wr::FileKind::Document => "Sent a document".to_string(),
+                    wr::FileKind::Sticker => "Sent a sticker".to_string(),
+                }
+            }
+        }
+    };
+    NotificationProjection { summary, body }
+}
+
+fn now_or(fallback: i64, clock: &dyn Clock) -> i64 {
+    clock.unix_seconds().unwrap_or(fallback)
+}
+
 pub fn unix_now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -2039,6 +2361,75 @@ pub fn unix_now() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::actions::AppAction;
+    use crate::app::presence::PresenceMarker;
+
+    #[derive(Debug)]
+    struct FixedClock(Option<i64>);
+
+    impl FixedClock {
+        fn new(value: i64) -> Self {
+            Self(Some(value))
+        }
+    }
+
+    impl Clock for FixedClock {
+        fn unix_seconds(&self) -> Option<i64> {
+            self.0
+        }
+    }
+
+    #[derive(Clone)]
+    struct MutableClock(Arc<Mutex<Option<i64>>>);
+
+    impl MutableClock {
+        fn new(value: Option<i64>) -> Self {
+            Self(Arc::new(Mutex::new(value)))
+        }
+
+        fn set(&self, value: Option<i64>) {
+            *self.0.lock().unwrap() = value;
+        }
+    }
+
+    impl Clock for MutableClock {
+        fn unix_seconds(&self) -> Option<i64> {
+            *self.0.lock().unwrap()
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct RecordingNotifier {
+        notifications: Arc<Mutex<Vec<(String, String)>>>,
+    }
+
+    impl RecordingNotifier {
+        fn notifications(&self) -> Vec<(String, String)> {
+            self.notifications.lock().unwrap().clone()
+        }
+    }
+
+    impl Notifier for RecordingNotifier {
+        fn show(&self, notification: &NotificationProjection) -> Result<(), String> {
+            self.notifications
+                .lock()
+                .unwrap()
+                .push((notification.summary.to_string(), notification.body.clone()));
+            Ok(())
+        }
+    }
+
+    #[derive(Clone)]
+    struct FailingNotifier {
+        attempts: Arc<Mutex<usize>>,
+    }
+
+    impl Notifier for FailingNotifier {
+        fn show(&self, _notification: &NotificationProjection) -> Result<(), String> {
+            *self.attempts.lock().unwrap() += 1;
+            Err("notification failed".to_owned())
+        }
+    }
 
     /// Test-only App wrapper: points every storage path at a fresh
     /// tempdir (so tests never open the real user database) and stops
@@ -2078,6 +2469,22 @@ mod tests {
         fn drop(&mut self) {
             self.app.db_handler.stop();
         }
+    }
+
+    fn app_with_ports<C, N>(clock: C, notifier: N) -> TestApp
+    where
+        C: Clock + 'static,
+        N: Notifier + 'static,
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let app = App::with_data_dir_and_ports(
+            dir.path(),
+            dir.path(),
+            Box::new(clock),
+            Box::new(notifier),
+        );
+        app.db_handler.init();
+        TestApp { app, _dir: dir }
     }
 
     impl std::ops::Deref for TestApp {
@@ -2135,6 +2542,180 @@ mod tests {
         assert_eq!(app.open_chat(), Some(recipient.clone()));
         assert!(app.chats.contains_key(&recipient));
         assert!(app.sorted_chats.contains(&recipient));
+    }
+
+    #[test]
+    fn community_hierarchy_is_sorted_with_roots_followed_by_children() {
+        let root = wr::JID::from("root@g.us".to_owned());
+        let child = wr::JID::from("child@g.us".to_owned());
+        let records = vec![
+            wr::CommunityInfo {
+                jid: child.clone(),
+                name: "Child".into(),
+                parent_jid: Some(root.clone()),
+                is_parent: false,
+            },
+            wr::CommunityInfo {
+                jid: root.clone(),
+                name: "Community".into(),
+                parent_jid: None,
+                is_parent: true,
+            },
+        ];
+        assert_eq!(
+            App::build_community_nodes(&records),
+            vec![
+                CommunityNode {
+                    jid: root,
+                    name: "Community".into(),
+                    is_root: true,
+                    linked_groups: vec![child.clone()],
+                },
+                CommunityNode {
+                    jid: child,
+                    name: "Child".into(),
+                    is_root: false,
+                    linked_groups: Vec::new(),
+                },
+            ]
+        );
+    }
+
+    fn community(name: &str, jid: &str, is_parent: bool) -> wr::CommunityInfo {
+        wr::CommunityInfo {
+            jid: wr::JID::from(jid.to_owned()),
+            name: name.into(),
+            parent_jid: None,
+            is_parent,
+        }
+    }
+
+    #[test]
+    fn communities_load_after_readiness_event() {
+        let mut app = TestApp::new();
+        let root = community("Community", "root@g.us", true);
+
+        app.refresh_communities(|| Ok(vec![root.clone()]));
+
+        assert_eq!(app.communities.len(), 1);
+        assert!(!app.communities_unavailable);
+    }
+
+    #[test]
+    fn communities_refresh_on_restart_or_reconnect_replaces_snapshot() {
+        let mut app = TestApp::new();
+        app.refresh_communities(|| Ok(vec![community("Old", "old@g.us", true)]));
+        app.refresh_communities(|| Ok(vec![community("New", "new@g.us", true)]));
+
+        assert_eq!(app.communities[0].name, "New");
+        assert_eq!(app.communities[0].jid, wr::JID::from("new@g.us".to_owned()));
+    }
+
+    #[test]
+    fn successful_empty_communities_clears_snapshot() {
+        let mut app = TestApp::new();
+        app.refresh_communities(|| Ok(vec![community("Old", "old@g.us", true)]));
+        app.refresh_communities(|| Ok(Vec::new()));
+
+        assert!(app.communities.is_empty());
+        assert!(!app.communities_unavailable);
+    }
+
+    #[test]
+    fn transient_communities_failure_preserves_last_successful_snapshot() {
+        let mut app = TestApp::new();
+        app.refresh_communities(|| Ok(vec![community("Known", "known@g.us", true)]));
+        app.refresh_communities(|| Err(wr::CommunitiesError::BridgeUnavailable));
+
+        assert_eq!(app.communities[0].name, "Known");
+        assert!(!app.communities_unavailable);
+    }
+
+    #[test]
+    fn communities_refresh_preserves_explicit_node_across_reorder_and_target_change() {
+        let mut app = TestApp::new();
+        let selected = wr::JID::from("selected@g.us".to_owned());
+        let other = wr::JID::from("other@g.us".to_owned());
+        app.selected_section = Section::Communities;
+        app.refresh_communities(|| {
+            Ok(vec![
+                community("Selected", "selected@g.us", true),
+                wr::CommunityInfo {
+                    jid: other.clone(),
+                    name: "Other".into(),
+                    parent_jid: Some(selected.clone()),
+                    is_parent: false,
+                },
+            ])
+        });
+        app.chat_list_state.select(Some(0));
+        app.chats.insert(
+            other.clone(),
+            Chat {
+                jid: other.clone(),
+                last_message_time: None,
+            },
+        );
+        app.refresh_communities(|| {
+            Ok(vec![
+                community("Aardvark", "aardvark@g.us", true),
+                community("Selected", "selected@g.us", true),
+                wr::CommunityInfo {
+                    jid: other.clone(),
+                    name: "Other".into(),
+                    parent_jid: Some(selected.clone()),
+                    is_parent: false,
+                },
+            ])
+        });
+
+        assert_eq!(app.selected_community_node_jid(), Some(other.clone()));
+        assert_eq!(app.get_selected_community(), Some(other));
+    }
+
+    #[test]
+    fn communities_refresh_falls_back_when_selected_node_is_removed() {
+        let mut app = TestApp::new();
+        app.selected_section = Section::Communities;
+        app.refresh_communities(|| {
+            Ok(vec![
+                community("Removed", "removed@g.us", true),
+                community("Kept", "kept@g.us", true),
+            ])
+        });
+        app.chat_list_state.select(Some(0));
+        app.refresh_communities(|| Ok(vec![community("Kept", "kept@g.us", true)]));
+
+        assert_eq!(app.chat_list_state.selected(), None);
+        assert_eq!(app.selected_community_node_jid(), None);
+    }
+
+    #[test]
+    fn community_selection_moves_and_enter_opens_the_selected_group() {
+        let mut app = TestApp::new();
+        let root = wr::JID::from("root@g.us".to_owned());
+        let child = wr::JID::from("child@g.us".to_owned());
+        app.communities = vec![
+            CommunityNode {
+                jid: root,
+                name: "Community".into(),
+                is_root: true,
+                linked_groups: vec![child.clone()],
+            },
+            CommunityNode {
+                jid: child.clone(),
+                name: "Child".into(),
+                is_root: false,
+                linked_groups: Vec::new(),
+            },
+        ];
+        app.selected_section = Section::Communities;
+        app.focus_pane = FocusPane::ChatList;
+        app.chat_list_state.select(Some(0));
+        assert_eq!(app.chat_list_state.selected(), Some(0));
+        app.dispatch_action(AppAction::OpenChat);
+        assert_eq!(app.open_chat(), Some(child));
+        assert_eq!(app.focus_pane, FocusPane::Conversation);
     }
 
     #[test]
@@ -2711,6 +3292,213 @@ mod tests {
 
         let status = status_message(&broadcast, "status", 3);
         assert!(!app.should_notify(&status));
+    }
+
+    #[test]
+    fn notification_projection_preserves_untrusted_message_text() {
+        let sender = wr::JID::from("alice@s.whatsapp.net".to_owned());
+        let message = message(&sender, "ignored", 1);
+        let projection = notification_projection(&message, Arc::from("Alice"));
+
+        assert_eq!(projection.summary.as_ref(), "Alice");
+        assert_eq!(projection.body, "ignored");
+
+        let message = wr::Message {
+            message: wr::MessageContent::Text("こんにちは\n\"quoted\"\u{0007}".into()),
+            ..message
+        };
+        let projection = notification_projection(&message, Arc::from("名前\n\"sender\""));
+        assert_eq!(projection.summary.as_ref(), "名前\n\"sender\"");
+        assert_eq!(projection.body, "こんにちは\n\"quoted\"\u{0007}");
+    }
+
+    #[test]
+    fn production_message_handler_covers_notification_policy_and_continuation() {
+        let chat = wr::JID::from("chat@g.us".to_owned());
+        let notifier = RecordingNotifier::default();
+        let mut app = app_with_ports(FixedClock::new(2_000), notifier.clone());
+
+        assert!(
+            app.process_message_with_lookup(message(&chat, "ordinary", 1), false, |_| {
+                wr::ChatSettings {
+                    found: false,
+                    ..Default::default()
+                }
+            },)
+        );
+        assert_eq!(
+            notifier.notifications(),
+            vec![("chat@g.us".to_owned(), "ordinary".to_owned())]
+        );
+        assert!(app.messages.contains_key("ordinary"));
+
+        let muted = RecordingNotifier::default();
+        let mut app = app_with_ports(FixedClock::new(2_000), muted.clone());
+        assert!(
+            app.process_message_with_lookup(message(&chat, "muted", 2), false, |_| {
+                wr::ChatSettings {
+                    found: true,
+                    muted_until: 2_001,
+                    ..Default::default()
+                }
+            },)
+        );
+        assert!(muted.notifications().is_empty());
+        assert!(app.messages.contains_key("muted"));
+
+        for (id, message) in [
+            ("own", {
+                let mut message = message(&chat, "own", 3);
+                message.info.is_from_me = true;
+                message
+            }),
+            ("status", status_message(&chat, "status", 4)),
+        ] {
+            let notifier = RecordingNotifier::default();
+            let lookup_calls = Arc::new(Mutex::new(0));
+            let calls = lookup_calls.clone();
+            let mut app = app_with_ports(FixedClock::new(2_000), notifier.clone());
+            assert!(app.process_message_with_lookup(message, false, |_| {
+                *calls.lock().unwrap() += 1;
+                Default::default()
+            }));
+            assert_eq!(*lookup_calls.lock().unwrap(), 0, "{id} lookup");
+            assert!(notifier.notifications().is_empty(), "{id} notification");
+            assert!(app.messages.contains_key(id));
+        }
+
+        let attempts = Arc::new(Mutex::new(0));
+        let failing = FailingNotifier {
+            attempts: attempts.clone(),
+        };
+        let mut app = app_with_ports(FixedClock::new(2_000), failing);
+        assert!(
+            app.process_message_with_lookup(message(&chat, "failure", 5), false, |_| {
+                Default::default()
+            },)
+        );
+        assert_eq!(*attempts.lock().unwrap(), 1);
+        assert!(app.messages.contains_key("failure"));
+
+        let sync = RecordingNotifier::default();
+        let mut app = app_with_ports(FixedClock::new(2_000), sync.clone());
+        assert!(
+            !app.process_message_with_lookup(message(&chat, "sync", 6), true, |_| panic!(
+                "sync messages must not look up chat settings"
+            ),)
+        );
+        assert!(sync.notifications().is_empty());
+        assert!(app.messages.contains_key("sync"));
+    }
+
+    #[test]
+    fn production_default_handler_keeps_message_processing_usable() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::with_data_dir(dir.path(), dir.path());
+        app.db_handler.init();
+        let chat = wr::JID::from("chat@g.us".to_owned());
+        assert!(
+            app.process_message_with_lookup(message(&chat, "default", 7), false, |_| {
+                Default::default()
+            },)
+        );
+        assert!(app.messages.contains_key("default"));
+        app.db_handler.stop();
+    }
+
+    #[test]
+    fn local_message_actions_use_injected_clock_and_message_timestamp_fallback() {
+        let chat = wr::JID::from("chat@g.us".to_owned());
+        let message = message(&chat, "local-action", 77);
+        let mut app = app_with_ports(FixedClock::new(1_700_000_000), RecordingNotifier::default());
+        app.record_local_message_edit(&message, "edited".into());
+        assert_eq!(
+            app.message_actions[&message.info.id][0].occurred_at,
+            1_700_000_000
+        );
+
+        let mut app = app_with_ports(FixedClock::new(1_700_000_000), RecordingNotifier::default());
+        app.record_local_message_delete(&message);
+        assert_eq!(
+            app.message_actions[&message.info.id][0].occurred_at,
+            1_700_000_000
+        );
+
+        let mut app = app_with_ports(FixedClock(None), RecordingNotifier::default());
+        app.record_local_message_delete(&message);
+        assert_eq!(app.message_actions[&message.info.id][0].occurred_at, 77);
+    }
+
+    #[test]
+    fn injected_clock_preserves_mute_boundary_and_presence_timing() {
+        let chat = wr::JID::from("alice@s.whatsapp.net".to_owned());
+        let clock = MutableClock::new(Some(1_000));
+        let mut app = app_with_ports(clock.clone(), RecordingNotifier::default());
+        app.open_chat = Some(chat.clone());
+        let now = app.now();
+        app.selected_presence.select(Some(chat.clone()), now);
+        app.selected_presence.update(&chat, true, 0, now);
+
+        assert!(!notification_is_muted(true, 1_000, app.now()));
+        let now = app.now();
+        assert_eq!(
+            app.selected_presence.marker(Some(&chat), now),
+            Some(PresenceMarker::RecentlyOffline)
+        );
+        assert_eq!(
+            app.selected_presence.redraw_after(app.now()),
+            Some(Duration::from_secs(300))
+        );
+
+        clock.set(Some(1_299));
+        let now = app.now();
+        assert_eq!(
+            app.selected_presence.marker(Some(&chat), now),
+            Some(PresenceMarker::RecentlyOffline)
+        );
+        assert_eq!(
+            app.selected_presence.redraw_after(app.now()),
+            Some(Duration::from_secs(1))
+        );
+        clock.set(Some(1_300));
+        assert!(notification_is_muted(true, 1_301, app.now()));
+        assert!(!notification_is_muted(true, 1_300, app.now()));
+        let now = app.now();
+        assert_eq!(
+            app.selected_presence.marker(Some(&chat), now),
+            Some(PresenceMarker::Offline)
+        );
+        assert_eq!(app.selected_presence.redraw_after(app.now()), None);
+
+        clock.set(None);
+        assert_eq!(app.now(), 0);
+    }
+
+    #[test]
+    fn injected_clock_reaches_presence_and_ui_marker_path() {
+        use ratatui::{Terminal, backend::TestBackend, layout::Rect};
+
+        let chat = wr::JID::from("alice@s.whatsapp.net".to_owned());
+        let mut app = app_with_ports(FixedClock::new(1_700_000_000), RecordingNotifier::default());
+        app.contacts.insert(chat.clone(), "Alice".into());
+        app.open_chat = Some(chat.clone());
+        let now = app.now();
+        app.selected_presence.select(Some(chat.clone()), now);
+        app.selected_presence.update(&chat, true, 0, now);
+
+        let mut terminal = Terminal::new(TestBackend::new(40, 8)).unwrap();
+        terminal
+            .draw(|frame| crate::ui::render_chats(frame, &mut app, Rect::new(0, 0, 40, 8)))
+            .unwrap();
+        let row = terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(40)
+            .next()
+            .unwrap();
+        let title = row.iter().map(|cell| cell.symbol()).collect::<String>();
+        assert!(title.contains("● Alice"), "rendered title: {title:?}");
     }
 
     #[test]

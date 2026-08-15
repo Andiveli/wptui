@@ -117,6 +117,14 @@ fn composer_wraps_visually_without_mutating_its_logical_lines() {
 }
 
 #[test]
+fn empty_composer_input_keeps_one_visual_row_and_origin_cursor() {
+    let lines = vec![String::new()];
+
+    assert_eq!(composer_visual_rows(&lines, 8), 1);
+    assert_eq!(composer_visual_cursor(&lines, (0, 0), 8), (0, 0));
+}
+
+#[test]
 fn composer_cursor_follows_a_word_moved_to_the_next_visual_row() {
     let width = 8;
     let mut line = "hello wo".to_owned();
@@ -247,6 +255,41 @@ fn composer_renders_a_word_on_the_same_row_as_its_cursor() {
 }
 
 #[test]
+fn composer_scrolls_to_keep_the_selected_cursor_row_visible() {
+    let mut app = TestApp::new();
+    let chat = JID::from("chat@example.test".to_owned());
+    app.sorted_chats.push(chat.clone());
+    app.open_chat = Some(chat);
+    app.chat_list_state.select(Some(0));
+    app.conversation_mode = wp_tui::app::actions::ConversationMode::ComposerEditing;
+    app.pane_visibility = PaneVisibility {
+        section_rail: false,
+        chat_list: false,
+    };
+    app.composer.insert_text("one\ntwo\nthree\nfour\nfive");
+
+    let backend = TestBackend::new(20, 8);
+    let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+    terminal
+        .draw(|frame| ui::draw(frame, &mut app))
+        .expect("chat should render");
+
+    let rows = terminal
+        .backend()
+        .buffer()
+        .content()
+        .chunks(20)
+        .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+        .collect::<Vec<_>>();
+
+    assert!(rows.iter().any(|row| row.contains("four")), "{rows:?}");
+    assert!(rows.iter().any(|row| row.contains("five")), "{rows:?}");
+    assert!(!rows.iter().any(|row| row.contains("one")), "{rows:?}");
+    assert!(!rows.iter().any(|row| row.contains("two")), "{rows:?}");
+    assert!(!rows.iter().any(|row| row.contains("three")), "{rows:?}");
+}
+
+#[test]
 fn conversation_areas_keep_the_message_area_valid_in_short_terminals() {
     let (messages, composer) = conversation_areas(Rect::new(0, 0, 20, 4), 1, 1, 4);
 
@@ -322,8 +365,7 @@ fn navigation_layout_supports_each_single_visible_navigation_pane() {
 
 #[test]
 fn structural_placeholders_do_not_render_chat_or_contact_content() {
-    // Status now renders real panes (see tests/status_section.rs), so only
-    // Communities keeps the structural placeholder.
+    // Communities now renders its approved hierarchy and real chat pane.
     for section in [Section::Communities] {
         let mut app = TestApp::new();
         let chat = JID::from("chat@example.test".to_owned());
@@ -345,7 +387,7 @@ fn structural_placeholders_do_not_render_chat_or_contact_content() {
             .iter()
             .map(|cell| cell.symbol())
             .collect::<String>();
-        assert!(output.contains(&format!("{} is not available yet.", section.title())));
+        assert!(output.contains("Communities"));
         assert!(!output.contains("CHAT_CONTACT_SENTINEL"));
         assert!(!output.contains("Contacts"));
         assert!(!output.contains("Message input"));
@@ -408,4 +450,16 @@ fn chat_border_truncates_long_action_notice_with_ellipsis() {
 
     assert!(row.contains("Alice"), "name still on the left: {row:?}");
     assert!(row.contains("…"), "notice should be truncated: {row:?}");
+}
+
+#[test]
+fn chat_border_truncates_unicode_action_notice_within_cell_width() {
+    let payload = "界".repeat(60);
+    let row = draw_top_row(100, |app| {
+        app.action_notice = Some(wp_tui::app::actions::ActionNotice::CopiedText(payload));
+    });
+
+    assert!(row.contains("界"), "{row:?}");
+    assert!(row.contains("…"), "notice should be truncated: {row:?}");
+    assert!(row.matches("界").count() <= 40, "{row:?}");
 }

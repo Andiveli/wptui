@@ -243,6 +243,32 @@ fn moving_selection_moves_the_card_without_stale_layout() {
     assert!(!second.iter().any(|row| row.contains("│ newer body")));
 }
 
+#[test]
+fn selected_message_scrolls_viewport_to_keep_the_card_with_padding() {
+    let mut app = app_with_messages(&[
+        text_message("first", "first body"),
+        text_message("second", "second body"),
+        text_message("third", "third body"),
+        text_message("fourth", "fourth body"),
+        text_message("fifth", "fifth body"),
+    ]);
+    app.message_list_state.set_selected_message("third".into());
+    app.message_list_state.offset = 6;
+
+    let first_rows = render_rows(&mut app, 34, 8);
+
+    assert_eq!(app.message_list_state.offset, 0);
+    assert!(first_rows.iter().any(|row| row.contains("│ third body")));
+
+    app.message_list_state.set_selected_message("first".into());
+    app.message_list_state.offset = 0;
+
+    let third_rows = render_rows(&mut app, 34, 8);
+
+    assert_eq!(app.message_list_state.offset, 4);
+    assert!(third_rows.iter().any(|row| row.contains("│ first body")));
+}
+
 fn render_rows(app: &mut App<'_>, width: u16, height: u16) -> Vec<String> {
     let buffer = render_buffer(app, width, height);
     (0..height)

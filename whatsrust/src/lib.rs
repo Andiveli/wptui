@@ -60,9 +60,24 @@ struct CContactEntry {
 }
 
 #[repr(C)]
+struct CCommunityEntry {
+    jid: CJID,
+    name: *const c_char,
+    parent_jid: CJID,
+    is_parent: bool,
+}
+
+#[repr(C)]
 struct CGetContactsResult {
     entries: *const CContactEntry,
     size: u32,
+}
+
+#[repr(C)]
+struct CGetCommunitiesResult {
+    entries: *const CCommunityEntry,
+    size: u32,
+    status: u8,
 }
 
 #[repr(C)]
@@ -622,6 +637,19 @@ pub enum GroupInfoError {
     InvalidBridgeResult,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CommunityInfo {
+    pub jid: JID,
+    pub name: Arc<str>,
+    pub parent_jid: Option<JID>,
+    pub is_parent: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CommunitiesError {
+    BridgeUnavailable,
+}
+
 impl From<&CContact> for Contact {
     fn from(ccontact: &CContact) -> Self {
         let first_name = unsafe { CStr::from_ptr(ccontact.first_name) }
@@ -692,6 +720,8 @@ unsafe extern "C" {
         forward_source_len: usize,
     ) -> CForwardResult;
     fn C_GetContacts() -> CGetContactsResult;
+    fn C_GetCommunities() -> CGetCommunitiesResult;
+    fn C_FreeCommunities(result: CGetCommunitiesResult);
     fn C_GetProfilePicture(jid: CJID) -> CProfilePictureResult;
     fn C_FreeProfilePicture(result: CProfilePictureResult);
     fn C_GetChatSettings(jid: CJID) -> CChatSettings;
@@ -1549,6 +1579,40 @@ pub fn get_contacts() -> Vec<(JID, Arc<str>)> {
             (jid, name)
         })
         .collect()
+}
+
+/// Returns real community roots and linked groups reported by WhatsApp.
+pub fn get_communities() -> Result<Vec<CommunityInfo>, CommunitiesError> {
+    let result = unsafe { C_GetCommunities() };
+    if result.status != 0 {
+        // C_GetCommunities transfers ownership even when the bridge reports
+        // an error; the current error result is empty, but freeing it here
+        // keeps that contract correct if it ever carries partial data.
+        unsafe { C_FreeCommunities(result) };
+        return Err(CommunitiesError::BridgeUnavailable);
+    }
+    if result.entries.is_null() || result.size == 0 {
+        unsafe { C_FreeCommunities(result) };
+        return Ok(Vec::new());
+    }
+    let entries = unsafe { std::slice::from_raw_parts(result.entries, result.size as usize) };
+    let communities = entries
+        .iter()
+        .map(|entry| {
+            let parent = unsafe { CStr::from_ptr(entry.parent_jid) }.to_string_lossy();
+            CommunityInfo {
+                jid: (&entry.jid).into(),
+                name: unsafe { CStr::from_ptr(entry.name) }
+                    .to_string_lossy()
+                    .into_owned()
+                    .into(),
+                parent_jid: (!parent.is_empty()).then(|| parent.to_string().into()),
+                is_parent: entry.is_parent,
+            }
+        })
+        .collect::<Vec<_>>();
+    unsafe { C_FreeCommunities(result) };
+    Ok(communities)
 }
 
 pub fn get_chat_settings(jid: &JID) -> ChatSettings {

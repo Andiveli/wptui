@@ -274,6 +274,11 @@ impl App<'_> {
                             self.message_list_state.select(Some(0));
                         }
                     }
+                } else if self.selected_section == Section::Communities {
+                    if let Some(jid) = self.get_selected_community() {
+                        self.open_chat_by_jid(jid);
+                        self.focus_pane = FocusPane::Conversation;
+                    }
                 } else {
                     let opened = self.get_selected_chat().is_some();
                     self.open_selected_chat();
@@ -1185,6 +1190,9 @@ impl App<'_> {
                 if self.selected_section == Section::Status {
                     self.status_selection.select_next();
                     self.clamp_status_selection();
+                } else if self.selected_section == Section::Communities {
+                    self.chat_list_state.select_next();
+                    self.clamp_community_selection();
                 } else {
                     self.chat_list_state.select_next();
                     self.clamp_chat_selection();
@@ -1219,6 +1227,9 @@ impl App<'_> {
                 if self.selected_section == Section::Status {
                     self.status_selection.select_previous();
                     self.clamp_status_selection();
+                } else if self.selected_section == Section::Communities {
+                    self.chat_list_state.select_previous();
+                    self.clamp_community_selection();
                 } else {
                     self.chat_list_state.select_previous();
                     self.clamp_chat_selection();
@@ -1359,6 +1370,17 @@ impl App<'_> {
             &self.filtered_chats
         };
         match (chats.len(), self.chat_list_state.selected()) {
+            (0, _) => self.chat_list_state.select(None),
+            (len, Some(selected)) if selected >= len => self.chat_list_state.select(Some(len - 1)),
+            _ => {}
+        }
+    }
+
+    fn clamp_community_selection(&mut self) {
+        match (
+            self.selectable_community_nodes().len(),
+            self.chat_list_state.selected(),
+        ) {
             (0, _) => self.chat_list_state.select(None),
             (len, Some(selected)) if selected >= len => self.chat_list_state.select(Some(len - 1)),
             _ => {}
