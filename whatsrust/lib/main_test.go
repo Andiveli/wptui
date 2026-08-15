@@ -51,30 +51,6 @@ func TestPinnedPresenceContractAndNarrowSubscription(t *testing.T) {
 	}
 }
 
-func TestCommunityEntryIncludedDistinguishesRootsAndLinkedGroups(t *testing.T) {
-	tests := []struct {
-		name        string
-		isParent    bool
-		parentEmpty bool
-		want        bool
-	}{
-		{name: "community root", isParent: true, parentEmpty: true, want: true},
-		{name: "linked group", parentEmpty: false, want: true},
-		{name: "ordinary group", parentEmpty: true, want: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := communityEntryIncluded(tt.isParent, tt.parentEmpty); got != tt.want {
-				t.Fatalf("communityEntryIncluded(%t, %t) = %t, want %t", tt.isParent, tt.parentEmpty, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestFreeCommunitiesNilResultIsSafe(t *testing.T) {
-	freeCommunityEntries(nil)
-}
-
 func TestRawPresenceDiagnosticsDisabledIsNoOp(t *testing.T) {
 	var diagnostics rawPresenceDiagnostics
 	diagnostics.reset(false)

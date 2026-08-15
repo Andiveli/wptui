@@ -23,13 +23,6 @@ typedef struct {
 } ContactEntry;
 
 typedef struct {
-	JID jid;
-	const char* name;
-	JID parent_jid;
-	bool is_parent;
-} CommunityEntry;
-
-typedef struct {
 	bool found;
 	int64_t muted_until;
 	bool pinned;
@@ -46,12 +39,6 @@ typedef struct {
 	ContactEntry* entries;
 	uint32_t size;
 } GetContactsResult;
-
-typedef struct {
-	CommunityEntry* entries;
-	uint32_t size;
-	uint8_t status;
-} GetCommunitiesResult;
 
 typedef struct {
 	uint8_t status;
@@ -2713,65 +2700,6 @@ func C_GetContacts() C.GetContactsResult {
 		entries = append(entries, contactEntry{jid: group.JID, name: group.GroupName.Name})
 	}
 	return contactEntriesToC(entries)
-}
-
-// C_GetCommunities transfers ownership of entries and every pointed-to string
-// to the caller. The caller must invoke C_FreeCommunities exactly once for
-// every returned result, including empty and error results. C_FreeCommunities
-// is nil-safe, but repeating it for the same non-nil result is not supported.
-//
-//export C_GetCommunities
-func C_GetCommunities() C.GetCommunitiesResult {
-	ctx := context.Background()
-	groups, err := client.GetJoinedGroups(ctx)
-	if err != nil {
-		LOG_WARN("Could not load communities: %v", err)
-		return C.GetCommunitiesResult{status: 1}
-	}
-	entries := make([]C.CommunityEntry, 0)
-	for _, group := range groups {
-		parent := group.LinkedParentJID
-		if !communityEntryIncluded(group.IsParent, parent.IsEmpty()) {
-			continue
-		}
-		entries = append(entries, C.CommunityEntry{
-			jid:        jidToC(group.JID),
-			name:       C.CString(group.GroupName.Name),
-			parent_jid: jidToC(parent),
-			is_parent:  C.bool(group.IsParent),
-		})
-	}
-	n := len(entries)
-	if n == 0 {
-		return C.GetCommunitiesResult{status: 0}
-	}
-	cEntries := C.malloc(C.size_t(n) * C.size_t(unsafe.Sizeof(C.CommunityEntry{})))
-	entryList := unsafe.Slice((*C.CommunityEntry)(cEntries), n)
-	for i := range n {
-		entryList[i] = entries[i]
-	}
-	return C.GetCommunitiesResult{entries: (*C.CommunityEntry)(cEntries), size: C.uint32_t(n), status: 0}
-}
-
-//export C_FreeCommunities
-func C_FreeCommunities(result C.GetCommunitiesResult) {
-	if result.entries == nil {
-		return
-	}
-	freeCommunityEntries(unsafe.Slice(result.entries, int(result.size)))
-	C.free(unsafe.Pointer(result.entries))
-}
-
-func freeCommunityEntries(entries []C.CommunityEntry) {
-	for _, entry := range entries {
-		C.free(unsafe.Pointer(entry.jid))
-		C.free(unsafe.Pointer(entry.name))
-		C.free(unsafe.Pointer(entry.parent_jid))
-	}
-}
-
-func communityEntryIncluded(isParent, parentEmpty bool) bool {
-	return isParent || !parentEmpty
 }
 
 //export C_GetProfilePicture
