@@ -1784,34 +1784,9 @@ func AddEventHandlers() {
 			dispatchIncomingMessage(evt, dispatchMessageActionEvent, HandleMessage)
 
 		case *events.Receipt:
-
-			receiptKind := -1
-			if evt.Type == types.ReceiptTypeRead || evt.Type == types.ReceiptTypeReadSelf {
-				receiptKind = 0
-			}
-
-			if receiptKind != -1 {
+			if receipt, ok := receiptEventFromEvent(evt); ok {
 				LOG_DEBUG("%#v was read by %s at %s", evt.MessageIDs, evt.SourceString(), evt.Timestamp)
-				n := len(evt.MessageIDs)
-				cmessageIds := (**C.char)(C.malloc(C.size_t(n) * C.size_t(unsafe.Sizeof(uintptr(0)))))
-				messageIds := unsafe.Slice(cmessageIds, len(evt.MessageIDs))
-				for i, id := range evt.MessageIDs {
-					messageIds[i] = C.CString(id)
-				}
-
-				cchatId := jidToC(evt.MessageSource.Chat)
-
-				creceipt := (*C.ReceiptEvent)(C.malloc(C.sizeof_ReceiptEvent))
-				creceipt.kind = C.uint8_t(EventTypeReceipt)
-				creceipt.id = cchatId
-				creceipt.messageIDs = cmessageIds
-				creceipt.size = C.size_t(n)
-
-				cevent := C.Event{
-					kind: C.uint8_t(EventTypeReceipt),
-					data: unsafe.Pointer(creceipt),
-				}
-				C.callEventCallback(eventHandler, &cevent)
+				dispatchReceiptEvent(receipt)
 			}
 
 		case *events.HistorySync:
