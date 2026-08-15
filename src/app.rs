@@ -26,6 +26,7 @@ pub mod message_actions;
 pub mod message_ingestion;
 pub mod notifications;
 pub mod presence;
+pub mod private_reply;
 pub mod share_picker;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -1125,39 +1126,6 @@ impl App<'_> {
         self.open_status_contact.clone()
     }
 
-    /// Jumps to a private conversation with the sender of the selected
-    /// message. Only meaningful inside a group, on a message sent by
-    /// someone else (the sender JID is the group participant).
-    pub fn reply_privately(&mut self) {
-        let Some(message) = self.selected_message().cloned() else {
-            return self.unavailable("Reply in private is not available");
-        };
-        if message.info.is_from_me {
-            return self.unavailable("Reply in private is not available for your own messages");
-        }
-        let Some(chat) = self.open_chat() else {
-            return self.unavailable("Reply in private is not available");
-        };
-        if !Self::is_group_chat(&chat) {
-            return self.unavailable("Reply in private is only available in groups");
-        }
-        // Group participants can be a LID while the real direct chat lives
-        // under its phone number; resolve so we open/send to the stored chat
-        // instead of an empty LID-keyed thread.
-        let target = wr::resolve_dm_chat(&message.info.sender)
-            .unwrap_or_else(|| message.info.sender.clone());
-        let name = self.contact_name(&target).to_string();
-        self.open_chat_by_jid(target);
-        // Mirror the status "reply to DM" flow: switch to the Chats view,
-        // focus the conversation, quote the original message and drop the
-        // user straight into the composer for the private reply.
-        self.selected_section = Section::Chats;
-        self.composer.quote = Some(message);
-        self.conversation_mode = ConversationMode::ComposerEditing;
-        self.focus_pane = FocusPane::Conversation;
-        self.action_notice = Some(ActionNotice::ReplyPrivatelyNamed(name));
-    }
-
     /// Re-derives `status_contacts` from the `status@broadcast` chat and
     /// keeps the list selection valid. Runs on every message arrival.
     fn refresh_status_contacts(&mut self) {
@@ -1518,106 +1486,6 @@ mod tests {
         fn deref_mut(&mut self) -> &mut Self::Target {
             &mut self.app
         }
-    }
-
-    #[test]
-    fn reply_privately_from_group_jumps_to_sender_direct_chat() {
-        let mut app = TestApp::new();
-        let group = wr::JID::from("123@g.us".to_owned());
-        let alice = wr::JID::from("alice@s.whatsapp.net".to_owned());
-        let group_msg = wr::Message {
-            info: wr::MessageInfo {
-                id: "g1".into(),
-                chat: group.clone(),
-                sender: alice.clone(),
-                timestamp: 100,
-                forwarding: Default::default(),
-                is_from_me: false,
-                quote_id: None,
-                read_by: 0,
-            },
-            message: wr::MessageContent::Text("hello group".into()),
-        };
-        app.open_chat = Some(group.clone());
-        app.add_message(group_msg);
-        app.message_list_state.set_selected_message("g1".into());
-
-        app.reply_privately();
-
-        assert_eq!(app.open_chat(), Some(alice.clone()));
-        assert!(app.chats.contains_key(&alice));
-        assert_eq!(app.selected_section, Section::Chats);
-        assert_eq!(app.focus_pane, FocusPane::Conversation);
-        assert_eq!(app.conversation_mode, ConversationMode::ComposerEditing);
-        assert_eq!(
-            app.composer.quote.as_ref().map(|m| m.info.id.as_ref()),
-            Some("g1")
-        );
-        assert!(matches!(
-            app.action_notice,
-            Some(ActionNotice::ReplyPrivatelyNamed(_))
-        ));
-    }
-
-    #[test]
-    fn reply_privately_is_refused_outside_groups() {
-        let mut app = TestApp::new();
-        let dm = wr::JID::from("alice@s.whatsapp.net".to_owned());
-        let msg = wr::Message {
-            info: wr::MessageInfo {
-                id: "m1".into(),
-                chat: dm.clone(),
-                sender: dm.clone(),
-                timestamp: 100,
-                forwarding: Default::default(),
-                is_from_me: false,
-                quote_id: None,
-                read_by: 0,
-            },
-            message: wr::MessageContent::Text("hi".into()),
-        };
-        app.open_chat = Some(dm.clone());
-        app.add_message(msg);
-        app.message_list_state.set_selected_message("m1".into());
-
-        app.reply_privately();
-
-        assert_eq!(app.open_chat(), Some(dm.clone()));
-        assert!(matches!(
-            app.action_notice,
-            Some(ActionNotice::Unavailable(_))
-        ));
-    }
-
-    #[test]
-    fn reply_privately_is_refused_for_own_group_message() {
-        let mut app = TestApp::new();
-        let group = wr::JID::from("123@g.us".to_owned());
-        let me = wr::JID::from("me@s.whatsapp.net".to_owned());
-        let own_msg = wr::Message {
-            info: wr::MessageInfo {
-                id: "g1".into(),
-                chat: group.clone(),
-                sender: me.clone(),
-                timestamp: 100,
-                forwarding: Default::default(),
-                is_from_me: true,
-                quote_id: None,
-                read_by: 0,
-            },
-            message: wr::MessageContent::Text("my message".into()),
-        };
-        app.open_chat = Some(group.clone());
-        app.add_message(own_msg);
-        app.message_list_state.set_selected_message("g1".into());
-
-        app.reply_privately();
-
-        assert_eq!(app.open_chat(), Some(group.clone()));
-        assert!(matches!(
-            app.action_notice,
-            Some(ActionNotice::Unavailable(_))
-        ));
     }
 
     #[test]
