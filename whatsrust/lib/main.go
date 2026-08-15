@@ -188,11 +188,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"mime"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -659,29 +657,6 @@ func ParseWebMessageInfo(selfJid types.JID, chatJid types.JID, webMsg *waWeb.Web
 		return nil
 	}
 	return &info
-}
-
-func SliceIndex(list []string, value string, defaultValue int) int {
-	index := slices.Index(list, value)
-	if index == -1 {
-		index = defaultValue
-	}
-	return index
-}
-
-func ExtensionByType(mimeType string, defaultExt string) string {
-	ext := defaultExt
-	exts, extErr := mime.ExtensionsByType(mimeType)
-	if extErr == nil && len(exts) > 0 {
-		// prefer common extensions over less common (.jpe, etc) returned by mime library
-		preferredExts := []string{".jpg", ".jpeg"}
-		sort.Slice(exts, func(i, j int) bool {
-			return SliceIndex(preferredExts, exts[i], math.MaxInt32) < SliceIndex(preferredExts, exts[j], math.MaxInt32)
-		})
-		ext = exts[0]
-	}
-
-	return ext
 }
 
 const (
@@ -1841,14 +1816,6 @@ func reactionEventFromMessage(info types.MessageInfo, msg *waE2E.Message) (react
 		return reactionEvent{}, false
 	}
 	return reactionEvent{chat: info.Chat.String(), targetMessageID: reaction.GetKey().GetID(), participant: info.Sender.String(), text: reaction.GetText(), isFromMe: info.IsFromMe}, true
-}
-
-//export C_DownloadFile
-func C_DownloadFile(fileId *C.char, basePath *C.char) C.uint8_t {
-	goFileId := C.GoString(fileId)
-	goBasePath := C.GoString(basePath)
-	status := DownloadFromFileId(client, goFileId, goBasePath)
-	return C.uint8_t(status)
 }
 
 func AddEventHandlers() {
