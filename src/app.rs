@@ -20,6 +20,7 @@ pub mod download_worker;
 pub mod events;
 pub mod input_reader;
 pub mod inputs;
+pub mod logout;
 pub mod media_cache;
 pub mod media_support;
 pub mod message_action_diagnostics;
@@ -712,110 +713,5 @@ mod tests {
                 .iter()
                 .any(|jid| jid.0.as_ref() == STATUS_BROADCAST_CHAT)
         );
-    }
-
-    #[test]
-    fn section_rail_navigates_through_sections_into_logout_and_back() {
-        use crate::app::FocusPane;
-        use crate::app::actions::{AppAction, Section};
-
-        let mut app = TestApp::new();
-        app.focus_pane = FocusPane::SectionRail;
-        app.selected_section = Section::Chats;
-        app.rail_on_logout = false;
-
-        // j: Chats -> Status -> Communities -> Logout (flag set) -> wraps to Chats.
-        app.dispatch_action(AppAction::SelectNext);
-        assert_eq!(app.selected_section, Section::Status);
-        assert!(!app.rail_on_logout);
-        app.dispatch_action(AppAction::SelectNext);
-        assert_eq!(app.selected_section, Section::Communities);
-        assert!(!app.rail_on_logout);
-        app.dispatch_action(AppAction::SelectNext);
-        assert!(app.rail_on_logout);
-        app.dispatch_action(AppAction::SelectNext);
-        assert_eq!(app.selected_section, Section::Chats);
-        assert!(!app.rail_on_logout);
-
-        // k: Chats wraps backward up to Logout.
-        app.dispatch_action(AppAction::SelectPrevious);
-        assert!(app.rail_on_logout);
-        app.dispatch_action(AppAction::SelectPrevious);
-        assert_eq!(app.selected_section, Section::Communities);
-        assert!(!app.rail_on_logout);
-
-        // G (jump_bottom) lands on Logout; gg (jump_top) returns to Chats.
-        app.dispatch_action(AppAction::JumpBottom);
-        assert!(app.rail_on_logout);
-        app.dispatch_action(AppAction::JumpTop);
-        assert_eq!(app.selected_section, Section::Chats);
-        assert!(!app.rail_on_logout);
-    }
-
-    #[test]
-    fn pressing_enter_on_the_rail_logout_slot_begins_confirmation() {
-        use crate::app::FocusPane;
-        use crate::app::actions::{AppAction, Section};
-        use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-
-        let mut app = TestApp::new();
-        app.focus_pane = FocusPane::SectionRail;
-        app.selected_section = Section::Chats;
-        app.rail_on_logout = false;
-
-        // Enter on a normal section does not start logout confirmation.
-        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
-        app.on_terminal_event(Event::Key(enter));
-        assert!(!app.pending_logout);
-
-        // Move the rail to the Logout slot and press Enter: confirmation starts.
-        app.dispatch_action(AppAction::JumpBottom);
-        assert!(app.rail_on_logout);
-        app.on_terminal_event(Event::Key(KeyEvent::new(
-            KeyCode::Enter,
-            KeyModifiers::NONE,
-        )));
-        assert!(app.pending_logout);
-        assert_eq!(app.focus_pane, FocusPane::SectionRail);
-        assert_eq!(app.selected_section, Section::Communities);
-    }
-
-    #[test]
-    fn logout_confirmation_menu_navigates_and_cancels() {
-        use crate::app::FocusPane;
-        use crate::app::actions::AppAction;
-        use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-
-        let mut app = TestApp::new();
-        app.focus_pane = FocusPane::SectionRail;
-        app.selected_section = crate::app::actions::Section::Chats;
-        app.dispatch_action(AppAction::JumpBottom);
-        assert!(app.rail_on_logout);
-
-        // Enter on the rail Logout slot opens the confirmation menu.
-        app.on_terminal_event(Event::Key(KeyEvent::new(
-            KeyCode::Enter,
-            KeyModifiers::NONE,
-        )));
-        assert!(app.pending_logout);
-        assert_eq!(app.logout_menu_index, 0);
-
-        // j / k move the selection between Confirm and Cancel (2 items).
-        app.on_terminal_event(Event::Key(KeyEvent::new(
-            KeyCode::Char('j'),
-            KeyModifiers::NONE,
-        )));
-        assert_eq!(app.logout_menu_index, 1);
-        app.on_terminal_event(Event::Key(KeyEvent::new(
-            KeyCode::Char('k'),
-            KeyModifiers::NONE,
-        )));
-        assert_eq!(app.logout_menu_index, 0);
-
-        // Esc cancels without starting logout (no bridge call).
-        app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
-        assert!(!app.pending_logout);
-        assert!(!app.logout_in_progress);
-        assert_eq!(app.logout_menu_index, 0);
     }
 }

@@ -30,37 +30,7 @@ pub(crate) fn handle(app: &mut App<'_>, event: wr::Event) -> bool {
             app.sort_chats();
             true
         }
-        wr::Event::LogoutResult(status) => match status {
-            wr::LogoutStatus::LoggedOut | wr::LogoutStatus::NotLoggedIn => {
-                app.finish_logout();
-                true
-            }
-            wr::LogoutStatus::LocalOnly => {
-                // Remote revocation failed, so WhatsApp on the phone still
-                // lists this device. The local session is already gone;
-                // surface it instead of silently quitting, and let the
-                // user retry (a second logout resolves as NotLoggedIn and
-                // finishes) or remove the device manually.
-                log::warn!(
-                    "Logout: device was not unlinked on the phone; remove it manually in WhatsApp → Linked devices"
-                );
-                app.pending_logout = false;
-                app.logout_in_progress = false;
-                app.logout_menu_index = 0;
-                app.unavailable(
-                    "Logged out locally, but the device is still linked on the phone — remove it in WhatsApp (Settings → Linked devices), then log out again to finish",
-                );
-                true
-            }
-            wr::LogoutStatus::Failed => {
-                // Even the local cleanup failed. Surface it and keep running.
-                app.pending_logout = false;
-                app.logout_in_progress = false;
-                app.logout_menu_index = 0;
-                app.unavailable("Could not log out");
-                true
-            }
-        },
+        wr::Event::LogoutResult(status) => app.handle_logout_result(status),
         wr::Event::SyncProgress(percent) => {
             app.history_sync_percent = Some(percent);
             true
