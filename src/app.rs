@@ -18,6 +18,7 @@ pub mod community_bridge;
 pub mod community_hierarchy;
 pub mod composer;
 pub mod contact_avatars;
+pub mod download_worker;
 pub mod events;
 pub mod inputs;
 pub mod media_cache;
@@ -48,6 +49,7 @@ pub use crate::app::chat_projection::ChatRow;
 pub use crate::app::community_hierarchy::CommunityNode;
 use crate::app::composer::Composer;
 use crate::app::contact_avatars::ContactAvatars;
+use crate::app::download_worker::spawn as spawn_download_worker;
 use crate::app::events::{AppEvent, AppInput, AttachmentViewerState, ViewerPreviewState};
 use crate::app::media_support::{
     apply_video_play_marker, generate_video_thumbnail, has_decent_video_thumbnail,
@@ -457,24 +459,7 @@ impl App<'_> {
         wr::new_client(self.whatsmeow_db.to_str().unwrap());
         register_runtime_callbacks(self.tx.clone(), self.message_action_diagnostics.clone());
 
-        // Single dedicated thread for all CGo downloads. Calling Go from many Rust-spawned
-        // threads can crash even with a mutex; one long-lived worker avoids that.
-        let (download_tx, download_rx) = mpsc::channel::<(wr::MessageId, wr::FileId)>();
-        let media_path = self.media_path.to_owned();
-        let app_tx = self.tx.clone();
-        thread::spawn(move || {
-            for (message_id, file_id) in download_rx {
-                let result = wr::download_file(&file_id, &media_path);
-                let state = if result.is_err() {
-                    FileMeta::DownloadFailed
-                } else {
-                    FileMeta::Downloaded
-                };
-                app_tx
-                    .send(AppInput::App(AppEvent::SetFileState(message_id, state)))
-                    .unwrap();
-            }
-        });
+        let download_tx = spawn_download_worker(self.media_path.to_owned(), self.tx.clone());
 
         info!("Connecting to WhatsApp Web");
         // thread::spawn(|| {
