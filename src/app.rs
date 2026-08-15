@@ -10,6 +10,7 @@ use std::{
 use std::{fs, thread};
 
 pub mod actions;
+pub mod chat_ordering;
 pub mod composer;
 pub mod contact_avatars;
 pub mod events;
@@ -1726,27 +1727,6 @@ impl App<'_> {
         }
     }
 
-    /// Keeps the highlighted message stable when a new message shifts the
-    /// rendered list: re-derives the selected index from the ID anchor
-    /// (selected_message) instead of trusting the now-stale index. The index
-    /// is set directly so the viewport does not jump (no update_selected).
-    fn reanchor_message_selection(&mut self, chat_jid: &wr::JID) {
-        let Some(anchor) = self.message_list_state.get_selected_message() else {
-            return;
-        };
-        let Some(messages) = self.chat_messages.get(chat_jid) else {
-            return;
-        };
-        if let Some(index) = messages
-            .iter()
-            .rev()
-            .filter(|id| self.messages.contains_key(*id))
-            .position(|id| id == &anchor)
-        {
-            self.message_list_state.selected = Some(index);
-        }
-    }
-
     fn add_message_without_sort(&mut self, message: wr::Message) {
         let chat_jid = message.info.chat.clone();
         self.add_or_update_chat(
@@ -1794,37 +1774,6 @@ impl App<'_> {
         for (jid, name) in wr::get_contacts() {
             self.contacts.insert(jid.clone(), name.clone());
             self.db_handler.add_contact(&jid, name.as_ref());
-        }
-    }
-
-    pub fn sort_chats(&mut self) {
-        let selected = self.get_selected_chat();
-        let mut entries: Vec<_> = self.chats.values().cloned().collect();
-        entries.sort_by(|a, b| {
-            let a_time = a.last_message_time.unwrap_or_default();
-            let b_time = b.last_message_time.unwrap_or_default();
-            b_time.cmp(&a_time)
-        });
-
-        self.sorted_chats = entries
-            .iter()
-            .map(|chat| chat.jid.clone())
-            .filter(|jid: &wr::JID| !jid.0.as_ref().ends_with("@broadcast"))
-            .collect();
-        self.select_chat(selected);
-    }
-
-    pub(crate) fn sort_chat_messages(&mut self, chat_jid: wr::JID) {
-        if let Some(messages) = self.chat_messages.get_mut(&chat_jid) {
-            messages.sort_by_cached_key(|msg_id| {
-                (
-                    self.messages
-                        .get(msg_id)
-                        .map(|m| m.info.timestamp)
-                        .unwrap_or(i64::MIN),
-                    msg_id.clone(),
-                )
-            });
         }
     }
 }
@@ -1952,27 +1901,6 @@ mod tests {
         fn deref_mut(&mut self) -> &mut Self::Target {
             &mut self.app
         }
-    }
-
-    #[test]
-    fn add_message_orders_out_of_order_history_for_newest_first_consumers() {
-        let mut app = TestApp::new();
-        let chat = wr::JID::from("chat@example.test".to_owned());
-
-        app.add_message(message(&chat, "newest", 30));
-        app.add_message(message(&chat, "oldest", 10));
-        app.add_message(message(&chat, "middle", 20));
-
-        let ids = &app.chat_messages[&chat];
-        assert_eq!(
-            ids.iter().map(|id| id.as_ref()).collect::<Vec<_>>(),
-            ["oldest", "middle", "newest"]
-        );
-        assert_eq!(ids.iter().next_back().map(AsRef::as_ref), Some("newest"));
-
-        app.add_message(message(&chat, "middle", 40));
-        let ids = &app.chat_messages[&chat];
-        assert_eq!(ids.last().map(AsRef::as_ref), Some("middle"));
     }
 
     #[test]
@@ -2273,57 +2201,6 @@ mod tests {
     }
 
     #[test]
-    fn new_message_preserves_selected_message_by_id() {
-        let mut app = TestApp::new();
-        let chat = wr::JID::from("chat@example.test".to_owned());
-        app.open_chat = Some(chat.clone());
-
-        app.add_message(message(&chat, "oldest", 10));
-        app.add_message(message(&chat, "middle", 20));
-        app.add_message(message(&chat, "newest", 30));
-
-        // Rendered order (render_messages reverses) is [newest, middle,
-        // oldest]; select "middle" and anchor the selection by ID.
-        app.message_list_state.select(Some(1));
-        app.message_list_state.set_selected_message("middle".into());
-
-        app.add_message(message(&chat, "newest-2", 40));
-
-        // The new message shifts the list, but the highlight stays on
-        // "middle" (now rendered index 2), not on the stale index.
-        assert_eq!(app.message_list_state.selected, Some(2));
-        assert_eq!(
-            app.message_list_state.get_selected_message(),
-            Some("middle".into())
-        );
-    }
-
-    #[test]
-    fn new_message_in_other_chat_leaves_selection_untouched() {
-        let mut app = TestApp::new();
-        let chat = wr::JID::from("chat@example.test".to_owned());
-        let other = wr::JID::from("other@example.test".to_owned());
-        app.open_chat = Some(chat.clone());
-
-        app.add_message(message(&chat, "oldest", 10));
-        app.add_message(message(&chat, "middle", 20));
-        app.add_message(message(&chat, "newest", 30));
-
-        app.message_list_state.select(Some(1));
-        app.message_list_state.set_selected_message("middle".into());
-        // Simulate the post-render state: index and ID anchor are consistent.
-        app.message_list_state.selected = Some(1);
-
-        app.add_message(message(&other, "other-msg", 40));
-
-        assert_eq!(app.message_list_state.selected, Some(1));
-        assert_eq!(
-            app.message_list_state.get_selected_message(),
-            Some("middle".into())
-        );
-    }
-
-    #[test]
     fn evicted_loaded_preview_becomes_reloadable() {
         let mut app = TestApp::new();
         let chat = wr::JID::from("chat@example.test".to_owned());
@@ -2343,24 +2220,6 @@ mod tests {
             app.metadata.get(&wr::MessageId::from("preview")),
             Some(Metadata::File(FileMeta::Downloaded))
         ));
-    }
-
-    #[test]
-    fn add_message_breaks_equal_timestamp_ties_by_message_id() {
-        let mut app = TestApp::new();
-        let chat = wr::JID::from("chat@example.test".to_owned());
-
-        app.add_message(message(&chat, "message-c", 10));
-        app.add_message(message(&chat, "message-a", 10));
-        app.add_message(message(&chat, "message-b", 10));
-
-        assert_eq!(
-            app.chat_messages[&chat]
-                .iter()
-                .map(|id| id.as_ref())
-                .collect::<Vec<_>>(),
-            ["message-a", "message-b", "message-c"]
-        );
     }
 
     #[test]
