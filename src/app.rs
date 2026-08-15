@@ -35,6 +35,7 @@ pub mod private_reply;
 pub mod runtime_callbacks;
 pub mod runtime_loop;
 pub mod runtime_media_events;
+pub mod runtime_startup;
 pub mod share_picker;
 pub mod status_projection;
 pub mod terminal_session;
@@ -54,7 +55,6 @@ pub use crate::app::chat_projection::ChatRow;
 pub use crate::app::community_hierarchy::CommunityNode;
 use crate::app::composer::Composer;
 use crate::app::contact_avatars::ContactAvatars;
-use crate::app::download_worker::spawn as spawn_download_worker;
 use crate::app::events::{AppEvent, AppInput, AttachmentViewerState, ViewerPreviewState};
 use crate::app::input_reader::InputReader;
 pub use crate::app::media_support::{remove_owned_media_files, remove_status_media_files};
@@ -66,7 +66,6 @@ pub use crate::app::notifications::{
     Clock, NotificationProjection, Notifier, NotifyRustNotifier, SystemClock, now_or, unix_now,
 };
 use crate::app::presence::{PresenceDiagnostics, SelectedPresence};
-use crate::app::runtime_callbacks::register as register_runtime_callbacks;
 pub use crate::app::share_picker::SharePicker;
 pub use crate::app::status_projection::STATUS_BROADCAST_CHAT;
 use crate::db;
@@ -76,7 +75,6 @@ use crate::key_handler::KeybindHandler;
 
 use crate::ui::message_list::{MessageHeightCache, MessageListState};
 use db::DatabaseHandler;
-use log::info;
 use ratatui::widgets::ListState;
 use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::protocol::StatefulProtocol;
@@ -265,37 +263,7 @@ impl App<'_> {
     }
 
     pub fn run(&mut self, phone: Option<String>) {
-        self.db_handler.init();
-        // Statuses expire 24h after posting (server-side). Prune the local
-        // copies at startup so the DB and media dir do not accumulate them.
-        let purged_status_media = self.db_handler.purge_expired_statuses(unix_now());
-        remove_status_media_files(&self.media_path, &purged_status_media);
-        if !purged_status_media.is_empty() {
-            info!(
-                "Purged {} expired status media files",
-                purged_status_media.len()
-            );
-        }
-        self.load_data_from_db();
-        self.sort_chats();
-
-        wr::new_client(self.whatsmeow_db.to_str().unwrap());
-        register_runtime_callbacks(self.tx.clone(), self.message_action_diagnostics.clone());
-
-        let download_tx = spawn_download_worker(self.media_path.to_owned(), self.tx.clone());
-
-        info!("Connecting to WhatsApp Web");
-        // thread::spawn(|| {
-        wr::connect(move |data| {
-            qr2term::print_qr(data).unwrap();
-            if let Some(phone) = phone.as_ref() {
-                let code = wr::pair_phone(phone);
-                println!("Pairing code: {}", code);
-            }
-        });
-        // });
-        info!("Connected, initializing terminal UI");
-        runtime_loop::run(self, download_tx);
+        runtime_startup::run(self, phone);
     }
 
     pub(crate) fn now(&self) -> i64 {
