@@ -33,6 +33,7 @@ pub mod share_picker;
 pub mod status_projection;
 #[cfg(test)]
 pub(crate) mod test_support;
+pub mod whatsapp_events;
 
 pub use crate::app;
 use crate::app::actions::{
@@ -71,7 +72,7 @@ use crate::ui;
 use arboard::Clipboard;
 use db::{DatabaseHandler, MessageActionPersistence};
 use directories::ProjectDirs;
-use log::{debug, error, info, trace};
+use log::{error, info, trace};
 use ratatui::crossterm::event;
 use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
@@ -433,130 +434,7 @@ impl App<'_> {
     }
 
     pub fn handle_whatsapp_event(&mut self, event: wr::Event) -> bool {
-        match event {
-            wr::Event::AppStateSyncComplete => {
-                self.get_contacts();
-                self.load_communities();
-                self.sort_chats();
-                true
-            }
-            wr::Event::Chat {
-                jid,
-                last_message_time,
-            } => {
-                // History sync reports chats that may carry no messages. Keep
-                // them so the chat list reflects the full account, not only
-                // conversations that shipped a message in the sync batch.
-                self.add_or_update_chat(
-                    Chat {
-                        jid,
-                        last_message_time: (last_message_time > 0).then_some(last_message_time),
-                    },
-                    |chat| {
-                        if last_message_time > 0 && Some(last_message_time) > chat.last_message_time
-                        {
-                            chat.last_message_time = Some(last_message_time);
-                        }
-                    },
-                );
-                self.sort_chats();
-                true
-            }
-            wr::Event::LogoutResult(status) => match status {
-                wr::LogoutStatus::LoggedOut | wr::LogoutStatus::NotLoggedIn => {
-                    self.finish_logout();
-                    true
-                }
-                wr::LogoutStatus::LocalOnly => {
-                    // Remote revocation failed, so WhatsApp on the phone still
-                    // lists this device. The local session is already gone;
-                    // surface it instead of silently quitting, and let the
-                    // user retry (a second logout resolves as NotLoggedIn and
-                    // finishes) or remove the device manually.
-                    log::warn!(
-                        "Logout: device was not unlinked on the phone; remove it manually in WhatsApp → Linked devices"
-                    );
-                    self.pending_logout = false;
-                    self.logout_in_progress = false;
-                    self.logout_menu_index = 0;
-                    self.unavailable(
-                        "Logged out locally, but the device is still linked on the phone — remove it in WhatsApp (Settings → Linked devices), then log out again to finish",
-                    );
-                    true
-                }
-                wr::LogoutStatus::Failed => {
-                    // Even the local cleanup failed. Surface it and keep running.
-                    self.pending_logout = false;
-                    self.logout_in_progress = false;
-                    self.logout_menu_index = 0;
-                    self.unavailable("Could not log out");
-                    true
-                }
-            },
-            wr::Event::SyncProgress(percent) => {
-                self.history_sync_percent = Some(percent);
-                true
-            }
-            wr::Event::Receipt {
-                kind,
-                chat,
-                message_ids,
-            } => {
-                debug!(
-                    "Received receipt: {:?} for chat: {:?} with messages: {:?}",
-                    kind, chat, message_ids
-                );
-                for msg_id in message_ids {
-                    if let Some(message) = self.messages.get_mut(&msg_id) {
-                        message.info.read_by += 1;
-                        self.db_handler.add_message(message);
-                    }
-                }
-                true
-            }
-            wr::Event::Reaction {
-                target_message_id,
-                participant,
-                text,
-                ..
-            } => {
-                self.apply_reaction(&target_message_id, participant, text);
-                true
-            }
-            wr::Event::Connected => {
-                // Connected is emitted again after reconnects.  The first
-                // probe may race group metadata hydration, so AppStateSyncComplete
-                // below remains the authoritative follow-up refresh.
-                self.load_communities();
-                self.mark_presence_ready();
-                true
-            }
-            wr::Event::MessageAction {
-                action_id,
-                target_message_id,
-                chat,
-                sender,
-                kind,
-                occurred_at,
-                arrival_order,
-            } => {
-                self.apply_message_action(MessageAction {
-                    action_id,
-                    target_message_id,
-                    chat,
-                    sender,
-                    kind: match kind {
-                        wr::MessageActionKind::Edit { replacement } => {
-                            MessageActionKind::Edit { replacement }
-                        }
-                        wr::MessageActionKind::Delete => MessageActionKind::Delete,
-                    },
-                    occurred_at,
-                    arrival_order,
-                });
-                true
-            }
-        }
+        crate::app::whatsapp_events::handle(self, event)
     }
 
     pub fn run(&mut self, phone: Option<String>) {
