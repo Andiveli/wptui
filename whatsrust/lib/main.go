@@ -649,29 +649,12 @@ func GetSelfId(client *whatsmeow.Client) string {
 
 //export C_GetGroupInfo
 func C_GetGroupInfo(cjid C.JID) C.GroupInfoResult {
-	if client == nil || cjid == nil {
-		return C.GroupInfoResult{status: 2}
+	if cjid == nil {
+		return groupInfoResultToC(groupInfoClientUnavailable)
 	}
-	jid := cToJid(cjid).ToNonAD()
-	if jid.Server != types.GroupServer {
-		return C.GroupInfoResult{status: 1}
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	info, err := client.GetGroupInfo(ctx, jid)
-	if err != nil {
-		LOG_WARN("failed to get group info for %s: %v", jid, err)
-		return C.GroupInfoResult{status: 3}
-	}
-
-	result := C.GroupInfoResult{is_announce: C.bool(info.IsAnnounce)}
-	for _, participant := range info.Participants {
-		if participantMatchesSelf(client, participant) {
-			result.is_admin = C.bool(participant.IsAdmin || participant.IsSuperAdmin)
-			break
-		}
-	}
-	return result
+	return groupInfoResultToC(fetchGroupInfo(client, cToJid(cjid).ToNonAD(), func(participant types.GroupParticipant) bool {
+		return participantMatchesSelf(client, participant)
+	}))
 }
 
 // GetChatId returns the normalized chat id (conversation key): LID→PN, broadcast→per-sender, status as-is.
