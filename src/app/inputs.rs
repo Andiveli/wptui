@@ -1070,120 +1070,6 @@ impl App<'_> {
         }
     }
 
-    fn select_next(&mut self) {
-        match self.focus_pane {
-            FocusPane::SectionRail => {
-                if !self.move_logout_selection_next() {
-                    self.selected_section = self.selected_section.next();
-                }
-            }
-            FocusPane::ChatList => {
-                self.move_selection_next();
-            }
-            // In Conversation, j moves UP (older) in the time-ascending list.
-            FocusPane::Conversation => {
-                if self.selected_section == Section::Status {
-                    self.message_list_state
-                        .select_previous_bounded(self.status_message_count());
-                } else {
-                    self.message_list_state
-                        .select_previous_bounded(self.message_count());
-                }
-            }
-        }
-    }
-
-    fn select_previous(&mut self) {
-        match self.focus_pane {
-            FocusPane::SectionRail => {
-                if !self.move_logout_selection_previous() {
-                    self.selected_section = self.selected_section.previous();
-                }
-            }
-            FocusPane::ChatList => {
-                self.move_selection_previous();
-            }
-            // In Conversation, k moves DOWN (newer) in the time-ascending list.
-            FocusPane::Conversation => {
-                if self.selected_section == Section::Status {
-                    self.message_list_state
-                        .select_next_bounded(self.status_message_count());
-                } else {
-                    self.message_list_state
-                        .select_next_bounded(self.message_count());
-                }
-            }
-        }
-    }
-
-    fn jump_top(&mut self) {
-        match self.focus_pane {
-            FocusPane::SectionRail => {
-                self.jump_logout_selection_top();
-            }
-            FocusPane::ChatList => {
-                self.jump_selection_top();
-            }
-            // En Conversation el render invierte: items[0]=más nuevo (abajo).
-            // gg va al principio del chat (más viejo arriba) = último índice.
-            FocusPane::Conversation => {
-                if self.selected_section == Section::Status {
-                    self.message_list_state
-                        .jump_bottom_bounded(self.status_message_count());
-                } else {
-                    self.message_list_state
-                        .jump_bottom_bounded(self.message_count());
-                }
-            }
-        }
-    }
-
-    fn jump_bottom(&mut self) {
-        match self.focus_pane {
-            FocusPane::SectionRail => {
-                self.jump_logout_selection_bottom();
-            }
-            FocusPane::ChatList => {
-                self.jump_selection_bottom();
-            }
-            // En Conversation el render invierte: items[0]=más nuevo (abajo).
-            // G va al final del chat (más nuevo abajo) = índice 0.
-            FocusPane::Conversation => {
-                if self.selected_section == Section::Status {
-                    self.message_list_state
-                        .jump_top_bounded(self.status_message_count());
-                } else {
-                    self.message_list_state
-                        .jump_top_bounded(self.message_count());
-                }
-            }
-        }
-    }
-
-    fn half_page_down(&mut self) {
-        if self.focus_pane == FocusPane::Conversation {
-            if self.selected_section == Section::Status {
-                self.message_list_state
-                    .half_page_down_bounded(self.status_message_count(), 10);
-            } else {
-                self.message_list_state
-                    .half_page_down_bounded(self.message_count(), 10);
-            }
-        }
-    }
-
-    fn half_page_up(&mut self) {
-        if self.focus_pane == FocusPane::Conversation {
-            if self.selected_section == Section::Status {
-                self.message_list_state
-                    .half_page_up_bounded(self.status_message_count(), 10);
-            } else {
-                self.message_list_state
-                    .half_page_up_bounded(self.message_count(), 10);
-            }
-        }
-    }
-
     fn dispatch_composer_action(&mut self, action: ComposerAction) {
         if self.composer_blocked() {
             return;
@@ -1216,18 +1102,6 @@ impl App<'_> {
                 }
             },
         }
-    }
-
-    fn message_count(&self) -> usize {
-        self.open_chat()
-            .and_then(|chat| self.chat_messages.get(&chat))
-            .map_or(0, Vec::len)
-    }
-
-    fn status_message_count(&self) -> usize {
-        self.open_status_contact()
-            .map(|contact| self.status_messages(&contact).len())
-            .unwrap_or(0)
     }
 }
 
