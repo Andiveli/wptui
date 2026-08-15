@@ -1,10 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
-use std::time::Duration;
 use std::{
     collections::{HashMap, VecDeque},
     sync::Arc,
-    sync::Condvar,
     sync::Mutex,
 };
 use std::{fs, thread};
@@ -20,6 +18,7 @@ pub mod composer;
 pub mod contact_avatars;
 pub mod download_worker;
 pub mod events;
+pub mod input_reader;
 pub mod inputs;
 pub mod media_cache;
 pub mod media_support;
@@ -51,6 +50,7 @@ use crate::app::composer::Composer;
 use crate::app::contact_avatars::ContactAvatars;
 use crate::app::download_worker::spawn as spawn_download_worker;
 use crate::app::events::{AppEvent, AppInput, AttachmentViewerState, ViewerPreviewState};
+use crate::app::input_reader::InputReader;
 use crate::app::media_support::{
     apply_video_play_marker, generate_video_thumbnail, has_decent_video_thumbnail,
 };
@@ -77,7 +77,6 @@ use arboard::Clipboard;
 use db::{DatabaseHandler, MessageActionPersistence};
 use directories::ProjectDirs;
 use log::{error, info, trace};
-use ratatui::crossterm::event;
 use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
 use ratatui_image::picker::{Picker, ProtocolType};
@@ -90,12 +89,6 @@ use whatsrust as wr;
 use crate::ui::text_input::TextInput;
 
 pub const ADMIN_ONLY_GROUP_MESSAGE: &str = "Only group admins can send messages in this group.";
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum InputReaderState {
-    Running,
-    Stopped,
-}
 
 #[derive(Clone, Debug)]
 pub struct Chat {
@@ -233,7 +226,7 @@ pub struct App<'a> {
 
     pub tx: mpsc::Sender<AppInput>,
     pub rx: mpsc::Receiver<AppInput>,
-    input_reader_control: Arc<(Mutex<InputReaderState>, Condvar)>,
+    input_reader: InputReader,
 }
 
 impl Default for App<'_> {
@@ -423,7 +416,7 @@ impl App<'_> {
             logout_menu_index: 0,
             tx,
             rx,
-            input_reader_control: Arc::new((Mutex::new(InputReaderState::Running), Condvar::new())),
+            input_reader: InputReader::new(),
         }
     }
 }
@@ -485,41 +478,7 @@ impl App<'_> {
             }
         };
 
-        {
-            let tx = self.tx.clone();
-            let input_reader_control = Arc::clone(&self.input_reader_control);
-            thread::spawn(move || {
-                loop {
-                    {
-                        let (state_lock, _) = &*input_reader_control;
-                        let state = state_lock.lock().unwrap();
-                        if *state == InputReaderState::Stopped {
-                            return;
-                        }
-                    }
-
-                    match event::poll(Duration::from_millis(50)) {
-                        Ok(true) => match event::read() {
-                            Ok(event) => {
-                                if let Err(e) = tx.send(AppInput::Terminal(event)) {
-                                    error!("Failed to send terminal event: {:?}", e);
-                                    break;
-                                }
-                            }
-                            Err(e) => {
-                                error!("Failed to read terminal event: {e}");
-                                thread::sleep(Duration::from_millis(50));
-                            }
-                        },
-                        Ok(false) => {}
-                        Err(e) => {
-                            error!("Failed to poll terminal events: {e}");
-                            thread::sleep(Duration::from_millis(50));
-                        }
-                    }
-                }
-            });
-        }
+        self.input_reader.start(self.tx.clone());
 
         self.sync_selected_presence();
         if let Err(error) = terminal.draw(|frame| ui::draw(frame, self)) {
@@ -812,11 +771,8 @@ impl App<'_> {
         now_or(0, &*self.clock)
     }
 
-    fn stop_input_reader(&self) {
-        let (state_lock, state_changed) = &*self.input_reader_control;
-        let mut state = state_lock.lock().unwrap();
-        *state = InputReaderState::Stopped;
-        state_changed.notify_all();
+    fn stop_input_reader(&mut self) {
+        self.input_reader.stop();
     }
 
     /// The status contact currently open in the Status section's right
@@ -965,6 +921,7 @@ mod tests {
     use super::*;
     use crate::app::notifications::notification_is_muted;
     use crate::app::presence::PresenceMarker;
+    use std::time::Duration;
 
     #[derive(Debug)]
     struct FixedClock(Option<i64>);
