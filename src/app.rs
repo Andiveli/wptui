@@ -1,5 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{
@@ -15,6 +14,7 @@ pub mod composer;
 pub mod contact_avatars;
 pub mod events;
 pub mod inputs;
+pub mod media_support;
 pub mod message_action_diagnostics;
 pub mod presence;
 pub mod share_picker;
@@ -30,6 +30,11 @@ use crate::app::actions::{
 use crate::app::composer::Composer;
 use crate::app::contact_avatars::ContactAvatars;
 use crate::app::events::{AppEvent, AppInput, AttachmentViewerState, ViewerPreviewState};
+use crate::app::media_support::{
+    apply_video_play_marker, generate_video_thumbnail, has_decent_video_thumbnail,
+    probe_audio_duration,
+};
+pub use crate::app::media_support::{remove_owned_media_files, remove_status_media_files};
 use crate::app::message_action_diagnostics::{MessageActionDiagnostics, identifier_for_log};
 use crate::app::presence::{PresenceDiagnostics, SelectedPresence, jid_for_log};
 pub use crate::app::share_picker::SharePicker;
@@ -2076,160 +2081,6 @@ impl App<'_> {
     }
 }
 
-/// WhatsApp embeds a tiny thumbnail (a few hundred bytes, ~72px) with video
-/// messages; anything at least this large is a real extracted frame.
-const VIDEO_THUMBNAIL_MIN_BYTES: u64 = 4096;
-
-/// True when the sidecar already contains a usable video frame (not the tiny
-/// embedded WhatsApp thumbnail that renders as a narrow sliver).
-fn has_decent_video_thumbnail(path: &Path) -> bool {
-    fs::metadata(path)
-        .map(|meta| meta.len() >= VIDEO_THUMBNAIL_MIN_BYTES)
-        .unwrap_or(false)
-}
-
-/// Extracts a real frame from a video file with ffmpeg into the `.jpg`
-/// sidecar. Used so inline video previews show the actual frame instead of
-/// WhatsApp's tiny embedded thumbnail. Best effort: on any failure the caller
-/// falls back to the existing placeholder rendering.
-fn generate_video_thumbnail(video_path: &Path, sidecar_path: &Path) {
-    let attempts: [&[&str]; 2] = [
-        // Seek 1s in so we skip the common black first frame.
-        &["-y", "-loglevel", "error", "-ss", "1"],
-        // Fallback for very short videos that start past 1s.
-        &["-y", "-loglevel", "error"],
-    ];
-    for args in attempts {
-        let status = Command::new("ffmpeg")
-            .args(args)
-            .arg("-i")
-            .arg(video_path)
-            .args(["-frames:v", "1", "-q:v", "4"])
-            .arg(sidecar_path)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        match status {
-            Ok(status) if status.success() && has_decent_video_thumbnail(sidecar_path) => return,
-            Ok(_) => continue,
-            Err(err) => {
-                warn!("ffmpeg thumbnail extraction failed: {err}");
-                return;
-            }
-        }
-    }
-    warn!(
-        "ffmpeg could not extract a thumbnail for {}",
-        video_path.display()
-    );
-}
-
-/// Reads the duration (in whole seconds) of an audio file with lofty.
-/// Best effort: returns `None` for unreadable files, unsupported formats, or
-/// files whose properties could not be resolved (lofty reports `Duration::ZERO`).
-///
-/// `guess_file_type()` sniffs the content (first 36 bytes) because the
-/// extension map in lofty lacks `.oga` — the extension WhatsApp uses for
-/// Opus voice notes — so extension-only probing would reject them.
-fn probe_audio_duration(path: &Path) -> Option<u64> {
-    use lofty::file::AudioFile;
-    let duration = lofty::probe::Probe::open(path)
-        .ok()?
-        .guess_file_type()
-        .ok()?
-        .read()
-        .ok()?
-        .properties()
-        .duration();
-    (!duration.is_zero()).then_some(duration.as_secs())
-}
-
-/// Overlays a play-button marker (translucent circle + white triangle) on a
-/// video thumbnail, matching Discord's in-app video preview styling.
-fn apply_video_play_marker(image: &mut image::DynamicImage) {
-    let mut rgba = image.to_rgba8();
-    let width = rgba.width();
-    let height = rgba.height();
-    let min_dimension = width.min(height);
-    if min_dimension < 24 {
-        return;
-    }
-
-    let cx = width as f32 / 2.0 - 0.5;
-    let cy = height as f32 / 2.0 - 0.5;
-    let radius = (min_dimension as f32 * 0.14).clamp(10.0, 56.0);
-    let radius_sq = radius * radius;
-
-    // Translucent black circle
-    for (x, y, pixel) in rgba.enumerate_pixels_mut() {
-        let dx = x as f32 - cx;
-        let dy = y as f32 - cy;
-        if dx * dx + dy * dy <= radius_sq {
-            blend_pixel(pixel, image::Rgba([0, 0, 0, 135]));
-        }
-    }
-
-    // White play triangle
-    let left = cx - radius * 0.24;
-    let right = cx + radius * 0.42;
-    let top = cy - radius * 0.42;
-    let bottom = cy + radius * 0.42;
-    let tri_min_x = left.floor().max(0.0) as u32;
-    let tri_max_x = right.ceil().min(width.saturating_sub(1) as f32) as u32;
-    let tri_min_y = top.floor().max(0.0) as u32;
-    let tri_max_y = bottom.ceil().min(height.saturating_sub(1) as f32) as u32;
-
-    for y in tri_min_y..=tri_max_y {
-        let vertical = if y as f32 <= cy {
-            ((y as f32 - top) / (cy - top)).clamp(0.0, 1.0)
-        } else {
-            ((bottom - y as f32) / (bottom - cy)).clamp(0.0, 1.0)
-        };
-        let row_left = left;
-        let row_right = left + (right - left) * vertical;
-        for x in tri_min_x..=tri_max_x {
-            let xf = x as f32;
-            if xf >= row_left && xf <= row_right {
-                blend_pixel(rgba.get_pixel_mut(x, y), image::Rgba([245, 247, 250, 230]));
-            }
-        }
-    }
-
-    *image = image::DynamicImage::ImageRgba8(rgba);
-}
-
-fn blend_pixel(pixel: &mut image::Rgba<u8>, overlay: image::Rgba<u8>) {
-    let alpha = u16::from(overlay.0[3]);
-    let inverse_alpha = 255u16.saturating_sub(alpha);
-    for channel in 0..3 {
-        pixel.0[channel] = ((u16::from(overlay.0[channel]) * alpha
-            + u16::from(pixel.0[channel]) * inverse_alpha
-            + 127)
-            / 255) as u8;
-    }
-    pixel.0[3] = pixel.0[3].max(overlay.0[3]);
-}
-
-/// Removes media files for purged status broadcasts, including the video
-/// thumbnail sidecar (`videos/<id>.jpg`) that ffmpeg generates next to the
-/// video. Missing files are ignored.
-pub fn remove_owned_media_files(media_path: &Path, relative_paths: &[PathBuf]) {
-    let Ok(root) = MediaRoot::new(media_path) else {
-        return;
-    };
-    for rel in relative_paths {
-        for candidate in [rel.clone(), rel.with_extension("jpg")] {
-            if let Ok(path) = root.media_file(&candidate) {
-                let _ = fs::remove_file(path);
-            }
-        }
-    }
-}
-
-pub fn remove_status_media_files(media_path: &Path, relative_paths: &[PathBuf]) {
-    remove_owned_media_files(media_path, relative_paths);
-}
-
 fn notification_eligibility(message: &wr::Message) -> bool {
     !message.info.is_from_me && !App::is_status_chat(&message.info.chat)
 }
@@ -2777,152 +2628,6 @@ mod tests {
         assert_eq!(
             app.message_list_state.get_selected_message(),
             Some("middle".into())
-        );
-    }
-
-    #[test]
-    fn probe_audio_duration_reads_wav_seconds() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("tone.wav");
-
-        // Minimal RIFF/WAVE header: 16-bit PCM, mono, 8000 Hz, 2 seconds of
-        // silence. Byte lengths must match the declared format for lofty.
-        let sample_rate: u32 = 8000;
-        let seconds: u32 = 2;
-        let data_len: u32 = sample_rate * 2 * seconds;
-        let mut wav = Vec::new();
-        wav.extend_from_slice(b"RIFF");
-        wav.extend_from_slice(&(36 + data_len).to_le_bytes());
-        wav.extend_from_slice(b"WAVEfmt ");
-        wav.extend_from_slice(&16u32.to_le_bytes());
-        wav.extend_from_slice(&1u16.to_le_bytes()); // PCM
-        wav.extend_from_slice(&1u16.to_le_bytes()); // mono
-        wav.extend_from_slice(&sample_rate.to_le_bytes());
-        wav.extend_from_slice(&(sample_rate * 2).to_le_bytes()); // byte rate
-        wav.extend_from_slice(&2u16.to_le_bytes()); // block align
-        wav.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
-        wav.extend_from_slice(b"data");
-        wav.extend_from_slice(&data_len.to_le_bytes());
-        wav.resize(44 + data_len as usize, 0);
-        std::fs::write(&path, &wav).unwrap();
-
-        assert_eq!(probe_audio_duration(&path), Some(2));
-        assert_eq!(
-            probe_audio_duration(&directory.path().join("missing.ogg")),
-            None
-        );
-    }
-
-    /// Hand-crafts a single Ogg page with a spec-compliant CRC
-    /// (CRC-32, polynomial 0x04c11db7, non-reflected, CRC field zeroed).
-    ///
-    /// Header layout per RFC 3533: "OggS"(4) + version(1) + header_type(1) +
-    /// granule(8) + serial(4) + sequence(4) + checksum(4) + nsegments(1) +
-    /// segment table. Note the sequence number is 32 bits.
-    fn ogg_page(
-        header_type: u8,
-        granule: u64,
-        serial: u32,
-        sequence: u32,
-        segments: &[u8],
-        payload: &[u8],
-    ) -> Vec<u8> {
-        let mut page = Vec::new();
-        page.extend_from_slice(b"OggS");
-        page.push(0); // version
-        page.push(header_type);
-        page.extend_from_slice(&granule.to_le_bytes());
-        page.extend_from_slice(&serial.to_le_bytes());
-        page.extend_from_slice(&sequence.to_le_bytes());
-        page.extend_from_slice(&[0; 4]); // CRC placeholder, patched below
-        page.push(segments.len() as u8);
-        page.extend_from_slice(segments);
-        page.extend_from_slice(payload);
-
-        let mut crc: u32 = 0;
-        for &byte in &page {
-            crc ^= u32::from(byte) << 24;
-            for _ in 0..8 {
-                if crc & 0x8000_0000 != 0 {
-                    crc = (crc << 1) ^ 0x04c1_1db7;
-                } else {
-                    crc <<= 1;
-                }
-            }
-        }
-        page[22..26].copy_from_slice(&crc.to_le_bytes());
-        page
-    }
-
-    /// Regression: WhatsApp stores voice notes as `.oga` (Ogg Opus), but lofty's
-    /// extension map only knows `opus`/`ogg` — so probing must sniff the content
-    /// instead of trusting the extension. This builds a minimal 2-page Ogg Opus
-    /// (OpusHead + OpusTags, granule = 3s at 48 kHz) named `.oga`.
-    #[test]
-    fn probe_audio_duration_reads_ogg_opus_with_oga_extension() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("voice.oga");
-        let serial: u32 = 0x1234_5678;
-
-        let mut opus_head = Vec::new();
-        opus_head.extend_from_slice(b"OpusHead");
-        opus_head.push(1); // version
-        opus_head.push(1); // channels (mono)
-        opus_head.extend_from_slice(&0u16.to_le_bytes()); // pre-skip
-        opus_head.extend_from_slice(&48000u32.to_le_bytes()); // input sample rate
-        opus_head.extend_from_slice(&0u16.to_le_bytes()); // output gain
-        opus_head.push(0); // channel mapping family
-
-        let vendor = b"wp-tui-test";
-        let mut opus_tags = Vec::new();
-        opus_tags.extend_from_slice(b"OpusTags");
-        opus_tags.extend_from_slice(&(vendor.len() as u32).to_le_bytes());
-        opus_tags.extend_from_slice(vendor);
-        opus_tags.extend_from_slice(&0u32.to_le_bytes()); // no user comments
-
-        let page1 = ogg_page(0x02, 0, serial, 0, &[opus_head.len() as u8], &opus_head); // BOS
-        let page2 = ogg_page(
-            0x04,
-            48000 * 3,
-            serial,
-            1,
-            &[opus_tags.len() as u8],
-            &opus_tags,
-        ); // EOS, 3s
-
-        let mut oga = Vec::new();
-        oga.extend_from_slice(&page1);
-        oga.extend_from_slice(&page2);
-        std::fs::write(&path, &oga).unwrap();
-
-        assert_eq!(probe_audio_duration(&path), Some(3));
-    }
-
-    #[test]
-    fn probe_real_whatsapp_audio_diagnostic() {
-        let Some(path) = std::env::var("WPTUI_PROBE_PATH").ok() else {
-            return; // local-only diagnostic, skipped unless the env var is set
-        };
-        let path = std::path::Path::new(&path);
-        let result = probe_audio_duration(path);
-        eprintln!("probe({}) = {result:?}", path.display());
-        {
-            let opened = lofty::probe::Probe::open(path)
-                .map(|p| p.file_type())
-                .map(|t| format!("{t:?}"))
-                .unwrap_or_else(|e| format!("open error: {e}"));
-            eprintln!("extension-guessed file type: {opened}");
-            let guessed = lofty::probe::Probe::open(path)
-                .ok()
-                .and_then(|p| p.guess_file_type().ok())
-                .map(|p| format!("{:?}", p.file_type()))
-                .unwrap_or_else(|| "guess error".to_string());
-            eprintln!("content-guessed file type: {guessed}");
-        }
-        assert!(
-            result.is_some(),
-            "expected lofty to read {}",
-            path.display()
         );
     }
 
