@@ -22,6 +22,8 @@ pub mod message_ingestion;
 pub mod notifications;
 pub mod presence;
 pub mod share_picker;
+#[cfg(test)]
+pub(crate) mod test_support;
 
 pub use crate::app;
 use crate::app::actions::{
