@@ -26,6 +26,7 @@ pub mod message_actions;
 pub mod message_ingestion;
 pub mod notifications;
 pub mod presence;
+pub mod presence_bridge;
 pub mod private_reply;
 pub mod share_picker;
 pub mod status_projection;
@@ -57,7 +58,7 @@ pub use crate::app::message_actions::{
 pub use crate::app::notifications::{
     Clock, NotificationProjection, Notifier, NotifyRustNotifier, SystemClock, now_or, unix_now,
 };
-use crate::app::presence::{PresenceDiagnostics, SelectedPresence, jid_for_log};
+use crate::app::presence::{PresenceDiagnostics, SelectedPresence};
 pub use crate::app::share_picker::SharePicker;
 pub use crate::app::status_projection::STATUS_BROADCAST_CHAT;
 use crate::db;
@@ -583,9 +584,7 @@ impl App<'_> {
                 // probe may race group metadata hydration, so AppStateSyncComplete
                 // below remains the authoritative follow-up refresh.
                 self.load_communities();
-                self.selected_presence.ready();
-                self.presence_diagnostics
-                    .record(|| "self presence available: ready".to_owned());
+                self.mark_presence_ready();
                 true
             }
             wr::Event::MessageAction {
@@ -1009,13 +1008,7 @@ impl App<'_> {
                     message: msg,
                     is_sync,
                 }) => self.process_message(msg, is_sync),
-                Ok(AppInput::Presence(wr::PresenceUpdate {
-                    from,
-                    unavailable,
-                    last_seen,
-                })) => self
-                    .selected_presence
-                    .update(&from, unavailable, last_seen, self.now()),
+                Ok(AppInput::Presence(update)) => self.handle_presence_update(update),
                 Ok(AppInput::Terminal(event)) => {
                     self.on_terminal_event(event);
                     true
@@ -1046,66 +1039,11 @@ impl App<'_> {
         wr::disconnect();
         let stderr = std::io::stderr();
         let mut stderr = stderr.lock();
-        let _ = self.presence_diagnostics.write_report(&mut stderr);
-        let raw_report = wr::drain_raw_presence_diagnostics();
-        let _ = self
-            .presence_diagnostics
-            .write_raw_report(&mut stderr, raw_report.as_deref());
+        self.write_presence_diagnostics(&mut stderr);
         drop(stderr);
         let _ = self
             .message_action_diagnostics
             .write_report(std::io::stderr());
-    }
-
-    fn sync_selected_presence(&mut self) {
-        let selected = self.open_chat.clone();
-        let now = self.now();
-        if self.selected_presence.select(selected, now) {
-            let selected = self
-                .selected_presence
-                .selected()
-                .map(jid_for_log)
-                .unwrap_or_else(|| "none".to_owned());
-            self.presence_diagnostics
-                .record(|| format!("selected canonical jid={selected}"));
-        }
-        if let Some(jid) = self.selected_presence.subscription_due(now) {
-            let diagnostic_jid = jid_for_log(&jid);
-            self.presence_diagnostics
-                .record(|| format!("presence subscription attempt: jid={diagnostic_jid}"));
-            info!("Presence subscription attempt: jid={}", jid_for_log(&jid));
-            let result = wr::subscribe_presence(&jid);
-            let retry_delay = self
-                .selected_presence
-                .subscription_result(&jid, result, now);
-            let diagnostic_jid = jid_for_log(&jid);
-            self.presence_diagnostics.record(|| {
-                if result == wr::SubscribePresenceResult::NoPrivacyToken {
-                    format!(
-                        "presence subscription result: jid={diagnostic_jid}, result=rejected: no privacy token"
-                    )
-                } else if let Some(delay) = retry_delay {
-                    format!(
-                        "presence subscription result: jid={diagnostic_jid}, result=rejected, retry_in={delay}s"
-                    )
-                } else {
-                    format!(
-                        "presence subscription result: jid={diagnostic_jid}, result=accepted"
-                    )
-                }
-            });
-            info!(
-                "Presence subscription result: jid={}, result={}",
-                jid_for_log(&jid),
-                match result {
-                    wr::SubscribePresenceResult::Accepted => "accepted",
-                    wr::SubscribePresenceResult::NoPrivacyToken => {
-                        "rejected: no privacy token"
-                    }
-                    wr::SubscribePresenceResult::Rejected => "rejected",
-                }
-            );
-        }
     }
 
     pub(crate) fn now(&self) -> i64 {
