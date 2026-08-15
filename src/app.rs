@@ -30,6 +30,7 @@ pub mod presence;
 pub mod presence_bridge;
 pub mod private_reply;
 pub mod runtime_callbacks;
+pub mod runtime_loop;
 pub mod runtime_media_events;
 pub mod share_picker;
 pub mod status_projection;
@@ -65,21 +66,19 @@ use crate::app::presence::{PresenceDiagnostics, SelectedPresence};
 use crate::app::runtime_callbacks::register as register_runtime_callbacks;
 pub use crate::app::share_picker::SharePicker;
 pub use crate::app::status_projection::STATUS_BROADCAST_CHAT;
-use crate::app::terminal_session::TerminalSession;
 use crate::db;
 use crate::file_picker::FilePickerState;
 use crate::key_handler::KeybindHandler;
-use crate::ui;
 // use crate::key_handler;
 
+use crate::ui::message_list::{MessageHeightCache, MessageListState};
 use arboard::Clipboard;
 use db::DatabaseHandler;
 use directories::ProjectDirs;
-use log::{error, info};
+use log::info;
 use ratatui::widgets::ListState;
 use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::protocol::StatefulProtocol;
-use ui::message_list::{MessageHeightCache, MessageListState};
 use whatsrust as wr;
 
 use crate::ui::text_input::TextInput;
@@ -461,93 +460,7 @@ impl App<'_> {
         });
         // });
         info!("Connected, initializing terminal UI");
-
-        let mut terminal_session = match TerminalSession::try_new() {
-            Ok(session) => session,
-            Err(e) => {
-                error!("Failed to initialize terminal UI: {e}");
-                eprintln!("Failed to initialize terminal UI: {e}");
-                let _ = self
-                    .message_action_diagnostics
-                    .write_report(std::io::stderr());
-                return;
-            }
-        };
-
-        terminal_session.start_input_reader(&mut self.input_reader, self.tx.clone());
-
-        self.sync_selected_presence();
-        if let Err(error) = terminal_session
-            .terminal_mut()
-            .draw(|frame| ui::draw(frame, self))
-        {
-            error!("Failed to draw terminal UI: {error}");
-            terminal_session.stop_input_reader(&mut self.input_reader);
-            terminal_session.restore();
-            wr::disconnect();
-            let _ = self
-                .message_action_diagnostics
-                .write_report(std::io::stderr());
-            return;
-        }
-
-        loop {
-            let now = self.now();
-            let msg = match self.selected_presence.redraw_after(now) {
-                Some(timeout) => match self.rx.recv_timeout(timeout) {
-                    Ok(input) => Ok(input),
-                    Err(mpsc::RecvTimeoutError::Timeout) => Ok(AppInput::Draw),
-                    Err(mpsc::RecvTimeoutError::Disconnected) => Err(mpsc::RecvError),
-                },
-                None => self.rx.recv(),
-            };
-            // info!("Received message: {:?}", &msg);
-            let should_draw = match msg {
-                Ok(AppInput::App(event)) => self.handle_media_event(event, &download_tx),
-                Ok(AppInput::WhatsApp(event)) => self.handle_whatsapp_event(event),
-                Ok(AppInput::Message {
-                    message: msg,
-                    is_sync,
-                }) => self.process_message(msg, is_sync),
-                Ok(AppInput::Presence(update)) => self.handle_presence_update(update),
-                Ok(AppInput::Terminal(event)) => {
-                    self.on_terminal_event(event);
-                    true
-                }
-                Ok(AppInput::Draw) => true,
-                Err(_) => {
-                    error!("Failed to receive input from channel");
-                    true
-                }
-            };
-
-            self.sync_selected_presence();
-
-            if should_draw {
-                if let Err(error) = terminal_session
-                    .terminal_mut()
-                    .draw(|frame| ui::draw(frame, self))
-                {
-                    error!("Failed to draw terminal UI: {error}");
-                    break;
-                }
-            }
-
-            if self.should_quit {
-                break;
-            }
-        }
-
-        terminal_session.stop_input_reader(&mut self.input_reader);
-        terminal_session.restore();
-        wr::disconnect();
-        let stderr = std::io::stderr();
-        let mut stderr = stderr.lock();
-        self.write_presence_diagnostics(&mut stderr);
-        drop(stderr);
-        let _ = self
-            .message_action_diagnostics
-            .write_report(std::io::stderr());
+        runtime_loop::run(self, download_tx);
     }
 
     pub(crate) fn now(&self) -> i64 {
