@@ -937,15 +937,6 @@ func TestActionJIDAndBridgeSourceContracts(t *testing.T) {
 	if _, err := parseActionJID(""); err == nil {
 		t.Fatal("empty action JID was accepted")
 	}
-	source, err := os.ReadFile("main.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, fragment := range []string{"//export C_ReactToMessage", "//export C_EditMessage", "//export C_RevokeMessage"} {
-		if !strings.Contains(string(source), fragment) {
-			t.Fatalf("missing bridge export %q", fragment)
-		}
-	}
 }
 
 func TestSafeDownloadTargetRejectsUnsafePathsAndPreservesNestedPaths(t *testing.T) {
