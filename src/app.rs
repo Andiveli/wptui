@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::{
@@ -5,7 +6,6 @@ use std::{
     sync::Arc,
     sync::Mutex,
 };
-use std::{fs, thread};
 
 pub mod actions;
 pub mod chat_opening;
@@ -30,6 +30,7 @@ pub mod presence;
 pub mod presence_bridge;
 pub mod private_reply;
 pub mod runtime_callbacks;
+pub mod runtime_media_events;
 pub mod share_picker;
 pub mod status_projection;
 pub mod terminal_session;
@@ -52,9 +53,6 @@ use crate::app::contact_avatars::ContactAvatars;
 use crate::app::download_worker::spawn as spawn_download_worker;
 use crate::app::events::{AppEvent, AppInput, AttachmentViewerState, ViewerPreviewState};
 use crate::app::input_reader::InputReader;
-use crate::app::media_support::{
-    apply_video_play_marker, generate_video_thumbnail, has_decent_video_thumbnail,
-};
 pub use crate::app::media_support::{remove_owned_media_files, remove_status_media_files};
 use crate::app::message_action_diagnostics::{MessageActionDiagnostics, identifier_for_log};
 pub use crate::app::message_actions::{
@@ -71,20 +69,16 @@ use crate::app::terminal_session::TerminalSession;
 use crate::db;
 use crate::file_picker::FilePickerState;
 use crate::key_handler::KeybindHandler;
-use crate::media::MediaRoot;
 use crate::ui;
 // use crate::key_handler;
 
 use arboard::Clipboard;
 use db::{DatabaseHandler, MessageActionPersistence};
 use directories::ProjectDirs;
-use log::{error, info, trace};
-use ratatui::layout::Rect;
+use log::{error, info};
 use ratatui::widgets::ListState;
 use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::protocol::StatefulProtocol;
-use ratatui_image::{Resize, ResizeEncodeRender};
-use ui::message_list::{IMAGE_HEIGHT, IMAGE_WIDTH, VIDEO_HEIGHT, VIDEO_WIDTH};
 use ui::message_list::{MessageHeightCache, MessageListState};
 use whatsrust as wr;
 
@@ -509,226 +503,7 @@ impl App<'_> {
             };
             // info!("Received message: {:?}", &msg);
             let should_draw = match msg {
-                Ok(AppInput::App(event)) => match event {
-                    AppEvent::SetFilePreview(message_id, file_path, img) => {
-                        self.cache_file_preview(message_id.clone(), file_path, img);
-                        if let Some(viewer) = self.attachment_viewer.as_mut()
-                            && viewer.message_id == message_id
-                        {
-                            viewer.status = crate::app::events::ViewerStatus::Ready;
-                        }
-
-                        trace!("Set file preview for message: {:?}", message_id);
-
-                        true
-                    }
-                    AppEvent::LoadViewerPreview(key) => {
-                        if self
-                            .viewer_preview
-                            .as_ref()
-                            .is_none_or(|state| state.key() != &key)
-                        {
-                            false
-                        } else {
-                            let tx = self.tx.clone();
-                            let media_path = self.media_path.clone();
-                            let picker = Arc::clone(&self.picker);
-                            thread::spawn(move || {
-                                let protocol = MediaRoot::new(&media_path)
-                                    .and_then(|root| {
-                                        root.media_file(std::path::Path::new(
-                                            key.preview_path().as_ref(),
-                                        ))
-                                    })
-                                    .ok()
-                                    .and_then(|path| image::ImageReader::open(path).ok())
-                                    .and_then(|reader| reader.decode().ok())
-                                    .map(|image| {
-                                        let mut protocol =
-                                            picker.lock().unwrap().new_resize_protocol(image);
-                                        protocol.resize_encode(
-                                            &Resize::Scale(None),
-                                            Rect::new(0, 0, key.width, key.height),
-                                        );
-                                        protocol
-                                    });
-                                let _ = tx
-                                    .send(AppInput::App(AppEvent::SetViewerPreview(key, protocol)));
-                            });
-                            false
-                        }
-                    }
-                    AppEvent::SetViewerPreview(key, protocol) => {
-                        if self
-                            .viewer_preview
-                            .as_ref()
-                            .is_some_and(|state| state.key() == &key)
-                        {
-                            self.viewer_preview = Some(match protocol {
-                                Some(protocol) => ViewerPreviewState::Ready {
-                                    key,
-                                    protocol: Box::new(protocol),
-                                },
-                                None => ViewerPreviewState::Failed(key),
-                            });
-                            true
-                        } else {
-                            false
-                        }
-                    }
-                    AppEvent::LoadFilePreview(message_id) => {
-                        if !matches!(
-                            self.metadata.get(&message_id),
-                            Some(Metadata::File(FileMeta::Loading))
-                        ) {
-                            self.metadata
-                                .insert(message_id.clone(), Metadata::File(FileMeta::Loading));
-                            self.message_height_cache.invalidate(&message_id);
-
-                            let tx = self.tx.clone();
-                            let media_path = self.media_path.to_owned();
-                            let picker = Arc::clone(&self.picker);
-
-                            let file = match &self.messages.get(&message_id).unwrap().message {
-                                wr::MessageContent::File(f) => Some(f.clone()),
-                                _ => None,
-                            };
-                            if let Some(file) = file {
-                                thread::spawn(move || {
-                                    // For videos, generate a real thumbnail frame with ffmpeg
-                                    // (videos/<id>.jpg) when the sidecar is missing or is still
-                                    // the tiny embedded WhatsApp thumbnail, then load it.
-                                    let preview_path = match file.kind {
-                                        wr::FileKind::Video => {
-                                            let video_rel = Path::new(file.path.as_ref());
-                                            let sidecar_rel = video_rel.with_extension("jpg");
-                                            let sidecar_abs = media_path.join(&sidecar_rel);
-                                            if !has_decent_video_thumbnail(&sidecar_abs) {
-                                                let video_abs = media_path.join(video_rel);
-                                                generate_video_thumbnail(&video_abs, &sidecar_abs);
-                                            }
-                                            sidecar_rel.to_string_lossy().to_string()
-                                        }
-                                        _ => file.path.to_string(),
-                                    };
-                                    let path = std::path::Path::new(&preview_path);
-                                    let image_res = MediaRoot::new(&media_path)
-                                        .and_then(|root| root.media_file(path))
-                                        .ok()
-                                        .and_then(|path| image::ImageReader::open(path).ok())
-                                        .and_then(|reader| reader.decode().ok());
-
-                                    if let Some(mut image_src) = image_res {
-                                        if matches!(file.kind, wr::FileKind::Video) {
-                                            apply_video_play_marker(&mut image_src);
-                                        }
-                                        let mut img =
-                                            picker.lock().unwrap().new_resize_protocol(image_src);
-                                        let (preview_width, preview_height) =
-                                            if matches!(file.kind, wr::FileKind::Video) {
-                                                (VIDEO_WIDTH, VIDEO_HEIGHT)
-                                            } else {
-                                                (IMAGE_WIDTH, IMAGE_HEIGHT)
-                                            };
-                                        img.resize_encode(
-                                            &Resize::Scale(None),
-                                            Rect {
-                                                x: 0,
-                                                y: 0,
-                                                width: preview_width as u16,
-                                                height: preview_height as u16,
-                                            },
-                                        );
-
-                                        tx.send(AppInput::App(AppEvent::SetFilePreview(
-                                            message_id.clone(),
-                                            file.path.clone(),
-                                            img,
-                                        )))
-                                        .unwrap();
-                                    } else if matches!(file.kind, wr::FileKind::Video) {
-                                        // No thumbnail sidecar (e.g. old messages before the
-                                        // feature existed) — show the 🎬 placeholder instead
-                                        // of a failure message.
-                                        tx.send(AppInput::App(AppEvent::SetFileState(
-                                            message_id.clone(),
-                                            FileMeta::Loaded,
-                                        )))
-                                        .unwrap();
-                                    } else {
-                                        tx.send(AppInput::App(AppEvent::SetFileState(
-                                            message_id.clone(),
-                                            FileMeta::LoadFailed,
-                                        )))
-                                        .unwrap();
-                                    }
-                                });
-                            } else {
-                                error!("Expected a file message for preview");
-                            }
-                        }
-                        false // We will redraw after the preview is loaded
-                    }
-                    AppEvent::SetFileState(message_id, state) => {
-                        if let Some(viewer) = self.attachment_viewer.as_mut()
-                            && viewer.message_id == message_id
-                        {
-                            viewer.status = match &state {
-                                FileMeta::Loaded | FileMeta::Downloaded => {
-                                    crate::app::events::ViewerStatus::Ready
-                                }
-                                FileMeta::Loading | FileMeta::Downloading => {
-                                    crate::app::events::ViewerStatus::Downloading
-                                }
-                                FileMeta::LoadFailed | FileMeta::DownloadFailed => {
-                                    crate::app::events::ViewerStatus::Failed
-                                }
-                            };
-                        }
-                        self.metadata
-                            .insert(message_id.clone(), Metadata::File(state));
-                        self.message_height_cache.invalidate(&message_id);
-
-                        if matches!(
-                            self.metadata.get(&message_id),
-                            Some(Metadata::File(FileMeta::Downloaded | FileMeta::Loaded))
-                        ) {
-                            self.spawn_audio_duration_probe_if_missing(&message_id);
-                        }
-
-                        true
-                    }
-                    AppEvent::SetAudioDuration(_message_id, path, duration) => {
-                        if let Some(duration) = duration {
-                            self.audio_durations.insert(path, duration);
-                        }
-                        true
-                    }
-                    AppEvent::ContactAvatar(result) => self.contact_avatars.apply(result),
-                    AppEvent::ContactAvatarRefreshed { generation, jid } => {
-                        self.contact_avatars.mark_refreshed(generation, jid)
-                    }
-                    AppEvent::DownloadFile(message_id, file_id) => {
-                        if matches!(
-                            self.metadata.get(&message_id),
-                            Some(Metadata::File(FileMeta::Downloading))
-                        ) {
-                            false
-                        } else {
-                            self.metadata
-                                .insert(message_id.clone(), Metadata::File(FileMeta::Downloading));
-                            self.message_height_cache.invalidate(&message_id);
-                            download_tx.send((message_id, file_id)).unwrap();
-                            false
-                        }
-                    }
-                    AppEvent::DownloadFileDone(message_id, state) => {
-                        self.metadata
-                            .insert(message_id.clone(), Metadata::File(state));
-                        self.message_height_cache.invalidate(&message_id);
-                        true
-                    }
-                },
+                Ok(AppInput::App(event)) => self.handle_media_event(event, &download_tx),
                 Ok(AppInput::WhatsApp(event)) => self.handle_whatsapp_event(event),
                 Ok(AppInput::Message {
                     message: msg,
