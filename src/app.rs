@@ -12,6 +12,7 @@ use std::{fs, thread};
 pub mod actions;
 pub mod chat_ordering;
 pub mod chat_store;
+pub mod community_bridge;
 pub mod community_hierarchy;
 pub mod composer;
 pub mod contact_avatars;
@@ -63,7 +64,7 @@ use crate::ui;
 use arboard::Clipboard;
 use db::{DatabaseHandler, MessageActionPersistence};
 use directories::ProjectDirs;
-use log::{debug, error, info, trace, warn};
+use log::{debug, error, info, trace};
 use ratatui::crossterm::event;
 use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
@@ -1212,42 +1213,6 @@ impl App<'_> {
             .unwrap_or_default()
     }
 
-    fn load_communities(&mut self) {
-        self.refresh_communities(wr::get_communities);
-    }
-
-    pub fn refresh_communities<F>(&mut self, fetch: F)
-    where
-        F: FnOnce() -> Result<Vec<wr::CommunityInfo>, wr::CommunitiesError>,
-    {
-        match fetch() {
-            Ok(records) => {
-                // Communities has its own hierarchy. Never preserve its
-                // selection through the projected Chats rows: those rows may
-                // reorder independently and roots target a different JID.
-                let selected = if self.selected_section == Section::Communities {
-                    self.selected_community_node_jid()
-                } else {
-                    None
-                };
-                // An empty successful result is meaningful: it clears a prior
-                // hierarchy and renders the normal "No communities" state.
-                self.communities = Self::build_community_nodes(&records);
-                self.communities_unavailable = false;
-                self.communities_loaded = true;
-                if self.selected_section == Section::Communities {
-                    self.select_community_node(selected);
-                }
-            }
-            Err(error) => {
-                // Do not turn a transient readiness/reconnect failure into an
-                // empty hierarchy. Keep the last successful snapshot visible.
-                warn!("Could not load communities: {error:?}");
-                self.communities_unavailable = !self.communities_loaded;
-            }
-        }
-    }
-
     pub fn open_chat(&self) -> Option<wr::JID> {
         self.open_chat.clone()
     }
@@ -1728,115 +1693,6 @@ mod tests {
         assert_eq!(app.open_chat(), Some(recipient.clone()));
         assert!(app.chats.contains_key(&recipient));
         assert!(app.sorted_chats.contains(&recipient));
-    }
-
-    fn community(name: &str, jid: &str, is_parent: bool) -> wr::CommunityInfo {
-        wr::CommunityInfo {
-            jid: wr::JID::from(jid.to_owned()),
-            name: name.into(),
-            parent_jid: None,
-            is_parent,
-        }
-    }
-
-    #[test]
-    fn communities_load_after_readiness_event() {
-        let mut app = TestApp::new();
-        let root = community("Community", "root@g.us", true);
-
-        app.refresh_communities(|| Ok(vec![root.clone()]));
-
-        assert_eq!(app.communities.len(), 1);
-        assert!(!app.communities_unavailable);
-    }
-
-    #[test]
-    fn communities_refresh_on_restart_or_reconnect_replaces_snapshot() {
-        let mut app = TestApp::new();
-        app.refresh_communities(|| Ok(vec![community("Old", "old@g.us", true)]));
-        app.refresh_communities(|| Ok(vec![community("New", "new@g.us", true)]));
-
-        assert_eq!(app.communities[0].name, "New");
-        assert_eq!(app.communities[0].jid, wr::JID::from("new@g.us".to_owned()));
-    }
-
-    #[test]
-    fn successful_empty_communities_clears_snapshot() {
-        let mut app = TestApp::new();
-        app.refresh_communities(|| Ok(vec![community("Old", "old@g.us", true)]));
-        app.refresh_communities(|| Ok(Vec::new()));
-
-        assert!(app.communities.is_empty());
-        assert!(!app.communities_unavailable);
-    }
-
-    #[test]
-    fn transient_communities_failure_preserves_last_successful_snapshot() {
-        let mut app = TestApp::new();
-        app.refresh_communities(|| Ok(vec![community("Known", "known@g.us", true)]));
-        app.refresh_communities(|| Err(wr::CommunitiesError::BridgeUnavailable));
-
-        assert_eq!(app.communities[0].name, "Known");
-        assert!(!app.communities_unavailable);
-    }
-
-    #[test]
-    fn communities_refresh_preserves_explicit_node_across_reorder_and_target_change() {
-        let mut app = TestApp::new();
-        let selected = wr::JID::from("selected@g.us".to_owned());
-        let other = wr::JID::from("other@g.us".to_owned());
-        app.selected_section = Section::Communities;
-        app.refresh_communities(|| {
-            Ok(vec![
-                community("Selected", "selected@g.us", true),
-                wr::CommunityInfo {
-                    jid: other.clone(),
-                    name: "Other".into(),
-                    parent_jid: Some(selected.clone()),
-                    is_parent: false,
-                },
-            ])
-        });
-        app.chat_list_state.select(Some(0));
-        app.chats.insert(
-            other.clone(),
-            Chat {
-                jid: other.clone(),
-                last_message_time: None,
-            },
-        );
-        app.refresh_communities(|| {
-            Ok(vec![
-                community("Aardvark", "aardvark@g.us", true),
-                community("Selected", "selected@g.us", true),
-                wr::CommunityInfo {
-                    jid: other.clone(),
-                    name: "Other".into(),
-                    parent_jid: Some(selected.clone()),
-                    is_parent: false,
-                },
-            ])
-        });
-
-        assert_eq!(app.selected_community_node_jid(), Some(other.clone()));
-        assert_eq!(app.get_selected_community(), Some(other));
-    }
-
-    #[test]
-    fn communities_refresh_falls_back_when_selected_node_is_removed() {
-        let mut app = TestApp::new();
-        app.selected_section = Section::Communities;
-        app.refresh_communities(|| {
-            Ok(vec![
-                community("Removed", "removed@g.us", true),
-                community("Kept", "kept@g.us", true),
-            ])
-        });
-        app.chat_list_state.select(Some(0));
-        app.refresh_communities(|| Ok(vec![community("Kept", "kept@g.us", true)]));
-
-        assert_eq!(app.chat_list_state.selected(), None);
-        assert_eq!(app.selected_community_node_jid(), None);
     }
 
     #[test]
