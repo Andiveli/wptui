@@ -29,6 +29,7 @@ pub mod notifications;
 pub mod presence;
 pub mod presence_bridge;
 pub mod private_reply;
+pub mod runtime_callbacks;
 pub mod share_picker;
 pub mod status_projection;
 #[cfg(test)]
@@ -60,6 +61,7 @@ pub use crate::app::notifications::{
     Clock, NotificationProjection, Notifier, NotifyRustNotifier, SystemClock, now_or, unix_now,
 };
 use crate::app::presence::{PresenceDiagnostics, SelectedPresence};
+use crate::app::runtime_callbacks::register as register_runtime_callbacks;
 pub use crate::app::share_picker::SharePicker;
 pub use crate::app::status_projection::STATUS_BROADCAST_CHAT;
 use crate::db;
@@ -453,41 +455,7 @@ impl App<'_> {
         self.sort_chats();
 
         wr::new_client(self.whatsmeow_db.to_str().unwrap());
-
-        {
-            let tx = self.tx.clone();
-            let diagnostics = self.message_action_diagnostics.clone();
-            wr::set_log_handler(move |msg, level| {
-                let level = match level {
-                    0 => log::Level::Error,
-                    1 => log::Level::Warn,
-                    2 => log::Level::Info,
-                    3 => log::Level::Debug,
-                    _ => log::Level::Trace,
-                };
-                diagnostics.record_go_log(&msg);
-                log::log!(level, "{msg}");
-                tx.send(AppInput::Draw).unwrap();
-            });
-        }
-        {
-            let tx = self.tx.clone();
-            wr::set_event_handler(move |event| {
-                tx.send(AppInput::WhatsApp(event)).unwrap();
-            })
-        }
-        {
-            let tx = self.tx.clone();
-            wr::set_presence_handler(move |update| {
-                tx.send(AppInput::Presence(update)).unwrap();
-            });
-        }
-        {
-            let tx = self.tx.clone();
-            wr::set_message_handler(move |message, is_sync| {
-                tx.send(AppInput::Message { message, is_sync }).unwrap();
-            });
-        }
+        register_runtime_callbacks(self.tx.clone(), self.message_action_diagnostics.clone());
 
         // Single dedicated thread for all CGo downloads. Calling Go from many Rust-spawned
         // threads can crash even with a mutex; one long-lived worker avoids that.
