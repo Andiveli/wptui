@@ -866,9 +866,7 @@ impl App<'_> {
 
     fn move_share_picker(&mut self, delta: isize) {
         if let Some(picker) = self.share_picker.as_mut() {
-            picker.selected = picker.selected.saturating_add_signed(delta);
-            picker.clamp_selection();
-            picker.keep_selected_visible();
+            picker.move_selection(delta);
         }
     }
 
@@ -876,31 +874,18 @@ impl App<'_> {
         let Some(picker) = self.share_picker.as_mut() else {
             return;
         };
-        let selected = picker
-            .visible_contacts()
-            .get(picker.selected)
-            .cloned()
-            .cloned();
-        if let Some(jid) = selected {
-            if !picker.selected_contacts.insert(jid.clone()) {
-                picker.selected_contacts.remove(&jid);
-            }
-        }
+        picker.toggle_selected();
     }
 
     fn share_search_backspace(&mut self) {
         if let Some(picker) = self.share_picker.as_mut() {
-            picker.query.pop();
-            picker.reset_search_position();
-            picker.clamp_selection();
+            picker.search_backspace();
         }
     }
 
     fn share_search_character(&mut self, character: char) {
         if let Some(picker) = self.share_picker.as_mut() {
-            picker.query.push(character);
-            picker.reset_search_position();
-            picker.clamp_selection();
+            picker.search_character(character);
         }
     }
 
