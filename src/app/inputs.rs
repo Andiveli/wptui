@@ -174,32 +174,6 @@ impl App<'_> {
         }
     }
 
-    fn handle_chat_search_key(&mut self, key: Key) {
-        match key.code {
-            KeyCode::Esc => {
-                let chat = self.get_selected_chat();
-                self.contact_search_active = false;
-                self.contact_search.clean();
-                self.select_chat(chat);
-            }
-            KeyCode::Enter => {
-                self.contact_search_active = false;
-                self.dispatch_action(AppAction::OpenChat);
-            }
-            KeyCode::Char(character) => {
-                self.contact_search.enter_char(character);
-                self.update_filtered_chats();
-            }
-            KeyCode::Backspace => {
-                self.contact_search.delete_char();
-                self.update_filtered_chats();
-            }
-            KeyCode::Left => self.contact_search.move_cursor_left(),
-            KeyCode::Right => self.contact_search.move_cursor_right(),
-            _ => {}
-        }
-    }
-
     pub fn dispatch_action(&mut self, action: AppAction) {
         self.focus_pane = focus_after(self.focus_pane, &action, self.pane_visibility);
 
@@ -1104,16 +1078,7 @@ impl App<'_> {
                 }
             }
             FocusPane::ChatList => {
-                if self.selected_section == Section::Status {
-                    self.status_selection.select_next();
-                    self.clamp_status_selection();
-                } else if self.selected_section == Section::Communities {
-                    self.chat_list_state.select_next();
-                    self.clamp_community_selection();
-                } else {
-                    self.chat_list_state.select_next();
-                    self.clamp_chat_selection();
-                }
+                self.move_selection_next();
             }
             // In Conversation, j moves UP (older) in the time-ascending list.
             FocusPane::Conversation => {
@@ -1136,16 +1101,7 @@ impl App<'_> {
                 }
             }
             FocusPane::ChatList => {
-                if self.selected_section == Section::Status {
-                    self.status_selection.select_previous();
-                    self.clamp_status_selection();
-                } else if self.selected_section == Section::Communities {
-                    self.chat_list_state.select_previous();
-                    self.clamp_community_selection();
-                } else {
-                    self.chat_list_state.select_previous();
-                    self.clamp_chat_selection();
-                }
+                self.move_selection_previous();
             }
             // In Conversation, k moves DOWN (newer) in the time-ascending list.
             FocusPane::Conversation => {
@@ -1166,12 +1122,7 @@ impl App<'_> {
                 self.jump_logout_selection_top();
             }
             FocusPane::ChatList => {
-                if self.selected_section == Section::Status {
-                    self.status_selection.select_first();
-                    self.clamp_status_selection();
-                } else {
-                    self.chat_list_state.select_first();
-                }
+                self.jump_selection_top();
             }
             // En Conversation el render invierte: items[0]=más nuevo (abajo).
             // gg va al principio del chat (más viejo arriba) = último índice.
@@ -1193,12 +1144,7 @@ impl App<'_> {
                 self.jump_logout_selection_bottom();
             }
             FocusPane::ChatList => {
-                if self.selected_section == Section::Status {
-                    self.status_selection.select_last();
-                    self.clamp_status_selection();
-                } else {
-                    self.chat_list_state.select_last();
-                }
+                self.jump_selection_bottom();
             }
             // En Conversation el render invierte: items[0]=más nuevo (abajo).
             // G va al final del chat (más nuevo abajo) = índice 0.
@@ -1212,7 +1158,6 @@ impl App<'_> {
                 }
             }
         }
-        self.clamp_chat_selection();
     }
 
     fn half_page_down(&mut self) {
@@ -1270,30 +1215,6 @@ impl App<'_> {
                     }
                 }
             },
-        }
-    }
-
-    fn clamp_chat_selection(&mut self) {
-        let chats = if self.contact_search.input.is_empty() {
-            &self.sorted_chats
-        } else {
-            &self.filtered_chats
-        };
-        match (chats.len(), self.chat_list_state.selected()) {
-            (0, _) => self.chat_list_state.select(None),
-            (len, Some(selected)) if selected >= len => self.chat_list_state.select(Some(len - 1)),
-            _ => {}
-        }
-    }
-
-    fn clamp_community_selection(&mut self) {
-        match (
-            self.selectable_community_nodes().len(),
-            self.chat_list_state.selected(),
-        ) {
-            (0, _) => self.chat_list_state.select(None),
-            (len, Some(selected)) if selected >= len => self.chat_list_state.select(Some(len - 1)),
-            _ => {}
         }
     }
 
