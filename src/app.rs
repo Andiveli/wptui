@@ -20,6 +20,7 @@ pub mod composer;
 pub mod contact_avatars;
 pub mod events;
 pub mod inputs;
+pub mod media_cache;
 pub mod media_support;
 pub mod message_action_diagnostics;
 pub mod message_actions;
@@ -48,7 +49,6 @@ use crate::app::contact_avatars::ContactAvatars;
 use crate::app::events::{AppEvent, AppInput, AttachmentViewerState, ViewerPreviewState};
 use crate::app::media_support::{
     apply_video_play_marker, generate_video_thumbnail, has_decent_video_thumbnail,
-    probe_audio_duration,
 };
 pub use crate::app::media_support::{remove_owned_media_files, remove_status_media_files};
 use crate::app::message_action_diagnostics::{MessageActionDiagnostics, identifier_for_log};
@@ -432,62 +432,6 @@ impl App<'_> {
         self.presence_diagnostics = PresenceDiagnostics::new(enabled);
     }
 
-    pub fn touch_image_cache(&mut self, path: &Arc<str>) {
-        if self.image_cache.contains_key(path) {
-            self.image_cache_order.retain(|cached| cached != path);
-            self.image_cache_order.push_back(path.clone());
-        }
-    }
-
-    fn mark_evicted_preview_reloadable(&mut self, path: &Arc<str>) {
-        for (id, message) in &self.messages {
-            if matches!(&message.message, wr::MessageContent::File(file) if file.path == *path)
-                && matches!(
-                    self.metadata.get(id),
-                    Some(Metadata::File(FileMeta::Loaded))
-                )
-            {
-                self.metadata
-                    .insert(id.clone(), Metadata::File(FileMeta::Downloaded));
-                self.message_height_cache.invalidate(id);
-            }
-        }
-    }
-
-    /// Spawns a background probe for the audio duration of `message_id` once
-    /// its file is on disk. No-op for non-audio messages and for paths that
-    /// already have a cached duration.
-    fn spawn_audio_duration_probe_if_missing(&self, message_id: &wr::MessageId) {
-        let Some(file) = (match self
-            .messages
-            .get(message_id)
-            .map(|message| &message.message)
-        {
-            Some(wr::MessageContent::File(file)) => Some(file.clone()),
-            _ => None,
-        }) else {
-            return;
-        };
-        if !matches!(file.kind, wr::FileKind::Audio)
-            || self.audio_durations.contains_key(file.path.as_ref())
-        {
-            return;
-        }
-        let tx = self.tx.clone();
-        let media_path = self.media_path.to_owned();
-        let message_id = message_id.clone();
-        thread::spawn(move || {
-            let absolute = media_path.join(file.path.as_ref());
-            let duration = probe_audio_duration(&absolute);
-            tx.send(AppInput::App(AppEvent::SetAudioDuration(
-                message_id.clone(),
-                file.path,
-                duration,
-            )))
-            .unwrap();
-        });
-    }
-
     pub fn handle_whatsapp_event(&mut self, event: wr::Event) -> bool {
         match event {
             wr::Event::AppStateSyncComplete => {
@@ -772,20 +716,7 @@ impl App<'_> {
             let should_draw = match msg {
                 Ok(AppInput::App(event)) => match event {
                     AppEvent::SetFilePreview(message_id, file_path, img) => {
-                        const IMAGE_CACHE_CAPACITY: usize = 50;
-                        if !self.image_cache.contains_key(&file_path)
-                            && self.image_cache.len() >= IMAGE_CACHE_CAPACITY
-                            && let Some(oldest) = self.image_cache_order.pop_front()
-                        {
-                            self.image_cache.remove(&oldest);
-                            self.mark_evicted_preview_reloadable(&oldest);
-                        }
-                        self.image_cache.insert(file_path.clone(), img);
-                        self.image_cache_order.retain(|path| path != &file_path);
-                        self.image_cache_order.push_back(file_path.clone());
-                        self.metadata
-                            .insert(message_id.clone(), Metadata::File(FileMeta::Loaded));
-                        self.message_height_cache.invalidate(&message_id);
+                        self.cache_file_preview(message_id.clone(), file_path, img);
                         if let Some(viewer) = self.attachment_viewer.as_mut()
                             && viewer.message_id == message_id
                         {
@@ -1320,28 +1251,6 @@ mod tests {
         fn deref_mut(&mut self) -> &mut Self::Target {
             &mut self.app
         }
-    }
-
-    #[test]
-    fn evicted_loaded_preview_becomes_reloadable() {
-        let mut app = TestApp::new();
-        let chat = wr::JID::from("chat@example.test".to_owned());
-        let mut preview = message(&chat, "preview", 1);
-        preview.message = wr::MessageContent::File(wr::FileContent {
-            kind: wr::FileKind::Image,
-            path: "old.png".into(),
-            ..Default::default()
-        });
-        app.messages.insert("preview".into(), preview);
-        app.metadata
-            .insert("preview".into(), Metadata::File(FileMeta::Loaded));
-
-        app.mark_evicted_preview_reloadable(&Arc::from("old.png"));
-
-        assert!(matches!(
-            app.metadata.get(&wr::MessageId::from("preview")),
-            Some(Metadata::File(FileMeta::Downloaded))
-        ));
     }
 
     #[test]
