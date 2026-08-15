@@ -761,10 +761,6 @@ func C_NewClient(dbPath *C.char) {
 	configurePresenceSubscriptions(client)
 }
 
-func configurePresenceSubscriptions(client *whatsmeow.Client) {
-	client.ErrorOnSubscribePresenceWithoutToken = true
-}
-
 func requestFullHistorySync() {
 	// Ask WhatsApp to send the complete conversation + history list instead of
 	// only a recent-activity subset. WhatsApp gates history sync requests on an
@@ -2210,10 +2206,6 @@ func countSyncMessages(conversations []*waHistorySync.Conversation) int {
 	return total
 }
 
-type sendPresenceFunc func(context.Context, types.Presence) error
-type connectedReadyFunc func()
-type presenceWarningFunc func(string, ...any)
-
 type lidToPNFunc func(context.Context, types.JID) (types.JID, error)
 
 func normalizePresenceJID(ctx context.Context, jid types.JID, getPNForLID lidToPNFunc) (types.JID, string) {
@@ -2268,15 +2260,6 @@ func C_TestEmitPresenceEventsConcurrently(from *C.char, count C.uint32_t) {
 	wait.Wait()
 }
 
-func handleConnected(sendPresence sendPresenceFunc, connected connectedReadyFunc, warn presenceWarningFunc) bool {
-	if err := sendPresence(context.Background(), types.PresenceAvailable); err != nil {
-		warn("Failed to announce presence after connection; presence subscriptions will wait for the next connection: %v", err)
-		return false
-	}
-	connected()
-	return true
-}
-
 //export C_Connect
 func C_Connect(handler C.QrCallback, data unsafe.Pointer) {
 	AddEventHandlers()
@@ -2308,42 +2291,6 @@ func C_Connect(handler C.QrCallback, data unsafe.Pointer) {
 		}
 	}
 
-}
-
-const (
-	subscribePresenceAccepted uint8 = iota
-	subscribePresenceNoPrivacyToken
-	subscribePresenceRejected
-)
-
-//export C_SubscribePresence
-func C_SubscribePresence(cjid C.JID) C.uint8_t {
-	jid := cToJid(cjid)
-	if client == nil {
-		return C.uint8_t(subscribePresenceRejected)
-	}
-	result := subscribePresence(jid, client.SubscribePresence)
-	if result == subscribePresenceNoPrivacyToken {
-		LOG_WARN("Failed to subscribe to presence: no privacy token")
-	} else if result == subscribePresenceRejected {
-		LOG_WARN("Failed to subscribe to presence")
-	}
-	return C.uint8_t(result)
-}
-
-type subscribePresenceFunc func(context.Context, types.JID) error
-
-func subscribePresence(jid types.JID, subscribe subscribePresenceFunc) uint8 {
-	if jid.Server != types.DefaultUserServer {
-		return subscribePresenceRejected
-	}
-	if err := subscribe(context.Background(), jid); err != nil {
-		if errors.Is(err, whatsmeow.ErrNoPrivacyToken) {
-			return subscribePresenceNoPrivacyToken
-		}
-		return subscribePresenceRejected
-	}
-	return subscribePresenceAccepted
 }
 
 //export C_PairPhone
