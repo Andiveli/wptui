@@ -8,6 +8,7 @@ use std::{
 
 pub mod actions;
 pub mod bootstrap;
+pub mod chat_navigation;
 pub mod chat_opening;
 pub mod chat_ordering;
 pub mod chat_projection;
@@ -304,36 +305,6 @@ impl App<'_> {
     /// pane (set by pressing Enter on a contact), mirroring `open_chat`.
     pub fn open_status_contact(&self) -> Option<wr::JID> {
         self.open_status_contact.clone()
-    }
-
-    pub fn select_chat(&mut self, jid: Option<wr::JID>) {
-        let target_list = self.visible_chat_rows();
-
-        if let Some(jid) = jid
-            && let Some(index) = target_list
-                .iter()
-                .position(|row| row.target == jid || row.members.contains(&jid))
-        {
-            self.chat_list_state.select(Some(index));
-        } else if !target_list.is_empty() {
-            self.chat_list_state.select(Some(0));
-        } else {
-            self.chat_list_state.select(None);
-        }
-    }
-
-    fn update_filtered_chats(&mut self) {
-        self.filtered_chats = self
-            .visible_chat_rows()
-            .into_iter()
-            .map(|row| row.target)
-            .collect();
-
-        if !self.filtered_chats.is_empty() {
-            self.chat_list_state.select(Some(0));
-        } else {
-            self.chat_list_state.select(None);
-        }
     }
 }
 
