@@ -7,6 +7,8 @@ use super::App;
 use crate::app::presence::jid_for_log;
 
 #[cfg(test)]
+mod integration_tests;
+#[cfg(test)]
 mod tests;
 
 impl App<'_> {

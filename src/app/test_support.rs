@@ -1,10 +1,60 @@
-use super::{App, Clock, Notifier};
+use super::{App, Clock, NotificationProjection, Notifier};
 use crate::db::DatabaseHandler;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use whatsrust as wr;
 pub(crate) struct TestApp {
     pub(crate) app: App<'static>,
     _dir: tempfile::TempDir,
+}
+
+#[derive(Debug)]
+pub(crate) struct FixedClock(pub(crate) Option<i64>);
+
+impl FixedClock {
+    pub(crate) fn new(value: i64) -> Self {
+        Self(Some(value))
+    }
+}
+
+impl Clock for FixedClock {
+    fn unix_seconds(&self) -> Option<i64> {
+        self.0
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct MutableClock(Arc<Mutex<Option<i64>>>);
+
+impl MutableClock {
+    pub(crate) fn new(value: Option<i64>) -> Self {
+        Self(Arc::new(Mutex::new(value)))
+    }
+
+    pub(crate) fn set(&self, value: Option<i64>) {
+        *self.0.lock().unwrap() = value;
+    }
+}
+
+impl Clock for MutableClock {
+    fn unix_seconds(&self) -> Option<i64> {
+        *self.0.lock().unwrap()
+    }
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct RecordingNotifier {
+    pub(crate) notifications: Arc<Mutex<Vec<(String, String)>>>,
+}
+
+impl Notifier for RecordingNotifier {
+    fn show(&self, notification: &NotificationProjection) -> Result<(), String> {
+        self.notifications
+            .lock()
+            .unwrap()
+            .push((notification.summary.to_string(), notification.body.clone()));
+        Ok(())
+    }
 }
 impl TestApp {
     pub(crate) fn new() -> Self {

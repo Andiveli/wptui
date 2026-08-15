@@ -85,4 +85,6 @@ pub fn unix_now() -> i64 {
 }
 
 #[cfg(test)]
+mod integration_tests;
+#[cfg(test)]
 mod tests;
