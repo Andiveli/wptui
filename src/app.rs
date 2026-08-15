@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::Arc,
@@ -16,6 +16,7 @@ pub mod events;
 pub mod inputs;
 pub mod media_support;
 pub mod message_action_diagnostics;
+pub mod notifications;
 pub mod presence;
 pub mod share_picker;
 
@@ -36,6 +37,12 @@ use crate::app::media_support::{
 };
 pub use crate::app::media_support::{remove_owned_media_files, remove_status_media_files};
 use crate::app::message_action_diagnostics::{MessageActionDiagnostics, identifier_for_log};
+pub use crate::app::notifications::{
+    Clock, NotificationProjection, Notifier, NotifyRustNotifier, SystemClock, now_or, unix_now,
+};
+pub(crate) use crate::app::notifications::{
+    notification_eligibility, notification_is_muted, notification_projection,
+};
 use crate::app::presence::{PresenceDiagnostics, SelectedPresence, jid_for_log};
 pub use crate::app::share_picker::SharePicker;
 use crate::db;
@@ -49,7 +56,6 @@ use arboard::Clipboard;
 use db::{DatabaseHandler, MessageActionPersistence};
 use directories::ProjectDirs;
 use log::{debug, error, info, trace, warn};
-use notify_rust::Notification;
 use ratatui::crossterm::event;
 use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
@@ -66,45 +72,6 @@ use crate::ui::text_input::TextInput;
 /// `info.sender` is the contact who posted the status.
 pub const STATUS_BROADCAST_CHAT: &str = "status@broadcast";
 pub const ADMIN_ONLY_GROUP_MESSAGE: &str = "Only group admins can send messages in this group.";
-
-pub trait Clock {
-    fn unix_seconds(&self) -> Option<i64>;
-}
-
-#[derive(Debug, Default)]
-pub struct SystemClock;
-
-impl Clock for SystemClock {
-    fn unix_seconds(&self) -> Option<i64> {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .ok()
-            .map(|duration| duration.as_secs() as i64)
-    }
-}
-
-pub struct NotificationProjection {
-    pub summary: Arc<str>,
-    pub body: String,
-}
-
-pub trait Notifier {
-    fn show(&self, notification: &NotificationProjection) -> Result<(), String>;
-}
-
-#[derive(Debug, Default)]
-pub struct NotifyRustNotifier;
-
-impl Notifier for NotifyRustNotifier {
-    fn show(&self, notification: &NotificationProjection) -> Result<(), String> {
-        Notification::new()
-            .summary(&notification.summary)
-            .body(&notification.body)
-            .show()
-            .map(|_| ())
-            .map_err(|error| error.to_string())
-    }
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum InputReaderState {
@@ -2081,45 +2048,6 @@ impl App<'_> {
     }
 }
 
-fn notification_eligibility(message: &wr::Message) -> bool {
-    !message.info.is_from_me && !App::is_status_chat(&message.info.chat)
-}
-
-fn notification_is_muted(found: bool, muted_until: i64, now: i64) -> bool {
-    found && muted_until > now
-}
-
-fn notification_projection(message: &wr::Message, summary: Arc<str>) -> NotificationProjection {
-    let body = match &message.message {
-        wr::MessageContent::Text(text) => text.to_string(),
-        wr::MessageContent::File(file) => {
-            if let Some(caption) = &file.caption {
-                caption.to_string()
-            } else {
-                match file.kind {
-                    wr::FileKind::Image => "Sent an image".to_string(),
-                    wr::FileKind::Video => "Sent a video".to_string(),
-                    wr::FileKind::Audio => "Sent an audio message".to_string(),
-                    wr::FileKind::Document => "Sent a document".to_string(),
-                    wr::FileKind::Sticker => "Sent a sticker".to_string(),
-                }
-            }
-        }
-    };
-    NotificationProjection { summary, body }
-}
-
-fn now_or(fallback: i64, clock: &dyn Clock) -> i64 {
-    clock.unix_seconds().unwrap_or(fallback)
-}
-
-pub fn unix_now() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2908,24 +2836,6 @@ mod tests {
 
         let status = status_message(&broadcast, "status", 3);
         assert!(!app.should_notify(&status));
-    }
-
-    #[test]
-    fn notification_projection_preserves_untrusted_message_text() {
-        let sender = wr::JID::from("alice@s.whatsapp.net".to_owned());
-        let message = message(&sender, "ignored", 1);
-        let projection = notification_projection(&message, Arc::from("Alice"));
-
-        assert_eq!(projection.summary.as_ref(), "Alice");
-        assert_eq!(projection.body, "ignored");
-
-        let message = wr::Message {
-            message: wr::MessageContent::Text("こんにちは\n\"quoted\"\u{0007}".into()),
-            ..message
-        };
-        let projection = notification_projection(&message, Arc::from("名前\n\"sender\""));
-        assert_eq!(projection.summary.as_ref(), "名前\n\"sender\"");
-        assert_eq!(projection.body, "こんにちは\n\"quoted\"\u{0007}");
     }
 
     #[test]
