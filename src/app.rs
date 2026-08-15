@@ -28,6 +28,7 @@ pub mod notifications;
 pub mod presence;
 pub mod private_reply;
 pub mod share_picker;
+pub mod status_projection;
 #[cfg(test)]
 pub(crate) mod test_support;
 
@@ -58,6 +59,7 @@ pub use crate::app::notifications::{
 };
 use crate::app::presence::{PresenceDiagnostics, SelectedPresence, jid_for_log};
 pub use crate::app::share_picker::SharePicker;
+pub use crate::app::status_projection::STATUS_BROADCAST_CHAT;
 use crate::db;
 use crate::file_picker::FilePickerState;
 use crate::key_handler::KeybindHandler;
@@ -81,9 +83,6 @@ use whatsrust as wr;
 
 use crate::ui::text_input::TextInput;
 
-/// The synthetic chat that carries WhatsApp status broadcasts. Each message's
-/// `info.sender` is the contact who posted the status.
-pub const STATUS_BROADCAST_CHAT: &str = "status@broadcast";
 pub const ADMIN_ONLY_GROUP_MESSAGE: &str = "Only group admins can send messages in this group.";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1126,109 +1125,6 @@ impl App<'_> {
         self.open_status_contact.clone()
     }
 
-    /// Re-derives `status_contacts` from the `status@broadcast` chat and
-    /// keeps the list selection valid. Runs on every message arrival.
-    fn refresh_status_contacts(&mut self) {
-        self.status_contacts = self.derive_status_contacts();
-        self.clamp_status_selection();
-    }
-
-    fn derive_status_contacts(&self) -> Vec<wr::JID> {
-        let mut latest: HashMap<wr::JID, i64> = HashMap::new();
-        for id in self
-            .chat_messages
-            .get(&wr::JID::from(STATUS_BROADCAST_CHAT.to_owned()))
-            .into_iter()
-            .flatten()
-        {
-            if let Some(message) = self.messages.get(id)
-                && message.info.timestamp
-                    > latest
-                        .get(&message.info.sender)
-                        .copied()
-                        .unwrap_or(i64::MIN)
-            {
-                latest.insert(message.info.sender.clone(), message.info.timestamp);
-            }
-        }
-        let mut senders = latest.into_iter().collect::<Vec<_>>();
-        senders.sort_by(|left, right| {
-            right
-                .1
-                .cmp(&left.1)
-                .then_with(|| left.0.0.as_ref().cmp(right.0.0.as_ref()))
-        });
-        senders.into_iter().map(|(jid, _)| jid).collect()
-    }
-
-    /// Keeps the status-list highlight valid: always selects a row when the
-    /// list is non-empty and never selects past the end.
-    pub(crate) fn clamp_status_selection(&mut self) {
-        match (self.status_contacts.len(), self.status_selection.selected()) {
-            (0, _) => self.status_selection.select(None),
-            (_, None) => self.status_selection.select(Some(0)),
-            (len, Some(selected)) if selected >= len => self.status_selection.select(Some(len - 1)),
-            _ => {}
-        }
-    }
-
-    pub fn selected_status_contact(&self) -> Option<wr::JID> {
-        self.status_selection
-            .selected()
-            .map(|index| self.status_contacts[index].clone())
-    }
-
-    /// The statuses of `contact` from the `status@broadcast` chat in
-    /// ascending order (newest last, as `sort_chat_messages` leaves it).
-    pub fn status_messages(&self, contact: &wr::JID) -> Vec<wr::MessageId> {
-        self.chat_messages
-            .get(&wr::JID::from(STATUS_BROADCAST_CHAT.to_owned()))
-            .into_iter()
-            .flatten()
-            .filter(|id| {
-                self.messages
-                    .get(*id)
-                    .is_some_and(|message| &message.info.sender == contact)
-            })
-            .cloned()
-            .collect()
-    }
-
-    pub fn status_latest_time(&self, contact: &wr::JID) -> Option<i64> {
-        self.chat_messages
-            .get(&wr::JID::from(STATUS_BROADCAST_CHAT.to_owned()))
-            .into_iter()
-            .flatten()
-            .filter_map(|id| self.messages.get(id))
-            .filter(|message| &message.info.sender == contact)
-            .map(|message| message.info.timestamp)
-            .max()
-    }
-
-    pub fn has_unseen_statuses(&self, contact: &wr::JID) -> bool {
-        self.status_latest_time(contact).is_some_and(|latest| {
-            latest
-                > self
-                    .status_last_seen
-                    .get(contact)
-                    .copied()
-                    .unwrap_or_default()
-        })
-    }
-
-    /// Marks the selected contact's statuses as viewed by recording the
-    /// latest status timestamp, and resets the message-list scroll state.
-    pub fn open_selected_status(&mut self) {
-        let Some(contact) = self.selected_status_contact() else {
-            return;
-        };
-        self.open_status_contact = Some(contact.clone());
-        if let Some(latest) = self.status_latest_time(&contact) {
-            self.status_last_seen.insert(contact, latest);
-        }
-        self.message_list_state.reset();
-    }
-
     pub fn apply_message_action(&mut self, action: MessageAction) {
         let target = action.target_message_id.clone();
         let base_exists = self.messages.contains_key(&target);
@@ -1649,89 +1545,6 @@ mod tests {
         TestApp::with_database(path)
     }
 
-    /// A status broadcast: the chat is always `status@broadcast` and the
-    /// sender is the contact who posted the status.
-    fn status_message(sender: &wr::JID, id: &str, timestamp: i64) -> wr::Message {
-        wr::Message {
-            info: wr::MessageInfo {
-                id: id.into(),
-                chat: wr::JID::from(STATUS_BROADCAST_CHAT.to_owned()),
-                forwarding: Default::default(),
-                sender: sender.clone(),
-                timestamp: timestamp,
-                is_from_me: false,
-                quote_id: None,
-                read_by: 0,
-            },
-            message: wr::MessageContent::Text(id.into()),
-        }
-    }
-
-    #[test]
-    fn status_contacts_are_sorted_by_latest_status_newest_first() {
-        let mut app = TestApp::new();
-        let alice = wr::JID::from("alice@s.whatsapp.net".to_owned());
-        let bob = wr::JID::from("bob@s.whatsapp.net".to_owned());
-
-        app.add_message(status_message(&alice, "a-old", 100));
-        app.add_message(status_message(&bob, "b-status", 200));
-        app.add_message(status_message(&alice, "a-new", 300));
-
-        assert_eq!(app.status_contacts, vec![alice.clone(), bob.clone()]);
-        assert_eq!(app.status_latest_time(&alice), Some(300));
-        assert_eq!(
-            app.status_messages(&alice)
-                .iter()
-                .map(|id| id.as_ref())
-                .collect::<Vec<_>>(),
-            ["a-old", "a-new"]
-        );
-    }
-
-    #[test]
-    fn status_contacts_break_equal_recency_ties_by_jid() {
-        let mut app = TestApp::new();
-        let alice = wr::JID::from("alice@s.whatsapp.net".to_owned());
-        let bob = wr::JID::from("bob@s.whatsapp.net".to_owned());
-
-        app.add_message(status_message(&bob, "b-status", 100));
-        app.add_message(status_message(&alice, "a-status", 100));
-
-        assert_eq!(app.status_contacts, vec![alice.clone(), bob.clone()]);
-    }
-
-    #[test]
-    fn status_selection_defaults_to_first_contact_and_clamps_when_refreshed() {
-        let mut app = TestApp::new();
-        let alice = wr::JID::from("alice@s.whatsapp.net".to_owned());
-        let bob = wr::JID::from("bob@s.whatsapp.net".to_owned());
-        app.add_message(status_message(&alice, "a-status", 200));
-        app.add_message(status_message(&bob, "b-status", 100));
-
-        assert_eq!(app.status_selection.selected(), Some(0));
-
-        app.status_selection.select(Some(5));
-        app.add_message(status_message(&alice, "a-new", 300));
-        assert_eq!(app.status_selection.selected(), Some(1));
-    }
-
-    #[test]
-    fn opening_a_status_marks_the_latest_status_as_seen() {
-        let mut app = TestApp::new();
-        let alice = wr::JID::from("alice@s.whatsapp.net".to_owned());
-        app.add_message(status_message(&alice, "a-old", 100));
-        app.add_message(status_message(&alice, "a-new", 200));
-
-        assert!(app.has_unseen_statuses(&alice));
-        app.open_selected_status();
-        assert!(!app.has_unseen_statuses(&alice));
-
-        app.add_message(status_message(&alice, "a-newer", 300));
-        assert!(app.has_unseen_statuses(&alice));
-        app.open_selected_status();
-        assert!(!app.has_unseen_statuses(&alice));
-    }
-
     #[test]
     fn local_message_actions_use_injected_clock_and_message_timestamp_fallback() {
         let chat = wr::JID::from("chat@g.us".to_owned());
@@ -1833,7 +1646,9 @@ mod tests {
         let chat = wr::JID::from("chat@example.test".to_owned());
         let alice = wr::JID::from("alice@s.whatsapp.net".to_owned());
         app.add_message(message(&chat, "c1", 100));
-        app.add_message(status_message(&alice, "s1", 200));
+        let mut status = message(&alice, "s1", 200);
+        status.info.chat = wr::JID::from(STATUS_BROADCAST_CHAT.to_owned());
+        app.add_message(status);
         app.sort_chats();
 
         assert!(app.sorted_chats.contains(&chat));
