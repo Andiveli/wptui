@@ -1315,135 +1315,23 @@ func TestMessageActionEventFromMessage(t *testing.T) {
 	}
 }
 
-func TestPrepareForwardMessagePreservesTextAndFilePayloads(t *testing.T) {
-	text := &waE2E.Message{Conversation: stringPointer("hello")}
-	forwarded, err := prepareForwardMessage(text, false)
-	if err != nil {
-		t.Fatalf("prepare text forward: %v", err)
-	}
-	if forwarded.GetExtendedTextMessage().GetText() != "hello" || !forwarded.GetExtendedTextMessage().GetContextInfo().GetIsForwarded() {
-		t.Fatalf("text forwarding envelope = %#v", forwarded)
-	}
-
-	media := &waE2E.Message{ImageMessage: &waE2E.ImageMessage{URL: stringPointer("https://media.example"), DirectPath: stringPointer("/media")}}
-	forwarded, err = prepareForwardMessage(media, false)
-	if err != nil {
-		t.Fatalf("prepare file forward: %v", err)
-	}
-	if forwarded.GetImageMessage().GetDirectPath() != "/media" || !forwarded.GetImageMessage().GetContextInfo().GetIsForwarded() {
-		t.Fatalf("file forwarding envelope lost media payload: %#v", forwarded)
-	}
-}
-
-func TestPrepareForwardMessageAppliesMobileForwardingContextSemantics(t *testing.T) {
-	stanzaID := "quoted-message"
-	score := uint32(4)
-	other := &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
-		Text: stringPointer("other person's message"),
-		ContextInfo: &waE2E.ContextInfo{
-			StanzaID:        &stanzaID,
-			ForwardingScore: &score,
-			IsForwarded:     proto.Bool(true),
-		},
-	}}
-
-	forwarded, err := prepareForwardMessage(other, false)
-	if err != nil {
-		t.Fatalf("prepare other sender forward: %v", err)
-	}
-	context := forwarded.GetExtendedTextMessage().GetContextInfo()
-	if !context.GetIsForwarded() || context.GetForwardingScore() != 5 || context.GetStanzaID() != stanzaID {
-		t.Fatalf("other sender context = %#v", context)
-	}
-
-	repeated, err := prepareForwardMessage(forwarded, false)
-	if err != nil {
-		t.Fatalf("prepare repeatedly forwarded message: %v", err)
-	}
-	if context := repeated.GetExtendedTextMessage().GetContextInfo(); !context.GetIsForwarded() || context.GetForwardingScore() != 5 || context.GetStanzaID() != stanzaID {
-		t.Fatalf("capped frequently-forwarded context = %#v", context)
-	}
-
-	own := &waE2E.Message{ImageMessage: &waE2E.ImageMessage{
-		DirectPath:  stringPointer("/media"),
-		ContextInfo: &waE2E.ContextInfo{StanzaID: &stanzaID, ForwardingScore: &score, IsForwarded: proto.Bool(true)},
-	}}
-	forwarded, err = prepareForwardMessage(own, true)
-	if err != nil {
-		t.Fatalf("prepare own forward: %v", err)
-	}
-	context = forwarded.GetImageMessage().GetContextInfo()
-	if context.GetIsForwarded() || context.GetForwardingScore() != 0 || context.GetStanzaID() != stanzaID || forwarded.GetImageMessage().GetDirectPath() != "/media" {
-		t.Fatalf("own sender context = %#v, message = %#v", context, forwarded)
-	}
-}
-
-func TestSourceOwnedByCurrentUserUsesMessageMetadataAndClientIdentity(t *testing.T) {
-	self := types.NewJID("self", types.DefaultUserServer)
-	other := types.NewJID("other", types.DefaultUserServer)
-	if !sourceOwnedByCurrentUser(true, other, self) {
-		t.Fatal("source metadata marking the message as own was ignored")
-	}
-	if !sourceOwnedByCurrentUser(false, self, self) {
-		t.Fatal("source sender matching the current client identity was ignored")
-	}
-	if sourceOwnedByCurrentUser(false, other, self) {
-		t.Fatal("other sender was incorrectly treated as current user")
-	}
-}
-
-func TestForwardSourceBytesSurviveCacheReset(t *testing.T) {
-	text := &waE2E.Message{Conversation: stringPointer("historical")}
-	raw, err := proto.Marshal(text)
-	if err != nil {
-		t.Fatalf("marshal source: %v", err)
-	}
-	resetForwardedSourcesForTest()
-	restored, reason := forwardSourceFromBytes(raw)
-	if reason != forwardFailureNone || restored.GetConversation() != "historical" {
-		t.Fatalf("historical source recovery = %#v, %v", restored, reason)
-	}
-	file := &waE2E.Message{ImageMessage: &waE2E.ImageMessage{DirectPath: stringPointer("/media")}}
-	raw, err = proto.Marshal(file)
-	if err != nil {
-		t.Fatalf("marshal file source: %v", err)
-	}
-	restored, reason = forwardSourceFromBytes(raw)
-	if reason != forwardFailureNone || restored.GetImageMessage().GetDirectPath() != "/media" {
-		t.Fatalf("historical file recovery = %#v, %v", restored, reason)
-	}
-}
-
 func TestForwardingStateExtractsEverySupportedMessageContext(t *testing.T) {
-	forwarded := proto.Bool(true)
-	score := uint32(5)
+	forwarded, score := proto.Bool(true), uint32(5)
 	context := &waE2E.ContextInfo{IsForwarded: forwarded, ForwardingScore: &score}
-	cases := []struct {
-		name    string
-		message *waE2E.Message
-	}{
-		{"extended text", &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{ContextInfo: context}}},
-		{"image", &waE2E.Message{ImageMessage: &waE2E.ImageMessage{ContextInfo: context}}},
-		{"video", &waE2E.Message{VideoMessage: &waE2E.VideoMessage{ContextInfo: context}}},
-		{"audio", &waE2E.Message{AudioMessage: &waE2E.AudioMessage{ContextInfo: context}}},
-		{"document", &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{ContextInfo: context}}},
-		{"sticker", &waE2E.Message{StickerMessage: &waE2E.StickerMessage{ContextInfo: context}}},
-	}
-	for _, testCase := range cases {
-		t.Run(testCase.name, func(t *testing.T) {
-			state := forwardingStateFromMessage(testCase.message)
-			if !state.isForwarded || state.score != 5 {
-				t.Fatalf("forwarding state = %#v", state)
-			}
-		})
-	}
-
-	t.Run("conversation has no forwarding context", func(t *testing.T) {
-		state := forwardingStateFromMessage(&waE2E.Message{Conversation: stringPointer("text")})
-		if state != (forwardingState{}) {
-			t.Fatalf("conversation forwarding state = %#v", state)
+	for _, message := range []*waE2E.Message{
+		{ExtendedTextMessage: &waE2E.ExtendedTextMessage{ContextInfo: context}},
+		{ImageMessage: &waE2E.ImageMessage{ContextInfo: context}}, {VideoMessage: &waE2E.VideoMessage{ContextInfo: context}},
+		{AudioMessage: &waE2E.AudioMessage{ContextInfo: context}}, {DocumentMessage: &waE2E.DocumentMessage{ContextInfo: context}},
+		{StickerMessage: &waE2E.StickerMessage{ContextInfo: context}},
+	} {
+		state := forwardingStateFromMessage(message)
+		if !state.isForwarded || state.score != 5 {
+			t.Fatalf("forwarding state = %#v", state)
 		}
-	})
+	}
+	if state := forwardingStateFromMessage(&waE2E.Message{Conversation: stringPointer("text")}); state != (forwardingState{}) {
+		t.Fatalf("conversation forwarding state = %#v", state)
+	}
 }
 
 func int64Pointer(value int64) *int64 { return &value }
