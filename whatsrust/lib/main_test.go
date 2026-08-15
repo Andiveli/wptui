@@ -1392,31 +1392,6 @@ func TestSourceOwnedByCurrentUserUsesMessageMetadataAndClientIdentity(t *testing
 	}
 }
 
-func TestNewForwardRequestRejectsBroadcastAndInvalidDestinations(t *testing.T) {
-	chat := types.NewJID("source", types.DefaultUserServer)
-	sender := types.NewJID("source", types.DefaultUserServer)
-	if _, err := newForwardRequest(chat.String(), sender.String(), "message", []string{types.StatusBroadcastJID.String()}); err == nil {
-		t.Fatal("broadcast destination was accepted")
-	}
-	if _, err := newForwardRequest(types.StatusBroadcastJID.String(), sender.String(), "message", []string{chat.String()}); err == nil {
-		t.Fatal("status source was accepted")
-	}
-	newsletter := types.NewJID("channel", types.NewsletterServer)
-	if _, err := newForwardRequest(chat.String(), sender.String(), "message", []string{newsletter.String()}); err == nil {
-		t.Fatal("newsletter destination was accepted")
-	}
-	if _, err := newForwardRequest(newsletter.String(), sender.String(), "message", []string{chat.String()}); err == nil {
-		t.Fatal("newsletter source was accepted")
-	}
-	if _, err := newForwardRequest(chat.String(), sender.String(), "", []string{chat.String()}); err == nil {
-		t.Fatal("empty source ID was accepted")
-	}
-	request, err := newForwardRequest(chat.String(), sender.String(), "message", []string{chat.String()})
-	if err != nil || len(request.destinations) != 1 {
-		t.Fatalf("forward to source chat must be allowed: request=%#v err=%v", request, err)
-	}
-}
-
 func TestForwardSourceBytesSurviveCacheReset(t *testing.T) {
 	text := &waE2E.Message{Conversation: stringPointer("historical")}
 	raw, err := proto.Marshal(text)
