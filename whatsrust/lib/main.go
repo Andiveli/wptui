@@ -201,21 +201,15 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
-	_ "github.com/mattn/go-sqlite3"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/appstate"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/proto/waHistorySync"
 	"go.mau.fi/whatsmeow/proto/waWeb"
-	"go.mau.fi/whatsmeow/store"
-	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
-
-var client *whatsmeow.Client
-var qrChan <-chan whatsmeow.QRChannelItem
 
 var logHandler C.LogHandler
 var messageHandler C.MessageHandler
@@ -572,32 +566,6 @@ func C_SetPresenceHandler(callback C.PresenceHandlerCallback, data unsafe.Pointe
 		callback:  callback,
 		user_data: data,
 	}
-}
-
-//export C_NewClient
-func C_NewClient(dbPath *C.char) {
-	rawPresenceProbe.reset(os.Getenv("WPTUI_PRESENCE_DEBUG") == "1")
-	requestFullHistorySync()
-	goPath := C.GoString(dbPath)
-	dbLog := &WrLogger{}
-	container, err := sqlstore.New(context.Background(), "sqlite3", "file:"+goPath+"?_foreign_keys=on", dbLog)
-	if err != nil {
-		panic(err)
-	}
-	deviceStore, _ := container.GetFirstDevice(context.Background())
-	clientLog := &WrLogger{}
-	client = whatsmeow.NewClient(deviceStore, clientLog)
-	configurePresenceSubscriptions(client)
-}
-
-func requestFullHistorySync() {
-	// Ask WhatsApp to send the complete conversation + history list instead of
-	// only a recent-activity subset. WhatsApp gates history sync requests on an
-	// open phone session, and full sync must be requested before pairing
-	// (DeviceProps is transmitted during the registration handshake).
-	store.DeviceProps.RequireFullSync = proto.Bool(true)
-	store.DeviceProps.HistorySyncConfig.FullSyncDaysLimit = proto.Uint32(365)
-	store.DeviceProps.HistorySyncConfig.FullSyncSizeMbLimit = proto.Uint32(10240)
 }
 
 const viewOnceUnavailablePlaceholder = "View-once media is unavailable here. View it on your phone."
@@ -1984,50 +1952,6 @@ func C_TestEmitPresenceEventsConcurrently(from *C.char, count C.uint32_t) {
 	wait.Wait()
 }
 
-//export C_Connect
-func C_Connect(handler C.QrCallback, data unsafe.Pointer) {
-	AddEventHandlers()
-	if client.Store.ID == nil {
-		LOG_INFO(
-			"Pairing: DeviceProps require_full_sync=%t days_limit=%d size_mb=%d platform=%s",
-			store.DeviceProps.GetRequireFullSync(),
-			store.DeviceProps.GetHistorySyncConfig().GetFullSyncDaysLimit(),
-			store.DeviceProps.GetHistorySyncConfig().GetFullSyncSizeMbLimit(),
-			store.DeviceProps.GetPlatformType(),
-		)
-		qrChan, _ = client.GetQRChannel(context.Background())
-		err := client.Connect()
-		if err != nil {
-			panic(err)
-		}
-
-		for evt := range qrChan {
-			if evt.Event == "code" {
-				code := C.CString(evt.Code)
-				defer C.free(unsafe.Pointer(code))
-				C.callQrCallback(handler, code, data)
-			}
-		}
-	} else {
-		err := client.Connect()
-		if err != nil {
-			panic(err)
-		}
-	}
-
-}
-
-//export C_PairPhone
-func C_PairPhone(phone *C.char) *C.char {
-	goPhone := C.GoString(phone)
-	code, err := client.PairPhone(context.Background(), goPhone, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
-	if err != nil {
-		panic(err)
-	}
-	cCode := C.CString(code)
-	return cCode
-}
-
 //export C_ForwardMessage
 func C_ForwardMessage(sourceID *C.char, sourceChat C.JID, sourceSender C.JID, sourceIsFromMe C.bool, destinations **C.char, destinationCount C.size_t, forwardSource *C.uint8_t, forwardSourceLen C.size_t) C.ForwardResult {
 	if sourceID == nil || sourceChat == nil || sourceSender == nil || destinations == nil || destinationCount == 0 {
@@ -2156,65 +2080,7 @@ func C_MarkAsRead(msg_id *C.char, chat_jid C.JID, sender_jid C.JID) {
 	)
 }
 
-//export C_Disconnect
-func C_Disconnect() {
-	client.Disconnect()
-}
-
-const (
-	// logoutStatusLoggedOut: remote revocation succeeded and the local store
-	// was cleared (the linked device is gone from the phone too).
-	logoutStatusLoggedOut uint8 = 0
-	// logoutStatusNotLoggedIn: there is no paired session to remove.
-	logoutStatusNotLoggedIn uint8 = 1
-	// logoutStatusFailed: the remote logout request was rejected/failed and
-	// even the local fallback could not clear the store.
-	logoutStatusFailed uint8 = 2
-	// logoutStatusLocalOnly: remote revocation failed (device offline or
-	// server rejected it) but the local sign-out succeeded, so the app can
-	// return to the terminal. The device stays linked on the phone until the
-	// user removes it manually from WhatsApp → Linked devices.
-	logoutStatusLocalOnly uint8 = 3
-)
-
-//export C_Logout
-func C_Logout() C.uint8_t {
-	status := logoutStatusLoggedOut
-	if client == nil {
-		// No bridge client exists, so there is no session to remove.
-		status = logoutStatusNotLoggedIn
-	} else {
-		// True sign-out: whatsmeow sends the remove-companion-device IQ to the
-		// server (which unlinks the device in WhatsApp on the phone), then
-		// disconnects and clears the persisted store. Bounded so it can never
-		// hang the UI; the Rust side keeps driving the exit.
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		err := client.Logout(ctx)
-		cancel()
-		switch {
-		case err == nil:
-			status = logoutStatusLoggedOut
-		case errors.Is(err, whatsmeow.ErrNotLoggedIn):
-			status = logoutStatusNotLoggedIn
-		default:
-			// Remote revocation failed. Still clear the local session so the
-			// TUI deterministically returns to the terminal; report the partial
-			// outcome so the caller can warn that the device remains linked.
-			LOG_ERROR("Logout: remote revocation failed, clearing locally only: %v", err)
-			client.Disconnect()
-			if client.Store == nil {
-				status = logoutStatusLocalOnly
-			} else if err := client.Store.Delete(context.Background()); err != nil {
-				LOG_ERROR("Logout: failed to clear local store: %v", err)
-				status = logoutStatusFailed
-			} else {
-				status = logoutStatusLocalOnly
-			}
-		}
-	}
-	emitLogoutResult(status)
-	return C.uint8_t(status)
-}
+func main() {} // Required for CGO
 
 func emitLogoutResult(status uint8) {
 	if eventHandler.callback == nil {
@@ -2231,5 +2097,3 @@ func emitLogoutResult(status uint8) {
 	})
 	C.free(unsafe.Pointer(payload))
 }
-
-func main() {} // Required for CGO
