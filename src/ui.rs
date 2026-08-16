@@ -1,7 +1,10 @@
+pub mod communities;
 pub mod contact_list;
+mod contacts;
 mod layout;
 pub mod message_list;
 mod navigation;
+mod status;
 pub mod status_list;
 pub mod text_input;
 
@@ -14,29 +17,24 @@ pub(crate) use layout::{composer_visual_layout, truncate_with_ellipsis};
 
 use crate::app::App;
 use crate::app::actions::{ConversationMode, FocusPane, Section};
-use crate::app::contact_avatars::prioritized_avatar_requests;
 use crate::app::events::{
     ViewerPreviewKey, ViewerPreviewState, ViewerStatus, viewer_preview_request,
 };
-use contact_list::{
-    AVATAR_HEIGHT, AVATAR_WIDTH, CONTACT_ITEM_HEIGHT, ContactList, ContactListItem,
-    contact_visible_range,
-};
-use message_list::{get_quoted_text, render_messages, render_status_messages};
+use contacts::render_contacts;
+use message_list::{get_quoted_text, render_messages};
 use navigation::{
     render_logout_placeholder, render_logs, render_section_rail, render_structural_placeholder,
 };
 use ratatui::{
     Frame,
-    layout::{Alignment, Constraint, Layout, Position, Rect},
+    layout::{Alignment, Constraint, Layout, Rect, Size},
     style::{Style, Stylize},
     symbols,
     text::{Line, Span},
-    widgets::{Block, Clear, Paragraph, StatefulWidget, Widget, Wrap},
+    widgets::{Block, Clear, Paragraph, StatefulWidget, Wrap},
 };
 use ratatui_image::{Resize, StatefulImage};
-use status_list::{StatusList, StatusListItem};
-use std::sync::Arc;
+use status::{render_status_contacts, render_statuses};
 use whatsrust as wr;
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
@@ -73,6 +71,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             render_status_contacts(frame, app, area);
         }
         render_statuses(frame, app, areas.conversation);
+    } else if app.selected_section == Section::Communities {
+        if let Some(area) = areas.chat_list {
+            communities::render(frame, app, area);
+        }
+        render_chats(frame, app, areas.conversation);
     } else {
         app.contact_avatars.clear_window();
         if let Some(area) = areas.chat_list {
@@ -84,150 +87,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     render_url_picker(frame, app);
     render_share_picker(frame, app);
     render_file_picker(frame, app);
-}
-
-fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
-    let chats = if app.contact_search.input.is_empty() {
-        app.sorted_chats.clone()
-    } else {
-        app.filtered_chats.clone()
-    };
-    let items = chats
-        .iter()
-        .map(|chat| ContactListItem::from_chat(app, chat))
-        .collect::<Vec<_>>();
-
-    let mut list_area = area;
-    if !app.contact_search.input.is_empty() || app.contact_search_active {
-        let [search_area, new_list_area] =
-            Layout::vertical([Constraint::Length(1), Constraint::Percentage(100)]).areas(area);
-        list_area = new_list_area;
-
-        let text = format!("/{}", app.contact_search.input);
-        frame.render_widget(Paragraph::new(text), search_area);
-
-        if app.contact_search_active {
-            frame.set_cursor_position(Position::new(
-                // Draw the cursor at the current position in the input field.
-                // This position is can be controlled via the left and right arrow key
-                search_area.x + app.contact_search.character_index as u16 + 1,
-                // Move one line down, from the border to the input line
-                search_area.y,
-            ));
-        }
-    }
-
-    let block = Block::bordered()
-        .title(if let Some(p) = app.history_sync_percent {
-            format!("Contacts ({p}%)")
-        } else {
-            "Contacts".to_string()
-        })
-        .border_style(
-            Style::default().fg(if app.focus_pane == FocusPane::ChatList {
-                ratatui::style::Color::Green
-            } else {
-                ratatui::style::Color::White
-            }),
-        );
-    let contacts_area = block.inner(list_area);
-    block.render(list_area, frame.buffer_mut());
-    frame.render_stateful_widget(
-        ContactList::new(&items),
-        contacts_area,
-        &mut app.chat_list_state,
-    );
-
-    let visible = contact_visible_range(
-        app.chat_list_state.offset(),
-        contacts_area.height,
-        chats.len(),
-    );
-    app.contact_avatars.schedule(
-        prioritized_avatar_requests(
-            &chats,
-            app.chat_list_state.selected(),
-            visible.start,
-            visible.len(),
-        ),
-        app.tx.clone(),
-        Arc::clone(&app.picker),
-    );
-    for index in visible {
-        let row = index.saturating_sub(app.chat_list_state.offset());
-        let y = contacts_area
-            .y
-            .saturating_add((row * CONTACT_ITEM_HEIGHT) as u16);
-        let avatar_area = Rect::new(
-            contacts_area.x,
-            y,
-            AVATAR_WIDTH.min(contacts_area.width),
-            AVATAR_HEIGHT.min(contacts_area.bottom().saturating_sub(y)),
-        );
-        // Partial Kitty placements can leave terminal artifacts after a scroll.
-        if avatar_area.width == AVATAR_WIDTH
-            && avatar_area.height == AVATAR_HEIGHT
-            && let Some(protocol) = app.contact_avatars.protocol_mut(&chats[index])
-        {
-            StatefulImage::default().render(avatar_area, frame.buffer_mut(), protocol);
-        }
-    }
-}
-
-fn render_status_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
-    let items = app
-        .status_contacts
-        .iter()
-        .map(|contact| StatusListItem::from_contact(app, contact))
-        .collect::<Vec<_>>();
-
-    let block = Block::bordered()
-        .title("Status")
-        .border_style(
-            Style::default().fg(if app.focus_pane == FocusPane::ChatList {
-                ratatui::style::Color::Green
-            } else {
-                ratatui::style::Color::White
-            }),
-        );
-    let list_area = block.inner(area);
-    block.render(area, frame.buffer_mut());
-
-    if items.is_empty() {
-        frame.render_widget(Paragraph::new("No statuses yet"), list_area);
-        return;
-    }
-    frame.render_stateful_widget(
-        StatusList::new(&items),
-        list_area,
-        &mut app.status_selection,
-    );
-}
-
-fn render_statuses(frame: &mut Frame, app: &mut App, area: Rect) {
-    let title = app
-        .open_status_contact()
-        .map(|contact| app.contact_name(&contact).to_string())
-        .unwrap_or_else(|| "Status".to_string());
-    let border_color = if app.focus_pane == FocusPane::Conversation {
-        ratatui::style::Color::Green
-    } else {
-        ratatui::style::Color::White
-    };
-    let block = Block::bordered()
-        .title(title)
-        .border_style(Style::default().fg(border_color));
-    let content_area = block.inner(area);
-    block.render(area, frame.buffer_mut());
-
-    if app.open_status_contact().is_none() {
-        frame.render_widget(
-            Paragraph::new("Select a contact to view their statuses"),
-            content_area,
-        );
-        return;
-    }
-    render_status_messages(frame, app, content_area);
 }
 
 const ANDIVELI_LOGO: [&str; 19] = [
@@ -379,9 +238,8 @@ pub fn render_chats(frame: &mut Frame, app: &mut App, area: Rect) {
         })
     };
     let selected_chat = app.open_chat();
-    let marker = app
-        .selected_presence
-        .marker(selected_chat.as_ref(), crate::app::unix_now());
+    let now = app.now();
+    let marker = app.selected_presence.marker(selected_chat.as_ref(), now);
     let marker_span = marker.map(|marker| match marker {
         crate::app::presence::PresenceMarker::Online => Span::styled("●", Style::default().green()),
         crate::app::presence::PresenceMarker::RecentlyOffline => {
@@ -414,15 +272,31 @@ pub fn render_chats(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(outer_block, area);
 
     let composer_width = inner.width.saturating_sub(2);
-    let composer_layout = composer_visual_layout(app.composer.input.lines(), composer_width);
+    let composer_blocked = app.composer_blocked();
+    let composer_layout = composer_visual_layout(
+        if composer_blocked {
+            &[]
+        } else {
+            app.composer.input.lines()
+        },
+        composer_width,
+    );
     let input_cursor = app.composer.input.cursor();
     let composer_cursor = composer_layout.cursor((input_cursor.0, input_cursor.1));
     let composer_rows = composer_layout.row_count().max(composer_cursor.0 + 1);
     let (chat_area, composer_area) = conversation_areas(
         inner,
-        composer_rows,
-        usize::from(app.composer.quote.is_some()),
-        app.composer.pending.len(),
+        if composer_blocked { 1 } else { composer_rows },
+        if composer_blocked {
+            0
+        } else {
+            usize::from(app.composer.quote.is_some())
+        },
+        if composer_blocked {
+            0
+        } else {
+            app.composer.pending.len()
+        },
     );
 
     if app.open_chat().is_none() {
@@ -441,7 +315,9 @@ pub fn render_chats(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             ratatui::style::Color::White
         };
-        let input_title = if app.conversation_mode == ConversationMode::EditingMessage {
+        let input_title = if composer_blocked {
+            " Admin-only group "
+        } else if app.conversation_mode == ConversationMode::EditingMessage {
             " Edit message (Enter save, Esc cancel) "
         } else {
             " Message input "
@@ -454,8 +330,12 @@ pub fn render_chats(frame: &mut Frame, app: &mut App, area: Rect) {
 
         let mut input_area = input_block.inner(composer_area);
 
-        // Show hint in the input area when not editing
-        if app.conversation_mode == ConversationMode::MessageNavigation {
+        if composer_blocked {
+            frame.render_widget(
+                Paragraph::new(crate::app::ADMIN_ONLY_GROUP_MESSAGE).fg(border_color),
+                input_area,
+            );
+        } else if app.conversation_mode == ConversationMode::MessageNavigation {
             let hint = format!(
                 "Press i to write in {} (Ctrl+O attach) | Space 1 sections | Space 2 chats",
                 app.contact_name(&chat_jid)
@@ -555,12 +435,15 @@ fn render_attachment_viewer(frame: &mut Frame, app: &mut App) {
                 && key.width == layout.preview.width
                 && key.height == layout.preview.height =>
         {
-            let render_rect = protocol.size_for(Resize::default(), layout.preview);
+            let render_size = protocol.size_for(
+                Resize::default(),
+                Size::new(layout.preview.width, layout.preview.height),
+            );
             let img_x =
-                layout.preview.x + (layout.preview.width.saturating_sub(render_rect.width) / 2);
+                layout.preview.x + (layout.preview.width.saturating_sub(render_size.width) / 2);
             let img_y =
-                layout.preview.y + (layout.preview.height.saturating_sub(render_rect.height) / 2);
-            let img_area = Rect::new(img_x, img_y, render_rect.width, render_rect.height);
+                layout.preview.y + (layout.preview.height.saturating_sub(render_size.height) / 2);
+            let img_area = Rect::new(img_x, img_y, render_size.width, render_size.height);
             StatefulImage::default().render(img_area, frame.buffer_mut(), protocol.as_mut());
         }
         Some(ViewerPreviewState::Failed(_))

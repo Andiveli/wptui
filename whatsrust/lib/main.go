@@ -23,6 +23,13 @@ typedef struct {
 } ContactEntry;
 
 typedef struct {
+	JID jid;
+	const char* name;
+	JID parent_jid;
+	bool is_parent;
+} CommunityEntry;
+
+typedef struct {
 	bool found;
 	int64_t muted_until;
 	bool pinned;
@@ -30,9 +37,21 @@ typedef struct {
 } ChatSettings;
 
 typedef struct {
+	uint8_t status;
+	bool is_announce;
+	bool is_admin;
+} GroupInfoResult;
+
+typedef struct {
 	ContactEntry* entries;
 	uint32_t size;
 } GetContactsResult;
+
+typedef struct {
+	CommunityEntry* entries;
+	uint32_t size;
+	uint8_t status;
+} GetCommunitiesResult;
 
 typedef struct {
 	uint8_t status;
@@ -632,6 +651,58 @@ func GetSelfId(client *whatsmeow.Client) string {
 		return ""
 	}
 	return StrFromJid(*client.Store.ID)
+}
+
+func participantMatchesSelf(client *whatsmeow.Client, participant types.GroupParticipant) bool {
+	if client == nil || client.Store == nil || client.Store.ID == nil {
+		return false
+	}
+	self := client.Store.ID.ToNonAD()
+	for _, candidate := range []types.JID{participant.JID, participant.PhoneNumber, participant.LID} {
+		if candidate.IsZero() {
+			continue
+		}
+		if jidsMatchSelf(self, candidate) {
+			return true
+		}
+		if candidate.Server == types.HiddenUserServer && self.Server == types.DefaultUserServer {
+			if phone, err := client.Store.LIDs.GetPNForLID(context.Background(), candidate); err == nil && phone.ToNonAD() == self {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func jidsMatchSelf(self, candidate types.JID) bool {
+	return !candidate.IsZero() && candidate.ToNonAD() == self.ToNonAD()
+}
+
+//export C_GetGroupInfo
+func C_GetGroupInfo(cjid C.JID) C.GroupInfoResult {
+	if client == nil || cjid == nil {
+		return C.GroupInfoResult{status: 2}
+	}
+	jid := cToJid(cjid).ToNonAD()
+	if jid.Server != types.GroupServer {
+		return C.GroupInfoResult{status: 1}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	info, err := client.GetGroupInfo(ctx, jid)
+	if err != nil {
+		LOG_WARN("failed to get group info for %s: %v", jid, err)
+		return C.GroupInfoResult{status: 3}
+	}
+
+	result := C.GroupInfoResult{is_announce: C.bool(info.IsAnnounce)}
+	for _, participant := range info.Participants {
+		if participantMatchesSelf(client, participant) {
+			result.is_admin = C.bool(participant.IsAdmin || participant.IsSuperAdmin)
+			break
+		}
+	}
+	return result
 }
 
 // GetChatId returns the normalized chat id (conversation key): LID→PN, broadcast→per-sender, status as-is.
@@ -2059,6 +2130,14 @@ func dispatchIncomingMessageWithDecrypt(
 		dispatchAction(action)
 		return
 	}
+	rawMessage := evt.RawMessage
+	if rawMessage == nil && evt.SourceWebMsg != nil {
+		rawMessage = evt.SourceWebMsg.GetMessage()
+	}
+	if message, ok := unavailableViewOnceMessage(rawMessage); ok {
+		dispatchMessage(evt.Info, message, false)
+		return
+	}
 	dispatchMessage(evt.Info, evt.Message, false)
 }
 
@@ -2783,6 +2862,65 @@ func C_GetContacts() C.GetContactsResult {
 	}
 }
 
+// C_GetCommunities transfers ownership of entries and every pointed-to string
+// to the caller. The caller must invoke C_FreeCommunities exactly once for
+// every returned result, including empty and error results. C_FreeCommunities
+// is nil-safe, but repeating it for the same non-nil result is not supported.
+//
+//export C_GetCommunities
+func C_GetCommunities() C.GetCommunitiesResult {
+	ctx := context.Background()
+	groups, err := client.GetJoinedGroups(ctx)
+	if err != nil {
+		LOG_WARN("Could not load communities: %v", err)
+		return C.GetCommunitiesResult{status: 1}
+	}
+	entries := make([]C.CommunityEntry, 0)
+	for _, group := range groups {
+		parent := group.LinkedParentJID
+		if !communityEntryIncluded(group.IsParent, parent.IsEmpty()) {
+			continue
+		}
+		entries = append(entries, C.CommunityEntry{
+			jid:        jidToC(group.JID),
+			name:       C.CString(group.GroupName.Name),
+			parent_jid: jidToC(parent),
+			is_parent:  C.bool(group.IsParent),
+		})
+	}
+	n := len(entries)
+	if n == 0 {
+		return C.GetCommunitiesResult{status: 0}
+	}
+	cEntries := C.malloc(C.size_t(n) * C.size_t(unsafe.Sizeof(C.CommunityEntry{})))
+	entryList := unsafe.Slice((*C.CommunityEntry)(cEntries), n)
+	for i := range n {
+		entryList[i] = entries[i]
+	}
+	return C.GetCommunitiesResult{entries: (*C.CommunityEntry)(cEntries), size: C.uint32_t(n), status: 0}
+}
+
+//export C_FreeCommunities
+func C_FreeCommunities(result C.GetCommunitiesResult) {
+	if result.entries == nil {
+		return
+	}
+	freeCommunityEntries(unsafe.Slice(result.entries, int(result.size)))
+	C.free(unsafe.Pointer(result.entries))
+}
+
+func freeCommunityEntries(entries []C.CommunityEntry) {
+	for _, entry := range entries {
+		C.free(unsafe.Pointer(entry.jid))
+		C.free(unsafe.Pointer(entry.name))
+		C.free(unsafe.Pointer(entry.parent_jid))
+	}
+}
+
+func communityEntryIncluded(isParent, parentEmpty bool) bool {
+	return isParent || !parentEmpty
+}
+
 const (
 	profilePictureStatusAvailable uint8 = iota
 	profilePictureStatusUnavailable
@@ -2948,7 +3086,7 @@ func C_GetChatSettings(cjid C.JID) C.ChatSettings {
 		mutedUntil = settings.MutedUntil.Unix()
 	}
 
-return C.ChatSettings{
+	return C.ChatSettings{
 		found:       C.bool(settings.Found),
 		muted_until: C.int64_t(mutedUntil),
 		pinned:      C.bool(settings.Pinned),

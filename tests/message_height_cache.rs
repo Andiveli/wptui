@@ -92,17 +92,72 @@ fn reply_context_presence_cannot_reuse_stale_height() {
 }
 
 #[test]
-fn media_state_changes_cannot_reuse_stale_height() {
+fn delayed_media_preview_keeps_height_and_cache_stable() {
     let mut app = TestApp::new();
-    let message = file_message("image", FileKind::Image, Some("caption"));
+    let messages = [
+        file_message("image", FileKind::Image, Some("caption")),
+        file_message("video", FileKind::Video, Some("caption")),
+        file_message("sticker", FileKind::Sticker, None),
+    ];
+
+    for message in &messages {
+        app.metadata
+            .insert(message.info.id.clone(), Metadata::File(FileMeta::Loading));
+        let loading_height = height(message, 20, false, &mut app);
+        assert_eq!(loading_height, height(message, 20, false, &mut app));
+
+        app.metadata
+            .insert(message.info.id.clone(), Metadata::File(FileMeta::Loaded));
+        assert_eq!(height(message, 20, false, &mut app), loading_height);
+    }
+}
+
+#[test]
+fn delayed_media_preview_preserves_offsets_visible_range_anchor_and_selection() {
+    let mut app = TestApp::new();
+    let messages = [
+        file_message("older", FileKind::Document, None),
+        file_message("media", FileKind::Image, Some("caption")),
+        text_message("newer", "hello"),
+    ];
+
+    let offsets = |app: &mut App<'_>| {
+        messages
+            .iter()
+            .map(|message| height(message, 20, false, app))
+            .scan(0, |offset, height| {
+                *offset += height;
+                Some(*offset)
+            })
+            .collect::<Vec<_>>()
+    };
 
     app.metadata
-        .insert(message.info.id.clone(), Metadata::File(FileMeta::Loading));
-    assert_eq!(height(&message, 20, false, &mut app), 3);
+        .insert("media".into(), Metadata::File(FileMeta::Loading));
+    let before = offsets(&mut app);
+    let before_anchor = before[1];
+    let before_visible = before
+        .iter()
+        .enumerate()
+        .filter(|(_, bottom)| **bottom > before_anchor.saturating_sub(2))
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
 
     app.metadata
-        .insert(message.info.id.clone(), Metadata::File(FileMeta::Loaded));
-    assert_eq!(height(&message, 20, false, &mut app), 14);
+        .insert("media".into(), Metadata::File(FileMeta::Loaded));
+    let after = offsets(&mut app);
+    let after_anchor = after[1];
+    let after_visible = after
+        .iter()
+        .enumerate()
+        .filter(|(_, bottom)| **bottom > after_anchor.saturating_sub(2))
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+
+    assert_eq!(before, after);
+    assert_eq!(before_anchor, after_anchor);
+    assert_eq!(before_visible, after_visible);
+    assert_eq!(messages[1].info.id.as_ref(), "media");
 }
 
 #[test]

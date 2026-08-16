@@ -24,6 +24,17 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+func TestJidsMatchSelfNormalizesDeviceIdentity(t *testing.T) {
+	self := types.NewADJID("self", 0, 7)
+	candidate := types.NewJID("self", types.DefaultUserServer)
+	if !jidsMatchSelf(self, candidate) {
+		t.Fatal("device and user JIDs should identify the same participant")
+	}
+	if jidsMatchSelf(self, types.NewJID("other", types.DefaultUserServer)) {
+		t.Fatal("different participants must not match")
+	}
+}
+
 func TestPinnedPresenceContractAndNarrowSubscription(t *testing.T) {
 	lastSeen := time.Unix(42, 0)
 	event := &events.Presence{
@@ -49,6 +60,30 @@ func TestPinnedPresenceContractAndNarrowSubscription(t *testing.T) {
 	if got := subscribePresence(types.NewJID("group", types.GroupServer), subscribe); got != subscribePresenceRejected || calls != 1 {
 		t.Fatalf("group subscription must be rejected before whatsmeow, calls=%d", calls)
 	}
+}
+
+func TestCommunityEntryIncludedDistinguishesRootsAndLinkedGroups(t *testing.T) {
+	tests := []struct {
+		name        string
+		isParent    bool
+		parentEmpty bool
+		want        bool
+	}{
+		{name: "community root", isParent: true, parentEmpty: true, want: true},
+		{name: "linked group", parentEmpty: false, want: true},
+		{name: "ordinary group", parentEmpty: true, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := communityEntryIncluded(tt.isParent, tt.parentEmpty); got != tt.want {
+				t.Fatalf("communityEntryIncluded(%t, %t) = %t, want %t", tt.isParent, tt.parentEmpty, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFreeCommunitiesNilResultIsSafe(t *testing.T) {
+	freeCommunityEntries(nil)
 }
 
 func TestRawPresenceDiagnosticsDisabledIsNoOp(t *testing.T) {
@@ -866,6 +901,96 @@ func TestIncomingMessageDispatchesNormalizedEditBeforeOrdinaryMessage(t *testing
 	}
 	if ordinaryMessages != 0 {
 		t.Fatalf("ordinary message path called %d times", ordinaryMessages)
+	}
+}
+
+func TestIncomingMessageDispatchesViewOncePlaceholderFromAuthoritativeEnvelope(t *testing.T) {
+	chat := types.NewJID("1234567890", types.DefaultUserServer)
+	sender := types.NewJID("0987654321", types.DefaultUserServer)
+	info := types.MessageInfo{
+		MessageSource: types.MessageSource{Chat: chat, Sender: sender},
+		ID:            "view-once-message",
+		Timestamp:     time.Unix(42, 0),
+	}
+	viewOnce := func(message *waE2E.Message) *waE2E.Message {
+		return &waE2E.Message{ViewOnceMessage: &waE2E.FutureProofMessage{Message: message}}
+	}
+
+	cases := []struct {
+		name  string
+		event *events.Message
+	}{
+		{
+			name: "live raw envelope",
+			event: &events.Message{
+				Info:       info,
+				Message:    &waE2E.Message{ImageMessage: &waE2E.ImageMessage{}},
+				RawMessage: viewOnce(&waE2E.Message{ImageMessage: &waE2E.ImageMessage{}}),
+			},
+		},
+		{
+			name: "history source envelope",
+			event: &events.Message{
+				Info:    info,
+				Message: &waE2E.Message{VideoMessage: &waE2E.VideoMessage{}},
+				SourceWebMsg: &waWeb.WebMessageInfo{
+					Message: viewOnce(&waE2E.Message{VideoMessage: &waE2E.VideoMessage{}}),
+				},
+			},
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			var actions []messageActionEvent
+			var dispatched []struct {
+				info    types.MessageInfo
+				message *waE2E.Message
+				isRetry bool
+			}
+			dispatchIncomingMessageWithDecrypt(testCase.event, func(action messageActionEvent) {
+				actions = append(actions, action)
+			}, func(info types.MessageInfo, message *waE2E.Message, isRetry bool) {
+				dispatched = append(dispatched, struct {
+					info    types.MessageInfo
+					message *waE2E.Message
+					isRetry bool
+				}{info, message, isRetry})
+			}, nil)
+
+			if len(actions) != 0 || len(dispatched) != 1 {
+				t.Fatalf("actions=%d dispatched=%d, want actions=0 dispatched=1", len(actions), len(dispatched))
+			}
+			if dispatched[0].info.ID != info.ID || dispatched[0].info.Chat != info.Chat || dispatched[0].info.Sender != info.Sender {
+				t.Fatalf("message info was not preserved: %#v", dispatched[0].info)
+			}
+			if dispatched[0].isRetry || dispatched[0].message.GetConversation() != viewOnceUnavailablePlaceholder {
+				t.Fatalf("unexpected placeholder dispatch: %#v", dispatched[0])
+			}
+		})
+	}
+}
+
+func TestIncomingMessageDispatchKeepsOrdinaryMessageWithoutRawViewOnce(t *testing.T) {
+	info := types.MessageInfo{ID: "ordinary-message"}
+	ordinary := &waE2E.Message{Conversation: stringPointer("ordinary")}
+	event := &events.Message{Info: info, Message: ordinary}
+
+	actions := 0
+	dispatched := 0
+	var got *waE2E.Message
+	dispatchIncomingMessageWithDecrypt(event, func(messageActionEvent) {
+		actions++
+	}, func(_ types.MessageInfo, message *waE2E.Message, isRetry bool) {
+		dispatched++
+		got = message
+		if isRetry {
+			t.Fatal("ordinary message was marked as a retry")
+		}
+	}, nil)
+
+	if actions != 0 || dispatched != 1 || got != ordinary {
+		t.Fatalf("actions=%d dispatched=%d got=%p, want actions=0 dispatched=1 original=%p", actions, dispatched, got, ordinary)
 	}
 }
 
