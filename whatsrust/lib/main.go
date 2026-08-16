@@ -1122,18 +1122,8 @@ func HandleMessage(info types.MessageInfo, msg *waE2E.Message, isSync bool) {
 	}
 }
 
-const (
-	messageActionEdit uint8 = iota
-	messageActionDelete
-)
-
-type messageActionEvent struct {
-	actionID, chat, sender, targetMessageID, replacement string
-	occurredAt                                           int64
-	arrivalOrder                                         uint64
-	kind                                                 uint8
-}
-
+// messageActionProbe captures wrapper and protocol-edit structure shared by
+// action classification and diagnostics.
 type messageActionProbe struct {
 	present, deviceSent, botInvoke, ephemeral, viewOnce, viewOnceV2, viewOnceV2Extension, lottieSticker, documentWithCaption, edited, futureProof bool
 	protocol                                                                                                                                      *waE2E.ProtocolMessage
@@ -1210,10 +1200,7 @@ func messageActionProbeFromMessage(msg *waE2E.Message, path string) messageActio
 }
 
 func (probe messageActionProbe) hasActionProtocol() bool {
-	if probe.protocol == nil {
-		return false
-	}
-	return probe.protocol.GetType() == waE2E.ProtocolMessage_MESSAGE_EDIT || probe.protocol.GetType() == waE2E.ProtocolMessage_REVOKE
+	return probe.protocol != nil && (probe.protocol.GetType() == waE2E.ProtocolMessage_MESSAGE_EDIT || probe.protocol.GetType() == waE2E.ProtocolMessage_REVOKE)
 }
 
 func (probe messageActionProbe) replacementVariant() (bool, string) {
@@ -1230,8 +1217,6 @@ func (probe messageActionProbe) replacementVariant() (bool, string) {
 	return true, "none"
 }
 
-// msgContentTypes returns a compact field-presence string for the message,
-// used for diagnostics when the decrypted structure doesn't match expectations.
 func msgContentTypes(msg *waE2E.Message) string {
 	if msg == nil {
 		return "nil"
@@ -1271,28 +1256,6 @@ func msgContentTypes(msg *waE2E.Message) string {
 		return "empty"
 	}
 	return strings.Join(parts, ",")
-}
-
-func replacementText(msg *waE2E.Message) (string, bool) {
-	if msg == nil {
-		return "", false
-	}
-	// Direct text content — simplest case
-	if replacement := msg.GetConversation(); replacement != "" {
-		return replacement, true
-	}
-	if replacement := msg.GetExtendedTextMessage().GetText(); replacement != "" {
-		return replacement, true
-	}
-	// ProtocolMessage wrapper: used by BuildEdit / non-secret edits
-	if pm := msg.GetProtocolMessage(); pm != nil && pm.GetEditedMessage() != nil {
-		return replacementText(pm.GetEditedMessage())
-	}
-	// EditedMessage wrapper: FutureProofMessage -> inner Message
-	if em := msg.GetEditedMessage(); em != nil && em.GetMessage() != nil {
-		return replacementText(em.GetMessage())
-	}
-	return "", false
 }
 
 type decryptSecretEncryptedMessageFunc func(context.Context, *events.Message) (*waE2E.Message, error)
@@ -1380,61 +1343,6 @@ func messageActionEventFromSecretEncryptedMessage(evt *events.Message, decrypt d
 		arrivalOrder:    atomic.AddUint64(&messageActionArrivalOrder, 1),
 		kind:            messageActionEdit,
 	}, true
-}
-
-// messageActionEventFromMessage recognizes the protocol envelopes emitted by the
-// pinned whatsmeow builders. Unsupported or incomplete payloads stay ordinary.
-func messageActionEventFromProbe(info types.MessageInfo, probe messageActionProbe) (messageActionEvent, bool, string) {
-	protocol := probe.protocol
-	if protocol == nil {
-		return messageActionEvent{}, false, "protocol_absent"
-	}
-	if info.ID == "" {
-		return messageActionEvent{}, false, "missing_action_id"
-	}
-	if protocol.GetKey() == nil {
-		return messageActionEvent{}, false, "missing_protocol_key"
-	}
-	if protocol.GetKey().GetID() == "" {
-		return messageActionEvent{}, false, "missing_target_id"
-	}
-
-	action := messageActionEvent{
-		actionID:        info.ID,
-		chat:            info.Chat.String(),
-		sender:          info.Sender.String(),
-		targetMessageID: protocol.GetKey().GetID(),
-		occurredAt:      info.Timestamp.Unix(),
-		arrivalOrder:    atomic.AddUint64(&messageActionArrivalOrder, 1),
-	}
-	if timestampMS := protocol.GetTimestampMS(); timestampMS > 0 {
-		action.occurredAt = timestampMS / 1000
-	}
-	if participant := protocol.GetKey().GetParticipant(); participant != "" {
-		if sender, err := types.ParseJID(participant); err == nil {
-			action.sender = sender.String()
-		}
-	}
-
-	switch protocol.GetType() {
-	case waE2E.ProtocolMessage_MESSAGE_EDIT:
-		replacement, ok := replacementText(protocol.GetEditedMessage())
-		if !ok {
-			return messageActionEvent{}, false, "missing_replacement"
-		}
-		action.kind = messageActionEdit
-		action.replacement = replacement
-	case waE2E.ProtocolMessage_REVOKE:
-		action.kind = messageActionDelete
-	default:
-		return messageActionEvent{}, false, "unsupported_protocol"
-	}
-	return action, true, ""
-}
-
-func messageActionEventFromMessage(info types.MessageInfo, msg *waE2E.Message) (messageActionEvent, bool) {
-	action, ok, _ := messageActionEventFromProbe(info, messageActionProbeFromMessage(msg, "message"))
-	return action, ok
 }
 
 func messageActionStructuralLine(evt *events.Message, branch, reason string) string {
