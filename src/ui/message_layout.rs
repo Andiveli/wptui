@@ -163,6 +163,8 @@ impl OwnedLayoutInput {
 pub struct MessageHeightCache {
     entries: HashMap<wr::MessageId, MessageHeightEntry>,
     order: VecDeque<wr::MessageId>,
+    generation: u64,
+    measurements: u64,
 }
 
 impl MessageHeightCache {
@@ -178,9 +180,22 @@ impl MessageHeightCache {
         self.entries.contains_key(id)
     }
 
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub fn measurement_count(&self) -> u64 {
+        self.measurements
+    }
+
     pub fn invalidate(&mut self, id: &wr::MessageId) {
         self.entries.remove(id);
         self.order.retain(|cached| cached != id);
+        self.generation = self.generation.wrapping_add(1);
+    }
+
+    pub fn mark_layout_changed(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
     }
 
     pub fn retain_messages(&mut self, ids: &[wr::MessageId]) {
@@ -232,6 +247,8 @@ pub(crate) fn height(
     if let Some(height) = cache.get(id, &input) {
         return height;
     }
+
+    cache.measurements = cache.measurements.wrapping_add(1);
 
     let content_width = if input.is_selected {
         input.width.saturating_sub(3)
