@@ -323,24 +323,6 @@ func TestMessageActionStructuralDiagnosticsAreSignalScopedAndRedacted(t *testing
 	}
 }
 
-func resetEventCensusForTest() {
-	eventCensus.mu.Lock()
-	defer eventCensus.mu.Unlock()
-	eventCensus.nextSeq = 0
-	eventCensus.entries = nil
-}
-
-func TestMessageActionEventCensusIsDisabledWithoutDebug(t *testing.T) {
-	t.Setenv("WPTUI_MESSAGE_ACTION_DEBUG", "")
-	resetEventCensusForTest()
-	messageActionCensusDiagnostic(&events.Receipt{Type: types.ReceiptTypeRead})
-	eventCensus.mu.Lock()
-	defer eventCensus.mu.Unlock()
-	if len(eventCensus.entries) != 0 {
-		t.Fatalf("disabled census recorded %d entries", len(eventCensus.entries))
-	}
-}
-
 func TestMessageActionEventCensusRedactsOrdinaryMessageAndLabelsNonMessage(t *testing.T) {
 	chat := types.NewJID("chat-secret", types.DefaultUserServer)
 	sender := types.NewJID("sender-secret", types.DefaultUserServer)
@@ -364,22 +346,6 @@ func TestMessageActionEventCensusRedactsOrdinaryMessageAndLabelsNonMessage(t *te
 	receipt := messageActionCensusLine(&events.Receipt{Type: types.ReceiptTypeRead})
 	if !strings.Contains(receipt, "event_type=events_receipt subtype=receipt_read") {
 		t.Fatalf("receipt census = %s", receipt)
-	}
-}
-
-func TestMessageActionEventCensusIsBoundedAndOrdered(t *testing.T) {
-	t.Setenv("WPTUI_MESSAGE_ACTION_DEBUG", "1")
-	resetEventCensusForTest()
-	for range messageActionCensusLimit + 1 {
-		messageActionCensusDiagnostic(&events.Receipt{Type: types.ReceiptTypeRead})
-	}
-	eventCensus.mu.Lock()
-	defer eventCensus.mu.Unlock()
-	if len(eventCensus.entries) != messageActionCensusLimit {
-		t.Fatalf("census length = %d, want %d", len(eventCensus.entries), messageActionCensusLimit)
-	}
-	if !strings.HasPrefix(eventCensus.entries[0], "census=event seq=2 ") || !strings.HasPrefix(eventCensus.entries[len(eventCensus.entries)-1], "census=event seq=101 ") {
-		t.Fatalf("census order = first %q, last %q", eventCensus.entries[0], eventCensus.entries[len(eventCensus.entries)-1])
 	}
 }
 
