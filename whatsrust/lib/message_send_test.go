@@ -6,6 +6,21 @@ import (
 	"testing"
 )
 
+func TestQuotedMessageFromContentPreservesTextAndFileKindsWithoutUpload(t *testing.T) {
+	quotedText := quotedTextMessage("quoted text")
+	if quotedText.GetConversation() != "quoted text" {
+		t.Fatalf("quoted text = %#v", quotedText)
+	}
+
+	quotedImage := quotedFileMessage(FileTypeImage, "caption")
+	if quotedImage.GetImageMessage() == nil || quotedImage.GetImageMessage().GetCaption() != "caption" {
+		t.Fatalf("quoted image = %#v", quotedImage)
+	}
+	if quotedFileMessage(99, "") != nil {
+		t.Fatal("unknown quoted file kind must be omitted")
+	}
+}
+
 func TestQuotedMessageBuildersPreserveTextAndFileKinds(t *testing.T) {
 	if quotedTextMessage("quoted text").GetConversation() != "quoted text" {
 		t.Fatal("quoted text was not preserved")

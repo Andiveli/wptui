@@ -736,38 +736,6 @@ func buildFileMessage(ctx context.Context, kind uint8, filePath string, caption 
 	}
 }
 
-func ContentToWaE2EMessage(messageType C.uint8_t, messageContent unsafe.Pointer, contextInfo *waE2E.ContextInfo) *waE2E.Message {
-	switch messageType {
-	case C.uint8_t(MessageTypeText):
-		textMsg := (*C.TextMessage)(messageContent)
-		text := C.GoString(textMsg.text)
-		return &waE2E.Message{
-			ExtendedTextMessage: &waE2E.ExtendedTextMessage{
-				Text:        &text,
-				ContextInfo: contextInfo,
-			},
-		}
-
-	case C.uint8_t(MessageTypeFile):
-		fileMsg := (*C.FileMessage)(messageContent)
-		kind := uint8(fileMsg.kind)
-		filePath := C.GoString(fileMsg.path)
-		var caption *string
-		if fileMsg.caption != nil {
-			captionValue := C.GoString(fileMsg.caption)
-			caption = &captionValue
-		}
-		message, err := buildFileMessage(context.Background(), kind, filePath, caption, contextInfo, client.Upload)
-		if err != nil {
-			panic(err)
-		}
-		return message
-
-	default:
-		panic(fmt.Sprintf("Unsupported message type: %d", messageType))
-	}
-}
-
 type forwardingState struct {
 	isForwarded bool
 	score       uint32

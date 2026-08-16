@@ -15,16 +15,50 @@ typedef struct {
 	char* fileID;
 	char* caption;
 } SendFileMessage;
+
 */
 import "C"
 
 import (
 	"context"
+	"fmt"
 	"unsafe"
 
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 )
+
+// ContentToWaE2EMessage converts the public FFI payload into a WhatsApp
+// message. File construction remains delegated to the injectable builder.
+func ContentToWaE2EMessage(messageType C.uint8_t, messageContent unsafe.Pointer, contextInfo *waE2E.ContextInfo) *waE2E.Message {
+	switch messageType {
+	case C.uint8_t(MessageTypeText):
+		textMsg := (*C.SendTextMessage)(messageContent)
+		text := C.GoString(textMsg.text)
+		return &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+			Text:        &text,
+			ContextInfo: contextInfo,
+		}}
+
+	case C.uint8_t(MessageTypeFile):
+		fileMsg := (*C.SendFileMessage)(messageContent)
+		kind := uint8(fileMsg.kind)
+		filePath := C.GoString(fileMsg.path)
+		var caption *string
+		if fileMsg.caption != nil {
+			captionValue := C.GoString(fileMsg.caption)
+			caption = &captionValue
+		}
+		message, err := buildFileMessage(context.Background(), kind, filePath, caption, contextInfo, client.Upload)
+		if err != nil {
+			panic(err)
+		}
+		return message
+
+	default:
+		panic(fmt.Sprintf("Unsupported message type: %d", messageType))
+	}
+}
 
 func quotedContextInfo(id, sender, chat string) *waE2E.ContextInfo {
 	return &waE2E.ContextInfo{StanzaID: &id, Participant: &sender, RemoteJID: &chat}

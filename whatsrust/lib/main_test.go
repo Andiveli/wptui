@@ -1034,21 +1034,6 @@ func TestBuildFileMessageKeepsNilCaptionNil(t *testing.T) {
 	}
 }
 
-func TestQuotedMessageFromContentPreservesTextAndFileKindsWithoutUpload(t *testing.T) {
-	quotedText := quotedTextMessage("quoted text")
-	if quotedText.GetConversation() != "quoted text" {
-		t.Fatalf("quoted text = %#v", quotedText)
-	}
-
-	quotedImage := quotedFileMessage(FileTypeImage, "caption")
-	if quotedImage.GetImageMessage() == nil || quotedImage.GetImageMessage().GetCaption() != "caption" {
-		t.Fatalf("quoted image = %#v", quotedImage)
-	}
-	if quotedFileMessage(99, "") != nil {
-		t.Fatal("unknown quoted file kind must be omitted")
-	}
-}
-
 func TestQuotedContextInfoPreservesOriginalChatForStatusAndOrdinaryReplies(t *testing.T) {
 	status := quotedContextInfo("status-id", "alice@s.whatsapp.net", "status@broadcast")
 	if status.GetStanzaID() != "status-id" || status.GetParticipant() != "alice@s.whatsapp.net" || status.GetRemoteJID() != "status@broadcast" {
