@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::sync::mpsc::Sender;
 use std::thread;
 
-use ratatui::layout::Rect;
+use ratatui::layout::Size;
 use ratatui_image::{Resize, ResizeEncodeRender};
 use whatsrust as wr;
 
@@ -57,7 +57,7 @@ impl App<'_> {
                                     picker.lock().unwrap().new_resize_protocol(image);
                                 protocol.resize_encode(
                                     &Resize::Scale(None),
-                                    Rect::new(0, 0, key.width, key.height),
+                                    Size::new(key.width, key.height),
                                 );
                                 protocol
                             });
@@ -132,12 +132,7 @@ impl App<'_> {
                                     };
                                 img.resize_encode(
                                     &Resize::Scale(None),
-                                    Rect {
-                                        x: 0,
-                                        y: 0,
-                                        width: preview_width as u16,
-                                        height: preview_height as u16,
-                                    },
+                                    Size::new(preview_width as u16, preview_height as u16),
                                 );
                                 tx.send(AppInput::App(AppEvent::SetFilePreview(
                                     message_id.clone(),

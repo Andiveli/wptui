@@ -27,7 +27,7 @@ use navigation::{
 };
 use ratatui::{
     Frame,
-    layout::{Alignment, Constraint, Layout, Rect},
+    layout::{Alignment, Constraint, Layout, Rect, Size},
     style::{Style, Stylize},
     symbols,
     text::{Line, Span},
@@ -435,12 +435,15 @@ fn render_attachment_viewer(frame: &mut Frame, app: &mut App) {
                 && key.width == layout.preview.width
                 && key.height == layout.preview.height =>
         {
-            let render_rect = protocol.size_for(Resize::default(), layout.preview);
+            let render_size = protocol.size_for(
+                Resize::default(),
+                Size::new(layout.preview.width, layout.preview.height),
+            );
             let img_x =
-                layout.preview.x + (layout.preview.width.saturating_sub(render_rect.width) / 2);
+                layout.preview.x + (layout.preview.width.saturating_sub(render_size.width) / 2);
             let img_y =
-                layout.preview.y + (layout.preview.height.saturating_sub(render_rect.height) / 2);
-            let img_area = Rect::new(img_x, img_y, render_rect.width, render_rect.height);
+                layout.preview.y + (layout.preview.height.saturating_sub(render_size.height) / 2);
+            let img_area = Rect::new(img_x, img_y, render_size.width, render_size.height);
             StatefulImage::default().render(img_area, frame.buffer_mut(), protocol.as_mut());
         }
         Some(ViewerPreviewState::Failed(_))
