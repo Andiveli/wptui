@@ -29,7 +29,7 @@ impl App<'_> {
                     // further input until Event::LogoutResult resolves.
                     return;
                 }
-                self.resolve_logout_confirmation(key);
+                self.handle_logout_input(key);
                 return;
             }
 
@@ -52,6 +52,8 @@ impl App<'_> {
                     }
                 } else if is_attach_file_key(&key) {
                     self.dispatch_action(AppAction::AttachFile);
+                } else if self.composer_blocked() {
+                    return;
                 } else {
                     self.dispatch_composer_action(composer_action_for_editing_key(&key));
                 }
@@ -172,32 +174,6 @@ impl App<'_> {
         }
     }
 
-    fn handle_chat_search_key(&mut self, key: Key) {
-        match key.code {
-            KeyCode::Esc => {
-                let chat = self.get_selected_chat();
-                self.contact_search_active = false;
-                self.contact_search.clean();
-                self.select_chat(chat);
-            }
-            KeyCode::Enter => {
-                self.contact_search_active = false;
-                self.dispatch_action(AppAction::OpenChat);
-            }
-            KeyCode::Char(character) => {
-                self.contact_search.enter_char(character);
-                self.update_filtered_chats();
-            }
-            KeyCode::Backspace => {
-                self.contact_search.delete_char();
-                self.update_filtered_chats();
-            }
-            KeyCode::Left => self.contact_search.move_cursor_left(),
-            KeyCode::Right => self.contact_search.move_cursor_right(),
-            _ => {}
-        }
-    }
-
     pub fn dispatch_action(&mut self, action: AppAction) {
         self.focus_pane = focus_after(self.focus_pane, &action, self.pane_visibility);
 
@@ -239,7 +215,7 @@ impl App<'_> {
             AppAction::HalfPageDown => self.half_page_down(),
             AppAction::HalfPageUp => self.half_page_up(),
             AppAction::InsertMode => {
-                if self.focus_pane == FocusPane::Conversation {
+                if self.focus_pane == FocusPane::Conversation && !self.composer_blocked() {
                     self.conversation_mode = ConversationMode::ComposerEditing;
                 }
             }
@@ -271,6 +247,11 @@ impl App<'_> {
                         if self.status_message_count() > 0 {
                             self.message_list_state.select(Some(0));
                         }
+                    }
+                } else if self.selected_section == Section::Communities {
+                    if let Some(jid) = self.get_selected_community() {
+                        self.open_chat_by_jid(jid);
+                        self.focus_pane = FocusPane::Conversation;
                     }
                 } else {
                     let opened = self.get_selected_chat().is_some();
@@ -336,7 +317,11 @@ impl App<'_> {
                 self.url_picker = None;
                 self.action_notice = Some(crate::app::actions::ActionNotice::Cancelled);
             }
-            AppAction::AttachFile => self.open_file_picker(),
+            AppAction::AttachFile => {
+                if !self.composer_blocked() {
+                    self.open_file_picker()
+                }
+            }
             AppAction::FilePickerPrevious => self.move_file_picker(-1),
             AppAction::FilePickerNext => self.move_file_picker(1),
             AppAction::FilePickerParent => {
@@ -369,69 +354,6 @@ impl App<'_> {
         self.action_notice = Some(crate::app::actions::ActionNotice::Unavailable(
             action.into(),
         ));
-    }
-
-    fn begin_logout_confirmation(&mut self) {
-        self.pending_logout = true;
-        self.logout_menu_index = 0;
-    }
-
-    /// Resolve the logout confirmation as a top-right menu, matching the
-    /// message-menu interaction: j/k (or Up/Down) move the selection, Enter
-    /// confirms it, Esc/n cancel. y is kept as a fast "confirm" and N as a
-    /// fast "cancel".
-    fn resolve_logout_confirmation(&mut self, key: Key) {
-        match key.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') => {
-                self.pending_logout = false;
-                self.confirm_logout();
-            }
-            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                self.pending_logout = false;
-                self.logout_menu_index = 0;
-                self.action_notice = Some(crate::app::actions::ActionNotice::Cancelled);
-            }
-            KeyCode::Enter => {
-                if self.logout_menu_index == 0 {
-                    self.pending_logout = false;
-                    self.confirm_logout();
-                } else {
-                    self.pending_logout = false;
-                    self.logout_menu_index = 0;
-                    self.action_notice = Some(crate::app::actions::ActionNotice::Cancelled);
-                }
-            }
-            KeyCode::Char('j') | KeyCode::Down => {
-                self.logout_menu_index = (self.logout_menu_index + 1) % 2;
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.logout_menu_index = (self.logout_menu_index + 1) % 2;
-            }
-            _ => {}
-        }
-    }
-
-    fn confirm_logout(&mut self) {
-        // The bridge runs the remove-companion-device IQ asynchronously so
-        // the event loop stays responsive. Keep intercepting input and let
-        // Event::LogoutResult drive the local cleanup / quit / error path.
-        self.pending_logout = true;
-        self.logout_in_progress = true;
-        wr::logout();
-    }
-
-    pub fn finish_logout(&mut self) {
-        self.pending_logout = false;
-        self.logout_in_progress = false;
-        self.logout_menu_index = 0;
-        // Stop the history writer so the sqlite files are released, then wipe
-        // BOTH databases plus media: a logout is a full account sign-out, and
-        // pairing a different account must never see the previous one's data.
-        self.db_handler.stop();
-        wipe_sqlite_file(&self.whatsmeow_db);
-        wipe_sqlite_file(&self.whatsmeow_db.with_file_name("whatsapp.db"));
-        clear_media_dir(&self.media_path);
-        self.should_quit = true;
     }
 
     fn selected_message_is_deleted(&self) -> bool {
@@ -595,6 +517,10 @@ impl App<'_> {
     }
 
     fn confirm_file_picker(&mut self) {
+        if self.composer_blocked() {
+            self.file_picker = None;
+            return;
+        }
         let Some(paths) = self
             .file_picker
             .as_ref()
@@ -851,9 +777,7 @@ impl App<'_> {
 
     fn move_share_picker(&mut self, delta: isize) {
         if let Some(picker) = self.share_picker.as_mut() {
-            picker.selected = picker.selected.saturating_add_signed(delta);
-            picker.clamp_selection();
-            picker.keep_selected_visible();
+            picker.move_selection(delta);
         }
     }
 
@@ -861,31 +785,18 @@ impl App<'_> {
         let Some(picker) = self.share_picker.as_mut() else {
             return;
         };
-        let selected = picker
-            .visible_contacts()
-            .get(picker.selected)
-            .cloned()
-            .cloned();
-        if let Some(jid) = selected {
-            if !picker.selected_contacts.insert(jid.clone()) {
-                picker.selected_contacts.remove(&jid);
-            }
-        }
+        picker.toggle_selected();
     }
 
     fn share_search_backspace(&mut self) {
         if let Some(picker) = self.share_picker.as_mut() {
-            picker.query.pop();
-            picker.reset_search_position();
-            picker.clamp_selection();
+            picker.search_backspace();
         }
     }
 
     fn share_search_character(&mut self, character: char) {
         if let Some(picker) = self.share_picker.as_mut() {
-            picker.query.push(character);
-            picker.reset_search_position();
-            picker.clamp_selection();
+            picker.search_character(character);
         }
     }
 
@@ -1159,156 +1070,10 @@ impl App<'_> {
         }
     }
 
-    fn select_next(&mut self) {
-        match self.focus_pane {
-            FocusPane::SectionRail => {
-                if self.rail_on_logout {
-                    self.rail_on_logout = false;
-                    self.selected_section = Section::Chats;
-                } else if self.selected_section == Section::Communities {
-                    self.rail_on_logout = true;
-                } else {
-                    self.selected_section = self.selected_section.next();
-                }
-            }
-            FocusPane::ChatList => {
-                if self.selected_section == Section::Status {
-                    self.status_selection.select_next();
-                    self.clamp_status_selection();
-                } else {
-                    self.chat_list_state.select_next();
-                    self.clamp_chat_selection();
-                }
-            }
-            // In Conversation, j moves UP (older) in the time-ascending list.
-            FocusPane::Conversation => {
-                if self.selected_section == Section::Status {
-                    self.message_list_state
-                        .select_previous_bounded(self.status_message_count());
-                } else {
-                    self.message_list_state
-                        .select_previous_bounded(self.message_count());
-                }
-            }
-        }
-    }
-
-    fn select_previous(&mut self) {
-        match self.focus_pane {
-            FocusPane::SectionRail => {
-                if self.rail_on_logout {
-                    self.rail_on_logout = false;
-                    self.selected_section = Section::Communities;
-                } else if self.selected_section == Section::Chats {
-                    self.rail_on_logout = true;
-                } else {
-                    self.selected_section = self.selected_section.previous();
-                }
-            }
-            FocusPane::ChatList => {
-                if self.selected_section == Section::Status {
-                    self.status_selection.select_previous();
-                    self.clamp_status_selection();
-                } else {
-                    self.chat_list_state.select_previous();
-                    self.clamp_chat_selection();
-                }
-            }
-            // In Conversation, k moves DOWN (newer) in the time-ascending list.
-            FocusPane::Conversation => {
-                if self.selected_section == Section::Status {
-                    self.message_list_state
-                        .select_next_bounded(self.status_message_count());
-                } else {
-                    self.message_list_state
-                        .select_next_bounded(self.message_count());
-                }
-            }
-        }
-    }
-
-    fn jump_top(&mut self) {
-        match self.focus_pane {
-            FocusPane::SectionRail => {
-                self.selected_section = crate::app::actions::Section::Chats;
-                self.rail_on_logout = false;
-            }
-            FocusPane::ChatList => {
-                if self.selected_section == Section::Status {
-                    self.status_selection.select_first();
-                    self.clamp_status_selection();
-                } else {
-                    self.chat_list_state.select_first();
-                }
-            }
-            // En Conversation el render invierte: items[0]=más nuevo (abajo).
-            // gg va al principio del chat (más viejo arriba) = último índice.
-            FocusPane::Conversation => {
-                if self.selected_section == Section::Status {
-                    self.message_list_state
-                        .jump_bottom_bounded(self.status_message_count());
-                } else {
-                    self.message_list_state
-                        .jump_bottom_bounded(self.message_count());
-                }
-            }
-        }
-    }
-
-    fn jump_bottom(&mut self) {
-        match self.focus_pane {
-            FocusPane::SectionRail => {
-                self.selected_section = crate::app::actions::Section::Communities;
-                self.rail_on_logout = true;
-            }
-            FocusPane::ChatList => {
-                if self.selected_section == Section::Status {
-                    self.status_selection.select_last();
-                    self.clamp_status_selection();
-                } else {
-                    self.chat_list_state.select_last();
-                }
-            }
-            // En Conversation el render invierte: items[0]=más nuevo (abajo).
-            // G va al final del chat (más nuevo abajo) = índice 0.
-            FocusPane::Conversation => {
-                if self.selected_section == Section::Status {
-                    self.message_list_state
-                        .jump_top_bounded(self.status_message_count());
-                } else {
-                    self.message_list_state
-                        .jump_top_bounded(self.message_count());
-                }
-            }
-        }
-        self.clamp_chat_selection();
-    }
-
-    fn half_page_down(&mut self) {
-        if self.focus_pane == FocusPane::Conversation {
-            if self.selected_section == Section::Status {
-                self.message_list_state
-                    .half_page_down_bounded(self.status_message_count(), 10);
-            } else {
-                self.message_list_state
-                    .half_page_down_bounded(self.message_count(), 10);
-            }
-        }
-    }
-
-    fn half_page_up(&mut self) {
-        if self.focus_pane == FocusPane::Conversation {
-            if self.selected_section == Section::Status {
-                self.message_list_state
-                    .half_page_up_bounded(self.status_message_count(), 10);
-            } else {
-                self.message_list_state
-                    .half_page_up_bounded(self.message_count(), 10);
-            }
-        }
-    }
-
     fn dispatch_composer_action(&mut self, action: ComposerAction) {
+        if self.composer_blocked() {
+            return;
+        }
         if self.conversation_mode == ConversationMode::EditingMessage
             && matches!(action, ComposerAction::Submit)
         {
@@ -1337,31 +1102,6 @@ impl App<'_> {
                 }
             },
         }
-    }
-
-    fn clamp_chat_selection(&mut self) {
-        let chats = if self.contact_search.input.is_empty() {
-            &self.sorted_chats
-        } else {
-            &self.filtered_chats
-        };
-        match (chats.len(), self.chat_list_state.selected()) {
-            (0, _) => self.chat_list_state.select(None),
-            (len, Some(selected)) if selected >= len => self.chat_list_state.select(Some(len - 1)),
-            _ => {}
-        }
-    }
-
-    fn message_count(&self) -> usize {
-        self.open_chat()
-            .and_then(|chat| self.chat_messages.get(&chat))
-            .map_or(0, Vec::len)
-    }
-
-    fn status_message_count(&self) -> usize {
-        self.open_status_contact()
-            .map(|contact| self.status_messages(&contact).len())
-            .unwrap_or(0)
     }
 }
 
@@ -1519,41 +1259,6 @@ fn message_urls(message: &wr::Message) -> Vec<String> {
     };
     text.map(crate::url::extract_openable_urls)
         .unwrap_or_default()
-}
-
-/// Remove a sqlite database together with its `-wal` and `-shm` sidecars.
-/// Used during logout to guarantee a full account sign-out.
-fn wipe_sqlite_file(path: &Path) {
-    for suffix in [
-        std::ffi::OsStr::new(""),
-        std::ffi::OsStr::new("-wal"),
-        std::ffi::OsStr::new("-shm"),
-    ] {
-        let mut os = path.as_os_str().to_os_string();
-        os.push(suffix);
-        let file = std::path::PathBuf::from(&os);
-        match std::fs::remove_file(&file) {
-            Ok(()) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => log::warn!("Failed to remove {}: {err}", file.display()),
-        }
-    }
-}
-
-/// Remove every entry under the media cache directory. A missing directory is
-/// fine; a nested directory tree is removed recursively.
-fn clear_media_dir(media_path: &Path) {
-    let Ok(entries) = std::fs::read_dir(media_path) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            let _ = std::fs::remove_dir_all(&path);
-        } else {
-            let _ = std::fs::remove_file(&path);
-        }
-    }
 }
 
 pub fn composer_action_for_editing_key(key: &Key) -> ComposerAction {

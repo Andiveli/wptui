@@ -65,6 +65,7 @@ pub struct Composer<'a> {
     pub input: TextArea<'a>,
     pub quote: Option<wr::Message>,
     pub pending: Vec<PendingAttachment>,
+    pub blocked: bool,
 }
 
 impl Default for Composer<'_> {
@@ -76,12 +77,16 @@ impl Default for Composer<'_> {
             input,
             quote: None,
             pending: Vec::new(),
+            blocked: false,
         }
     }
 }
 
 impl Composer<'_> {
     pub fn apply(&mut self, action: ComposerAction) -> ComposerOutcome {
+        if self.blocked {
+            return ComposerOutcome::Idle;
+        }
         match action {
             ComposerAction::Submit => self.submit(),
             ComposerAction::InsertNewline => {
@@ -105,6 +110,9 @@ impl Composer<'_> {
     }
 
     pub fn insert_text(&mut self, text: &str) {
+        if self.blocked {
+            return;
+        }
         self.input.insert_str(text);
     }
 
@@ -123,7 +131,19 @@ impl Composer<'_> {
     }
 
     pub fn queue_attachment(&mut self, path: Arc<str>, kind: wr::FileKind) {
+        if self.blocked {
+            return;
+        }
         self.pending.push(PendingAttachment::new(path, kind));
+    }
+
+    pub fn set_blocked(&mut self, blocked: bool) {
+        self.blocked = blocked;
+        if blocked {
+            self.clear_text();
+            self.quote = None;
+            self.pending.clear();
+        }
     }
 
     pub fn is_empty(&self) -> bool {

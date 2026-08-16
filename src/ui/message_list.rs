@@ -1,6 +1,6 @@
 use std::{
     cmp::{max, min},
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashMap},
     sync::Arc,
 };
 
@@ -16,22 +16,45 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, StatefulWidget, Widget, Wrap},
 };
 use ratatui_image::StatefulImage;
-use unicode_segmentation::UnicodeSegmentation;
 use whatsrust::{self as wr, FileKind};
 
 use crate::app::events::{AppEvent, AppInput};
 use crate::app::{App, FileMeta, Metadata};
 
-pub const IMAGE_HEIGHT: usize = 12;
-pub const IMAGE_WIDTH: usize = IMAGE_HEIGHT * 3;
-/// Video thumbnails are rendered wider than images (like Concord's 72-column
-/// inline previews) so the play marker and the frame are actually visible.
-/// Height matches image previews so video messages don't tower over photos.
-pub const VIDEO_HEIGHT: usize = IMAGE_HEIGHT;
-pub const VIDEO_WIDTH: usize = 72;
-pub const MESSAGE_HEIGHT_CACHE_CAPACITY: usize = 256;
-pub const AUTHOR_GROUP_MAX_GAP: i64 = 5 * 60;
-const REPLY_EXCERPT_MAX_CHARS: usize = 40;
+#[path = "message_helpers.rs"]
+mod message_helpers;
+#[path = "message_layout.rs"]
+mod message_layout;
+
+pub use message_helpers::{
+    AUTHOR_GROUP_MAX_GAP, AuthorGroupContext, get_quoted_text, reply_summary, starts_author_group,
+};
+use message_helpers::{
+    StatusLabel, forwarding_indicator_lines, forwarding_label, inline_content_lines,
+};
+pub use message_layout::{
+    IMAGE_HEIGHT, IMAGE_WIDTH, MESSAGE_HEIGHT_CACHE_CAPACITY, MessageHeightCache, VIDEO_HEIGHT,
+    VIDEO_WIDTH,
+};
+use message_layout::{LayoutInput, file_kind};
+
+fn status_label(app: &App, message_id: &wr::MessageId) -> Option<StatusLabel> {
+    let status = app.message_status(message_id);
+    status
+        .deleted
+        .then_some(StatusLabel::Deleted)
+        .or_else(|| status.edited.then_some(StatusLabel::Edited))
+}
+
+#[cfg(test)]
+mod layout_contract_tests {
+    #[test]
+    fn text_height_contract_handles_unicode_and_narrow_widths() {
+        assert_eq!(super::message_layout::text_height("café 👩‍💻", 20), 1);
+        assert_eq!(super::message_layout::text_height("café 👩‍💻", 4), 2);
+    }
+}
+
 /// Number of bars in the static audio waveform.
 const AUDIO_WIDGET_BARS: usize = 16;
 
@@ -62,264 +85,6 @@ fn author_color(sender: &wr::JID) -> Color {
         hash = hash.wrapping_mul(0x100_0000_01b3);
     }
     AUTHOR_PALETTE[(hash as usize) % AUTHOR_PALETTE.len()]
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct AuthorGroupContext {
-    starts_group: bool,
-}
-
-impl AuthorGroupContext {
-    pub const STARTS_GROUP: Self = Self { starts_group: true };
-    pub const CONTINUATION: Self = Self {
-        starts_group: false,
-    };
-
-    pub const fn starts_group(self) -> bool {
-        self.starts_group
-    }
-}
-
-pub fn starts_author_group(previous: Option<&wr::Message>, current: &wr::Message) -> bool {
-    let Some(previous) = previous else {
-        return true;
-    };
-    let same_author = if previous.info.is_from_me || current.info.is_from_me {
-        previous.info.is_from_me && current.info.is_from_me
-    } else {
-        previous.info.sender == current.info.sender
-    };
-    let Some(previous_time) = DateTime::<chrono::Utc>::from_timestamp(previous.info.timestamp, 0)
-        .map(DateTime::<Local>::from)
-    else {
-        return true;
-    };
-    let Some(current_time) = DateTime::<chrono::Utc>::from_timestamp(current.info.timestamp, 0)
-        .map(DateTime::<Local>::from)
-    else {
-        return true;
-    };
-    let elapsed = current.info.timestamp - previous.info.timestamp;
-
-    !same_author
-        || previous_time.date_naive() != current_time.date_naive()
-        || !(0..AUTHOR_GROUP_MAX_GAP).contains(&elapsed)
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum HeightContent {
-    Text {
-        body: Arc<str>,
-        forwarding: Option<ForwardingLabel>,
-        status: Option<StatusLabel>,
-    },
-    File {
-        kind: HeightFileKind,
-        caption: Option<Arc<str>>,
-        preview_loaded: bool,
-        forwarding: Option<ForwardingLabel>,
-        status: Option<StatusLabel>,
-    },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ForwardingLabel {
-    Forwarded,
-    ForwardedManyTimes,
-}
-
-impl ForwardingLabel {
-    fn text(self) -> &'static str {
-        match self {
-            Self::Forwarded => "Forwarded",
-            Self::ForwardedManyTimes => "Forwarded many times",
-        }
-    }
-}
-
-fn forwarding_label(message: &wr::Message) -> Option<ForwardingLabel> {
-    message.info.forwarding.is_forwarded.then(|| {
-        if message.info.forwarding.score >= 5 {
-            ForwardingLabel::ForwardedManyTimes
-        } else {
-            ForwardingLabel::Forwarded
-        }
-    })
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum StatusLabel {
-    Edited,
-    Deleted,
-}
-
-impl StatusLabel {
-    fn text(self) -> &'static str {
-        match self {
-            Self::Edited => "(edited)",
-            Self::Deleted => "(deleted)",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum HeightFileKind {
-    Image,
-    Video,
-    Audio,
-    Document,
-    Sticker,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct MessageHeightInput {
-    width: usize,
-    is_selected: bool,
-    has_quote: bool,
-    has_reactions: bool,
-    author_group: AuthorGroupContext,
-    content: HeightContent,
-}
-
-fn status_label(app: &App, message_id: &wr::MessageId) -> Option<StatusLabel> {
-    let status = app.message_status(message_id);
-    status
-        .deleted
-        .then_some(StatusLabel::Deleted)
-        .or_else(|| status.edited.then_some(StatusLabel::Edited))
-}
-
-fn inline_content_lines(
-    body: &str,
-    status: Option<StatusLabel>,
-    width: usize,
-) -> Vec<Line<'static>> {
-    if matches!(status, Some(StatusLabel::Deleted)) {
-        return textwrap::wrap(crate::app::DELETED_MESSAGE_TEXT, width.max(1))
-            .into_iter()
-            .map(|line| Line::styled(line.into_owned(), Style::default().dark_gray()))
-            .collect();
-    }
-    let status_text = status.map(StatusLabel::text);
-    let content = match (body, status_text) {
-        ("", Some(status)) => status.to_owned(),
-        (_, Some(status)) => format!("{body} {status}"),
-        (_, None) => body.to_owned(),
-    };
-    if content.is_empty() {
-        return Vec::new();
-    }
-    let wrapped = textwrap::wrap(&content, width.max(1))
-        .into_iter()
-        .map(|line| line.into_owned())
-        .collect::<Vec<_>>();
-    let mut status_starts = vec![None; wrapped.len()];
-    if let Some(status) = status_text {
-        let mut remaining = status.graphemes(true).collect::<Vec<_>>();
-        for (index, line) in wrapped.iter().enumerate().rev() {
-            let graphemes = line.graphemes(true).collect::<Vec<_>>();
-            if remaining.ends_with(&graphemes) {
-                status_starts[index] = Some(0);
-                remaining.truncate(remaining.len().saturating_sub(graphemes.len()));
-            } else if let Some(start) =
-                (0..graphemes.len()).find(|start| remaining.starts_with(&graphemes[*start..]))
-            {
-                status_starts[index] = Some(start);
-                break;
-            }
-        }
-    }
-    wrapped
-        .iter()
-        .zip(status_starts)
-        .map(|(line, status_start)| {
-            let graphemes = line
-                .graphemes(true)
-                .enumerate()
-                .map(|(index, grapheme)| {
-                    (grapheme, status_start.is_some_and(|start| index >= start))
-                })
-                .collect::<Vec<_>>();
-            inline_line(&graphemes)
-        })
-        .collect()
-}
-
-fn inline_line(graphemes: &[(&str, bool)]) -> Line<'static> {
-    let mut spans: Vec<Span<'static>> = Vec::new();
-    for (grapheme, is_status) in graphemes {
-        let style = if *is_status {
-            Style::default().dark_gray()
-        } else {
-            Style::default()
-        };
-        match spans.last_mut() {
-            Some(span) if span.style == style => span.content.to_mut().push_str(grapheme),
-            _ => spans.push(Span::styled((*grapheme).to_owned(), style)),
-        }
-    }
-    Line::from(spans)
-}
-
-#[derive(Clone, Debug)]
-struct MessageHeightEntry {
-    input: MessageHeightInput,
-    height: usize,
-}
-
-#[derive(Debug, Default)]
-pub struct MessageHeightCache {
-    entries: HashMap<wr::MessageId, MessageHeightEntry>,
-    order: VecDeque<wr::MessageId>,
-}
-
-impl MessageHeightCache {
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
-    pub fn contains(&self, id: &str) -> bool {
-        self.entries.contains_key(id)
-    }
-
-    pub fn invalidate(&mut self, id: &wr::MessageId) {
-        self.entries.remove(id);
-        self.order.retain(|cached| cached != id);
-    }
-
-    pub fn retain_messages(&mut self, ids: &[wr::MessageId]) {
-        let retained: HashSet<_> = ids.iter().cloned().collect();
-        self.entries.retain(|id, _| retained.contains(id));
-        self.order.retain(|id| retained.contains(id));
-    }
-
-    fn get(&mut self, id: &wr::MessageId, input: &MessageHeightInput) -> Option<usize> {
-        let height = self
-            .entries
-            .get(id)
-            .filter(|entry| entry.input == *input)
-            .map(|entry| entry.height)?;
-        self.order.retain(|cached| cached != id);
-        self.order.push_back(id.clone());
-        Some(height)
-    }
-
-    fn insert(&mut self, id: wr::MessageId, input: MessageHeightInput, height: usize) {
-        if !self.entries.contains_key(&id)
-            && self.entries.len() >= MESSAGE_HEIGHT_CACHE_CAPACITY
-            && let Some(oldest) = self.order.pop_front()
-        {
-            self.entries.remove(&oldest);
-        }
-        self.order.retain(|cached| cached != &id);
-        self.order.push_back(id.clone());
-        self.entries
-            .insert(id, MessageHeightEntry { input, height });
-    }
 }
 
 fn message_block<'a>(
@@ -359,38 +124,12 @@ fn message_content_area(area: Rect, is_selected: bool) -> Rect {
     }
 }
 
-pub fn reply_summary(message: &wr::Message, author: &str) -> String {
-    format!("> {author}: {}", reply_excerpt(&get_quoted_text(message)))
-}
-
-fn reply_excerpt(text: &str) -> String {
-    let normalized = text.replace(['\n', '\r'], " ");
-    let mut characters = normalized.chars();
-    let excerpt = characters
-        .by_ref()
-        .take(REPLY_EXCERPT_MAX_CHARS)
-        .collect::<String>();
-
-    if characters.next().is_some() {
-        format!("{excerpt}…")
-    } else {
-        excerpt
-    }
-}
-
-fn file_content_height(id: &wr::MessageId, file: &wr::FileContent, app: &mut App) -> usize {
+fn file_content_height(_id: &wr::MessageId, file: &wr::FileContent, _app: &mut App) -> usize {
     match file.kind {
-        FileKind::Image | FileKind::Sticker | FileKind::Video => match app.metadata.get(id) {
-            None => 1,
-            Some(Metadata::File(meta)) => match meta {
-                FileMeta::Downloading
-                | FileMeta::DownloadFailed
-                | FileMeta::Downloaded
-                | FileMeta::LoadFailed
-                | FileMeta::Loading => 1,
-                FileMeta::Loaded => preview_height(&file.kind),
-            },
-        },
+        // Media previews occupy their final block from the first render. The
+        // preview lifecycle changes only the contents of this block, never its
+        // geometry.
+        FileKind::Image | FileKind::Sticker | FileKind::Video => preview_height(&file.kind),
         // Audio renders a static play bar under the file line, so it takes
         // two rows. Must stay in sync with `message_height`.
         FileKind::Audio => 2,
@@ -421,10 +160,6 @@ pub fn reaction_chips(reactions: Option<&HashMap<wr::JID, Arc<str>>>) -> Vec<Str
         .collect()
 }
 
-fn forwarding_indicator_lines(label: Option<ForwardingLabel>, width: usize) -> usize {
-    label.map_or(0, |label| textwrap::wrap(label.text(), width.max(1)).len())
-}
-
 pub fn message_height(
     message: &wr::Message,
     width: usize,
@@ -432,33 +167,21 @@ pub fn message_height(
     author_group: AuthorGroupContext,
     app: &mut App,
 ) -> usize {
-    let content_width = if is_selected {
-        width.saturating_sub(3)
-    } else {
-        width
-    }
-    .max(1);
-    let input = MessageHeightInput {
+    let input = LayoutInput {
         width,
         is_selected,
         has_quote: message.info.quote_id.is_some(),
         has_reactions: app.reactions.contains_key(&message.info.id),
         author_group,
         content: match &message.message {
-            wr::MessageContent::Text(text) => HeightContent::Text {
-                body: text.clone(),
+            wr::MessageContent::Text(text) => message_layout::HeightContent::Text {
+                body: text,
                 forwarding: forwarding_label(message),
                 status: status_label(app, &message.info.id),
             },
-            wr::MessageContent::File(file) => HeightContent::File {
-                kind: match file.kind {
-                    FileKind::Image => HeightFileKind::Image,
-                    FileKind::Video => HeightFileKind::Video,
-                    FileKind::Audio => HeightFileKind::Audio,
-                    FileKind::Document => HeightFileKind::Document,
-                    FileKind::Sticker => HeightFileKind::Sticker,
-                },
-                caption: file.caption.clone(),
+            wr::MessageContent::File(file) => message_layout::HeightContent::File {
+                kind: file_kind(file.kind.clone()),
+                caption: file.caption.as_deref(),
                 forwarding: forwarding_label(message),
                 preview_loaded: matches!(
                     app.metadata.get(&message.info.id),
@@ -468,52 +191,7 @@ pub fn message_height(
             },
         },
     };
-    if let Some(height) = app.message_height_cache.get(&message.info.id, &input) {
-        return height;
-    }
-
-    let content_height = match &input.content {
-        HeightContent::Text {
-            body,
-            status,
-            forwarding,
-        } => {
-            inline_content_lines(body, *status, content_width).len()
-                + forwarding_indicator_lines(*forwarding, content_width)
-        }
-        HeightContent::File {
-            kind,
-            caption,
-            preview_loaded,
-            forwarding,
-            status,
-        } => {
-            let caption_height = caption.as_ref().map_or_else(
-                || inline_content_lines("", *status, content_width).len(),
-                |caption| inline_content_lines(caption, *status, content_width).len(),
-            );
-            let file_height = match kind {
-                HeightFileKind::Video if *preview_loaded => VIDEO_HEIGHT,
-                HeightFileKind::Image | HeightFileKind::Sticker if *preview_loaded => IMAGE_HEIGHT,
-                // Audio keeps the file line plus a static play bar.
-                HeightFileKind::Audio => 2,
-                HeightFileKind::Image
-                | HeightFileKind::Video
-                | HeightFileKind::Document
-                | HeightFileKind::Sticker => 1,
-            };
-            file_height + caption_height + forwarding_indicator_lines(*forwarding, content_width)
-        }
-    };
-
-    let height = usize::from(input.author_group.starts_group() || input.is_selected)
-        + usize::from(input.has_quote)
-        + content_height
-        + usize::from(input.has_reactions)
-        + usize::from(input.is_selected);
-    app.message_height_cache
-        .insert(message.info.id.clone(), input, height);
-    height
+    message_layout::height(&mut app.message_height_cache, &message.info.id, &input)
 }
 
 fn spacing_after_message(
@@ -921,8 +599,8 @@ fn render_message_items(
     let author_groups = items
         .iter()
         .enumerate()
-        .map(|(index, message)| AuthorGroupContext {
-            starts_group: starts_author_group(items.get(index + 1), message),
+        .map(|(index, message)| {
+            AuthorGroupContext::new(starts_author_group(items.get(index + 1), message))
         })
         .collect::<Vec<_>>();
 
@@ -960,6 +638,30 @@ fn render_message_items(
     let width = list_area.width as isize;
     let padding = 4;
 
+    let previous_offset = app.message_list_state.offset;
+    let mut previous_anchor = app
+        .message_list_state
+        .viewport_anchor
+        .clone()
+        .filter(|anchor| {
+            anchor.width == width as usize
+                && anchor.offset == app.message_list_state.offset
+                && anchor.generation == app.message_height_cache.generation()
+                && app
+                    .message_list_state
+                    .selected
+                    .is_none_or(|selected| selected >= anchor.index)
+                && items
+                    .get(anchor.index)
+                    .is_some_and(|item| item.info.id == anchor.message_id)
+        });
+    if let Some(anchor) = previous_anchor.as_mut() {
+        let new_bottom = list_area.bottom();
+        let bottom_delta = new_bottom as isize - anchor.bottom as isize;
+        anchor.y = anchor.y.saturating_add(bottom_delta);
+        anchor.bottom = new_bottom;
+    }
+
     app.message_list_state.selected_message = app
         .message_list_state
         .selected
@@ -969,21 +671,50 @@ fn render_message_items(
         let selected = app.message_list_state.selected.unwrap();
         app.message_list_state.update_selected = false;
 
-        // Height to the bottom of selected msg
-        let acc_height = items
-            .iter()
-            .take(selected)
-            .enumerate()
-            .map(|(index, item)| {
-                message_height(
-                    item,
-                    width as usize,
-                    app.message_list_state.selected == Some(index),
-                    author_groups[index],
-                    app,
-                ) + spacing_after_message(index, &author_groups, app.message_list_state.selected)
+        // Use the previous viewport as an anchor while selection moves locally. A
+        // cold jump still falls back to the exact prefix calculation below.
+        let acc_height = previous_anchor
+            .as_ref()
+            .filter(|anchor| anchor.index <= selected)
+            .map(|anchor| {
+                let mut cursor = anchor.y;
+                for index in anchor.index..selected {
+                    cursor -= message_height(
+                        &items[index],
+                        width as usize,
+                        app.message_list_state.selected == Some(index),
+                        author_groups[index],
+                        app,
+                    ) as isize;
+                    cursor -= spacing_after_message(
+                        index,
+                        &author_groups,
+                        app.message_list_state.selected,
+                    ) as isize;
+                }
+                (list_area.bottom() as isize + app.message_list_state.offset as isize - cursor)
+                    as usize
             })
-            .sum::<usize>();
+            .unwrap_or_else(|| {
+                items
+                    .iter()
+                    .take(selected)
+                    .enumerate()
+                    .map(|(index, item)| {
+                        message_height(
+                            item,
+                            width as usize,
+                            app.message_list_state.selected == Some(index),
+                            author_groups[index],
+                            app,
+                        ) + spacing_after_message(
+                            index,
+                            &author_groups,
+                            app.message_list_state.selected,
+                        )
+                    })
+                    .sum::<usize>()
+            });
 
         let selected_height = message_height(
             &items[selected],
@@ -1006,10 +737,32 @@ fn render_message_items(
             app.message_list_state.offset =
                 (acc_height + selected_height + padding).saturating_sub(list_area.height as usize);
         }
+        if app.message_list_state.offset != previous_offset {
+            if let Some(anchor) = previous_anchor.as_mut() {
+                let delta = if app.message_list_state.offset >= previous_offset {
+                    app.message_list_state.offset - previous_offset
+                } else {
+                    previous_offset - app.message_list_state.offset
+                };
+                let delta = delta.min(isize::MAX as usize) as isize;
+                anchor.y = if app.message_list_state.offset >= previous_offset {
+                    anchor.y.saturating_add(delta)
+                } else {
+                    anchor.y.saturating_sub(delta)
+                };
+                anchor.offset = app.message_list_state.offset;
+            }
+        }
     }
 
-    let mut y = list_area.bottom() as isize + app.message_list_state.offset as isize;
-    for (i, item) in items.iter().enumerate() {
+    let (start_index, mut y) = previous_anchor
+        .map(|anchor| (anchor.index, anchor.y))
+        .unwrap_or((
+            0,
+            list_area.bottom() as isize + app.message_list_state.offset as isize,
+        ));
+    let mut viewport_anchor = None;
+    for (i, item) in items.iter().enumerate().skip(start_index) {
         let is_selected = app.message_list_state.selected == Some(i);
         let author_group = author_groups[i];
         let height = message_height(item, width as usize, is_selected, author_group, app) as isize;
@@ -1017,11 +770,24 @@ fn render_message_items(
         let bottom = y;
         let top = y - height;
 
-        if bottom < list_area.top() as isize {
+        if bottom <= list_area.top() as isize {
             break;
         }
 
-        if top <= list_area.bottom() as isize {
+        let Some(top_i64) = i64::try_from(top).ok() else {
+            break;
+        };
+        let Some(bottom_i64) = i64::try_from(bottom).ok() else {
+            break;
+        };
+        if crate::app::read_receipts::intersects(
+            top_i64,
+            bottom_i64,
+            i64::from(list_area.top()),
+            i64::from(list_area.bottom()),
+        ) {
+            viewport_anchor.get_or_insert((i, y));
+            app.observe_visible_message(item, true);
             let too_low = top < list_area.top() as isize;
             let too_high = bottom > list_area.bottom() as isize;
 
@@ -1147,7 +913,30 @@ fn render_message_items(
             + spacing_after_message(i, &author_groups, app.message_list_state.selected) as isize;
     }
 
+    app.message_list_state.viewport_anchor = viewport_anchor.and_then(|(index, y)| {
+        items.get(index).map(|item| ViewportAnchor {
+            index,
+            y,
+            width: width as usize,
+            offset: app.message_list_state.offset,
+            generation: app.message_height_cache.generation(),
+            message_id: item.info.id.clone(),
+            bottom: list_area.bottom(),
+        })
+    });
+
     None
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+struct ViewportAnchor {
+    index: usize,
+    y: isize,
+    width: usize,
+    offset: usize,
+    generation: u64,
+    message_id: wr::MessageId,
+    bottom: u16,
 }
 
 #[derive(Debug, Default, Clone, Eq, PartialEq, Hash)]
@@ -1156,6 +945,7 @@ pub struct MessageListState {
     pub offset: usize,
     selected_message: Option<wr::MessageId>,
     pub update_selected: bool,
+    viewport_anchor: Option<ViewportAnchor>,
 }
 
 impl MessageListState {
@@ -1166,6 +956,7 @@ impl MessageListState {
         self.selected_message = Some(msg_id);
         self.selected = None;
         self.update_selected = false;
+        self.viewport_anchor = None;
     }
 }
 
@@ -1175,6 +966,7 @@ impl MessageListState {
         self.offset = 0;
         self.selected_message = None;
         self.update_selected = false;
+        self.viewport_anchor = None;
     }
 
     pub fn select(&mut self, index: Option<usize>) {
@@ -1254,15 +1046,6 @@ impl MessageListState {
             self.update_selected = false;
         } else {
             self.select(Some(index.min(item_count - 1)));
-        }
-    }
-}
-
-pub fn get_quoted_text(msg: &wr::Message) -> Arc<str> {
-    match &msg.message {
-        wr::MessageContent::Text(text) => text.clone(),
-        wr::MessageContent::File(data) => {
-            format!("{}: {}", data.path, data.caption.as_deref().unwrap_or("")).into()
         }
     }
 }

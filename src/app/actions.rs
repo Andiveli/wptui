@@ -81,18 +81,6 @@ pub trait UrlOpener {
     fn open(&mut self, plan: &crate::url::UrlLaunchPlan) -> std::io::Result<()>;
 }
 
-pub trait ReadReceiptSender {
-    fn mark_as_read(&self, message_id: &wr::MessageId, chat: &wr::JID, sender: &wr::JID);
-}
-
-pub struct WhatsAppReadReceiptSender;
-
-impl ReadReceiptSender for WhatsAppReadReceiptSender {
-    fn mark_as_read(&self, message_id: &wr::MessageId, chat: &wr::JID, sender: &wr::JID) {
-        wr::mark_as_read(message_id, chat, sender);
-    }
-}
-
 pub struct SystemUrlOpener;
 
 impl UrlOpener for SystemUrlOpener {

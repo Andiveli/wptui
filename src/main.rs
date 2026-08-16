@@ -20,7 +20,7 @@ fn main() {
     let args = Args::parse();
 
     let mut app = App::default();
-    app.enable_read_receipts(!args.no_view);
+    app.initialize_read_receipts(!args.no_view);
     app.enable_message_action_diagnostics(mac_debug_enabled(
         std::env::var("WPTUI_MESSAGE_ACTION_DEBUG").ok().as_deref(),
     ));

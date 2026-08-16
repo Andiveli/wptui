@@ -8,7 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ratatui::layout::Rect;
+use ratatui::layout::Size;
 use ratatui_image::{Resize, ResizeEncodeRender, picker::Picker, protocol::StatefulProtocol};
 use whatsrust as wr;
 
@@ -473,7 +473,7 @@ fn start_runtime(
 fn decode_protocol(picker: &Arc<Mutex<Picker>>, bytes: &[u8]) -> Option<StatefulProtocol> {
     let image = image::load_from_memory(bytes).ok()?;
     let mut protocol = picker.lock().ok()?.new_resize_protocol(image);
-    protocol.resize_encode(&Resize::Scale(None), Rect::new(0, 0, 4, 2));
+    protocol.resize_encode(&Resize::Scale(None), Size::new(4, 2));
     Some(protocol)
 }
 

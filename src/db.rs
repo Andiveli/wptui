@@ -30,6 +30,27 @@ fn open_database(path: &Path) -> Connection {
     db
 }
 
+pub(crate) fn try_open_database(path: &Path) -> rusqlite::Result<Connection> {
+    let db = Connection::open(path)?;
+    db.busy_timeout(SQLITE_BUSY_TIMEOUT)?;
+    Ok(db)
+}
+
+pub(crate) fn with_database_write_lock<T>(operation: impl FnOnce() -> T) -> T {
+    let _lock = DATABASE_WRITE_LOCK.lock().unwrap();
+    operation()
+}
+
+const READ_RECEIPT_SCHEMA_VERSION: i64 = 2;
+
+fn ensure_read_receipt_schema(db: &Connection) -> rusqlite::Result<()> {
+    let version: i64 = db.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    if version < READ_RECEIPT_SCHEMA_VERSION {
+        db.execute_batch("CREATE TABLE IF NOT EXISTS read_receipt_pending (chat TEXT NOT NULL, sender TEXT NOT NULL, message_id TEXT NOT NULL, timestamp INTEGER NOT NULL, kind INTEGER NOT NULL, PRIMARY KEY (chat, sender, message_id)); CREATE INDEX IF NOT EXISTS idx_read_receipt_pending_timestamp ON read_receipt_pending(timestamp); CREATE TABLE IF NOT EXISTS read_receipt_sent (chat TEXT NOT NULL, sender TEXT NOT NULL, message_id TEXT NOT NULL, PRIMARY KEY (chat, sender, message_id)); CREATE TABLE IF NOT EXISTS read_receipt_rejected (chat TEXT NOT NULL, sender TEXT NOT NULL, message_id TEXT NOT NULL, PRIMARY KEY (chat, sender, message_id)); PRAGMA user_version = 2")?;
+    }
+    Ok(())
+}
+
 fn ensure_forwarding_columns(db: &Connection, table: &str) {
     let columns = db
         .prepare(&format!("PRAGMA table_info({table})"))
@@ -74,6 +95,9 @@ impl DatabaseHandler {
     pub fn new(db_path: &Path) -> Self {
         let db = open_database(db_path);
         let _write_lock = DATABASE_WRITE_LOCK.lock().unwrap();
+        if let Err(error) = ensure_read_receipt_schema(&db) {
+            log::error!("read-receipt schema migration failed: {error}");
+        }
         db.execute(
             "CREATE TABLE IF NOT EXISTS message_reactions (
                 message_id TEXT NOT NULL,

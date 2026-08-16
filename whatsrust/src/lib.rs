@@ -60,9 +60,24 @@ struct CContactEntry {
 }
 
 #[repr(C)]
+struct CCommunityEntry {
+    jid: CJID,
+    name: *const c_char,
+    parent_jid: CJID,
+    is_parent: bool,
+}
+
+#[repr(C)]
 struct CGetContactsResult {
     entries: *const CContactEntry,
     size: u32,
+}
+
+#[repr(C)]
+struct CGetCommunitiesResult {
+    entries: *const CCommunityEntry,
+    size: u32,
+    status: u8,
 }
 
 #[repr(C)]
@@ -80,6 +95,13 @@ struct CChatSettings {
     muted_until: i64,
     pinned: bool,
     archived: bool,
+}
+
+#[repr(C)]
+struct CGroupInfoResult {
+    status: u8,
+    is_announce: bool,
+    is_admin: bool,
 }
 
 #[repr(C)]
@@ -599,10 +621,33 @@ pub struct ChatSettings {
     pub archived: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GroupInfo {
     pub jid: JID,
     pub name: Arc<str>,
+    pub is_announce: bool,
+    pub is_admin: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GroupInfoError {
+    NotGroup,
+    ClientUnavailable,
+    RequestFailed,
+    InvalidBridgeResult,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CommunityInfo {
+    pub jid: JID,
+    pub name: Arc<str>,
+    pub parent_jid: Option<JID>,
+    pub is_parent: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CommunitiesError {
+    BridgeUnavailable,
 }
 
 impl From<&CContact> for Contact {
@@ -675,9 +720,12 @@ unsafe extern "C" {
         forward_source_len: usize,
     ) -> CForwardResult;
     fn C_GetContacts() -> CGetContactsResult;
+    fn C_GetCommunities() -> CGetCommunitiesResult;
+    fn C_FreeCommunities(result: CGetCommunitiesResult);
     fn C_GetProfilePicture(jid: CJID) -> CProfilePictureResult;
     fn C_FreeProfilePicture(result: CProfilePictureResult);
     fn C_GetChatSettings(jid: CJID) -> CChatSettings;
+    fn C_GetGroupInfo(jid: CJID) -> CGroupInfoResult;
     fn C_ResolveDmChatId(jid: CJID) -> *mut c_char;
     fn C_FreeResolveDmChatId(value: *mut c_char);
     fn C_Disconnect();
@@ -697,7 +745,7 @@ unsafe extern "C" {
     fn C_EditMessage(chat_jid: CJID, message_id: *const c_char, replacement: *const c_char) -> u8;
     fn C_RevokeMessage(chat_jid: CJID, sender_jid: CJID, message_id: *const c_char) -> u8;
 
-    fn C_MarkAsRead(msg_id: *const c_char, chat_jid: CJID, sender_jid: CJID);
+    fn C_MarkAsRead(msg_id: *const c_char, chat_jid: CJID, sender_jid: CJID) -> i32;
 
     fn C_SetMessageHandler(message_cb: CMessageCallback, data: *mut c_void);
     fn C_SetEventHandler(event_cb: CEventCallback, data: *mut c_void);
@@ -968,11 +1016,37 @@ pub fn download_file(file_id: &FileId, base_path: &Path) -> Result<(), DownloadF
     }
 }
 
-pub fn mark_as_read(msg_id: &MessageId, chat_jid: &JID, sender_jid: &JID) {
-    let msg_id_c = CString::new(msg_id.as_ref()).unwrap();
-    let chat_jid_c = CJID::from(chat_jid);
-    let sender_jid_c = CJID::from(sender_jid);
-    unsafe { C_MarkAsRead(msg_id_c.as_ptr(), chat_jid_c, sender_jid_c) }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MarkAsReadError { Disconnected, Transient, Permanent }
+
+fn with_borrowed_mark_read_args<T>(msg_id: &MessageId, chat_jid: &JID, sender_jid: &JID, send: impl FnOnce(*const c_char, CJID, CJID) -> T) -> Result<T, MarkAsReadError> {
+    let msg_id_c = CString::new(msg_id.as_ref()).map_err(|_| MarkAsReadError::Permanent)?;
+    let chat_jid_c = CString::new(chat_jid.0.as_ref()).map_err(|_| MarkAsReadError::Permanent)?;
+    let sender_jid_c = CString::new(sender_jid.0.as_ref()).map_err(|_| MarkAsReadError::Permanent)?;
+    Ok(send(msg_id_c.as_ptr(), chat_jid_c.as_ptr(), sender_jid_c.as_ptr()))
+}
+
+pub fn mark_as_read(msg_id: &MessageId, chat_jid: &JID, sender_jid: &JID) -> Result<(), MarkAsReadError> {
+    let result = with_borrowed_mark_read_args(msg_id, chat_jid, sender_jid, |id, chat, sender| unsafe { C_MarkAsRead(id, chat, sender) })?;
+    match result {
+        0 => Ok(()), 1 => Err(MarkAsReadError::Disconnected), 3 => Err(MarkAsReadError::Permanent), _ => Err(MarkAsReadError::Transient),
+    }
+}
+
+#[cfg(test)]
+mod read_receipt_ffi_tests {
+    use super::*;
+    #[test]
+    fn borrowed_ffi_arguments_can_be_reused_without_owned_pointer_leaks() {
+        let id: MessageId = "message".into();
+        let chat = JID::from("chat@s.whatsapp.net".to_owned());
+        let sender = JID::from("sender@s.whatsapp.net".to_owned());
+        for _ in 0..1_000 {
+            with_borrowed_mark_read_args(&id, &chat, &sender, |id, chat, sender| {
+                assert!(!id.is_null() && !chat.is_null() && !sender.is_null());
+            }).unwrap();
+        }
+    }
 }
 
 pub fn pair_phone(phone: &str) -> String {
@@ -1026,9 +1100,7 @@ impl CallbackTranslator<*const CEvent> for Event {
             EventType::MessageAction => unsafe {
                 message_action_event_from_ffi(&*(event.data as *const CMessageActionEvent))
             },
-            EventType::Chat => unsafe {
-                chat_event_from_ffi(&*(event.data as *const CChatEvent))
-            },
+            EventType::Chat => unsafe { chat_event_from_ffi(&*(event.data as *const CChatEvent)) },
             EventType::LogoutResult => unsafe {
                 let result = &(*(event.data as *const CLogoutResultEvent));
                 Event::LogoutResult(
@@ -1535,6 +1607,40 @@ pub fn get_contacts() -> Vec<(JID, Arc<str>)> {
         .collect()
 }
 
+/// Returns real community roots and linked groups reported by WhatsApp.
+pub fn get_communities() -> Result<Vec<CommunityInfo>, CommunitiesError> {
+    let result = unsafe { C_GetCommunities() };
+    if result.status != 0 {
+        // C_GetCommunities transfers ownership even when the bridge reports
+        // an error; the current error result is empty, but freeing it here
+        // keeps that contract correct if it ever carries partial data.
+        unsafe { C_FreeCommunities(result) };
+        return Err(CommunitiesError::BridgeUnavailable);
+    }
+    if result.entries.is_null() || result.size == 0 {
+        unsafe { C_FreeCommunities(result) };
+        return Ok(Vec::new());
+    }
+    let entries = unsafe { std::slice::from_raw_parts(result.entries, result.size as usize) };
+    let communities = entries
+        .iter()
+        .map(|entry| {
+            let parent = unsafe { CStr::from_ptr(entry.parent_jid) }.to_string_lossy();
+            CommunityInfo {
+                jid: (&entry.jid).into(),
+                name: unsafe { CStr::from_ptr(entry.name) }
+                    .to_string_lossy()
+                    .into_owned()
+                    .into(),
+                parent_jid: (!parent.is_empty()).then(|| parent.to_string().into()),
+                is_parent: entry.is_parent,
+            }
+        })
+        .collect::<Vec<_>>();
+    unsafe { C_FreeCommunities(result) };
+    Ok(communities)
+}
+
 pub fn get_chat_settings(jid: &JID) -> ChatSettings {
     let jid_c = CJID::from(jid);
     let settings = unsafe { C_GetChatSettings(jid_c) };
@@ -1547,6 +1653,62 @@ pub fn get_chat_settings(jid: &JID) -> ChatSettings {
     }
 }
 
+fn group_info_from_parts(
+    jid: &JID,
+    status: u8,
+    is_announce: bool,
+    is_admin: bool,
+) -> Result<GroupInfo, GroupInfoError> {
+    match status {
+        0 => Ok(GroupInfo {
+            jid: jid.clone(),
+            name: "".into(),
+            is_announce,
+            is_admin,
+        }),
+        1 => Err(GroupInfoError::NotGroup),
+        2 => Err(GroupInfoError::ClientUnavailable),
+        3 => Err(GroupInfoError::RequestFailed),
+        _ => Err(GroupInfoError::InvalidBridgeResult),
+    }
+}
+
+pub fn get_group_info(jid: &JID) -> Result<GroupInfo, GroupInfoError> {
+    let jid_c = CJID::from(jid);
+    let result = unsafe { C_GetGroupInfo(jid_c) };
+    group_info_from_parts(jid, result.status, result.is_announce, result.is_admin)
+}
+
+#[cfg(test)]
+mod group_info_tests {
+    use super::{GroupInfoError, JID, group_info_from_parts};
+
+    #[test]
+    fn maps_announce_and_admin_flags() {
+        let jid = JID("123@g.us".into());
+        let info = group_info_from_parts(&jid, 0, true, false).unwrap();
+
+        assert_eq!(info.jid, jid);
+        assert!(info.is_announce);
+        assert!(!info.is_admin);
+    }
+
+    #[test]
+    fn maps_bridge_failures_without_claiming_send_permission() {
+        for (status, expected) in [
+            (1, GroupInfoError::NotGroup),
+            (2, GroupInfoError::ClientUnavailable),
+            (3, GroupInfoError::RequestFailed),
+            (255, GroupInfoError::InvalidBridgeResult),
+        ] {
+            assert_eq!(
+                group_info_from_parts(&JID("chat@g.us".into()), status, false, false),
+                Err(expected)
+            );
+        }
+    }
+}
+
 /// Resolves a group participant (or any user JID) to the canonical JID of
 /// its direct conversation: a LID is mapped to its phone number when known,
 /// matching how direct chats are keyed in the conversation list. Used so a
@@ -1555,10 +1717,7 @@ pub fn get_chat_settings(jid: &JID) -> ChatSettings {
 /// JID is unusable.
 pub fn resolve_dm_chat(jid: &JID) -> Option<JID> {
     unsafe {
-        take_owned_c_string(
-            C_ResolveDmChatId(CJID::from(jid)),
-            C_FreeResolveDmChatId,
-        )
-        .map(JID::from)
+        take_owned_c_string(C_ResolveDmChatId(CJID::from(jid)), C_FreeResolveDmChatId)
+            .map(JID::from)
     }
 }

@@ -1,9 +1,11 @@
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use wp_tui::app::actions::ComposerAction;
 use wp_tui::app::actions::{AppAction, ConversationMode};
 use wp_tui::app::composer::Composer;
 use wp_tui::app::inputs::composer_action_for_editing_key;
 use wp_tui::key_handler::Key;
+use wp_tui::ui::render_chats;
 mod common;
 use common::TestApp;
 
@@ -160,6 +162,60 @@ fn attachment_only_drafts_are_sendable() {
 
     assert!(outcome.text_messages().is_empty());
     assert_eq!(outcome.file_messages().len(), 1);
+}
+
+#[test]
+fn blocked_composer_rejects_text_attachments_and_submission() {
+    let mut composer = Composer::default();
+    composer.set_blocked(true);
+
+    composer.insert_text("blocked");
+    composer.queue_attachment("image.png".into(), whatsrust::FileKind::Image);
+
+    assert!(composer.text().is_empty());
+    assert!(composer.pending.is_empty());
+    assert!(composer.apply(ComposerAction::Submit).is_idle());
+}
+
+#[test]
+fn admin_only_group_blocks_input_actions_and_renders_message() {
+    let mut app = TestApp::new();
+    let group = whatsrust::JID("123@g.us".into());
+    app.open_chat_by_jid(group.clone());
+    app.group_permissions.insert(
+        group,
+        whatsrust::GroupInfo {
+            jid: whatsrust::JID("123@g.us".into()),
+            name: "Admins only".into(),
+            is_announce: true,
+            is_admin: false,
+        },
+    );
+    let blocked = app.composer_blocked();
+    app.composer.set_blocked(blocked);
+    app.focus_pane = wp_tui::app::actions::FocusPane::Conversation;
+
+    app.dispatch_action(AppAction::InsertMode);
+    app.dispatch_action(AppAction::Composer(ComposerAction::Edit(Key::c('x'))));
+    app.dispatch_action(AppAction::AttachFile);
+
+    assert_eq!(app.conversation_mode, ConversationMode::MessageNavigation);
+    assert!(app.composer.text().is_empty());
+    assert!(app.composer.pending.is_empty());
+
+    let mut terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
+    terminal
+        .draw(|frame| render_chats(frame, &mut app, Rect::new(0, 0, 80, 12)))
+        .unwrap();
+    let rendered = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+    assert!(rendered.contains("Only group admins can send messages in this group."));
+    assert!(!rendered.contains("Message input"));
 }
 
 fn message(id: &str) -> whatsrust::Message {
