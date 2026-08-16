@@ -4387,7 +4387,7 @@ dependencies = [
  "ratatui-textarea",
  "rfd",
  "rusqlite",
- "strum 0.27.2",
+ "strum 0.28.0",
  "tempfile",
  "textwrap",
  "tui-logger",
