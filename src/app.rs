@@ -28,6 +28,7 @@ pub mod file_picker_input;
 pub mod input_mapping;
 pub mod input_reader;
 pub mod inputs;
+pub mod log_toggle;
 pub mod logout;
 pub mod media_cache;
 pub mod media_support;
