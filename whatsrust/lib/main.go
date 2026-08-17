@@ -949,47 +949,6 @@ func HandleMessage(info types.MessageInfo, msg *waE2E.Message, isSync bool) {
 	}
 }
 
-func msgContentTypes(msg *waE2E.Message) string {
-	if msg == nil {
-		return "nil"
-	}
-	parts := make([]string, 0, 8)
-	if msg.Conversation != nil {
-		parts = append(parts, "conversation")
-	}
-	if msg.ExtendedTextMessage != nil {
-		parts = append(parts, "extended_text")
-	}
-	if msg.ProtocolMessage != nil {
-		pm := msg.ProtocolMessage
-		s := "protocol"
-		if pm.GetEditedMessage() != nil {
-			s += "+edited"
-		}
-		parts = append(parts, s)
-	}
-	if msg.EditedMessage != nil {
-		s := "edited"
-		if em := msg.EditedMessage.GetMessage(); em != nil {
-			s += "+inner"
-			if em.Conversation != nil {
-				s += "_conv"
-			}
-			if em.ExtendedTextMessage != nil {
-				s += "_ext"
-			}
-		}
-		parts = append(parts, s)
-	}
-	if msg.ReactionMessage != nil {
-		parts = append(parts, "reaction")
-	}
-	if len(parts) == 0 {
-		return "empty"
-	}
-	return strings.Join(parts, ",")
-}
-
 // messageActionEventFromIncomingMessage also supports whatsmeow's normalized edit
 // event: UnwrapRaw has already replaced Message with the edited body and Info.ID
 // with the target ID. IsEdit is the library's explicit discriminator, so normal
