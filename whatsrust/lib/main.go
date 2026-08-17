@@ -123,6 +123,61 @@ func GetSelfId(client *whatsmeow.Client) string {
 	return StrFromJid(*client.Store.ID)
 }
 
+type messageCallbackMetadata struct {
+	id         string
+	chat       types.JID
+	sender     types.JID
+	timestamp  int64
+	isFromMe   bool
+	forwarding forwardingState
+}
+
+func messageCallbackMetadataFrom(info types.MessageInfo, msg *waE2E.Message) messageCallbackMetadata {
+	return messageCallbackMetadata{
+		id:         info.ID,
+		chat:       info.Chat,
+		sender:     info.Sender,
+		timestamp:  info.Timestamp.Unix(),
+		isFromMe:   info.IsFromMe,
+		forwarding: forwardingStateFromMessage(msg),
+	}
+}
+
+type messageCallback struct {
+	info        C.MessageInfo
+	forwardData unsafe.Pointer
+}
+
+func beginMessageCallback(info types.MessageInfo, msg *waE2E.Message, rawSource []byte) *messageCallback {
+	messageCallbackMu.Lock()
+	callback := &messageCallback{}
+	if len(rawSource) > 0 {
+		callback.forwardData = C.CBytes(rawSource)
+	}
+	C.setActiveForwardSource((*C.uint8_t)(callback.forwardData), C.size_t(len(rawSource)))
+	metadata := messageCallbackMetadataFrom(info, msg)
+	callback.info = C.MessageInfo{
+		id:              C.CString(metadata.id),
+		chat:            jidToC(metadata.chat),
+		sender:          jidToC(metadata.sender),
+		timestamp:       C.int64_t(metadata.timestamp),
+		isFromMe:        C.bool(metadata.isFromMe),
+		quoteID:         nil,
+		readBy:          C.uint16_t(0),
+		isForwarded:     C.bool(metadata.forwarding.isForwarded),
+		forwardingScore: C.uint32_t(metadata.forwarding.score),
+	}
+	return callback
+}
+
+func (callback *messageCallback) close() {
+	C.setActiveForwardSource(nil, 0)
+	if callback.forwardData != nil {
+		C.free(callback.forwardData)
+	}
+	messageCallbackMu.Unlock()
+}
+
 const (
 	EventTypeSyncProgress         = 0
 	EventTypeAppStateSyncComplete = 1
@@ -153,35 +208,13 @@ func HandleMessage(info types.MessageInfo, msg *waE2E.Message, isSync bool) {
 
 	info = normalizeMessageInfo(info)
 
-	chat := info.Chat
-	sender := info.Sender
 	if dispatchMessageEvent(info, msg) {
 		return
 	}
 	rawSource := forwardingSourcePayload(info, msg, viewOnceUnavailable)
-	messageCallbackMu.Lock()
-	defer messageCallbackMu.Unlock()
-	var cForwardSource unsafe.Pointer
-	if len(rawSource) > 0 {
-		cForwardSource = C.CBytes(rawSource)
-		defer C.free(cForwardSource)
-	}
-	C.setActiveForwardSource((*C.uint8_t)(cForwardSource), C.size_t(len(rawSource)))
-	defer C.setActiveForwardSource(nil, 0)
-	timestamp := info.Timestamp.Unix()
-	forwarding := forwardingStateFromMessage(msg)
-
-	cinfo := C.MessageInfo{
-		id:              C.CString(info.ID),
-		chat:            jidToC(chat),
-		sender:          jidToC(sender),
-		timestamp:       C.int64_t(timestamp),
-		isFromMe:        C.bool(info.IsFromMe),
-		quoteID:         nil,
-		readBy:          C.uint16_t(0),
-		isForwarded:     C.bool(forwarding.isForwarded),
-		forwardingScore: C.uint32_t(forwarding.score),
-	}
+	callback := beginMessageCallback(info, msg, rawSource)
+	defer callback.close()
+	cinfo := callback.info
 
 	if msg.Conversation != nil {
 		ctext := C.CString(msg.GetConversation())
