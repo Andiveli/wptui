@@ -190,21 +190,18 @@ import (
 	"mime"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
 
-	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/reflect/protoreflect"
-
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
+	"google.golang.org/protobuf/proto"
 )
 
 var logHandler C.LogHandler
@@ -336,61 +333,6 @@ func messageActionMessageCensusLine(eventType string, evt *events.Message) strin
 	}
 	// whatsmeow has no IsHistory flag; SourceWebMsg marks parsed history or an unavailable-message response.
 	return fmt.Sprintf("event_type=%s is_edit=%t is_history=%t info_id=%s chat=%s sender=%s roots=raw:%t,message:%t,source_web_msg:%t raw_kinds=%s message_kinds=%s source_kinds=%s wrappers=%s protocol_present=%t protocol_type=%s protocol_key_id=%t source_key=%s secret_enc_type=%s secret_enc_type_number=%d secret_target_present=%t secret_target_id=%s secret_payload_length=%d secret_iv_length=%d decrypt_result=not_attempted decrypted_content_kind=none", eventType, evt.IsEdit, evt.SourceWebMsg != nil, messageActionIdentifier(evt.Info.ID), messageActionIdentifier(evt.Info.Chat.String()), messageActionIdentifier(evt.Info.Sender.String()), evt.RawMessage != nil, evt.Message != nil, evt.SourceWebMsg != nil, messageCensusKinds(evt.RawMessage), messageCensusKinds(evt.Message), messageCensusKinds(sourceMessage), messageCensusWrappers(evt.RawMessage, "raw"), selected.protocol != nil, protocolType, protocolKeyID, sourceKey, secretType, secretTypeNumber, secretTargetPresent, secretTargetID, secretPayloadLength, secretIVLength)
-}
-
-func messageCensusKinds(msg *waE2E.Message) string {
-	if msg == nil {
-		return "none"
-	}
-	var kinds []string
-	msg.ProtoReflect().Range(func(field protoreflect.FieldDescriptor, _ protoreflect.Value) bool {
-		kinds = append(kinds, safeCensusName(string(field.Name())))
-		return true
-	})
-	sort.Strings(kinds)
-	if len(kinds) == 0 {
-		return "none"
-	}
-	return strings.Join(kinds, ",")
-}
-
-func messageCensusWrappers(msg *waE2E.Message, path string) string {
-	var paths []string
-	for msg != nil {
-		switch {
-		case msg.GetDeviceSentMessage().GetMessage() != nil:
-			path += ":device_sent"
-			msg = msg.GetDeviceSentMessage().GetMessage()
-		case msg.GetBotInvokeMessage().GetMessage() != nil:
-			path += ":bot_invoke"
-			msg = msg.GetBotInvokeMessage().GetMessage()
-		case msg.GetEphemeralMessage().GetMessage() != nil:
-			path += ":ephemeral"
-			msg = msg.GetEphemeralMessage().GetMessage()
-		case msg.GetViewOnceMessage().GetMessage() != nil:
-			path += ":view_once"
-			msg = msg.GetViewOnceMessage().GetMessage()
-		case msg.GetViewOnceMessageV2().GetMessage() != nil:
-			path += ":view_once_v2"
-			msg = msg.GetViewOnceMessageV2().GetMessage()
-		case msg.GetViewOnceMessageV2Extension().GetMessage() != nil:
-			path += ":view_once_v2_extension"
-			msg = msg.GetViewOnceMessageV2Extension().GetMessage()
-		case msg.GetLottieStickerMessage().GetMessage() != nil:
-			path += ":lottie_sticker"
-			msg = msg.GetLottieStickerMessage().GetMessage()
-		case msg.GetDocumentWithCaptionMessage().GetMessage() != nil:
-			path += ":document_caption"
-			msg = msg.GetDocumentWithCaptionMessage().GetMessage()
-		case msg.GetEditedMessage().GetMessage() != nil:
-			path += ":edited"
-			msg = msg.GetEditedMessage().GetMessage()
-		default:
-			return path
-		}
-		paths = append(paths, path)
-	}
-	return strings.Join(paths, ",")
 }
 
 func appStateCensusSubtype(evt *events.AppState) string {
