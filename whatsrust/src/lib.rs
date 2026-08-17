@@ -1017,19 +1017,43 @@ pub fn download_file(file_id: &FileId, base_path: &Path) -> Result<(), DownloadF
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum MarkAsReadError { Disconnected, Transient, Permanent }
-
-fn with_borrowed_mark_read_args<T>(msg_id: &MessageId, chat_jid: &JID, sender_jid: &JID, send: impl FnOnce(*const c_char, CJID, CJID) -> T) -> Result<T, MarkAsReadError> {
-    let msg_id_c = CString::new(msg_id.as_ref()).map_err(|_| MarkAsReadError::Permanent)?;
-    let chat_jid_c = CString::new(chat_jid.0.as_ref()).map_err(|_| MarkAsReadError::Permanent)?;
-    let sender_jid_c = CString::new(sender_jid.0.as_ref()).map_err(|_| MarkAsReadError::Permanent)?;
-    Ok(send(msg_id_c.as_ptr(), chat_jid_c.as_ptr(), sender_jid_c.as_ptr()))
+pub enum MarkAsReadError {
+    Disconnected,
+    Transient,
+    Permanent,
 }
 
-pub fn mark_as_read(msg_id: &MessageId, chat_jid: &JID, sender_jid: &JID) -> Result<(), MarkAsReadError> {
-    let result = with_borrowed_mark_read_args(msg_id, chat_jid, sender_jid, |id, chat, sender| unsafe { C_MarkAsRead(id, chat, sender) })?;
+fn with_borrowed_mark_read_args<T>(
+    msg_id: &MessageId,
+    chat_jid: &JID,
+    sender_jid: &JID,
+    send: impl FnOnce(*const c_char, CJID, CJID) -> T,
+) -> Result<T, MarkAsReadError> {
+    let msg_id_c = CString::new(msg_id.as_ref()).map_err(|_| MarkAsReadError::Permanent)?;
+    let chat_jid_c = CString::new(chat_jid.0.as_ref()).map_err(|_| MarkAsReadError::Permanent)?;
+    let sender_jid_c =
+        CString::new(sender_jid.0.as_ref()).map_err(|_| MarkAsReadError::Permanent)?;
+    Ok(send(
+        msg_id_c.as_ptr(),
+        chat_jid_c.as_ptr(),
+        sender_jid_c.as_ptr(),
+    ))
+}
+
+pub fn mark_as_read(
+    msg_id: &MessageId,
+    chat_jid: &JID,
+    sender_jid: &JID,
+) -> Result<(), MarkAsReadError> {
+    let result =
+        with_borrowed_mark_read_args(msg_id, chat_jid, sender_jid, |id, chat, sender| unsafe {
+            C_MarkAsRead(id, chat, sender)
+        })?;
     match result {
-        0 => Ok(()), 1 => Err(MarkAsReadError::Disconnected), 3 => Err(MarkAsReadError::Permanent), _ => Err(MarkAsReadError::Transient),
+        0 => Ok(()),
+        1 => Err(MarkAsReadError::Disconnected),
+        3 => Err(MarkAsReadError::Permanent),
+        _ => Err(MarkAsReadError::Transient),
     }
 }
 
@@ -1044,7 +1068,8 @@ mod read_receipt_ffi_tests {
         for _ in 0..1_000 {
             with_borrowed_mark_read_args(&id, &chat, &sender, |id, chat, sender| {
                 assert!(!id.is_null() && !chat.is_null() && !sender.is_null());
-            }).unwrap();
+            })
+            .unwrap();
         }
     }
 }

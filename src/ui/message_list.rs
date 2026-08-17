@@ -551,12 +551,40 @@ fn render_message(
 }
 
 pub fn render_messages(frame: &mut Frame, app: &mut App, area: Rect) -> Option<()> {
+    crate::crash_diagnostics::breadcrumb("first-message-render", "start");
     let chat_jid = app.open_chat()?;
-
-    let list_area = area;
-    if list_area.is_empty() {
+    if area.is_empty() {
         return Some(());
     }
+
+    let unread_count = app.unread_boundary(&chat_jid).map_or(0, |(count, _)| count);
+    let banner = app.unread_boundary(&chat_jid).map(|(count, since)| {
+        format!(
+            " {count} unread messages since {}",
+            DateTime::<chrono::Utc>::from_timestamp(since, 0)
+                .map(DateTime::<Local>::from)
+                .unwrap()
+                .format("%Y-%m-%d %H:%M")
+        )
+    });
+    let pending = app.pending_new_messages(&chat_jid);
+    let notice_height = u16::from(banner.is_some());
+    let pending_height = u16::from(pending > 0);
+    let notice_area = Rect::new(area.x, area.y, area.width, notice_height);
+    let list_area = Rect::new(
+        area.x,
+        area.y.saturating_add(notice_height),
+        area.width,
+        area.height
+            .saturating_sub(notice_height)
+            .saturating_sub(pending_height),
+    );
+    let pending_area = Rect::new(
+        area.x,
+        area.bottom().saturating_sub(pending_height),
+        area.width,
+        pending_height,
+    );
 
     let items: Vec<_> = app
         .chat_messages
@@ -565,7 +593,25 @@ pub fn render_messages(frame: &mut Frame, app: &mut App, area: Rect) -> Option<(
         .rev()
         .filter_map(|msg_id| app.messages.get(msg_id).cloned())
         .collect();
-    render_message_items(frame, app, area, items)
+    let result = render_message_items(frame, app, list_area, items, unread_count);
+    crate::crash_diagnostics::breadcrumb("first-message-render", "complete");
+    if let Some(text) = banner {
+        Paragraph::new(text)
+            .style(
+                Style::default()
+                    .fg(Color::Reset)
+                    .bg(Color::Rgb(37, 211, 102)),
+            )
+            .render(notice_area, frame.buffer_mut());
+    }
+    if pending > 0 && !pending_area.is_empty() {
+        let label = format!("↓ {pending} new messages ");
+        let width = label.chars().count().min(pending_area.width as usize) as u16;
+        let x = pending_area.x + pending_area.width.saturating_sub(width) / 2;
+        Paragraph::new(Line::styled(label, Style::default().fg(Color::Cyan).bold()))
+            .render(Rect::new(x, pending_area.y, width, 1), frame.buffer_mut());
+    }
+    result
 }
 
 /// Read-only statuses of the opened status contact, rendered with the
@@ -580,7 +626,7 @@ pub fn render_status_messages(frame: &mut Frame, app: &mut App, area: Rect) {
         .rev()
         .filter_map(|id| app.messages.get(id).cloned())
         .collect::<Vec<_>>();
-    render_message_items(frame, app, area, items);
+    render_message_items(frame, app, area, items, 0);
 }
 
 /// Shared core of chat and status message rendering. The caller supplies
@@ -590,6 +636,7 @@ fn render_message_items(
     app: &mut App,
     area: Rect,
     items: Vec<wr::Message>,
+    unread_count: usize,
 ) -> Option<()> {
     let list_area = area;
     if list_area.is_empty() {
@@ -637,6 +684,7 @@ fn render_message_items(
 
     let width = list_area.width as isize;
     let padding = 4;
+    let divider_after = unread_count.checked_sub(1);
 
     let previous_offset = app.message_list_state.offset;
     let mut previous_anchor = app
@@ -691,6 +739,9 @@ fn render_message_items(
                         &author_groups,
                         app.message_list_state.selected,
                     ) as isize;
+                    if divider_after == Some(index) {
+                        cursor -= 1;
+                    }
                 }
                 (list_area.bottom() as isize + app.message_list_state.offset as isize - cursor)
                     as usize
@@ -701,17 +752,19 @@ fn render_message_items(
                     .take(selected)
                     .enumerate()
                     .map(|(index, item)| {
-                        message_height(
-                            item,
-                            width as usize,
-                            app.message_list_state.selected == Some(index),
-                            author_groups[index],
-                            app,
-                        ) + spacing_after_message(
-                            index,
-                            &author_groups,
-                            app.message_list_state.selected,
-                        )
+                        usize::from(divider_after == Some(index))
+                            + message_height(
+                                item,
+                                width as usize,
+                                app.message_list_state.selected == Some(index),
+                                author_groups[index],
+                                app,
+                            )
+                            + spacing_after_message(
+                                index,
+                                &author_groups,
+                                app.message_list_state.selected,
+                            )
                     })
                     .sum::<usize>()
             });
@@ -726,7 +779,10 @@ fn render_message_items(
 
         let low = acc_height < app.message_list_state.offset + padding;
         let high = acc_height + selected_height
-            > app.message_list_state.offset + list_area.height as usize - padding;
+            > app
+                .message_list_state
+                .offset
+                .saturating_add((list_area.height as usize).saturating_sub(padding));
 
         // if low && high {
         //     info!("idk");
@@ -911,6 +967,15 @@ fn render_message_items(
 
         y -= height
             + spacing_after_message(i, &author_groups, app.message_list_state.selected) as isize;
+        if divider_after == Some(i) {
+            y -= 1;
+            if y >= list_area.top() as isize && y < list_area.bottom() as isize {
+                Paragraph::new(unread_divider_line(list_area.width as usize)).render(
+                    Rect::new(list_area.left(), y as u16, width as u16, 1),
+                    frame.buffer_mut(),
+                );
+            }
+        }
     }
 
     app.message_list_state.viewport_anchor = viewport_anchor.and_then(|(index, y)| {
@@ -926,6 +991,18 @@ fn render_message_items(
     });
 
     None
+}
+
+fn unread_divider_line(width: usize) -> Line<'static> {
+    const TAG: &str = " New ";
+    let style = Style::default().fg(Color::Rgb(237, 66, 69));
+    if width <= 7 {
+        return Line::styled("─".repeat(width), style);
+    }
+    Line::from(vec![
+        Span::styled("─".repeat(width.saturating_sub(TAG.len())), style),
+        Span::styled(TAG, style.bold()),
+    ])
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -955,6 +1032,14 @@ impl MessageListState {
     pub fn set_selected_message(&mut self, msg_id: wr::MessageId) {
         self.selected_message = Some(msg_id);
         self.selected = None;
+        self.update_selected = false;
+        self.viewport_anchor = None;
+    }
+
+    pub fn follow_latest(&mut self, message_id: wr::MessageId) {
+        self.selected_message = Some(message_id);
+        self.selected = Some(0);
+        self.offset = 0;
         self.update_selected = false;
         self.viewport_anchor = None;
     }

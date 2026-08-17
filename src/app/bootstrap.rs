@@ -104,6 +104,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         status_selection: ListState::default(),
         status_last_seen: HashMap::new(),
         message_list_state: MessageListState::default(),
+        timeline: unread_messages::Timeline::default(),
         metadata: HashMap::new(),
         history_sync_percent: None,
         selected_presence: SelectedPresence::default(),

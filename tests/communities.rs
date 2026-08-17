@@ -78,6 +78,7 @@ fn opening_selected_community_renders_the_existing_chat_context() {
         .collect::<Vec<_>>()
         .join("\n");
     assert!(rendered.contains("community context"), "{rendered}");
+    assert!(rendered.contains("↓ 1 new messages"), "{rendered}");
 }
 
 #[test]

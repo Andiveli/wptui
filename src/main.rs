@@ -3,6 +3,7 @@ use wp_tui::app::message_action_diagnostics::debug_enabled as mac_debug_enabled;
 use wp_tui::app::presence::debug_enabled as presence_debug_enabled;
 
 use clap::Parser;
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
@@ -11,6 +12,14 @@ struct Args {
     phone: Option<String>,
     #[clap(long, hide = true)]
     no_view: bool,
+    /// Write a persistent panic report here (default: ./wptui-crash.log).
+    #[clap(
+        long,
+        hide = true,
+        value_name = "PATH",
+        default_value = "wptui-crash.log"
+    )]
+    crash_log: PathBuf,
 }
 
 fn main() {
@@ -18,6 +27,7 @@ fn main() {
     tui_logger::set_default_level(tui_logger::LevelFilter::Warn);
 
     let args = Args::parse();
+    wp_tui::crash_diagnostics::install(args.crash_log.clone());
 
     let mut app = App::default();
     app.initialize_read_receipts(!args.no_view);
@@ -45,6 +55,12 @@ mod tests {
                 .render_long_help()
                 .to_string()
                 .contains("--no-view")
+        );
+        assert!(
+            !Args::command()
+                .render_long_help()
+                .to_string()
+                .contains("--crash-log")
         );
     }
 }

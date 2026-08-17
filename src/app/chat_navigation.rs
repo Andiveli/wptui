@@ -8,6 +8,7 @@ use whatsrust as wr;
 impl App<'_> {
     pub fn select_chat(&mut self, jid: Option<wr::JID>) {
         let rows = self.visible_chat_rows();
+        crate::crash_diagnostics::breadcrumb("chat-selection", &format!("rows={}", rows.len()));
         if let Some(jid) = jid
             && let Some(index) = rows
                 .iter()

@@ -42,6 +42,7 @@ pub mod status_projection;
 pub mod terminal_session;
 #[cfg(test)]
 pub(crate) mod test_support;
+pub mod unread_messages;
 pub mod whatsapp_events;
 
 pub use crate::app;
@@ -157,6 +158,7 @@ pub struct App<'a> {
 
     pub composer: Composer<'a>,
     pub message_list_state: MessageListState,
+    pub timeline: unread_messages::Timeline,
     pub metadata: HashMap<wr::MessageId, Metadata>,
     pub image_cache: HashMap<Arc<str>, StatefulProtocol>,
     pub image_cache_order: VecDeque<Arc<str>>,

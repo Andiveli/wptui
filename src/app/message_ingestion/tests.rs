@@ -58,3 +58,33 @@ fn sync_messages_skip_notification_lookup_and_return_false() {
     );
     assert!(app.messages.contains_key("sync"));
 }
+
+#[test]
+fn live_incoming_messages_update_persistent_timeline_state() {
+    let mut app = TestApp::new();
+    let chat = wr::JID::from("chat@g.us".to_owned());
+
+    app.process_message_with_lookup(message(&chat, "live", 6), false, |_| Default::default());
+    assert_eq!(app.pending_new_messages(&chat), 1);
+
+    app.process_message_with_lookup(message(&chat, "synced", 7), true, |_| Default::default());
+    assert_eq!(app.pending_new_messages(&chat), 1);
+
+    let mut own = message(&chat, "own", 8);
+    own.info.is_from_me = true;
+    app.process_message_with_lookup(own, false, |_| Default::default());
+    assert_eq!(app.pending_new_messages(&chat), 0);
+}
+
+#[test]
+fn unread_boundary_uses_message_id_as_equal_timestamp_tiebreaker() {
+    let mut app = TestApp::new();
+    let chat = wr::JID::from("chat@g.us".to_owned());
+
+    app.process_message_with_lookup(message(&chat, "b", 10), false, |_| Default::default());
+    app.mark_chat_read_at_latest(&chat);
+    app.process_message_with_lookup(message(&chat, "a", 10), false, |_| Default::default());
+    assert_eq!(app.unread_boundary(&chat), None);
+    app.process_message_with_lookup(message(&chat, "c", 10), false, |_| Default::default());
+    assert_eq!(app.unread_boundary(&chat), Some((1, 10)));
+}

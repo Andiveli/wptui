@@ -99,6 +99,15 @@ impl DatabaseHandler {
             log::error!("read-receipt schema migration failed: {error}");
         }
         db.execute(
+            "CREATE TABLE IF NOT EXISTS chat_read_cursors (
+                chat_jid TEXT PRIMARY KEY,
+                message_id TEXT NOT NULL,
+                timestamp INTEGER NOT NULL
+            )",
+            [],
+        )
+        .unwrap();
+        db.execute(
             "CREATE TABLE IF NOT EXISTS message_reactions (
                 message_id TEXT NOT NULL,
                 participant_jid TEXT NOT NULL,
@@ -645,6 +654,16 @@ impl DatabaseHandler {
                 [],
             )
             .unwrap();
+        self.db
+            .execute(
+                "CREATE TABLE IF NOT EXISTS chat_read_cursors (
+                    chat_jid TEXT PRIMARY KEY,
+                    message_id TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL
+                )",
+                [],
+            )
+            .unwrap();
 
         for kind in wr::MessageContent::iter() {
             match kind {
@@ -690,6 +709,39 @@ impl DatabaseHandler {
             }
         }
         self.migrate_message_action_columns();
+    }
+
+    pub fn set_last_read_cursor(
+        &self,
+        chat: &wr::JID,
+        message_id: Option<wr::MessageId>,
+        timestamp: i64,
+    ) {
+        let _write_lock = DATABASE_WRITE_LOCK.lock().unwrap();
+        self.db
+            .execute(
+                "INSERT INTO chat_read_cursors (chat_jid, message_id, timestamp)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT(chat_jid) DO UPDATE SET message_id = excluded.message_id, timestamp = excluded.timestamp",
+                rusqlite::params![chat.0, message_id, timestamp],
+            )
+            .unwrap();
+    }
+
+    pub fn read_cursors(&self) -> Vec<(wr::JID, wr::MessageId, i64)> {
+        self.db
+            .prepare("SELECT chat_jid, message_id, timestamp FROM chat_read_cursors")
+            .unwrap()
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?.into(),
+                    row.get::<_, String>(1)?.into(),
+                    row.get(2)?,
+                ))
+            })
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
     }
 
     /// Migrates the `message_actions` table to the current schema. Any

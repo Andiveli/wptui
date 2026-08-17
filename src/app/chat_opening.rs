@@ -13,11 +13,15 @@ impl App<'_> {
     /// Opens the currently highlighted chat: it becomes the rendered
     /// conversation, composer target, and presence subscription.
     pub fn open_selected_chat(&mut self) {
+        crate::crash_diagnostics::breadcrumb("chat-open", "start");
         if let Some(chat) = self.get_selected_chat() {
             self.open_chat = Some(chat.clone());
             self.refresh_group_permission(&chat);
             self.sort_chat_messages(chat);
+            crate::crash_diagnostics::breadcrumb("chat-open", "messages-sorted");
             self.message_list_state.reset();
+            self.restore_read_cursor_anchor();
+            crate::crash_diagnostics::breadcrumb("chat-open", "ready");
         }
     }
 
@@ -62,5 +66,23 @@ impl App<'_> {
         self.composer.set_blocked(self.composer_blocked());
         self.sort_chat_messages(jid);
         self.message_list_state.reset();
+        self.restore_read_cursor_anchor();
+    }
+
+    fn restore_read_cursor_anchor(&mut self) {
+        crate::crash_diagnostics::breadcrumb("unread-cursor", "load-start");
+        let Some(chat) = self.open_chat.as_ref() else {
+            return;
+        };
+        if let Some(message_id) = self
+            .timeline
+            .get(chat)
+            .and_then(|state| state.last_read_message.clone())
+        {
+            self.message_list_state.set_selected_message(message_id);
+            crate::crash_diagnostics::breadcrumb("unread-cursor", "restored");
+        } else {
+            crate::crash_diagnostics::breadcrumb("unread-cursor", "none");
+        }
     }
 }
