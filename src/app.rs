@@ -31,6 +31,7 @@ pub mod message_action_diagnostics;
 pub mod message_actions;
 pub mod message_ingestion;
 pub mod message_navigation;
+pub mod message_opening;
 pub mod notifications;
 pub mod presence;
 pub mod presence_bridge;
