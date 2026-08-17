@@ -3,10 +3,31 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
+	"strings"
 	"testing"
 
 	"go.mau.fi/whatsmeow/types"
 )
+
+func TestGroupInfoFFIOwnsGroupInfoExport(t *testing.T) {
+	seam, err := os.ReadFile("group_info.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(seam), "//export C_GetGroupInfo") ||
+		!strings.Contains(string(seam), "func C_GetGroupInfo(cjid C.JID)") {
+		t.Fatal("group info FFI seam is missing C_GetGroupInfo")
+	}
+
+	mainSource, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(mainSource), "func C_GetGroupInfo") {
+		t.Fatal("group info FFI export remains in main.go")
+	}
+}
 
 func TestFetchGroupInfoPreservesStatusesAndGroupFields(t *testing.T) {
 	wantErr := errors.New("group request failed")

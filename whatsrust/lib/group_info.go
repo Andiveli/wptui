@@ -3,6 +3,7 @@ package main
 /*
 #include <stdbool.h>
 #include <stdint.h>
+#include "callback_log_registration.h"
 
 typedef struct {
 	uint8_t status;
@@ -73,6 +74,16 @@ func fetchGroupInfoWith(ctx context.Context, jid types.JID, lookup groupInfoLook
 		}
 	}
 	return result
+}
+
+//export C_GetGroupInfo
+func C_GetGroupInfo(cjid C.JID) C.GroupInfoResult {
+	if cjid == nil {
+		return groupInfoResultToC(groupInfoClientUnavailable)
+	}
+	return groupInfoResultToC(fetchGroupInfo(client, cToJid(cjid).ToNonAD(), func(participant types.GroupParticipant) bool {
+		return participantMatchesSelf(client, participant)
+	}))
 }
 
 func groupInfoResultToC(result groupInfoResult) C.GroupInfoResult {

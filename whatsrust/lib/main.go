@@ -24,12 +24,6 @@ typedef struct {
 } ChatSettings;
 
 typedef struct {
-	uint8_t status;
-	bool is_announce;
-	bool is_admin;
-} GroupInfoResult;
-
-typedef struct {
 	char* text;
 } TextMessage;
 
@@ -150,16 +144,6 @@ func GetSelfId(client *whatsmeow.Client) string {
 		return ""
 	}
 	return StrFromJid(*client.Store.ID)
-}
-
-//export C_GetGroupInfo
-func C_GetGroupInfo(cjid C.JID) C.GroupInfoResult {
-	if cjid == nil {
-		return groupInfoResultToC(groupInfoClientUnavailable)
-	}
-	return groupInfoResultToC(fetchGroupInfo(client, cToJid(cjid).ToNonAD(), func(participant types.GroupParticipant) bool {
-		return participantMatchesSelf(client, participant)
-	}))
 }
 
 const (
