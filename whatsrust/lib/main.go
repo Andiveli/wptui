@@ -200,7 +200,6 @@ import (
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
-	waLog "go.mau.fi/whatsmeow/util/log"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -398,26 +397,6 @@ func LOG_INFO(msg string, args ...any) {
 }
 func LOG_DEBUG(msg string, args ...any) {
 	LOG_LEVEL(4, msg, args...)
-}
-
-// Logger
-type WrLogger struct{}
-
-func (l *WrLogger) Errorf(msg string, args ...any) {
-	LOG_ERROR(msg, args...)
-}
-func (l *WrLogger) Warnf(msg string, args ...any) {
-	LOG_WARN(msg, args...)
-}
-func (l *WrLogger) Infof(msg string, args ...any) {
-	LOG_INFO(msg, args...)
-}
-func (l *WrLogger) Debugf(msg string, args ...any) {
-	LOG_DEBUG(msg, args...)
-}
-
-func (l *WrLogger) Sub(module string) waLog.Logger {
-	return &WrLogger{}
 }
 
 // GetSelfId returns the current user's JID string for comparison (e.g. broadcast sender).
