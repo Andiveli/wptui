@@ -6,8 +6,7 @@ package main
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
-
-typedef const char* JID;
+#include "callback_log_registration.h"
 
 typedef struct {
 	bool found;
@@ -49,18 +48,6 @@ typedef struct {
 } ProfilePictureResult;
 
 typedef struct {
-	char* id;
-	JID chat;
-	JID sender;
-	int64_t timestamp;
-	bool isFromMe;
-	char* quoteID;
-	uint16_t readBy;
-	bool isForwarded;
-	uint32_t forwardingScore;
-} MessageInfo;
-
-typedef struct {
 	char* text;
 } TextMessage;
 
@@ -76,14 +63,6 @@ typedef struct {
 	uint32_t failed;
 	uint8_t failure;
 } ForwardResult;
-
-typedef struct {
-	MessageInfo info;
-	uint8_t messageType;
-	void* message;
-	uint8_t* forwardSource;
-	size_t forwardSourceLen;
-} Message;
 
 typedef struct {
 	uint8_t kind;
@@ -120,16 +99,6 @@ typedef struct {
 	uint8_t status;
 } LogoutResultEvent;
 
-typedef struct {
-	uint8_t kind;
-	void* data;
-} Event;
-
-typedef void (*EventCallback)(const Event*, void*);
-typedef struct {
-	EventCallback callback;
-	void* user_data;
-} EventHandler;
 static void callEventCallback(EventHandler hdl, const Event* event) {
 	hdl.callback(event, hdl.user_data);
 }
@@ -138,11 +107,6 @@ static void callQrCallback(QrCallback cb, const char* code, void* user_data) {
 	cb(code, user_data);
 }
 
-typedef void (*MessageHandlerCallback)(const Message*, bool, void*);
-typedef struct {
-	MessageHandlerCallback callback;
-	void* user_data;
-} MessageHandler;
 static uint8_t* activeForwardSource;
 static size_t activeForwardSourceLen;
 static void setActiveForwardSource(uint8_t* source, size_t length) {
@@ -156,11 +120,6 @@ static void callMessageHandler(MessageHandler hdl, bool isSync, const Message* d
     hdl.callback(&copy, isSync, hdl.user_data);
 }
 
-typedef void (*PresenceHandlerCallback)(JID, bool, int64_t, void*);
-typedef struct {
-	PresenceHandlerCallback callback;
-	void* user_data;
-} PresenceHandler;
 static void callPresenceHandler(PresenceHandler hdl, JID from, bool unavailable, int64_t lastSeen) {
 	hdl.callback(from, unavailable, lastSeen, hdl.user_data);
 }
@@ -174,14 +133,6 @@ static void callHistorySync(HistorySyncHandler hdl, uint32_t percent) {
 	hdl.callback(percent, hdl.user_data);
 }
 
-typedef void (*LogHandlerCallback)(const char*, uint8_t, void*);
-typedef struct {
-	LogHandlerCallback callback;
-	void* user_data;
-} LogHandler;
-static void callLogInfo(LogHandler hdl, const char* msg, uint8_t level) {
-	hdl.callback(msg, level, hdl.user_data);
-}
 */
 import "C"
 import (
@@ -199,11 +150,6 @@ import (
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 )
-
-var logHandler C.LogHandler
-var messageHandler C.MessageHandler
-var eventHandler C.EventHandler
-var presenceHandler C.PresenceHandler
 
 var messageActionArrivalOrder uint64
 
@@ -229,35 +175,6 @@ func emitStatusProtocolDiagnostic(emit func(string, ...any), entry string) {
 		return
 	}
 	emit("%s", entry)
-}
-
-func LOG_LEVEL(level int, msg string, args ...any) {
-	formatted := fmt.Sprintf(msg, args...)
-	if os.Getenv("WPTUI_LOGS_STDERR") == "1" {
-		// Debug aid for headless capture: mirror every Go log to stderr so a
-		// run like `WPTUI_LOGS_STDERR=1 target/debug/wp-tui 2>go.log` lets the
-		// user read diagnostics after closing the TUI (Ctrl+L panel is broken).
-		fmt.Fprintf(os.Stderr, "[go %d] %s\n", level, formatted)
-	}
-	if logHandler.callback == nil {
-		return
-	}
-	cmsg := C.CString(formatted)
-	defer C.free(unsafe.Pointer(cmsg))
-	C.callLogInfo(logHandler, cmsg, C.uint8_t(level))
-}
-
-func LOG_ERROR(msg string, args ...any) {
-	LOG_LEVEL(0, msg, args...)
-}
-func LOG_WARN(msg string, args ...any) {
-	LOG_LEVEL(1, msg, args...)
-}
-func LOG_INFO(msg string, args ...any) {
-	LOG_LEVEL(2, msg, args...)
-}
-func LOG_DEBUG(msg string, args ...any) {
-	LOG_LEVEL(4, msg, args...)
 }
 
 // GetSelfId returns the current user's JID string for comparison (e.g. broadcast sender).
@@ -291,38 +208,6 @@ func cToJid(cjid C.JID) types.JID {
 		panic(err)
 	}
 	return jid
-}
-
-//export C_SetLogHandler
-func C_SetLogHandler(callback C.LogHandlerCallback, data unsafe.Pointer) {
-	logHandler = C.LogHandler{
-		callback:  callback,
-		user_data: data,
-	}
-}
-
-//export C_SetEventHandler
-func C_SetEventHandler(callback C.EventCallback, data unsafe.Pointer) {
-	eventHandler = C.EventHandler{
-		callback:  callback,
-		user_data: data,
-	}
-}
-
-//export C_SetMessageHandler
-func C_SetMessageHandler(callback C.MessageHandlerCallback, data unsafe.Pointer) {
-	messageHandler = C.MessageHandler{
-		callback:  callback,
-		user_data: data,
-	}
-}
-
-//export C_SetPresenceHandler
-func C_SetPresenceHandler(callback C.PresenceHandlerCallback, data unsafe.Pointer) {
-	presenceHandler = C.PresenceHandler{
-		callback:  callback,
-		user_data: data,
-	}
 }
 
 const (
