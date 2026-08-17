@@ -17,11 +17,6 @@ typedef struct {
 } Contact;
 
 typedef struct {
-	JID jid;
-	const char* name;
-} ContactEntry;
-
-typedef struct {
 	bool found;
 	int64_t muted_until;
 	bool pinned;
@@ -33,11 +28,6 @@ typedef struct {
 	bool is_announce;
 	bool is_admin;
 } GroupInfoResult;
-
-typedef struct {
-	ContactEntry* entries;
-	uint32_t size;
-} GetContactsResult;
 
 typedef struct {
 	uint8_t status;
@@ -652,25 +642,6 @@ func C_ForwardMessage(sourceID *C.char, sourceChat C.JID, sourceSender C.JID, so
 		destinationStrings,
 		forwardingSourceBytes(forwardSource, forwardSourceLen),
 	).cResult()
-}
-
-//export C_GetContacts
-func C_GetContacts() C.GetContactsResult {
-	if client == nil || client.Store == nil {
-		return contactEntriesToC(nil)
-	}
-	ctx := context.Background()
-	entries := lookupContactEntries(ctx, client)
-
-	// Groups remain in this bridge wrapper; contacts.go owns only contact lookup.
-	groups, err := client.GetJoinedGroups(ctx)
-	if err != nil {
-		panic(err)
-	}
-	for _, group := range groups {
-		entries = append(entries, contactEntry{jid: group.JID, name: group.GroupName.Name})
-	}
-	return contactEntriesToC(entries)
 }
 
 //export C_GetProfilePicture

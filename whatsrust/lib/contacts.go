@@ -69,6 +69,25 @@ func lookupContactEntries(ctx context.Context, bridgeClient *whatsmeow.Client) [
 	return entries
 }
 
+//export C_GetContacts
+func C_GetContacts() C.GetContactsResult {
+	if client == nil || client.Store == nil {
+		return contactEntriesToC(nil)
+	}
+	ctx := context.Background()
+	entries := lookupContactEntries(ctx, client)
+
+	// Groups remain in this bridge wrapper; contacts.go owns only contact lookup.
+	groups, err := client.GetJoinedGroups(ctx)
+	if err != nil {
+		panic(err)
+	}
+	for _, group := range groups {
+		entries = append(entries, contactEntry{jid: group.JID, name: group.GroupName.Name})
+	}
+	return contactEntriesToC(entries)
+}
+
 func contactEntriesToC(entries []contactEntry) C.GetContactsResult {
 	if len(entries) == 0 {
 		return C.GetContactsResult{}
