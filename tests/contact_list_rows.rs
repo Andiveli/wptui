@@ -7,8 +7,11 @@ use ratatui::{
     widgets::{ListState, StatefulWidget},
 };
 use whatsrust::{JID, Message, MessageContent, MessageInfo};
-use wp_tui::app::actions::{PaneVisibility, Section};
 use wp_tui::app::contact_avatars::prioritized_avatar_requests;
+use wp_tui::app::{
+    Chat, CommunityNode,
+    actions::{PaneVisibility, Section},
+};
 use wp_tui::ui::{
     self,
     contact_list::{
@@ -152,6 +155,51 @@ fn search_list_renders_the_same_two_row_item_and_preserves_its_selection() {
     assert!(rows.iter().any(|row| row.contains("Visible Contact")));
     assert!(rows.iter().any(|row| row.contains("preview")));
     assert!(!rows.iter().any(|row| row.contains("Hidden Contact")));
+}
+
+#[test]
+fn chats_render_one_aggregated_community_row_and_one_normal_chat_row() {
+    let mut app = TestApp::new();
+    app.selected_section = Section::Chats;
+    let first = JID::from("first@g.us".to_owned());
+    let second = JID::from("second@g.us".to_owned());
+    let normal = JID::from("normal@s.whatsapp.net".to_owned());
+    app.contacts.insert(normal.clone(), "Normal Contact".into());
+    for chat in [&first, &second, &normal] {
+        app.chats.insert(
+            chat.clone(),
+            Chat {
+                jid: chat.clone(),
+                last_message_time: Some(if *chat == second { 20 } else { 10 }),
+            },
+        );
+    }
+    app.sorted_chats = vec![first, second, normal];
+    app.communities = vec![CommunityNode {
+        jid: JID::from("community@g.us".to_owned()),
+        name: "Project Team".into(),
+        is_root: true,
+        linked_groups: vec![
+            JID::from("first@g.us".to_owned()),
+            JID::from("second@g.us".to_owned()),
+        ],
+    }];
+
+    let mut terminal = Terminal::new(TestBackend::new(100, 10)).unwrap();
+    terminal.draw(|frame| ui::draw(frame, &mut app)).unwrap();
+    let rendered = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol().to_owned())
+        .collect::<String>();
+
+    assert_eq!(app.visible_chat_rows().len(), 2);
+    assert_eq!(rendered.matches("Project Team").count(), 1);
+    assert!(!rendered.contains("first@g.us"));
+    assert!(!rendered.contains("second@g.us"));
+    assert!(rendered.contains("Normal Contact"));
 }
 
 #[test]
