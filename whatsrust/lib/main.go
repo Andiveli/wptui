@@ -138,7 +138,6 @@ import "C"
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -162,20 +161,6 @@ const (
 	forwardFailureInvalidDestination
 	forwardFailureSendFailed
 )
-
-func messageActionDiagnostic(msg string, args ...any) {
-	if os.Getenv("WPTUI_MESSAGE_ACTION_DEBUG") != "1" {
-		return
-	}
-	LOG_WARN("MESSAGE_ACTION_DIAG "+msg, args...)
-}
-
-func emitStatusProtocolDiagnostic(emit func(string, ...any), entry string) {
-	if os.Getenv("WPTUI_MESSAGE_ACTION_DEBUG") != "1" {
-		return
-	}
-	emit("%s", entry)
-}
 
 // GetSelfId returns the current user's JID string for comparison (e.g. broadcast sender).
 func GetSelfId(client *whatsmeow.Client) string {
