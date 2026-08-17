@@ -13,6 +13,7 @@ pub mod chat_navigation;
 pub mod chat_opening;
 pub mod chat_ordering;
 pub mod chat_projection;
+pub mod chat_search_input;
 pub mod chat_store;
 pub mod community_bridge;
 pub mod community_hierarchy;
