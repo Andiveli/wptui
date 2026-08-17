@@ -105,12 +105,10 @@ static void callHistorySync(HistorySyncHandler hdl, uint32_t percent) {
 */
 import "C"
 import (
-	"context"
 	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 	"unsafe"
 
 	"go.mau.fi/whatsmeow"
@@ -611,24 +609,6 @@ func C_ForwardMessage(sourceID *C.char, sourceChat C.JID, sourceSender C.JID, so
 		destinationStrings,
 		forwardingSourceBytes(forwardSource, forwardSourceLen),
 	).cResult()
-}
-
-//export C_MarkAsRead
-func C_MarkAsRead(msg_id *C.char, chat_jid C.JID, sender_jid C.JID) {
-	ctx := context.Background()
-	timeRead := time.Now()
-
-	msgIds := []types.MessageID{
-		C.GoString(msg_id),
-	}
-
-	client.MarkRead(
-		ctx,
-		msgIds,
-		timeRead,
-		cToJid(chat_jid),
-		cToJid(sender_jid),
-	)
 }
 
 func main() {} // Required for CGO
