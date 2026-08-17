@@ -25,6 +25,7 @@ import (
 	"io"
 	"strings"
 	"time"
+	"unsafe"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types"
@@ -135,4 +136,24 @@ func profilePictureToC(outcome profilePictureOutcome) C.ProfilePictureResult {
 		result.size = C.uint32_t(len(outcome.data))
 	}
 	return result
+}
+
+//export C_GetProfilePicture
+func C_GetProfilePicture(jid *C.char) C.ProfilePictureResult {
+	if jid == nil {
+		return C.ProfilePictureResult{status: C.uint8_t(profilePictureStatusInvalidJID)}
+	}
+	if client == nil {
+		return C.ProfilePictureResult{status: C.uint8_t(profilePictureStatusClientUnavailable)}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), profilePictureTimeout)
+	defer cancel()
+	return profilePictureToC(fetchProfilePicture(ctx, C.GoString(jid), client.GetProfilePictureInfo, downloadProfilePicture))
+}
+
+//export C_FreeProfilePicture
+func C_FreeProfilePicture(result C.ProfilePictureResult) {
+	C.free(unsafe.Pointer(result.picture_id))
+	C.free(unsafe.Pointer(result.picture_type))
+	C.free(unsafe.Pointer(result.data))
 }

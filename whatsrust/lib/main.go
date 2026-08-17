@@ -30,14 +30,6 @@ typedef struct {
 } GroupInfoResult;
 
 typedef struct {
-	uint8_t status;
-	char* picture_id;
-	char* picture_type;
-	uint8_t* data;
-	uint32_t size;
-} ProfilePictureResult;
-
-typedef struct {
 	char* text;
 } TextMessage;
 
@@ -642,26 +634,6 @@ func C_ForwardMessage(sourceID *C.char, sourceChat C.JID, sourceSender C.JID, so
 		destinationStrings,
 		forwardingSourceBytes(forwardSource, forwardSourceLen),
 	).cResult()
-}
-
-//export C_GetProfilePicture
-func C_GetProfilePicture(jid *C.char) C.ProfilePictureResult {
-	if jid == nil {
-		return C.ProfilePictureResult{status: C.uint8_t(profilePictureStatusInvalidJID)}
-	}
-	if client == nil {
-		return C.ProfilePictureResult{status: C.uint8_t(profilePictureStatusClientUnavailable)}
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), profilePictureTimeout)
-	defer cancel()
-	return profilePictureToC(fetchProfilePicture(ctx, C.GoString(jid), client.GetProfilePictureInfo, downloadProfilePicture))
-}
-
-//export C_FreeProfilePicture
-func C_FreeProfilePicture(result C.ProfilePictureResult) {
-	C.free(unsafe.Pointer(result.picture_id))
-	C.free(unsafe.Pointer(result.picture_type))
-	C.free(unsafe.Pointer(result.data))
 }
 
 //export C_GetChatSettings
