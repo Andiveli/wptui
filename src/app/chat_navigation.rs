@@ -22,14 +22,13 @@ impl App<'_> {
         }
     }
 
-    pub(crate) fn update_filtered_chats(&mut self) {
+    pub(crate) fn update_filtered_chats(&mut self, selected: Option<wr::JID>) {
         self.filtered_chats = self
             .visible_chat_rows()
             .into_iter()
             .map(|row| row.target)
             .collect();
-        self.chat_list_state
-            .select((!self.filtered_chats.is_empty()).then_some(0));
+        self.select_chat(selected);
     }
 
     pub(crate) fn handle_chat_search_key(&mut self, key: Key) {
@@ -45,12 +44,14 @@ impl App<'_> {
                 self.dispatch_action(AppAction::OpenChat);
             }
             KeyCode::Char(character) => {
+                let selected = self.get_selected_chat();
                 self.contact_search.enter_char(character);
-                self.update_filtered_chats();
+                self.update_filtered_chats(selected);
             }
             KeyCode::Backspace => {
+                let selected = self.get_selected_chat();
                 self.contact_search.delete_char();
-                self.update_filtered_chats();
+                self.update_filtered_chats(selected);
             }
             KeyCode::Left => self.contact_search.move_cursor_left(),
             KeyCode::Right => self.contact_search.move_cursor_right(),
@@ -127,11 +128,7 @@ impl App<'_> {
     }
 
     fn clamp_chat_selection(&mut self) {
-        let count = if self.contact_search.input.is_empty() {
-            self.visible_chat_rows().len()
-        } else {
-            self.filtered_chats.len()
-        };
+        let count = self.visible_chat_rows().len();
         clamp_list_state(&mut self.chat_list_state, count);
     }
 
