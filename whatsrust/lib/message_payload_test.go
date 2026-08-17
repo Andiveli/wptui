@@ -19,15 +19,32 @@ func TestHandleMessageOwnsTextPayloadEmission(t *testing.T) {
 	if strings.Count(mainSource, "emitTextMessage(cinfo,") != 2 {
 		t.Fatal("conversation and extended-text payloads must use the text seam")
 	}
+}
+
+func TestHandleMessageDelegatesFilePayloadEmission(t *testing.T) {
+	if strings.Contains(string(mustRead(t, "main.go")), "func emitFileMessage(") {
+		t.Fatal("file payload emission must remain outside HandleMessage's composition file")
+	}
+	source := string(mustRead(t, "file_message_payload.go"))
 	for _, fragment := range []string{
-		"if msg.ImageMessage != nil",
-		"if msg.VideoMessage != nil",
-		"if msg.AudioMessage != nil",
-		"if msg.DocumentMessage != nil",
-		"if msg.StickerMessage != nil",
+		"func emitFileMessage(",
+		"func emitImageMessage(",
+		"func emitVideoMessage(",
+		"func emitAudioMessage(",
+		"func emitDocumentMessage(",
+		"func emitStickerMessage(",
 	} {
-		if !strings.Contains(mainSource, fragment) {
-			t.Fatalf("remaining media payload responsibility changed: %q", fragment)
+		if !strings.Contains(source, fragment) {
+			t.Fatalf("file payload seam is missing: %q", fragment)
 		}
 	}
+}
+
+func mustRead(t *testing.T, name string) []byte {
+	t.Helper()
+	source, err := os.ReadFile(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return source
 }
