@@ -195,21 +195,6 @@ func C_GetGroupInfo(cjid C.JID) C.GroupInfoResult {
 	}))
 }
 
-// Convert Go JID to C JID
-func jidToC(jid types.JID) C.JID {
-	return C.CString(jid.ToNonAD().String())
-	// return C.CString(jid.User + "@" + jid.Server)
-}
-
-// Convert C JID to Go JID
-func cToJid(cjid C.JID) types.JID {
-	jid, err := types.ParseJID(C.GoString(cjid))
-	if err != nil {
-		panic(err)
-	}
-	return jid
-}
-
 const (
 	EventTypeSyncProgress         = 0
 	EventTypeAppStateSyncComplete = 1
