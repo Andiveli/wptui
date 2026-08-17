@@ -41,7 +41,10 @@ fn eligibility_suppresses_only_the_open_chat() {
     let highlighted_chat = message("highlighted@g.us", "incoming");
     let open_message = message("open@g.us", "incoming");
 
-    assert!(notification_eligibility(&highlighted_chat, None));
+    assert!(notification_eligibility(
+        &highlighted_chat,
+        Some(&open_chat)
+    ));
     assert!(!notification_eligibility(&open_message, Some(&open_chat)));
     assert!(notification_eligibility(
         &message("other@g.us", "incoming"),
