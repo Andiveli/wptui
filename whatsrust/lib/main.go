@@ -643,54 +643,6 @@ func messageActionKindName(kind uint8) string {
 	return "delete"
 }
 
-func AddEventHandlers() {
-	client.AddEventHandler(func(rawEvt any) {
-		messageActionCensusDiagnostic(rawEvt)
-		switch evt := rawEvt.(type) {
-		case *events.Connected:
-			handleConnected(
-				client.SendPresence,
-				dispatchConnectedEvent,
-				LOG_WARN,
-			)
-
-		case *events.Presence:
-			dispatchPresenceEvent(evt, client.Store.LIDs.GetPNForLID, rawPresenceProbe.record, rawPresenceProbe.update, func(from string, unavailable bool, lastSeen int64) {
-				cFrom := C.CString(from)
-				defer C.free(unsafe.Pointer(cFrom))
-				C.callPresenceHandler(presenceHandler, cFrom, C.bool(unavailable), C.int64_t(lastSeen))
-			})
-
-		case *events.MarkChatAsRead:
-			LOG_DEBUG("MarkChatAsRead %v", evt.JID)
-
-		case *events.AppStateSyncComplete:
-			dispatchAppStateSyncComplete(evt)
-
-		case *events.Message:
-			dispatchIncomingMessage(evt, dispatchMessageActionEvent, HandleMessage)
-
-		case *events.Receipt:
-			if receipt, ok := receiptEventFromEvent(evt); ok {
-				LOG_DEBUG("%#v was read by %s at %s", evt.MessageIDs, evt.SourceString(), evt.Timestamp)
-				dispatchReceiptEvent(receipt)
-			}
-
-		case *events.HistorySync:
-			dispatchHistorySync(
-				evt,
-				client.DangerousInternals().StoreHistoricalMessageSecrets,
-				client.ParseWebMessage,
-				func(parsed *events.Message) {
-					dispatchIncomingMessage(parsed, dispatchMessageActionEvent, func(info types.MessageInfo, message *waE2E.Message, _ bool) {
-						HandleMessage(info, message, true)
-					})
-				},
-			)
-		}
-	})
-}
-
 //export C_TestEmitPresenceEvent
 func C_TestEmitPresenceEvent(from *C.char, unavailable C.bool, lastSeen C.int64_t) {
 	C.callPresenceHandler(presenceHandler, from, unavailable, lastSeen)

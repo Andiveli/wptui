@@ -15,6 +15,10 @@ func TestCallbackAndLogRegistrationStaysDedicated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	wiringSource, err := os.ReadFile("event_wiring.go")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	for _, expected := range []string{
 		"func LOG_LEVEL",
@@ -34,7 +38,10 @@ func TestCallbackAndLogRegistrationStaysDedicated(t *testing.T) {
 	if strings.Contains(string(mainSource), "func C_SetEventHandler") {
 		t.Fatal("event callback registration remains in main.go")
 	}
-	if !strings.Contains(string(mainSource), "func AddEventHandlers") {
-		t.Fatal("event wiring was moved with callback registration")
+	if strings.Contains(string(mainSource), "func AddEventHandlers") {
+		t.Fatal("event wiring remains in main.go")
+	}
+	if !strings.Contains(string(wiringSource), "func AddEventHandlers") {
+		t.Fatal("event wiring is not dedicated")
 	}
 }

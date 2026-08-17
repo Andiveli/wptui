@@ -27,15 +27,15 @@ func TestConnectionEventDispatchKeepsCallbackGuardAndKinds(t *testing.T) {
 }
 
 func TestConnectionEventDispatchLeavesMainHandlerAsRouter(t *testing.T) {
-	source, err := os.ReadFile("main.go")
+	source, err := os.ReadFile("event_wiring.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	body := string(source)
-	if !strings.Contains(body, "dispatchConnectedEvent,") {
-		t.Fatal("main handler does not delegate connected events")
+	if !strings.Contains(body, "dispatchConnectedEvent") {
+		t.Fatal("event wiring does not delegate connected events")
 	}
 	if strings.Contains(body, "func emitLogoutResult(status uint8)") {
-		t.Fatal("logout result conversion remains in main.go")
+		t.Fatal("logout result conversion remains in event wiring")
 	}
 }
