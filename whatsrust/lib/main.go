@@ -158,20 +158,9 @@ func HandleMessage(info types.MessageInfo, msg *waE2E.Message, isSync bool) {
 	if dispatchMessageEvent(info, msg) {
 		return
 	}
-	if !viewOnceUnavailable {
-		cacheForwardSource(info, msg)
-	}
+	rawSource := forwardingSourcePayload(info, msg, viewOnceUnavailable)
 	messageCallbackMu.Lock()
 	defer messageCallbackMu.Unlock()
-	var rawSource []byte
-	if !viewOnceUnavailable {
-		var err error
-		rawSource, err = marshalForwardSource(msg)
-		if err != nil {
-			LOG_WARN("forward source serialization failed: %v", err)
-			rawSource = nil
-		}
-	}
 	var cForwardSource unsafe.Pointer
 	if len(rawSource) > 0 {
 		cForwardSource = C.CBytes(rawSource)
