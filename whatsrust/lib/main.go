@@ -148,16 +148,6 @@ const (
 	FileTypeSticker
 )
 
-func isStatusProtocolContext(context *waE2E.ContextInfo) bool {
-	return context.GetRemoteJID() == "status@broadcast" ||
-		context.GetPosterStatusID() != "" ||
-		context.StatusSourceType != nil ||
-		context.StatusAttributionType != nil ||
-		context.StatusAttributions != nil ||
-		context.StatusAudienceMetadata != nil ||
-		context.IsGroupStatus != nil
-}
-
 func forwardSourceKey(chat, sender types.JID, id types.MessageID) string {
 	return chat.String() + "\x00" + sender.String() + "\x00" + string(id)
 }

@@ -13,6 +13,16 @@ type statusProtocolContext struct {
 	info *waE2E.ContextInfo
 }
 
+func isStatusProtocolContext(context *waE2E.ContextInfo) bool {
+	return context.GetRemoteJID() == "status@broadcast" ||
+		context.GetPosterStatusID() != "" ||
+		context.StatusSourceType != nil ||
+		context.StatusAttributionType != nil ||
+		context.StatusAttributions != nil ||
+		context.StatusAudienceMetadata != nil ||
+		context.IsGroupStatus != nil
+}
+
 func statusProtocolReactionDiagnostic(info types.MessageInfo, msg *waE2E.Message) (string, bool) {
 	reaction := msg.GetReactionMessage()
 	if reaction == nil || !isStatusProtocolReaction(info, reaction) {
