@@ -391,46 +391,6 @@ impl App<'_> {
         });
     }
 
-    /// Reply from a status: switches to the contact's private chat with
-    /// the status quoted, so the answer lands in the inbox (the same flow
-    /// as replying to a status in the WhatsApp mobile app).
-    fn reply_to_status(&mut self) {
-        let Some(message) = self.selected_message().cloned() else {
-            return self.unavailable("Reply is not available");
-        };
-        let contact = message.info.sender.clone();
-        self.selected_section = Section::Chats;
-        self.open_chat = Some(contact.clone());
-        self.sort_chat_messages(contact);
-        self.message_list_state.reset();
-        self.composer.quote = Some(message);
-        self.conversation_mode = ConversationMode::ComposerEditing;
-        self.focus_pane = FocusPane::Conversation;
-    }
-
-    /// Reacts to the selected status with a heart directly, skipping the
-    /// reaction picker (WhatsApp only allows the heart on statuses).
-    fn heart_selected_status(&mut self) {
-        let Some(message) = self.selected_message().cloned() else {
-            return self.unavailable("Reaction is not available");
-        };
-        if self
-            .message_reactor
-            .react_to_message_in_chat(
-                &message.info.chat,
-                &message.info.chat,
-                &message.info.sender,
-                &message.info.id,
-                crate::app::actions::STATUS_REACTION,
-            )
-            .is_ok()
-        {
-            self.action_notice = Some(crate::app::actions::ActionNotice::Reacted);
-        } else {
-            self.unavailable("Could not react to message");
-        }
-    }
-
     fn open_message_menu(&mut self) {
         if self.selected_message_is_deleted() {
             return self.unavailable("This message was deleted.");
