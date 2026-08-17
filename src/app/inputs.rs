@@ -2,8 +2,8 @@ use ratatui::crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 
 use crate::app::App;
 use crate::app::actions::{
-    AppAction, COMMON_REACTIONS, ComposerAction, ConversationMode, FocusPane, Section,
-    SequenceResolution, focus_after, focus_after_visibility_change,
+    AppAction, ComposerAction, ConversationMode, FocusPane, Section, SequenceResolution,
+    focus_after, focus_after_visibility_change,
 };
 use crate::app::composer::ComposerOutcome;
 pub use crate::app::composer_input_mapping::composer_action_for_editing_key;
@@ -276,13 +276,10 @@ impl App<'_> {
             }
             AppAction::ShareSearchBackspace => self.share_search_backspace(),
             AppAction::ShareSearchCharacter(character) => self.share_search_character(character),
-            AppAction::ReactionPrev => self.move_reaction(-1),
-            AppAction::ReactionNext => self.move_reaction(1),
-            AppAction::ConfirmReaction => self.confirm_reaction(),
-            AppAction::CancelReaction => {
-                self.reaction_picker = None;
-                self.action_notice = Some(crate::app::actions::ActionNotice::Cancelled);
-            }
+            action @ (AppAction::ReactionPrev
+            | AppAction::ReactionNext
+            | AppAction::ConfirmReaction
+            | AppAction::CancelReaction) => self.dispatch_reaction_picker_action(action),
             AppAction::UrlPickerPrevious => self.move_url_picker(-1),
             AppAction::UrlPickerNext => self.move_url_picker(1),
             AppAction::ConfirmUrlPicker => self.confirm_url_picker(),
@@ -392,53 +389,6 @@ impl App<'_> {
             failed: report.failed,
             failure: report.failure,
         });
-    }
-
-    fn open_reaction_picker(&mut self) {
-        if self.selected_message().is_none() {
-            return self.unavailable("Reaction is not available");
-        }
-        self.reaction_picker = Some((
-            COMMON_REACTIONS
-                .iter()
-                .map(|reaction| (*reaction).into())
-                .collect(),
-            0,
-        ));
-    }
-
-    fn move_reaction(&mut self, delta: isize) {
-        if let Some((reactions, selected)) = &mut self.reaction_picker {
-            *selected = selected
-                .saturating_add_signed(delta)
-                .min(reactions.len() - 1);
-        }
-    }
-
-    fn confirm_reaction(&mut self) {
-        let Some((reactions, selected)) = self.reaction_picker.take() else {
-            return;
-        };
-        let Some(reaction) = reactions.get(selected).cloned() else {
-            return;
-        };
-        let Some(message) = self.selected_message().cloned() else {
-            return self.unavailable("Reaction is not available");
-        };
-        if self
-            .message_reactor
-            .react_to_message(
-                &message.info.chat,
-                &message.info.sender,
-                &message.info.id,
-                &reaction,
-            )
-            .is_ok()
-        {
-            self.action_notice = Some(crate::app::actions::ActionNotice::Reacted);
-        } else {
-            self.unavailable("Could not react to message");
-        }
     }
 
     /// Reply from a status: switches to the contact's private chat with

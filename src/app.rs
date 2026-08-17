@@ -39,6 +39,7 @@ pub mod notifications;
 pub mod presence;
 pub mod presence_bridge;
 pub mod private_reply;
+pub mod reaction_picker;
 pub mod read_receipts;
 pub mod runtime_callbacks;
 pub mod runtime_loop;
