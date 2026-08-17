@@ -203,6 +203,22 @@ const (
 	FileTypeSticker
 )
 
+func emitTextMessage(cinfo C.MessageInfo, text string, isSync bool) {
+	ctext := C.CString(text)
+	defer C.free(unsafe.Pointer(ctext))
+
+	content := (*C.TextMessage)(C.malloc(C.sizeof_TextMessage))
+	content.text = ctext
+	defer C.free(unsafe.Pointer(content))
+
+	message := C.Message{
+		info:        cinfo,
+		messageType: C.uint8_t(MessageTypeText),
+		message:     unsafe.Pointer(content),
+	}
+	C.callMessageHandler(messageHandler, C.bool(isSync), &message)
+}
+
 func HandleMessage(info types.MessageInfo, msg *waE2E.Message, isSync bool) {
 	msg, viewOnceUnavailable := unavailableViewOnceMessage(msg)
 
@@ -217,27 +233,10 @@ func HandleMessage(info types.MessageInfo, msg *waE2E.Message, isSync bool) {
 	cinfo := callback.info
 
 	if msg.Conversation != nil {
-		ctext := C.CString(msg.GetConversation())
-		defer C.free(unsafe.Pointer(ctext))
-
-		content := (*C.TextMessage)(C.malloc(C.sizeof_TextMessage))
-		content.text = ctext
-		defer C.free(unsafe.Pointer(content))
-
-		message := C.Message{
-			info:        cinfo,
-			messageType: C.uint8_t(MessageTypeText),
-			message:     unsafe.Pointer(content),
-		}
-
-		C.callMessageHandler(messageHandler, C.bool(isSync), &message)
+		emitTextMessage(cinfo, msg.GetConversation(), isSync)
 	}
 	if msg.ExtendedTextMessage != nil {
 		ext_msg := msg.GetExtendedTextMessage()
-
-		text := ext_msg.GetText()
-		ctext := C.CString(text)
-		defer C.free(unsafe.Pointer(ctext))
 
 		context_info := ext_msg.GetContextInfo()
 		if context_info != nil {
@@ -248,16 +247,7 @@ func HandleMessage(info types.MessageInfo, msg *waE2E.Message, isSync bool) {
 			}
 		}
 
-		content := (*C.TextMessage)(C.malloc(C.sizeof_TextMessage))
-		content.text = ctext
-		defer C.free(unsafe.Pointer(content))
-
-		message := C.Message{
-			info:        cinfo,
-			messageType: C.uint8_t(MessageTypeText),
-			message:     unsafe.Pointer(content),
-		}
-		C.callMessageHandler(messageHandler, C.bool(isSync), &message)
+		emitTextMessage(cinfo, ext_msg.GetText(), isSync)
 	}
 	if msg.ImageMessage != nil {
 		img := msg.GetImageMessage()
