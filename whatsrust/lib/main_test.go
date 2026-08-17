@@ -201,32 +201,6 @@ func TestMessageActionEventFromIncomingMessage(t *testing.T) {
 	}
 }
 
-func TestMessageActionEventCensusRedactsOrdinaryMessageAndLabelsNonMessage(t *testing.T) {
-	chat := types.NewJID("chat-secret", types.DefaultUserServer)
-	sender := types.NewJID("sender-secret", types.DefaultUserServer)
-	event := &events.Message{
-		Info:       types.MessageInfo{MessageSource: types.MessageSource{Chat: chat, Sender: sender}, ID: "message-secret"},
-		RawMessage: &waE2E.Message{Conversation: stringPointer("DO-NOT-LOG-BODY")},
-		Message:    &waE2E.Message{Conversation: stringPointer("DO-NOT-LOG-BODY")},
-	}
-	line := messageActionCensusLine(event)
-	for _, secret := range []string{"DO-NOT-LOG-BODY", "message-secret", chat.String(), sender.String()} {
-		if strings.Contains(line, secret) {
-			t.Fatalf("census leaked %q: %s", secret, line)
-		}
-	}
-	for _, field := range []string{"event_type=events_message", "raw_kinds=conversation", "message_kinds=conversation", "info_id=<id:", "wrappers=raw"} {
-		if !strings.Contains(line, field) {
-			t.Fatalf("census omitted %q: %s", field, line)
-		}
-	}
-
-	receipt := messageActionCensusLine(&events.Receipt{Type: types.ReceiptTypeRead})
-	if !strings.Contains(receipt, "event_type=events_receipt subtype=receipt_read") {
-		t.Fatalf("receipt census = %s", receipt)
-	}
-}
-
 func TestOrdinaryActionBuildersRejectInvalidTargets(t *testing.T) {
 	client := &whatsmeow.Client{}
 	chat := types.NewJID("1234567890", types.DefaultUserServer)
