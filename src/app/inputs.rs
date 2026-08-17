@@ -7,13 +7,13 @@ use crate::app::actions::{
 use std::path::Path;
 
 use crate::app::App;
-use crate::app::composer::{Composer, ComposerOutcome};
+use crate::app::composer::ComposerOutcome;
 pub use crate::app::composer_input_mapping::composer_action_for_editing_key;
+pub use crate::app::composer_input_paste::apply_clipboard_paste;
 use crate::app::input_mapping::{
     attachment_viewer_action, file_picker_navigation_action, file_picker_search_action,
     message_menu_action, reaction_picker_action, share_picker_action, url_picker_action,
 };
-use crate::clipboard::{self, ClipboardError, ClipboardPaste};
 use crate::file_picker::FilePickerState;
 use crate::key_handler::Key;
 use whatsrust as wr;
@@ -1200,30 +1200,6 @@ mod tests {
             assert!(!status_view_allows(&blocked), "{blocked:?} must be blocked");
         }
     }
-}
-
-pub fn apply_clipboard_paste(
-    composer: &mut Composer<'_>,
-    media_path: &Path,
-    paste: Result<ClipboardPaste, ClipboardError>,
-) -> Result<(), ClipboardError> {
-    match paste? {
-        ClipboardPaste::Text(text) => composer.insert_text(&text),
-        ClipboardPaste::Paths(paths) => {
-            for path in paths {
-                let kind = clipboard::file_kind(&path);
-                composer.queue_attachment(path.to_string_lossy().into_owned().into(), kind);
-            }
-        }
-        ClipboardPaste::Png(png) => {
-            let path = clipboard::persist_png(media_path, &png)?;
-            composer.queue_attachment(
-                path.to_string_lossy().into_owned().into(),
-                whatsrust::FileKind::Image,
-            );
-        }
-    }
-    Ok(())
 }
 
 fn message_urls(message: &wr::Message) -> Vec<String> {
