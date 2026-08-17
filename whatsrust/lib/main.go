@@ -148,10 +148,6 @@ const (
 	FileTypeSticker
 )
 
-func forwardSourceKey(chat, sender types.JID, id types.MessageID) string {
-	return chat.String() + "\x00" + sender.String() + "\x00" + string(id)
-}
-
 func HandleMessage(info types.MessageInfo, msg *waE2E.Message, isSync bool) {
 	msg, viewOnceUnavailable := unavailableViewOnceMessage(msg)
 

@@ -12,6 +12,10 @@ import (
 
 const maxForwardSources = 1000
 
+func forwardSourceKey(chat, sender types.JID, id types.MessageID) string {
+	return chat.String() + "\x00" + sender.String() + "\x00" + string(id)
+}
+
 type forwardSource struct {
 	info    types.MessageInfo
 	message *waE2E.Message

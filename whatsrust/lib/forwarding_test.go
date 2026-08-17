@@ -2,11 +2,38 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"strings"
 	"testing"
 
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 )
+
+func TestForwardSourceKeyOwnership(t *testing.T) {
+	forwardingSource, err := os.ReadFile("forwarding.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mainSource, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(forwardingSource), "func forwardSourceKey(") {
+		t.Fatal("forwarding source key helper is not owned by forwarding.go")
+	}
+	if strings.Contains(string(mainSource), "func forwardSourceKey(") {
+		t.Fatal("forwarding source key helper remains in main.go")
+	}
+}
+
+func TestForwardSourceKeyPreservesCompositeFormat(t *testing.T) {
+	chat := types.NewJID("chat", types.DefaultUserServer)
+	sender := types.NewJID("sender", types.DefaultUserServer)
+	if got, want := forwardSourceKey(chat, sender, "message"), "chat@s.whatsapp.net\x00sender@s.whatsapp.net\x00message"; got != want {
+		t.Fatalf("forward source key = %q, want %q", got, want)
+	}
+}
 
 func TestViewOnceMessagesAreNotCachedForForwarding(t *testing.T) {
 	resetForwardedSourcesForTest()
