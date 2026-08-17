@@ -12,6 +12,7 @@ use crate::app::input_mapping::{
     attachment_viewer_action, file_picker_navigation_action, file_picker_search_action,
     message_menu_action, reaction_picker_action, share_picker_action, url_picker_action,
 };
+use crate::app::share_picker::is_forwardable_recipient;
 use crate::app::status_input::status_view_allows;
 use crate::key_handler::Key;
 use whatsrust as wr;
@@ -349,13 +350,13 @@ impl App<'_> {
         let Some(message) = self.selected_message() else {
             return self.unavailable("Forward is not available");
         };
-        if !forwardable_jid(&message.info.chat) {
+        if !is_forwardable_recipient(&message.info.chat) {
             return self.unavailable("Forward is not available");
         }
         let contacts = self
             .contacts
             .keys()
-            .filter(|jid| forwardable_jid(jid))
+            .filter(|jid| is_forwardable_recipient(jid))
             .cloned()
             .collect();
         let labels = self
@@ -699,10 +700,6 @@ impl App<'_> {
             },
         }
     }
-}
-
-fn forwardable_jid(jid: &wr::JID) -> bool {
-    !jid.0.ends_with("@broadcast") && !jid.0.ends_with("@newsletter")
 }
 
 fn is_toggle_logs_key(key: &Key) -> bool {

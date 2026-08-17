@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use whatsrust::JID;
 
-use super::SharePicker;
+use super::{SharePicker, is_forwardable_recipient};
 
 fn jid(value: &str) -> JID {
     JID::from(value.to_owned())
@@ -73,4 +73,11 @@ fn search_reset_returns_to_first_visible_row() {
     assert_eq!((picker.selected, picker.offset), (0, 0));
     picker.search_backspace();
     assert_eq!((picker.selected, picker.offset), (0, 0));
+}
+
+#[test]
+fn recipient_policy_excludes_broadcast_and_newsletter_chats() {
+    assert!(is_forwardable_recipient(&jid("alice@s.whatsapp.net")));
+    assert!(!is_forwardable_recipient(&jid("status@broadcast")));
+    assert!(!is_forwardable_recipient(&jid("channel@newsletter")));
 }

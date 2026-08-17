@@ -5,6 +5,10 @@ use whatsrust as wr;
 #[cfg(test)]
 mod tests;
 
+pub(crate) fn is_forwardable_recipient(jid: &wr::JID) -> bool {
+    !jid.0.ends_with("@broadcast") && !jid.0.ends_with("@newsletter")
+}
+
 pub struct SharePicker {
     contacts: Vec<wr::JID>,
     labels: HashMap<wr::JID, String>,
