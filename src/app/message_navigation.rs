@@ -63,6 +63,7 @@ impl App<'_> {
         } else {
             self.message_list_state.select_next_bounded(count);
         }
+        self.mark_latest_if_reached();
     }
 
     fn jump_message_selection(&mut self, bottom: bool) {
@@ -71,6 +72,16 @@ impl App<'_> {
             self.message_list_state.jump_top_bounded(count);
         } else {
             self.message_list_state.jump_bottom_bounded(count);
+        }
+        self.mark_latest_if_reached();
+    }
+
+    fn mark_latest_if_reached(&mut self) {
+        if self.focus_pane == FocusPane::Conversation
+            && self.message_list_state.selected == Some(0)
+            && let Some(chat) = self.open_chat()
+        {
+            self.mark_chat_read_at_latest(&chat);
         }
     }
 

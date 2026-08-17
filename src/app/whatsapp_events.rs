@@ -64,6 +64,7 @@ pub(crate) fn handle(app: &mut App<'_>, event: wr::Event) -> bool {
             true
         }
         wr::Event::Connected => {
+            app.set_read_receipt_readiness(crate::app::read_receipts::Readiness::Connected);
             // Connected is emitted again after reconnects. The first
             // probe may race group metadata hydration, so AppStateSyncComplete
             // below remains the authoritative follow-up refresh.

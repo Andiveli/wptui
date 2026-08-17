@@ -32,6 +32,7 @@ pub mod notifications;
 pub mod presence;
 pub mod presence_bridge;
 pub mod private_reply;
+pub mod read_receipts;
 pub mod runtime_callbacks;
 pub mod runtime_loop;
 pub mod runtime_media_events;
@@ -41,6 +42,7 @@ pub mod status_projection;
 pub mod terminal_session;
 #[cfg(test)]
 pub(crate) mod test_support;
+pub mod unread_messages;
 pub mod whatsapp_events;
 
 pub use crate::app;
@@ -66,6 +68,7 @@ pub use crate::app::notifications::{
     Clock, NotificationProjection, Notifier, NotifyRustNotifier, SystemClock, now_or, unix_now,
 };
 use crate::app::presence::{PresenceDiagnostics, SelectedPresence};
+use crate::app::read_receipts::Coordinator as ReadReceiptCoordinator;
 pub use crate::app::share_picker::SharePicker;
 pub use crate::app::status_projection::STATUS_BROADCAST_CHAT;
 use crate::db;
@@ -155,6 +158,7 @@ pub struct App<'a> {
 
     pub composer: Composer<'a>,
     pub message_list_state: MessageListState,
+    pub timeline: unread_messages::Timeline,
     pub metadata: HashMap<wr::MessageId, Metadata>,
     pub image_cache: HashMap<Arc<str>, StatefulProtocol>,
     pub image_cache_order: VecDeque<Arc<str>>,
@@ -185,6 +189,8 @@ pub struct App<'a> {
     pub attachment_viewer: Option<AttachmentViewerState>,
     pub viewer_preview: Option<ViewerPreviewState>,
     pub viewer_zoom: u16,
+    pub read_receipts: ReadReceiptCoordinator,
+    pub read_receipt_worker: read_receipts::worker::Worker,
 
     pub kh: KeybindHandler,
 

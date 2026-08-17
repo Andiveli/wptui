@@ -35,6 +35,18 @@ func TestJidsMatchSelfNormalizesDeviceIdentity(t *testing.T) {
 	}
 }
 
+func TestMarkReadResultPropagatesFailureWithoutNetwork(t *testing.T) {
+	if got := markReadResult(nil); got != 1 {
+		t.Fatal("nil sender must fail")
+	}
+	if got := markReadResult(func() error { return errors.New("transient") }); got != 2 {
+		t.Fatal("sender failure must propagate")
+	}
+	if got := markReadResult(func() error { return nil }); got != 0 {
+		t.Fatal("successful sender must return success")
+	}
+}
+
 func TestPinnedPresenceContractAndNarrowSubscription(t *testing.T) {
 	lastSeen := time.Unix(42, 0)
 	event := &events.Presence{

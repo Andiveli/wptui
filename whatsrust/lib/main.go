@@ -3118,22 +3118,49 @@ func C_FreeResolveDmChatId(value *C.char) {
 	C.free(unsafe.Pointer(value))
 }
 
+// C_MarkAsRead returns 0 for success, 1 when no connected client exists, 2
+// for a retryable bridge failure, and 3 for an invalid permanent request.
+//
 //export C_MarkAsRead
-func C_MarkAsRead(msg_id *C.char, chat_jid C.JID, sender_jid C.JID) {
-	ctx := context.Background()
+func C_MarkAsRead(msg_id *C.char, chat_jid C.JID, sender_jid C.JID) C.int {
+	if client == nil || msg_id == nil || chat_jid == nil || sender_jid == nil {
+		return 1
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	chat, err := types.ParseJID(C.GoString(chat_jid))
+	if err != nil || chat.IsEmpty() {
+		return 3
+	}
+	sender, err := types.ParseJID(C.GoString(sender_jid))
+	if err != nil || sender.IsEmpty() {
+		return 3
+	}
 	timeRead := time.Now()
 
 	msgIds := []types.MessageID{
 		C.GoString(msg_id),
 	}
 
-	client.MarkRead(
-		ctx,
-		msgIds,
-		timeRead,
-		cToJid(chat_jid),
-		cToJid(sender_jid),
-	)
+	return markReadResult(func() error {
+		return client.MarkRead(
+			ctx,
+			msgIds,
+			timeRead,
+			chat,
+			sender,
+		)
+	})
+}
+
+func markReadResult(send func() error) C.int {
+	if send == nil {
+		return 1
+	}
+	if send() != nil {
+		return 2
+	}
+	return 0
 }
 
 //export C_Disconnect

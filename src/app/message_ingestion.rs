@@ -42,7 +42,13 @@ impl App<'_> {
         }
 
         self.db_handler.add_message(&message);
-        self.add_message(message);
+        if is_sync {
+            let chat = message.info.chat.clone();
+            self.add_message_without_sort(message);
+            self.sort_chat_messages(chat);
+        } else {
+            self.add_message(message);
+        }
 
         let chat_jid = self.get_selected_chat();
         self.sort_chats();

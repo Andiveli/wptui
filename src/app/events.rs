@@ -8,6 +8,9 @@ use ratatui_image::protocol::StatefulProtocol;
 use whatsrust as wr;
 
 use crate::app::contact_avatars::AvatarResult;
+use crate::app::read_receipts::{
+    PersistResult, ReceiptCandidate, ReceiptKey, ReceiptSendStatus, RepositoryError,
+};
 use crate::app::{App, FileMeta};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -137,6 +140,11 @@ impl AttachmentViewerState {
 }
 
 pub enum AppEvent {
+    ReadReceiptResult(ReceiptKey, ReceiptSendStatus),
+    ReadReceiptRestored(Result<Vec<ReceiptCandidate>, RepositoryError>),
+    ReadReceiptPersisted(ReceiptCandidate, PersistResult),
+    ReadReceiptCompleted(ReceiptKey, Result<(), RepositoryError>),
+    ReadReceiptRejected(ReceiptKey, Result<(), RepositoryError>),
     DownloadFile(wr::MessageId, wr::FileId),
     DownloadFileDone(wr::MessageId, FileMeta),
     LoadFilePreview(wr::MessageId),
@@ -162,6 +170,30 @@ pub enum AppInput {
 impl fmt::Debug for AppEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            AppEvent::ReadReceiptResult(key, status) => f
+                .debug_tuple("ReadReceiptResult")
+                .field(key)
+                .field(status)
+                .finish(),
+            AppEvent::ReadReceiptRestored(result) => f
+                .debug_tuple("ReadReceiptRestored")
+                .field(&result.as_ref().map(|items| items.len()))
+                .finish(),
+            AppEvent::ReadReceiptPersisted(candidate, result) => f
+                .debug_tuple("ReadReceiptPersisted")
+                .field(&candidate.key())
+                .field(result)
+                .finish(),
+            AppEvent::ReadReceiptCompleted(key, result) => f
+                .debug_tuple("ReadReceiptCompleted")
+                .field(key)
+                .field(result)
+                .finish(),
+            AppEvent::ReadReceiptRejected(key, result) => f
+                .debug_tuple("ReadReceiptRejected")
+                .field(key)
+                .field(result)
+                .finish(),
             AppEvent::DownloadFile(message_id, file_id) => f
                 .debug_tuple("DownloadFile")
                 .field(message_id)

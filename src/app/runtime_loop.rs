@@ -23,6 +23,7 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
             let _ = app
                 .message_action_diagnostics
                 .write_report(std::io::stderr());
+            app.shutdown_read_receipt_worker();
             return;
         }
     };
@@ -35,6 +36,7 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
         .draw(|frame| ui::draw(frame, app))
     {
         error!("Failed to draw terminal UI: {error}");
+        app.shutdown_read_receipt_worker();
         terminal_session.stop_input_reader(&mut app.input_reader);
         terminal_session.restore();
         wr::disconnect();
@@ -43,6 +45,7 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
             .write_report(std::io::stderr());
         return;
     }
+    app.dispatch_read_receipts();
 
     loop {
         let now = app.now();
@@ -79,17 +82,21 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
                 .draw(|frame| ui::draw(frame, app))
             {
                 error!("Failed to draw terminal UI: {error}");
+                app.set_read_receipt_readiness(crate::app::read_receipts::Readiness::Disconnected);
                 break;
             }
         }
+        app.dispatch_read_receipts();
 
         if app.should_quit {
             break;
         }
     }
 
+    app.shutdown_read_receipt_worker();
     terminal_session.stop_input_reader(&mut app.input_reader);
     terminal_session.restore();
+    app.set_read_receipt_readiness(crate::app::read_receipts::Readiness::Disconnected);
     wr::disconnect();
     let stderr = std::io::stderr();
     let mut stderr = stderr.lock();

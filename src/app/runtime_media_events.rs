@@ -24,6 +24,39 @@ impl App<'_> {
         download_tx: &DownloadSender,
     ) -> bool {
         match event {
+            AppEvent::ReadReceiptResult(key, status) => {
+                self.complete_read_receipt(&key, status);
+                false
+            }
+            AppEvent::ReadReceiptRestored(result) => {
+                match result {
+                    Ok(candidates) => self
+                        .read_receipts
+                        .restore_candidates(candidates, self.now()),
+                    Err(error) => self.read_receipts.restore_failed(self.now(), error),
+                }
+                false
+            }
+            AppEvent::ReadReceiptPersisted(candidate, result) => {
+                self.read_receipts.persisted(candidate, result, self.now());
+                false
+            }
+            AppEvent::ReadReceiptCompleted(key, result) => {
+                let success = result.is_ok();
+                self.read_receipts.persistence_completed(&key, result);
+                if success && self.read_receipts.enabled() {
+                    let _ = self.read_receipt_worker.load();
+                }
+                false
+            }
+            AppEvent::ReadReceiptRejected(key, result) => {
+                let success = result.is_ok();
+                self.read_receipts.persistence_rejected(&key, result);
+                if success && self.read_receipts.enabled() {
+                    let _ = self.read_receipt_worker.load();
+                }
+                false
+            }
             AppEvent::SetFilePreview(message_id, file_path, img) => {
                 self.cache_file_preview(message_id.clone(), file_path, img);
                 if let Some(viewer) = self.attachment_viewer.as_mut()

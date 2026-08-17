@@ -104,6 +104,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         status_selection: ListState::default(),
         status_last_seen: HashMap::new(),
         message_list_state: MessageListState::default(),
+        timeline: unread_messages::Timeline::default(),
         metadata: HashMap::new(),
         history_sync_percent: None,
         selected_presence: SelectedPresence::default(),
@@ -135,6 +136,16 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         attachment_viewer: None,
         viewer_preview: None,
         viewer_zoom: 100,
+        read_receipts: ReadReceiptCoordinator::default(),
+        read_receipt_worker: crate::app::read_receipts::worker::Worker::new(
+            tx.clone(),
+            Box::new(crate::app::read_receipts::whatsapp_adapter::WhatsAppAdapter),
+            Box::new(
+                crate::app::read_receipts::sqlite_repository::SqliteRepository::new(
+                    data_dir.join("whatsapp.db"),
+                ),
+            ),
+        ),
         kh: KeybindHandler::default(),
         contact_search_active: false,
         contact_search: TextInput::new(),
