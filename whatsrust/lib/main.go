@@ -98,7 +98,6 @@ import (
 	"sync"
 	"unsafe"
 
-	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 )
@@ -112,14 +111,6 @@ const (
 	forwardFailureInvalidDestination
 	forwardFailureSendFailed
 )
-
-// GetSelfId returns the current user's JID string for comparison (e.g. broadcast sender).
-func GetSelfId(client *whatsmeow.Client) string {
-	if client == nil || client.Store == nil || client.Store.ID == nil {
-		return ""
-	}
-	return StrFromJid(*client.Store.ID)
-}
 
 type messageCallbackMetadata struct {
 	id         string
