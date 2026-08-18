@@ -14,6 +14,7 @@ use crate::app::input_mapping::{
     attachment_viewer_action, file_picker_navigation_action, file_picker_search_action,
     message_menu_action, reaction_picker_action, share_picker_action, url_picker_action,
 };
+use crate::app::status_input::status_view_allows;
 use crate::file_picker::FilePickerState;
 use crate::key_handler::Key;
 use whatsrust as wr;
@@ -1101,40 +1102,6 @@ fn home_dir() -> Option<std::path::PathBuf> {
         .filter(|path| path.is_dir())
 }
 
-/// Actions allowed while a contact's status view is focused (read-only).
-/// Chat-specific actions are rejected so nothing ever targets the
-/// `status@broadcast` chat from the status pane.
-fn status_view_allows(action: &AppAction) -> bool {
-    matches!(
-        action,
-        AppAction::Quit
-            | AppAction::Logout
-            | AppAction::ToggleLogs
-            | AppAction::ToggleSectionRail
-            | AppAction::ToggleChatList
-            | AppAction::FocusNext
-            | AppAction::FocusPrevious
-            | AppAction::SelectNext
-            | AppAction::SelectPrevious
-            | AppAction::JumpTop
-            | AppAction::JumpBottom
-            | AppAction::HalfPageDown
-            | AppAction::HalfPageUp
-            | AppAction::CopyMessage
-            | AppAction::ReplyMessage
-            | AppAction::ReactMessage
-            | AppAction::DownloadMessage
-            | AppAction::ViewMessage
-            | AppAction::ViewerNext
-            | AppAction::ViewerPrevious
-            | AppAction::ViewerZoomIn
-            | AppAction::ViewerZoomOut
-            | AppAction::CloseAttachmentViewer
-            | AppAction::ViewerOpenExternal
-            | AppAction::CloseStatusPane
-    )
-}
-
 fn log_level_for_logs(show_logs: bool) -> tui_logger::LevelFilter {
     if show_logs {
         tui_logger::LevelFilter::Info
@@ -1145,60 +1112,13 @@ fn log_level_for_logs(show_logs: bool) -> tui_logger::LevelFilter {
 
 #[cfg(test)]
 mod tests {
-    use super::{log_level_for_logs, status_view_allows};
+    use super::log_level_for_logs;
     use tui_logger::LevelFilter;
 
     #[test]
     fn log_panel_uses_info_and_restores_warn_when_closed() {
         assert_eq!(log_level_for_logs(true), LevelFilter::Info);
         assert_eq!(log_level_for_logs(false), LevelFilter::Warn);
-    }
-
-    #[test]
-    fn status_view_allows_status_interactions_and_media_actions() {
-        use crate::app::actions::AppAction;
-
-        for allowed in [
-            AppAction::Quit,
-            AppAction::Logout,
-            AppAction::ToggleLogs,
-            AppAction::ToggleSectionRail,
-            AppAction::ToggleChatList,
-            AppAction::FocusNext,
-            AppAction::FocusPrevious,
-            AppAction::SelectNext,
-            AppAction::SelectPrevious,
-            AppAction::JumpTop,
-            AppAction::JumpBottom,
-            AppAction::HalfPageDown,
-            AppAction::HalfPageUp,
-            AppAction::CopyMessage,
-            AppAction::ReactMessage,
-            AppAction::ReplyMessage,
-            AppAction::DownloadMessage,
-            AppAction::ViewMessage,
-            AppAction::ViewerNext,
-            AppAction::ViewerPrevious,
-            AppAction::ViewerZoomIn,
-            AppAction::ViewerZoomOut,
-            AppAction::CloseAttachmentViewer,
-            AppAction::ViewerOpenExternal,
-            AppAction::CloseStatusPane,
-        ] {
-            assert!(status_view_allows(&allowed), "{allowed:?} must be allowed");
-        }
-
-        for blocked in [
-            AppAction::OpenChat,
-            AppAction::OpenMessage,
-            AppAction::InsertMode,
-            AppAction::DeleteMessage,
-            AppAction::EditMessage,
-            AppAction::OpenMessageMenu,
-            AppAction::GoToReference,
-        ] {
-            assert!(!status_view_allows(&blocked), "{blocked:?} must be blocked");
-        }
     }
 }
 

@@ -41,6 +41,7 @@ pub mod runtime_loop;
 pub mod runtime_media_events;
 pub mod runtime_startup;
 pub mod share_picker;
+pub mod status_input;
 pub mod status_projection;
 pub mod terminal_session;
 #[cfg(test)]
