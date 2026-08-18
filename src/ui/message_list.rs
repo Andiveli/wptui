@@ -1,5 +1,4 @@
 use std::{
-    cmp::{max, min},
     collections::{BTreeMap, HashMap},
     sync::Arc,
 };
@@ -14,7 +13,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Widget, Wrap},
 };
-use whatsrust::{self as wr, FileKind};
+use whatsrust as wr;
 
 use crate::app::{App, FileMeta, Metadata};
 
@@ -26,6 +25,8 @@ mod message_layout;
 mod message_list_state;
 #[path = "message_media.rs"]
 mod message_media;
+#[path = "message_viewport.rs"]
+mod message_viewport;
 
 pub use message_helpers::{
     AUTHOR_GROUP_MAX_GAP, AuthorGroupContext, get_quoted_text, reply_summary, starts_author_group,
@@ -39,7 +40,6 @@ pub use message_layout::{
 };
 use message_layout::{LayoutInput, file_kind};
 pub use message_list_state::MessageListState;
-use message_list_state::ViewportAnchor;
 pub use message_media::preview_height;
 use message_media::render_file;
 
@@ -647,184 +647,23 @@ fn render_message_items(
         }
     }
 
-    let (start_index, mut y) = previous_anchor
+    let (start_index, y) = previous_anchor
         .map(|anchor| (anchor.index, anchor.y))
         .unwrap_or((
             0,
             list_area.bottom() as isize + app.message_list_state.offset as isize,
         ));
-    let mut viewport_anchor = None;
-    for (i, item) in items.iter().enumerate().skip(start_index) {
-        let is_selected = app.message_list_state.selected == Some(i);
-        let author_group = author_groups[i];
-        let height = message_height(item, width as usize, is_selected, author_group, app) as isize;
-
-        let bottom = y;
-        let top = y - height;
-
-        if bottom <= list_area.top() as isize {
-            break;
-        }
-
-        let Some(top_i64) = i64::try_from(top).ok() else {
-            break;
-        };
-        let Some(bottom_i64) = i64::try_from(bottom).ok() else {
-            break;
-        };
-        if crate::app::read_receipts::intersects(
-            top_i64,
-            bottom_i64,
-            i64::from(list_area.top()),
-            i64::from(list_area.bottom()),
-        ) {
-            viewport_anchor.get_or_insert((i, y));
-            app.observe_visible_message(item, true);
-            let too_low = top < list_area.top() as isize;
-            let too_high = bottom > list_area.bottom() as isize;
-
-            if too_low || too_high {
-                let item_area = Rect::new(0, 0, width as u16, height as u16);
-                let mut buf = Buffer::empty(item_area);
-
-                let available_top = max(top, list_area.top() as isize) as u16;
-                let available_bottom = min(bottom, list_area.bottom() as isize) as u16;
-                let visible_buf_top = (available_top as isize - top) as u16;
-                let visible_buf_height = available_bottom - available_top;
-
-                // -- BEGIN AI IMPRESSIVE HACK --
-                // Only render the image (and thus touch protocol state) when at least one image
-                // row is in the visible slice. Otherwise we'd set "transmitted" but never send
-                // any cell to the frame, and the image would never show when scrolled into view.
-                let render_image = match &item.message {
-                    wr::MessageContent::File(data)
-                        if matches!(
-                            app.metadata.get(&item.info.id),
-                            Some(Metadata::File(FileMeta::Loaded))
-                        ) && matches!(
-                            data.kind,
-                            FileKind::Image | FileKind::Sticker | FileKind::Video
-                        ) =>
-                    {
-                        let image_top = u16::from(is_selected || author_group.starts_group())
-                            + u16::from(item.info.quote_id.is_some());
-                        let image_bottom = image_top + preview_height(&data.kind) as u16;
-                        let visible_buf_bottom = visible_buf_top + visible_buf_height;
-                        visible_buf_top < image_bottom && visible_buf_bottom > image_top
-                    }
-                    _ => true,
-                };
-                // -- END AI IMPRESSIVE HACK --
-
-                render_message(
-                    &mut buf,
-                    item,
-                    is_selected,
-                    author_group,
-                    app,
-                    item_area,
-                    render_image,
-                );
-
-                let buf_area = Rect::new(
-                    list_area.left(),
-                    available_top,
-                    width as u16,
-                    visible_buf_height,
-                );
-
-                if !buf_area.is_empty() {
-                    let mut mapped_area = buf_area;
-                    mapped_area.y = visible_buf_top;
-                    mapped_area.x = 0;
-
-                    // -- BEGIN AI IMPRESSIVE HACK --
-                    // When the visible slice doesn't include the image's first row, Kitty never
-                    // receives the image transmit (it's in that first row's cell). Inject it into
-                    // the first visible row's left cell so the image displays.
-                    let (inject_transmit, media_first_row, media_first_col) = match &item.message {
-                        wr::MessageContent::File(data)
-                            if matches!(
-                                app.metadata.get(&item.info.id),
-                                Some(Metadata::File(FileMeta::Loaded))
-                            ) && matches!(
-                                data.kind,
-                                FileKind::Image | FileKind::Sticker | FileKind::Video
-                            ) =>
-                        {
-                            let first_row = u16::from(is_selected || author_group.starts_group())
-                                + u16::from(item.info.quote_id.is_some());
-                            let inject = mapped_area.y > first_row
-                                && mapped_area.y < first_row + preview_height(&data.kind) as u16;
-                            (inject, first_row, if is_selected { 2 } else { 0 })
-                        }
-                        _ => (false, 0, 0),
-                    };
-
-                    for (row_idx, (screen_row, msg_row)) in
-                        buf_area.rows().zip(mapped_area.rows()).enumerate()
-                    {
-                        for (screen_col, msg_col) in screen_row.columns().zip(msg_row.columns()) {
-                            let mut cell = buf[msg_col].clone();
-                            if inject_transmit
-                                && row_idx == 0
-                                && screen_col.x == list_area.left() + media_first_col
-                            {
-                                let first_sym = buf[(media_first_col, media_first_row)].symbol();
-                                if let Some(pos) = first_sym.find("\x1b[s") {
-                                    let merged = format!("{}{}", &first_sym[..pos], cell.symbol());
-                                    cell.set_symbol(&merged);
-                                }
-                            }
-                            frame.buffer_mut()[screen_col] = cell;
-                        }
-                    }
-                    // -- END AI IMPRESSIVE HACK --
-                }
-            } else {
-                let item_area = Rect {
-                    x: list_area.left(),
-                    y: top as u16,
-                    width: width as u16,
-                    height: height as u16,
-                };
-
-                render_message(
-                    frame.buffer_mut(),
-                    item,
-                    is_selected,
-                    author_group,
-                    app,
-                    item_area,
-                    true,
-                );
-            }
-        }
-
-        y -= height
-            + spacing_after_message(i, &author_groups, app.message_list_state.selected) as isize;
-        if divider_after == Some(i) {
-            y -= 1;
-            if y >= list_area.top() as isize && y < list_area.bottom() as isize {
-                Paragraph::new(unread_divider_line(list_area.width as usize)).render(
-                    Rect::new(list_area.left(), y as u16, width as u16, 1),
-                    frame.buffer_mut(),
-                );
-            }
-        }
-    }
-
-    app.message_list_state.viewport_anchor = viewport_anchor.and_then(|(index, y)| {
-        items.get(index).map(|item| ViewportAnchor {
-            index,
-            y,
-            width: width as usize,
-            offset: app.message_list_state.offset,
-            generation: app.message_height_cache.generation(),
-            message_id: item.info.id.clone(),
-            bottom: list_area.bottom(),
-        })
-    });
+    app.message_list_state.viewport_anchor = message_viewport::render(
+        frame,
+        app,
+        list_area,
+        &items,
+        &author_groups,
+        unread_count,
+        width,
+        start_index,
+        y,
+    );
 
     None
 }
