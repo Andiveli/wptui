@@ -27,17 +27,18 @@ func HandleMessage(info types.MessageInfo, msg *waE2E.Message, isSync bool) {
 		emitTextMessage(cinfo, msg.GetConversation(), isSync)
 	}
 	if msg.ExtendedTextMessage != nil {
-		extMsg := msg.GetExtendedTextMessage()
+		ext_msg := msg.GetExtendedTextMessage()
 
-		contextInfo := extMsg.GetContextInfo()
-		if contextInfo != nil {
-			id := contextInfo.GetStanzaID()
+		context_info := ext_msg.GetContextInfo()
+		if context_info != nil {
+			id := context_info.GetStanzaID()
+			// LOG_ERROR("asdfasdf %s", co)
 			if id != "" {
 				cinfo.quoteID = C.CString(id)
 			}
 		}
 
-		emitTextMessage(cinfo, extMsg.GetText(), isSync)
+		emitTextMessage(cinfo, ext_msg.GetText(), isSync)
 	}
 	if msg.ImageMessage != nil {
 		if !emitImageMessage(cinfo, info.ID, msg.GetImageMessage(), isSync) {
