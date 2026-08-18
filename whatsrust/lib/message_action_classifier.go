@@ -12,6 +12,13 @@ const (
 	messageActionDelete
 )
 
+func messageActionKindName(kind uint8) string {
+	if kind == messageActionEdit {
+		return "edit"
+	}
+	return "delete"
+}
+
 type messageActionEvent struct {
 	actionID, chat, sender, targetMessageID, replacement string
 	occurredAt                                           int64

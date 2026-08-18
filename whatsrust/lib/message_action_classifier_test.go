@@ -9,6 +9,25 @@ import (
 	"go.mau.fi/whatsmeow/types"
 )
 
+func TestMessageActionKindName(t *testing.T) {
+	tests := []struct {
+		name string
+		kind uint8
+		want string
+	}{
+		{name: "edit", kind: messageActionEdit, want: "edit"},
+		{name: "delete", kind: messageActionDelete, want: "delete"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := messageActionKindName(tt.kind); got != tt.want {
+				t.Fatalf("messageActionKindName(%d) = %q, want %q", tt.kind, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMessageActionEventFromMessage(t *testing.T) {
 	baseInfo := types.MessageInfo{
 		MessageSource: types.MessageSource{Chat: types.NewJID("chat", types.DefaultUserServer), Sender: types.NewJID("sender", types.DefaultUserServer)},
