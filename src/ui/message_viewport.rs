@@ -9,10 +9,10 @@ use whatsrust::{self as wr, FileKind};
 
 use crate::app::{App, FileMeta, Metadata};
 
+use super::message_formatting::unread_divider_line;
 use super::message_list_state::ViewportAnchor;
 use super::{
     AuthorGroupContext, message_height, preview_height, render_message, spacing_after_message,
-    unread_divider_line,
 };
 
 pub(super) fn render(
