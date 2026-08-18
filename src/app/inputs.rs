@@ -8,6 +8,10 @@ use std::path::Path;
 
 use crate::app::App;
 use crate::app::composer::{Composer, ComposerOutcome};
+use crate::app::input_mapping::{
+    attachment_viewer_action, file_picker_navigation_action, file_picker_search_action,
+    message_menu_action, reaction_picker_action, share_picker_action, url_picker_action,
+};
 use crate::clipboard::{self, ClipboardError, ClipboardPaste};
 use crate::file_picker::FilePickerState;
 use crate::key_handler::Key;
@@ -58,76 +62,45 @@ impl App<'_> {
                     self.dispatch_composer_action(composer_action_for_editing_key(&key));
                 }
             } else if self.attachment_viewer.is_some() {
-                self.dispatch_action(match key.code {
-                    KeyCode::Char('h') | KeyCode::Left => AppAction::ViewerPrevious,
-                    KeyCode::Char('l') | KeyCode::Right => AppAction::ViewerNext,
-                    KeyCode::Char('-') => AppAction::ViewerZoomOut,
-                    KeyCode::Char('=') => AppAction::ViewerZoomIn,
-                    KeyCode::Char('x') => AppAction::ViewerOpenExternal,
-                    KeyCode::Esc | KeyCode::Char('q') => AppAction::CloseAttachmentViewer,
-                    _ => return,
-                });
+                let Some(action) = attachment_viewer_action(&key) else {
+                    return;
+                };
+                self.dispatch_action(action);
             } else if self.url_picker.is_some() {
-                self.dispatch_action(match key.code {
-                    KeyCode::Char('j') | KeyCode::Down => AppAction::UrlPickerNext,
-                    KeyCode::Char('k') | KeyCode::Up => AppAction::UrlPickerPrevious,
-                    KeyCode::Enter => AppAction::ConfirmUrlPicker,
-                    KeyCode::Esc => AppAction::CancelUrlPicker,
-                    _ => return,
-                });
+                let Some(action) = url_picker_action(&key) else {
+                    return;
+                };
+                self.dispatch_action(action);
             } else if self.file_picker.is_some() && self.file_picker.as_ref().unwrap().searching {
                 // Search mode: the keyboard buffer owns every key except the
                 // explicit exits, so `h/j/k/l` build the filter instead of
                 // moving. Esc leaves search mode back to navigation.
-                self.dispatch_action(match key.code {
-                    KeyCode::Backspace => AppAction::FilePickerBackspace,
-                    KeyCode::Esc => AppAction::FilePickerEndSearch,
-                    KeyCode::Char(character) => AppAction::FilePickerCharacter(character),
-                    KeyCode::Enter => AppAction::FilePickerConfirm,
-                    _ => return,
-                });
+                let Some(action) = file_picker_search_action(&key) else {
+                    return;
+                };
+                self.dispatch_action(action);
             } else if self.file_picker.is_some() {
                 // Navigation mode. `h/l` move across the tree, `Enter` commits
                 // (files under the cursor, or every `Space`-selected file).
-                self.dispatch_action(match key.code {
-                    KeyCode::Char('j') | KeyCode::Down => AppAction::FilePickerNext,
-                    KeyCode::Char('k') | KeyCode::Up => AppAction::FilePickerPrevious,
-                    KeyCode::Char('h') | KeyCode::Left => AppAction::FilePickerParent,
-                    KeyCode::Char('l') | KeyCode::Right => AppAction::FilePickerDescend,
-                    KeyCode::Char(' ') => AppAction::FilePickerToggle,
-                    KeyCode::Char('/') => AppAction::FilePickerEnterSearch,
-                    KeyCode::Enter => AppAction::FilePickerConfirm,
-                    KeyCode::Backspace => AppAction::FilePickerParent,
-                    KeyCode::Esc => AppAction::CancelFilePicker,
-                    _ => return,
-                });
+                let Some(action) = file_picker_navigation_action(&key) else {
+                    return;
+                };
+                self.dispatch_action(action);
             } else if self.share_picker.is_some() {
-                self.dispatch_action(match key.code {
-                    KeyCode::Char('j') | KeyCode::Down => AppAction::SharePickerNext,
-                    KeyCode::Char('k') | KeyCode::Up => AppAction::SharePickerPrevious,
-                    KeyCode::Char(' ') => AppAction::ToggleShareRecipient,
-                    KeyCode::Enter => AppAction::ConfirmShare,
-                    KeyCode::Esc => AppAction::CancelShare,
-                    KeyCode::Backspace => AppAction::ShareSearchBackspace,
-                    KeyCode::Char(character) => AppAction::ShareSearchCharacter(character),
-                    _ => return,
-                });
+                let Some(action) = share_picker_action(&key) else {
+                    return;
+                };
+                self.dispatch_action(action);
             } else if self.reaction_picker.is_some() {
-                self.dispatch_action(match key.code {
-                    KeyCode::Char('h') | KeyCode::Left => AppAction::ReactionPrev,
-                    KeyCode::Char('l') | KeyCode::Right => AppAction::ReactionNext,
-                    KeyCode::Enter => AppAction::ConfirmReaction,
-                    KeyCode::Esc => AppAction::CancelReaction,
-                    _ => return,
-                });
+                let Some(action) = reaction_picker_action(&key) else {
+                    return;
+                };
+                self.dispatch_action(action);
             } else if self.message_menu.is_some() {
-                self.dispatch_action(match key.code {
-                    KeyCode::Char('j') | KeyCode::Down => AppAction::MenuNext,
-                    KeyCode::Char('k') | KeyCode::Up => AppAction::MenuPrevious,
-                    KeyCode::Enter => AppAction::ConfirmMessageMenu,
-                    KeyCode::Esc => AppAction::CancelMessageMenu,
-                    _ => return,
-                });
+                let Some(action) = message_menu_action(&key) else {
+                    return;
+                };
+                self.dispatch_action(action);
             } else if self.focus_pane == FocusPane::Conversation
                 && self.selected_section == Section::Status
             {

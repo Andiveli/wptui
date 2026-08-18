@@ -19,6 +19,7 @@ pub mod composer;
 pub mod contact_avatars;
 pub mod download_worker;
 pub mod events;
+pub mod input_mapping;
 pub mod input_reader;
 pub mod inputs;
 pub mod logout;
