@@ -9,7 +9,7 @@ use ratatui::{
 };
 use whatsrust as wr;
 
-use crate::app::{App, FileMeta, Metadata};
+use crate::app::App;
 
 #[path = "message_formatting.rs"]
 mod message_formatting;
@@ -17,6 +17,8 @@ mod message_formatting;
 mod message_helpers;
 #[path = "message_layout.rs"]
 mod message_layout;
+#[path = "message_layout_integration.rs"]
+mod message_layout_integration;
 #[path = "message_list_state.rs"]
 mod message_list_state;
 #[path = "message_media.rs"]
@@ -37,7 +39,6 @@ pub use message_layout::{
     IMAGE_HEIGHT, IMAGE_WIDTH, MESSAGE_HEIGHT_CACHE_CAPACITY, MessageHeightCache, VIDEO_HEIGHT,
     VIDEO_WIDTH,
 };
-use message_layout::{LayoutInput, file_kind};
 pub use message_list_state::MessageListState;
 pub use message_media::preview_height;
 use message_media::render_file;
@@ -59,39 +60,7 @@ mod layout_contract_tests {
     }
 }
 
-pub fn message_height(
-    message: &wr::Message,
-    width: usize,
-    is_selected: bool,
-    author_group: AuthorGroupContext,
-    app: &mut App,
-) -> usize {
-    let input = LayoutInput {
-        width,
-        is_selected,
-        has_quote: message.info.quote_id.is_some(),
-        has_reactions: app.reactions.contains_key(&message.info.id),
-        author_group,
-        content: match &message.message {
-            wr::MessageContent::Text(text) => message_layout::HeightContent::Text {
-                body: text,
-                forwarding: forwarding_label(message),
-                status: status_label(app, &message.info.id),
-            },
-            wr::MessageContent::File(file) => message_layout::HeightContent::File {
-                kind: file_kind(file.kind.clone()),
-                caption: file.caption.as_deref(),
-                forwarding: forwarding_label(message),
-                preview_loaded: matches!(
-                    app.metadata.get(&message.info.id),
-                    Some(Metadata::File(FileMeta::Loaded))
-                ),
-                status: status_label(app, &message.info.id),
-            },
-        },
-    };
-    message_layout::height(&mut app.message_height_cache, &message.info.id, &input)
-}
+pub use message_layout_integration::message_height;
 
 fn spacing_after_message(
     index: usize,
@@ -341,11 +310,7 @@ fn render_message_items(
         })
         .collect::<Vec<_>>();
 
-    let item_ids = items
-        .iter()
-        .map(|message| message.info.id.clone())
-        .collect::<Vec<_>>();
-    app.message_height_cache.retain_messages(&item_ids);
+    message_layout_integration::retain_message_heights(app, &items);
 
     if items.is_empty() {
         app.message_list_state.select(None);
@@ -384,7 +349,7 @@ fn render_message_items(
         .filter(|anchor| {
             anchor.width == width as usize
                 && anchor.offset == app.message_list_state.offset
-                && anchor.generation == app.message_height_cache.generation()
+                && anchor.generation == message_layout_integration::height_generation(app)
                 && app
                     .message_list_state
                     .selected
