@@ -19,6 +19,8 @@ mod message_helpers;
 mod message_layout;
 #[path = "message_layout_integration.rs"]
 mod message_layout_integration;
+#[path = "message_list_reconciliation.rs"]
+mod message_list_reconciliation;
 #[path = "message_list_state.rs"]
 mod message_list_state;
 #[path = "message_media.rs"]
@@ -316,161 +318,14 @@ fn render_message_items(
         return Some(());
     }
 
-    if app.message_list_state.selected.is_none()
-        && app.message_list_state.selected_message.is_some()
-    {
-        let selected_message = app.message_list_state.selected_message.clone().unwrap();
-        if let Some(idx) = items
-            .iter()
-            .position(|item| item.info.id == selected_message)
-        {
-            app.message_list_state.select(Some(idx));
-        } else {
-            app.message_list_state.select(None);
-        }
-    }
-
-    if let Some(idx) = app.message_list_state.selected
-        && idx >= items.len()
-    {
-        app.message_list_state.selected = items.len().checked_sub(1);
-    }
-
     let width = list_area.width as isize;
-    let padding = 4;
-    let divider_after = unread_count.checked_sub(1);
-
-    let previous_offset = app.message_list_state.offset;
-    let mut previous_anchor = app
-        .message_list_state
-        .viewport_anchor
-        .clone()
-        .filter(|anchor| {
-            anchor.width == width as usize
-                && anchor.offset == app.message_list_state.offset
-                && anchor.generation == message_layout_integration::height_generation(app)
-                && app
-                    .message_list_state
-                    .selected
-                    .is_none_or(|selected| selected >= anchor.index)
-                && items
-                    .get(anchor.index)
-                    .is_some_and(|item| item.info.id == anchor.message_id)
-        });
-    if let Some(anchor) = previous_anchor.as_mut() {
-        let new_bottom = list_area.bottom();
-        let bottom_delta = new_bottom as isize - anchor.bottom as isize;
-        anchor.y = anchor.y.saturating_add(bottom_delta);
-        anchor.bottom = new_bottom;
-    }
-
-    app.message_list_state.selected_message = app
-        .message_list_state
-        .selected
-        .map(|selected| items[selected].info.id.clone());
-
-    if app.message_list_state.selected.is_some() && app.message_list_state.update_selected {
-        let selected = app.message_list_state.selected.unwrap();
-        app.message_list_state.update_selected = false;
-
-        // Use the previous viewport as an anchor while selection moves locally. A
-        // cold jump still falls back to the exact prefix calculation below.
-        let acc_height = previous_anchor
-            .as_ref()
-            .filter(|anchor| anchor.index <= selected)
-            .map(|anchor| {
-                let mut cursor = anchor.y;
-                for index in anchor.index..selected {
-                    cursor -= message_height(
-                        &items[index],
-                        width as usize,
-                        app.message_list_state.selected == Some(index),
-                        author_groups[index],
-                        app,
-                    ) as isize;
-                    cursor -= spacing_after_message(
-                        index,
-                        &author_groups,
-                        app.message_list_state.selected,
-                    ) as isize;
-                    if divider_after == Some(index) {
-                        cursor -= 1;
-                    }
-                }
-                (list_area.bottom() as isize + app.message_list_state.offset as isize - cursor)
-                    as usize
-            })
-            .unwrap_or_else(|| {
-                items
-                    .iter()
-                    .take(selected)
-                    .enumerate()
-                    .map(|(index, item)| {
-                        usize::from(divider_after == Some(index))
-                            + message_height(
-                                item,
-                                width as usize,
-                                app.message_list_state.selected == Some(index),
-                                author_groups[index],
-                                app,
-                            )
-                            + spacing_after_message(
-                                index,
-                                &author_groups,
-                                app.message_list_state.selected,
-                            )
-                    })
-                    .sum::<usize>()
-            });
-
-        let selected_height = message_height(
-            &items[selected],
-            width as usize,
-            true,
-            author_groups[selected],
-            app,
-        );
-
-        let low = acc_height < app.message_list_state.offset + padding;
-        let high = acc_height + selected_height
-            > app
-                .message_list_state
-                .offset
-                .saturating_add((list_area.height as usize).saturating_sub(padding));
-
-        // if low && high {
-        //     info!("idk");
-        // } else if low {
-        if low {
-            app.message_list_state.offset = acc_height.saturating_sub(padding);
-        } else if high {
-            app.message_list_state.offset =
-                (acc_height + selected_height + padding).saturating_sub(list_area.height as usize);
-        }
-        if app.message_list_state.offset != previous_offset {
-            if let Some(anchor) = previous_anchor.as_mut() {
-                let delta = if app.message_list_state.offset >= previous_offset {
-                    app.message_list_state.offset - previous_offset
-                } else {
-                    previous_offset - app.message_list_state.offset
-                };
-                let delta = delta.min(isize::MAX as usize) as isize;
-                anchor.y = if app.message_list_state.offset >= previous_offset {
-                    anchor.y.saturating_add(delta)
-                } else {
-                    anchor.y.saturating_sub(delta)
-                };
-                anchor.offset = app.message_list_state.offset;
-            }
-        }
-    }
-
-    let (start_index, y) = previous_anchor
-        .map(|anchor| (anchor.index, anchor.y))
-        .unwrap_or((
-            0,
-            list_area.bottom() as isize + app.message_list_state.offset as isize,
-        ));
+    let (start_index, y) = message_list_reconciliation::reconcile(
+        app,
+        list_area,
+        &items,
+        &author_groups,
+        unread_count,
+    );
     app.message_list_state.viewport_anchor = message_viewport::render(
         frame,
         app,
