@@ -1,4 +1,4 @@
-use ratatui::crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{Event, KeyCode, KeyEventKind};
 
 use crate::app::App;
 use crate::app::actions::{
@@ -11,6 +11,7 @@ use crate::app::input_mapping::{
     attachment_viewer_action, file_picker_navigation_action, file_picker_search_action,
     message_menu_action, reaction_picker_action, share_picker_action, url_picker_action,
 };
+use crate::app::log_toggle::is_toggle_logs_key;
 use crate::app::status_input::status_view_allows;
 use crate::key_handler::Key;
 
@@ -136,10 +137,7 @@ impl App<'_> {
                 self.should_quit = true;
             }
             AppAction::Logout => self.begin_logout_confirmation(),
-            AppAction::ToggleLogs => {
-                self.show_logs = !self.show_logs;
-                tui_logger::set_default_level(log_level_for_logs(self.show_logs));
-            }
+            AppAction::ToggleLogs => self.toggle_logs(),
             AppAction::ToggleSectionRail => {
                 self.pane_visibility.section_rail = !self.pane_visibility.section_rail;
                 self.focus_pane =
@@ -282,30 +280,5 @@ impl App<'_> {
         self.action_notice = Some(crate::app::actions::ActionNotice::Unavailable(
             action.into(),
         ));
-    }
-}
-
-fn is_toggle_logs_key(key: &Key) -> bool {
-    matches!(key.code, KeyCode::Char('l' | 'L'))
-        && key.modifiers == KeyModifiers::CONTROL | KeyModifiers::SHIFT
-}
-
-fn log_level_for_logs(show_logs: bool) -> tui_logger::LevelFilter {
-    if show_logs {
-        tui_logger::LevelFilter::Info
-    } else {
-        tui_logger::LevelFilter::Warn
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::log_level_for_logs;
-    use tui_logger::LevelFilter;
-
-    #[test]
-    fn log_panel_uses_info_and_restores_warn_when_closed() {
-        assert_eq!(log_level_for_logs(true), LevelFilter::Info);
-        assert_eq!(log_level_for_logs(false), LevelFilter::Warn);
     }
 }
