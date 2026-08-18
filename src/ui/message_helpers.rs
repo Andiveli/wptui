@@ -8,6 +8,8 @@ use ratatui::{
 use unicode_segmentation::UnicodeSegmentation;
 use whatsrust as wr;
 
+use super::bidi::visual_graphemes_with_range;
+
 pub const AUTHOR_GROUP_MAX_GAP: i64 = 5 * 60;
 const REPLY_EXCERPT_MAX_CHARS: usize = 40;
 
@@ -97,11 +99,35 @@ impl StatusLabel {
     }
 }
 
+#[derive(Clone, Copy)]
+enum TextOrder {
+    Visual,
+    Logical,
+}
+
 pub(crate) fn inline_content_lines(
     body: &str,
     mention_ranges: &[Range<usize>],
     status: Option<StatusLabel>,
     width: usize,
+) -> Vec<Line<'static>> {
+    inline_content_lines_with_order(body, mention_ranges, status, width, TextOrder::Visual)
+}
+
+pub(crate) fn inline_content_lines_logical(
+    body: &str,
+    status: Option<StatusLabel>,
+    width: usize,
+) -> Vec<Line<'static>> {
+    inline_content_lines_with_order(body, &[], status, width, TextOrder::Logical)
+}
+
+fn inline_content_lines_with_order(
+    body: &str,
+    mention_ranges: &[Range<usize>],
+    status: Option<StatusLabel>,
+    width: usize,
+    text_order: TextOrder,
 ) -> Vec<Line<'static>> {
     if matches!(status, Some(StatusLabel::Deleted)) {
         return textwrap::wrap(crate::app::DELETED_MESSAGE_TEXT, width.max(1))
@@ -122,18 +148,18 @@ pub(crate) fn inline_content_lines(
         .into_iter()
         .map(|line| line.into_owned())
         .collect::<Vec<_>>();
-    let mut status_starts = vec![None; wrapped.len()];
+    let mut status_ranges = vec![None; wrapped.len()];
     if let Some(status) = status_text {
         let mut remaining = status.graphemes(true).collect::<Vec<_>>();
         for (index, line) in wrapped.iter().enumerate().rev() {
             let graphemes = line.graphemes(true).collect::<Vec<_>>();
             if remaining.ends_with(&graphemes) {
-                status_starts[index] = Some(0);
+                status_ranges[index] = Some((0, graphemes.len()));
                 remaining.truncate(remaining.len().saturating_sub(graphemes.len()));
             } else if let Some(start) =
-                (0..graphemes.len()).find(|start| remaining.starts_with(&graphemes[*start..]))
+                (0..graphemes.len()).find(|start| graphemes[*start..].starts_with(&remaining))
             {
-                status_starts[index] = Some(start);
+                status_ranges[index] = Some((start, start + remaining.len()));
                 break;
             }
         }
@@ -150,31 +176,47 @@ pub(crate) fn inline_content_lines(
         .collect::<Vec<_>>();
     wrapped
         .iter()
-        .zip(status_starts)
+        .zip(status_ranges)
         .zip(line_starts)
-        .map(|((line, status_start), line_start)| {
-            let mut byte_offset = 0;
-            let graphemes = line
-                .graphemes(true)
+        .map(|((line, status_range), line_start)| {
+            let mention_ranges_for_line = line
+                .grapheme_indices(true)
                 .enumerate()
-                .map(|(index, grapheme)| {
-                    let start = line_start + byte_offset;
-                    byte_offset += grapheme.len();
-                    (
-                        grapheme,
-                        status_start.is_some_and(|status_start| index >= status_start),
-                        mention_ranges
-                            .iter()
-                            .any(|range| start < range.end && start + grapheme.len() > range.start),
-                    )
+                .filter_map(|(index, (offset, grapheme))| {
+                    let start = line_start + offset;
+                    mention_ranges
+                        .iter()
+                        .any(|range| start < range.end && start + grapheme.len() > range.start)
+                        .then_some(index..index + 1)
                 })
                 .collect::<Vec<_>>();
-            inline_line(&graphemes)
+            if matches!(text_order, TextOrder::Visual) {
+                inline_line(&super::bidi::visual_graphemes_with_marks(
+                    line,
+                    status_range.map(|(start, end)| start..end),
+                    &mention_ranges_for_line,
+                ))
+            } else {
+                let graphemes = line
+                    .graphemes(true)
+                    .enumerate()
+                    .map(|(index, grapheme)| {
+                        (
+                            grapheme.to_owned(),
+                            status_range.is_some_and(|(start, end)| (start..end).contains(&index)),
+                            mention_ranges_for_line
+                                .iter()
+                                .any(|range| range.contains(&index)),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                inline_line(&graphemes)
+            }
         })
         .collect()
 }
 
-fn inline_line(graphemes: &[(&str, bool, bool)]) -> Line<'static> {
+fn inline_line(graphemes: &[(String, bool, bool)]) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     for (grapheme, is_status, is_mention) in graphemes {
         let style = if *is_status {
@@ -186,7 +228,7 @@ fn inline_line(graphemes: &[(&str, bool, bool)]) -> Line<'static> {
         };
         match spans.last_mut() {
             Some(span) if span.style == style => span.content.to_mut().push_str(grapheme),
-            _ => spans.push(Span::styled((*grapheme).to_owned(), style)),
+            _ => spans.push(Span::styled(grapheme.clone(), style)),
         }
     }
     Line::from(spans)

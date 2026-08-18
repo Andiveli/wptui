@@ -1,6 +1,7 @@
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Layout, Rect},
+    text::Line,
     widgets::{Paragraph, StatefulWidget, Widget},
 };
 use ratatui_image::StatefulImage;
@@ -9,7 +10,8 @@ use whatsrust::{self as wr, FileKind};
 use crate::app::events::{AppEvent, AppInput};
 use crate::app::{App, FileMeta, Metadata};
 
-use super::message_helpers::{StatusLabel, inline_content_lines};
+use super::MessageTextMode;
+use super::message_helpers::{StatusLabel, inline_content_lines, inline_content_lines_logical};
 
 pub fn preview_height(kind: &FileKind) -> usize {
     match kind {
@@ -26,6 +28,19 @@ fn content_height(file: &wr::FileContent) -> usize {
     }
 }
 
+fn caption_lines(
+    caption: Option<&str>,
+    status: Option<StatusLabel>,
+    width: usize,
+    text_mode: MessageTextMode,
+) -> Vec<Line<'static>> {
+    let caption = caption.unwrap_or_default();
+    match text_mode {
+        MessageTextMode::Chat => inline_content_lines(caption, &[], status, width),
+        MessageTextMode::Status => inline_content_lines_logical(caption, status, width),
+    }
+}
+
 pub fn render_file(
     buf: &mut Buffer,
     message_id: &wr::MessageId,
@@ -35,6 +50,7 @@ pub fn render_file(
     content_area: Rect,
     render_image: bool,
     alignment: Alignment,
+    text_mode: MessageTextMode,
 ) {
     let is_audio = matches!(data.kind, FileKind::Audio);
     let audio_duration = is_audio
@@ -155,22 +171,45 @@ pub fn render_file(
     }
 
     if data.caption.is_some() || status.is_some() {
-        let lines = inline_content_lines(
-            data.caption.as_deref().unwrap_or_default(),
-            &[],
+        Paragraph::new(caption_lines(
+            data.caption.as_deref(),
             status,
             content_area.width as usize,
-        );
-        Paragraph::new(lines)
-            .alignment(alignment)
-            .render(caption_area, buf);
+            text_mode,
+        ))
+        .alignment(alignment)
+        .render(caption_area, buf);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::preview_height;
+    use super::{MessageTextMode, caption_lines, preview_height};
+    use ratatui::{
+        Terminal,
+        backend::TestBackend,
+        widgets::{Paragraph, Widget},
+    };
     use whatsrust::FileKind;
+
+    #[test]
+    fn caption_cells_use_visual_lines_after_logical_wrapping() {
+        let mut terminal = Terminal::new(TestBackend::new(4, 3)).unwrap();
+        terminal
+            .draw(|frame| {
+                Paragraph::new(caption_lines(
+                    Some("abc אבג 123"),
+                    None,
+                    4,
+                    MessageTextMode::Chat,
+                ))
+                .render(frame.area(), frame.buffer_mut());
+            })
+            .unwrap();
+        terminal
+            .backend()
+            .assert_buffer_lines(["abc ", "גבא ", "123 "]);
+    }
 
     #[test]
     fn preview_height_matches_layout_contract() {
