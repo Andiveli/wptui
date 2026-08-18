@@ -7,14 +7,14 @@ import (
 )
 
 func TestTextPayloadOwnershipIsKeptWithEmitter(t *testing.T) {
-	mainSource := string(mustRead(t, "main.go"))
+	handlingSource := string(mustRead(t, "message_handling.go"))
 	source, err := os.ReadFile("text_message_payload.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	textSource := string(source)
 
-	if strings.Contains(mainSource, "func emitTextMessage(") {
+	if strings.Contains(handlingSource, "func emitTextMessage(") {
 		t.Fatal("text payload emission must not remain in HandleMessage's composition file")
 	}
 	for _, fragment := range []string{
@@ -28,7 +28,7 @@ func TestTextPayloadOwnershipIsKeptWithEmitter(t *testing.T) {
 			t.Fatalf("text payload ownership is missing: %q", fragment)
 		}
 	}
-	if strings.Count(mainSource, "emitTextMessage(cinfo,") != 2 {
+	if strings.Count(handlingSource, "emitTextMessage(cinfo,") != 2 {
 		t.Fatal("conversation and extended-text payloads must use the text seam")
 	}
 }
