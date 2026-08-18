@@ -5,7 +5,6 @@ use std::{
 };
 
 use chrono::{DateTime, Datelike, Local};
-use log::trace;
 use ratatui::{
     Frame,
     buffer::Buffer,
@@ -13,12 +12,10 @@ use ratatui::{
     style::{Color, Style, Stylize},
     symbols,
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, StatefulWidget, Widget, Wrap},
+    widgets::{Block, Borders, Paragraph, Widget, Wrap},
 };
-use ratatui_image::StatefulImage;
 use whatsrust::{self as wr, FileKind};
 
-use crate::app::events::{AppEvent, AppInput};
 use crate::app::{App, FileMeta, Metadata};
 
 #[path = "message_helpers.rs"]
@@ -27,6 +24,8 @@ mod message_helpers;
 mod message_layout;
 #[path = "message_list_state.rs"]
 mod message_list_state;
+#[path = "message_media.rs"]
+mod message_media;
 
 pub use message_helpers::{
     AUTHOR_GROUP_MAX_GAP, AuthorGroupContext, get_quoted_text, reply_summary, starts_author_group,
@@ -41,6 +40,8 @@ pub use message_layout::{
 use message_layout::{LayoutInput, file_kind};
 pub use message_list_state::MessageListState;
 use message_list_state::ViewportAnchor;
+pub use message_media::preview_height;
+use message_media::render_file;
 
 fn status_label(app: &App, message_id: &wr::MessageId) -> Option<StatusLabel> {
     let status = app.message_status(message_id);
@@ -58,9 +59,6 @@ mod layout_contract_tests {
         assert_eq!(super::message_layout::text_height("café 👩‍💻", 4), 2);
     }
 }
-
-/// Number of bars in the static audio waveform.
-const AUDIO_WIDGET_BARS: usize = 16;
 
 /// Palette inspired by WhatsApp's group chat author colors.
 /// Picked for solid contrast on both black and dark-gray backgrounds.
@@ -128,28 +126,6 @@ fn message_content_area(area: Rect, is_selected: bool) -> Rect {
     }
 }
 
-fn file_content_height(_id: &wr::MessageId, file: &wr::FileContent, _app: &mut App) -> usize {
-    match file.kind {
-        // Media previews occupy their final block from the first render. The
-        // preview lifecycle changes only the contents of this block, never its
-        // geometry.
-        FileKind::Image | FileKind::Sticker | FileKind::Video => preview_height(&file.kind),
-        // Audio renders a static play bar under the file line, so it takes
-        // two rows. Must stay in sync with `message_height`.
-        FileKind::Audio => 2,
-        FileKind::Document => 1,
-    }
-}
-
-/// Height (in terminal rows) of an inline media preview once loaded.
-/// Video is rendered taller than images/stickers so it doesn't look tiny.
-pub fn preview_height(kind: &FileKind) -> usize {
-    match kind {
-        FileKind::Video => VIDEO_HEIGHT,
-        _ => IMAGE_HEIGHT,
-    }
-}
-
 pub fn reaction_chips(reactions: Option<&HashMap<wr::JID, Arc<str>>>) -> Vec<String> {
     let mut counts = BTreeMap::new();
     for reaction in reactions
@@ -210,13 +186,8 @@ fn spacing_after_message(
     usize::from(has_older_neighbor && (!continuation || selected_at_boundary))
 }
 
-/// Visual-only waveform for audio messages. Deliberately static: a functional
-/// progress bar would need per-frame re-rendering and playback position
-/// tracking, which is out of scope.
-///
-/// The pattern is deterministic per message (seeded from the file path), so
-/// each audio message keeps its own waveform across re-renders. `duration` is
-/// the probed length in seconds, shown between the play marker and the wave.
+const AUDIO_WIDGET_BARS: usize = 16;
+
 fn audio_widget_line(seed: &str, duration: Option<u64>) -> Line<'static> {
     let mut spans = vec![Span::styled(
         "|> ",
@@ -232,7 +203,6 @@ fn audio_widget_line(seed: &str, duration: Option<u64>) -> Line<'static> {
     Line::from(spans)
 }
 
-/// Formats whole seconds as `m:ss` (or `h:mm:ss` for long recordings).
 fn format_duration(seconds: u64) -> String {
     let hours = seconds / 3600;
     let minutes = (seconds % 3600) / 60;
@@ -244,16 +214,12 @@ fn format_duration(seconds: u64) -> String {
     }
 }
 
-/// Generates `len` waveform bars (▁..█) via a deterministic random walk seeded
-/// from `seed`, so the same audio always renders the same pattern.
 fn waveform_bars(seed: &str, len: usize) -> String {
-    // FNV-1a over the seed bytes (same approach as `author_color`).
     let mut state: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in seed.as_bytes() {
         state ^= u64::from(*byte);
         state = state.wrapping_mul(0x100_0000_01b3);
     }
-    // xorshift64* PRNG for a stable pseudo-random walk.
     let mut next = move || {
         state ^= state >> 12;
         state ^= state << 25;
@@ -262,7 +228,7 @@ fn waveform_bars(seed: &str, len: usize) -> String {
     };
     const BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
     let mut waveform = String::with_capacity(len);
-    let mut level = 3 + (next() as usize % 3); // start mid-range
+    let mut level = 3 + (next() as usize % 3);
     for _ in 0..len {
         let step = (next() % 3) as i32 - 1;
         level = (level as i32 + step).clamp(0, 7) as usize;
@@ -271,9 +237,7 @@ fn waveform_bars(seed: &str, len: usize) -> String {
     waveform
 }
 
-/// Builds the media line(s) for a file message. Audio messages append a
-/// static waveform (with probed duration when available) under the file line.
-fn media_paragraph(
+pub(crate) fn media_paragraph(
     status: String,
     is_audio: bool,
     audio_seed: &str,
@@ -403,148 +367,16 @@ fn render_message(
                 .render(content_area, buf);
         }
         wr::MessageContent::File(data) => {
-            let content_height = file_content_height(&message.info.id, data, app);
-            let is_audio = matches!(data.kind, FileKind::Audio);
-            let audio_duration = if is_audio {
-                app.audio_durations.get(data.path.as_ref()).copied()
-            } else {
-                None
-            };
-
-            let [media_area, caption_area] = Layout::vertical([
-                Constraint::Length(content_height as u16),
-                Constraint::Min(0),
-            ])
-            .areas(content_area);
-
-            match app.metadata.get(&message.info.id) {
-                None => {
-                    media_paragraph(
-                        format!("🔗 {} +", data.path),
-                        is_audio,
-                        data.path.as_ref(),
-                        audio_duration,
-                        alignment,
-                    )
-                    .render(media_area, buf);
-                    app.tx
-                        .send(AppInput::App(AppEvent::DownloadFile(
-                            message.info.id.clone(),
-                            data.file_id.clone(),
-                        )))
-                        .unwrap();
-                }
-                Some(Metadata::File(meta)) => match meta {
-                    FileMeta::Downloaded => {
-                        media_paragraph(
-                            format!("🔗 {} ✓", data.path),
-                            is_audio,
-                            data.path.as_ref(),
-                            audio_duration,
-                            alignment,
-                        )
-                        .render(media_area, buf);
-
-                        if let FileKind::Image | FileKind::Sticker | FileKind::Video = data.kind {
-                            let already_loading = matches!(
-                                app.metadata.get(&message.info.id),
-                                Some(Metadata::File(FileMeta::Loading))
-                            );
-                            if !already_loading {
-                                app.tx
-                                    .send(AppInput::App(AppEvent::LoadFilePreview(
-                                        message.info.id.clone(),
-                                    )))
-                                    .unwrap();
-                            }
-                        }
-                    }
-                    FileMeta::Downloading => {
-                        media_paragraph(
-                            format!("🔗 {} downloading", data.path),
-                            is_audio,
-                            data.path.as_ref(),
-                            audio_duration,
-                            alignment,
-                        )
-                        .render(media_area, buf);
-                    }
-                    FileMeta::DownloadFailed => {
-                        media_paragraph(
-                            format!("🔗 Failed to download {}", data.path),
-                            is_audio,
-                            data.path.as_ref(),
-                            audio_duration,
-                            alignment,
-                        )
-                        .render(media_area, buf);
-                    }
-                    FileMeta::LoadFailed => {
-                        media_paragraph(
-                            format!("🔗 Failed to load {}", data.path),
-                            is_audio,
-                            data.path.as_ref(),
-                            audio_duration,
-                            alignment,
-                        )
-                        .render(media_area, buf);
-                    }
-                    FileMeta::Loading => {
-                        trace!("Rendering loading for {}", &message.info.id);
-                        media_paragraph(
-                            format!("🔗 {} loading", data.path),
-                            is_audio,
-                            data.path.as_ref(),
-                            audio_duration,
-                            alignment,
-                        )
-                        .render(media_area, buf);
-                    }
-                    FileMeta::Loaded => match data.kind {
-                        FileKind::Image | FileKind::Sticker | FileKind::Video => {
-                            let placeholder = match data.kind {
-                                FileKind::Video => "🎬",
-                                _ => "🖼",
-                            };
-                            if !render_image || app.image_cache.get_mut(&data.path).is_none() {
-                                Paragraph::new(placeholder)
-                                    .alignment(alignment)
-                                    .render(media_area, buf);
-                            } else {
-                                app.touch_image_cache(&data.path);
-                                if let Some(image) = app.image_cache.get_mut(&data.path) {
-                                    StatefulImage::default().render(media_area, buf, image);
-                                } else {
-                                    Paragraph::new(placeholder)
-                                        .alignment(alignment)
-                                        .render(media_area, buf);
-                                }
-                            }
-                        }
-                        FileKind::Audio | FileKind::Document => {
-                            media_paragraph(
-                                format!("🔗 {} ✓", data.path),
-                                is_audio,
-                                data.path.as_ref(),
-                                audio_duration,
-                                alignment,
-                            )
-                            .render(media_area, buf);
-                        }
-                    },
-                },
-            };
-
-            if data.caption.is_some() || status.is_some() {
-                let lines = inline_content_lines(
-                    data.caption.as_deref().unwrap_or_default(),
-                    status,
-                    content_area.width as usize,
-                );
-                Paragraph::new(lines)
-                    .alignment(alignment)
-                    .render(caption_area, buf);
-            }
+            render_file(
+                buf,
+                &message.info.id,
+                data,
+                status,
+                app,
+                content_area,
+                render_image,
+                alignment,
+            );
         }
     };
     if !reactions_area.is_empty() {
