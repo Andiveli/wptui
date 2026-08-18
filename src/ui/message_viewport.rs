@@ -12,7 +12,8 @@ use crate::app::{App, FileMeta, Metadata};
 use super::message_formatting::unread_divider_line;
 use super::message_list_state::ViewportAnchor;
 use super::{
-    AuthorGroupContext, message_height, preview_height, render_message, spacing_after_message,
+    AuthorGroupContext, MessageTextMode, message_height, preview_height, render_message,
+    spacing_after_message,
 };
 
 pub(super) fn render(
@@ -25,6 +26,7 @@ pub(super) fn render(
     width: isize,
     start_index: usize,
     mut y: isize,
+    text_mode: MessageTextMode,
 ) -> Option<ViewportAnchor> {
     let divider_after = unread_count.checked_sub(1);
     let mut viewport_anchor = None;
@@ -94,6 +96,7 @@ pub(super) fn render(
                     app,
                     item_area,
                     render_image,
+                    text_mode,
                 );
 
                 let buf_area = Rect::new(
@@ -162,6 +165,7 @@ pub(super) fn render(
                     app,
                     item_area,
                     true,
+                    text_mode,
                 );
             }
         }

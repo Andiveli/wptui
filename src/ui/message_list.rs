@@ -11,6 +11,8 @@ use whatsrust as wr;
 
 use crate::app::App;
 
+#[path = "bidi.rs"]
+mod bidi;
 #[path = "message_formatting.rs"]
 mod message_formatting;
 #[path = "message_helpers.rs"]
@@ -35,6 +37,7 @@ pub use message_helpers::{
 };
 use message_helpers::{
     StatusLabel, forwarding_indicator_lines, forwarding_label, inline_content_lines,
+    inline_content_lines_logical,
 };
 pub use message_layout::{
     IMAGE_HEIGHT, IMAGE_WIDTH, MESSAGE_HEIGHT_CACHE_CAPACITY, MessageHeightCache, VIDEO_HEIGHT,
@@ -43,6 +46,12 @@ pub use message_layout::{
 pub use message_list_state::MessageListState;
 pub use message_media::preview_height;
 use message_media::render_file;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MessageTextMode {
+    Chat,
+    Status,
+}
 
 fn status_label(app: &App, message_id: &wr::MessageId) -> Option<StatusLabel> {
     let status = app.message_status(message_id);
@@ -55,9 +64,140 @@ fn status_label(app: &App, message_id: &wr::MessageId) -> Option<StatusLabel> {
 #[cfg(test)]
 mod layout_contract_tests {
     #[test]
+    fn rendered_cells_receive_visual_text_once() {
+        use ratatui::{
+            buffer::Buffer,
+            layout::Rect,
+            widgets::{Paragraph, Widget},
+        };
+
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 20, 1));
+        Paragraph::new(super::inline_content_lines("abc אבג 123", None, 20))
+            .render(Rect::new(0, 0, 20, 1), &mut buffer);
+        let rendered = (0..12).map(|x| buffer[(x, 0)].symbol()).collect::<String>();
+
+        assert_eq!(rendered, "abc 123 גבא ");
+    }
+
+    #[test]
+    fn status_content_keeps_logical_order() {
+        let lines = super::inline_content_lines_logical(
+            "abc אבג 123",
+            Some(super::StatusLabel::Edited),
+            20,
+        );
+        let rendered = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(rendered, ["abc אבג 123 (edited)"]);
+        assert!(lines[0].spans.iter().any(|span| {
+            span.content.as_ref() == "(edited)"
+                && span.style == ratatui::style::Style::default().dark_gray()
+        }));
+    }
+
+    #[test]
+    fn rtl_status_label_stays_styled_after_reordering() {
+        let lines = super::inline_content_lines("אבג", Some(super::StatusLabel::Edited), 20);
+        let line = &lines[0];
+
+        assert_eq!(
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>(),
+            ")edited( גבא"
+        );
+        assert!(line.spans.iter().any(|span| {
+            span.content.as_ref() == ")edited("
+                && span.style == ratatui::style::Style::default().dark_gray()
+        }));
+    }
+
+    #[test]
+    fn caption_cells_follow_visual_order_after_logical_wrapping() {
+        use ratatui::{
+            buffer::Buffer,
+            layout::Rect,
+            widgets::{Paragraph, Widget},
+        };
+
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 4, 3));
+        Paragraph::new(super::inline_content_lines("abc אבג 123", None, 4))
+            .render(Rect::new(0, 0, 4, 3), &mut buffer);
+        let rendered = (0..3)
+            .map(|y| (0..4).map(|x| buffer[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>();
+
+        assert_eq!(rendered, ["abc ", "גבא ", "123 "]);
+    }
+
+    #[test]
     fn text_height_contract_handles_unicode_and_narrow_widths() {
         assert_eq!(super::message_layout::text_height("café 👩‍💻", 20), 1);
         assert_eq!(super::message_layout::text_height("café 👩‍💻", 4), 2);
+    }
+
+    #[test]
+    fn logical_wrap_precedes_per_line_visual_reordering() {
+        let lines = super::inline_content_lines("abc אבג 123", None, 4);
+        let rendered = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(rendered, ["abc", "גבא", "123"]);
+    }
+
+    #[test]
+    fn visual_wrapping_and_cached_height_agree_at_narrow_width() {
+        use std::sync::Arc;
+
+        let body = "abc אבג 123";
+        let width = 4;
+        let lines = super::inline_content_lines(body, None, width);
+        let input = super::message_layout::LayoutInput {
+            width,
+            is_selected: false,
+            has_quote: false,
+            has_reactions: false,
+            author_group: super::AuthorGroupContext::STARTS_GROUP,
+            content: super::message_layout::HeightContent::Text {
+                body,
+                forwarding: None,
+                status: None,
+            },
+        };
+        let mut cache = super::MessageHeightCache::default();
+        let cached = super::message_layout::height(&mut cache, &Arc::from("rtl"), &input);
+        let caption_input = super::message_layout::LayoutInput {
+            content: super::message_layout::HeightContent::File {
+                kind: super::message_layout::HeightFileKind::Document,
+                caption: Some(body),
+                preview_loaded: false,
+                forwarding: None,
+                status: None,
+            },
+            ..input.clone()
+        };
+        let caption_cached =
+            super::message_layout::height(&mut cache, &Arc::from("rtl-caption"), &caption_input);
+
+        assert_eq!(cached, lines.len() + 1);
+        assert_eq!(caption_cached, lines.len() + 2);
+        assert_eq!(super::message_layout::text_height(body, width), lines.len());
     }
 }
 
@@ -86,6 +226,7 @@ fn render_message(
     app: &mut App,
     area: Rect,
     render_image: bool,
+    text_mode: MessageTextMode,
 ) {
     let alignment = ratatui::layout::Alignment::Left;
     // let alignment = if message.info.is_from_me {
@@ -185,7 +326,14 @@ fn render_message(
     }
     match &message.message {
         wr::MessageContent::Text(text) => {
-            let lines = inline_content_lines(text, status, content_area.width as usize);
+            let lines = match text_mode {
+                MessageTextMode::Chat => {
+                    inline_content_lines(text, status, content_area.width as usize)
+                }
+                MessageTextMode::Status => {
+                    inline_content_lines_logical(text, status, content_area.width as usize)
+                }
+            };
             Paragraph::new(lines)
                 .alignment(alignment)
                 .render(content_area, buf);
@@ -200,6 +348,7 @@ fn render_message(
                 content_area,
                 render_image,
                 alignment,
+                text_mode,
             );
         }
     };
@@ -253,7 +402,14 @@ pub fn render_messages(frame: &mut Frame, app: &mut App, area: Rect) -> Option<(
         .rev()
         .filter_map(|msg_id| app.messages.get(msg_id).cloned())
         .collect();
-    let result = render_message_items(frame, app, list_area, items, unread_count);
+    let result = render_message_items(
+        frame,
+        app,
+        list_area,
+        items,
+        unread_count,
+        MessageTextMode::Chat,
+    );
     crate::crash_diagnostics::breadcrumb("first-message-render", "complete");
     if let Some(text) = banner {
         Paragraph::new(text)
@@ -286,7 +442,7 @@ pub fn render_status_messages(frame: &mut Frame, app: &mut App, area: Rect) {
         .rev()
         .filter_map(|id| app.messages.get(id).cloned())
         .collect::<Vec<_>>();
-    render_message_items(frame, app, area, items, 0);
+    render_message_items(frame, app, area, items, 0, MessageTextMode::Status);
 }
 
 /// Shared core of chat and status message rendering. The caller supplies
@@ -297,6 +453,7 @@ fn render_message_items(
     area: Rect,
     items: Vec<wr::Message>,
     unread_count: usize,
+    text_mode: MessageTextMode,
 ) -> Option<()> {
     let list_area = area;
     if list_area.is_empty() {
@@ -336,6 +493,7 @@ fn render_message_items(
         width,
         start_index,
         y,
+        text_mode,
     );
 
     None
