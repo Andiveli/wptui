@@ -97,7 +97,7 @@ impl App<'_> {
         self.read_receipts
             .dispatch(self.now(), &self.read_receipt_worker, None);
     }
-    fn request_restore_load(&mut self) {
+    pub(crate) fn request_restore_load(&mut self) {
         let now = self.now();
         if self.read_receipts.restore_load_allowed(now) {
             if self.read_receipt_worker.load() {

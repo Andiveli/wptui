@@ -45,7 +45,8 @@ impl App<'_> {
                 let success = result.is_ok();
                 self.read_receipts.persistence_completed(&key, result);
                 if success && self.read_receipts.enabled() {
-                    let _ = self.read_receipt_worker.load();
+                    self.read_receipts.restore_load_needed();
+                    self.request_restore_load();
                 }
                 false
             }
@@ -53,7 +54,8 @@ impl App<'_> {
                 let success = result.is_ok();
                 self.read_receipts.persistence_rejected(&key, result);
                 if success && self.read_receipts.enabled() {
-                    let _ = self.read_receipt_worker.load();
+                    self.read_receipts.restore_load_needed();
+                    self.request_restore_load();
                 }
                 false
             }

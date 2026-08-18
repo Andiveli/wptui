@@ -2,7 +2,10 @@ use std::path::PathBuf;
 
 use rusqlite::{Error, ErrorCode, params};
 
-use super::{PendingReceiptRepository, ReceiptCandidate, ReceiptKey, ReceiptKind, RepositoryError};
+use super::{
+    MAX_PENDING, PendingReceiptRepository, ReceiptCandidate, ReceiptKey, ReceiptKind,
+    RepositoryError,
+};
 
 /// Every eligible candidate is durable before it enters the bounded working set.
 /// Therefore memory pressure cannot silently lose a receipt that may leave the
@@ -41,9 +44,9 @@ fn classify(error: Error) -> RepositoryError {
 impl PendingReceiptRepository for SqliteRepository {
     fn load(&self) -> Result<Vec<ReceiptCandidate>, RepositoryError> {
         let connection = self.connection()?;
-        let mut statement = connection.prepare("SELECT p.chat, p.sender, p.message_id, p.timestamp, p.kind FROM read_receipt_pending p LEFT JOIN read_receipt_sent s ON s.chat = p.chat AND s.sender = p.sender AND s.message_id = p.message_id LEFT JOIN read_receipt_rejected r ON r.chat = p.chat AND r.sender = p.sender AND r.message_id = p.message_id WHERE s.message_id IS NULL AND r.message_id IS NULL ORDER BY p.timestamp").map_err(classify)?;
+        let mut statement = connection.prepare("SELECT p.chat, p.sender, p.message_id, p.timestamp, p.kind FROM read_receipt_pending p LEFT JOIN read_receipt_sent s ON s.chat = p.chat AND s.sender = p.sender AND s.message_id = p.message_id LEFT JOIN read_receipt_rejected r ON r.chat = p.chat AND r.sender = p.sender AND r.message_id = p.message_id WHERE s.message_id IS NULL AND r.message_id IS NULL ORDER BY p.timestamp LIMIT ?1").map_err(classify)?;
         statement
-            .query_map([], |row| {
+            .query_map([MAX_PENDING as i64], |row| {
                 Ok(ReceiptCandidate {
                     chat: row.get(0)?,
                     sender: row.get(1)?,
@@ -91,5 +94,104 @@ impl PendingReceiptRepository for SqliteRepository {
             transaction.execute("DELETE FROM read_receipt_pending WHERE chat = ?1 AND sender = ?2 AND message_id = ?3", params![&key.chat, &key.sender, &key.message_id]).map_err(classify)?;
             transaction.commit().map_err(classify)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::read_receipts::{MAX_PENDING, PendingReceiptRepository};
+    use tempfile::tempdir;
+
+    fn repository_with_pending(count: usize) -> (tempfile::TempDir, SqliteRepository) {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("read-receipts.sqlite");
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE read_receipt_pending (
+                    chat TEXT NOT NULL,
+                    sender TEXT NOT NULL,
+                    message_id TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL,
+                    kind INTEGER NOT NULL,
+                    PRIMARY KEY (chat, sender, message_id)
+                );
+                CREATE TABLE read_receipt_sent (
+                    chat TEXT NOT NULL,
+                    sender TEXT NOT NULL,
+                    message_id TEXT NOT NULL,
+                    PRIMARY KEY (chat, sender, message_id)
+                );
+                CREATE TABLE read_receipt_rejected (
+                    chat TEXT NOT NULL,
+                    sender TEXT NOT NULL,
+                    message_id TEXT NOT NULL,
+                    PRIMARY KEY (chat, sender, message_id)
+                );",
+            )
+            .unwrap();
+        for timestamp in 0..count {
+            connection
+                .execute(
+                    "INSERT INTO read_receipt_pending
+                        (chat, sender, message_id, timestamp, kind)
+                     VALUES (?1, ?2, ?3, ?4, 0)",
+                    rusqlite::params![
+                        format!("chat-{timestamp}"),
+                        "sender@example.test",
+                        format!("message-{timestamp}"),
+                        timestamp as i64,
+                    ],
+                )
+                .unwrap();
+        }
+        drop(connection);
+        (directory, SqliteRepository::new(path))
+    }
+
+    #[test]
+    fn load_is_bounded_to_the_working_set() {
+        let (_directory, repository) = repository_with_pending(MAX_PENDING + 1);
+
+        let candidates = repository.load().unwrap();
+
+        assert_eq!(candidates.len(), MAX_PENDING);
+        assert_eq!(candidates.first().unwrap().timestamp, 0);
+        assert_eq!(
+            candidates.last().unwrap().timestamp,
+            (MAX_PENDING - 1) as i64
+        );
+    }
+
+    #[test]
+    fn load_fills_the_bound_after_excluding_completed_rows() {
+        let (directory, repository) = repository_with_pending(MAX_PENDING + 2);
+        let connection =
+            rusqlite::Connection::open(directory.path().join("read-receipts.sqlite")).unwrap();
+        connection
+            .execute(
+                "INSERT INTO read_receipt_sent (chat, sender, message_id)
+                 VALUES (?1, ?2, ?3)",
+                rusqlite::params!["chat-0", "sender@example.test", "message-0"],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO read_receipt_rejected (chat, sender, message_id)
+                 VALUES (?1, ?2, ?3)",
+                rusqlite::params!["chat-1", "sender@example.test", "message-1"],
+            )
+            .unwrap();
+        drop(connection);
+
+        let candidates = repository.load().unwrap();
+
+        assert_eq!(candidates.len(), MAX_PENDING);
+        assert_eq!(candidates.first().unwrap().timestamp, 2);
+        assert_eq!(
+            candidates.last().unwrap().timestamp,
+            (MAX_PENDING + 1) as i64
+        );
     }
 }
