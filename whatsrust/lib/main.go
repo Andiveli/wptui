@@ -265,11 +265,4 @@ func HandleMessage(info types.MessageInfo, msg *waE2E.Message, isSync bool) {
 	}
 }
 
-func messageActionKindName(kind uint8) string {
-	if kind == messageActionEdit {
-		return "edit"
-	}
-	return "delete"
-}
-
 func main() {} // Required for CGO
