@@ -33,6 +33,7 @@ pub mod message_action_diagnostics;
 pub mod message_actions;
 pub mod message_ingestion;
 pub mod message_interactions;
+pub mod message_menu;
 pub mod message_navigation;
 pub mod message_opening;
 pub mod notifications;
