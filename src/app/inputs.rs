@@ -2,10 +2,9 @@ use ratatui::crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 
 use crate::app::App;
 use crate::app::actions::{
-    AppAction, ComposerAction, ConversationMode, FocusPane, Section, SequenceResolution,
-    focus_after, focus_after_visibility_change,
+    AppAction, ConversationMode, FocusPane, Section, SequenceResolution, focus_after,
+    focus_after_visibility_change,
 };
-use crate::app::composer::ComposerOutcome;
 pub use crate::app::composer_input_mapping::composer_action_for_editing_key;
 pub use crate::app::composer_input_paste::apply_clipboard_paste;
 use crate::app::input_mapping::{
@@ -15,7 +14,6 @@ use crate::app::input_mapping::{
 use crate::app::share_picker::is_forwardable_recipient;
 use crate::app::status_input::status_view_allows;
 use crate::key_handler::Key;
-use whatsrust as wr;
 
 impl App<'_> {
     pub fn on_terminal_event(&mut self, event: Event) {
@@ -39,28 +37,7 @@ impl App<'_> {
 
             if is_toggle_logs_key(&key) {
                 self.dispatch_action(AppAction::ToggleLogs);
-            } else if self.focus_pane == FocusPane::Conversation
-                && self.selected_section == Section::Chats
-                && matches!(
-                    self.conversation_mode,
-                    ConversationMode::ComposerEditing | ConversationMode::EditingMessage
-                )
-            {
-                if key == Key::k(KeyCode::Esc) {
-                    if self.conversation_mode == ConversationMode::EditingMessage {
-                        self.cancel_message_edit();
-                    } else {
-                        self.composer.apply(ComposerAction::CancelReply);
-                        self.composer.pending.clear();
-                        self.conversation_mode = ConversationMode::MessageNavigation;
-                    }
-                } else if is_attach_file_key(&key) {
-                    self.dispatch_action(AppAction::AttachFile);
-                } else if self.composer_blocked() {
-                    return;
-                } else {
-                    self.dispatch_composer_action(composer_action_for_editing_key(&key));
-                }
+            } else if self.handle_composer_input(key.clone()) {
             } else if self.attachment_viewer.is_some() {
                 let Some(action) = attachment_viewer_action(&key) else {
                     return;
@@ -390,49 +367,11 @@ impl App<'_> {
             failure: report.failure,
         });
     }
-
-    fn dispatch_composer_action(&mut self, action: ComposerAction) {
-        if self.composer_blocked() {
-            return;
-        }
-        if self.conversation_mode == ConversationMode::EditingMessage
-            && matches!(action, ComposerAction::Submit)
-        {
-            return self.submit_message_edit();
-        }
-        match action {
-            ComposerAction::StartEdit => {
-                // InsertMode is now the canonical way; StartEdit is unused.
-            }
-            ComposerAction::Paste => {
-                let paste = self.clipboard_reader.read_paste();
-                if let Err(error) =
-                    apply_clipboard_paste(&mut self.composer, &self.media_path, paste)
-                {
-                    self.unavailable(&format!("Could not paste clipboard content: {error:?}"));
-                }
-            }
-            action => match self.composer.apply(action) {
-                ComposerOutcome::Idle => {}
-                ComposerOutcome::Submit { messages, quote } => {
-                    if let Some(chat) = self.open_chat() {
-                        for message in messages {
-                            wr::send_message(&chat, &message, quote.as_ref());
-                        }
-                    }
-                }
-            },
-        }
-    }
 }
 
 fn is_toggle_logs_key(key: &Key) -> bool {
     matches!(key.code, KeyCode::Char('l' | 'L'))
         && key.modifiers == KeyModifiers::CONTROL | KeyModifiers::SHIFT
-}
-
-fn is_attach_file_key(key: &Key) -> bool {
-    key == &Key::ctrl('o')
 }
 
 fn log_level_for_logs(show_logs: bool) -> tui_logger::LevelFilter {
