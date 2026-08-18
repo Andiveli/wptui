@@ -8,6 +8,7 @@ use std::path::Path;
 
 use crate::app::App;
 use crate::app::composer::{Composer, ComposerOutcome};
+pub use crate::app::composer_input_mapping::composer_action_for_editing_key;
 use crate::app::input_mapping::{
     attachment_viewer_action, file_picker_navigation_action, file_picker_search_action,
     message_menu_action, reaction_picker_action, share_picker_action, url_picker_action,
@@ -1232,12 +1233,4 @@ fn message_urls(message: &wr::Message) -> Vec<String> {
     };
     text.map(crate::url::extract_openable_urls)
         .unwrap_or_default()
-}
-
-pub fn composer_action_for_editing_key(key: &Key) -> ComposerAction {
-    match (key.code, key.modifiers) {
-        (KeyCode::Enter, KeyModifiers::NONE) => ComposerAction::Submit,
-        (KeyCode::Char('v'), KeyModifiers::CONTROL) => ComposerAction::Paste,
-        _ => ComposerAction::Edit(key.clone()),
-    }
 }
