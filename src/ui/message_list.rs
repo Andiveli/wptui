@@ -26,9 +26,8 @@ mod message_media;
 #[path = "message_viewport.rs"]
 mod message_viewport;
 
-use message_formatting::{
-    author_color, media_paragraph, message_block, message_content_area, reaction_chips,
-};
+pub use message_formatting::reaction_chips;
+use message_formatting::{author_color, media_paragraph, message_block, message_content_area};
 pub use message_helpers::{
     AUTHOR_GROUP_MAX_GAP, AuthorGroupContext, get_quoted_text, reply_summary, starts_author_group,
 };
