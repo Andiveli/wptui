@@ -17,6 +17,7 @@ pub mod community_bridge;
 pub mod community_hierarchy;
 pub mod composer;
 pub mod composer_input_mapping;
+pub mod composer_input_paste;
 pub mod contact_avatars;
 pub mod download_worker;
 pub mod events;
