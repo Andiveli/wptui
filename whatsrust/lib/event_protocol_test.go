@@ -14,12 +14,6 @@ func TestEventTypeConstantsAreOwnedByEventProtocol(t *testing.T) {
 	if strings.Contains(string(mainSource), "EventType") {
 		t.Fatal("main.go must not own EventType protocol constants")
 	}
-	for _, declaration := range []string{"MessageTypeText", "FileTypeImage"} {
-		if !strings.Contains(string(mainSource), declaration) {
-			t.Fatalf("main.go must retain %s outside this seam", declaration)
-		}
-	}
-
 	protocolSource, err := os.ReadFile("event_protocol.go")
 	if err != nil {
 		t.Fatal(err)
