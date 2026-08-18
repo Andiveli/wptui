@@ -7,6 +7,7 @@ use std::{
 };
 
 pub mod actions;
+pub mod attachment_viewer;
 pub mod bootstrap;
 pub mod chat_navigation;
 pub mod chat_opening;
