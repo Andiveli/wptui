@@ -94,8 +94,7 @@ impl App<'_> {
                         SequenceResolution::Cancelled => {}
                     }
                 }
-            } else if self.focus_pane == FocusPane::ChatList && self.contact_search_active {
-                self.handle_chat_search_key(key);
+            } else if self.handle_chat_search_input(key.clone()) {
             } else if self.focus_pane == FocusPane::ChatList && key == Key::k(KeyCode::Enter) {
                 self.dispatch_action(AppAction::OpenChat);
             } else if self.focus_pane == FocusPane::SectionRail
@@ -116,12 +115,7 @@ impl App<'_> {
     fn handle_unbound_key(&mut self, key: Key) {
         // Chat search is a Chats-section feature; the status list has its
         // own single-pane navigation.
-        if self.focus_pane == FocusPane::ChatList
-            && self.selected_section == Section::Chats
-            && key.code == KeyCode::Char('/')
-        {
-            self.contact_search_active = true;
-        }
+        self.start_chat_search(&key);
     }
 
     pub fn dispatch_action(&mut self, action: AppAction) {
