@@ -1,22 +1,18 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    sync::Arc,
-};
-
 use chrono::{DateTime, Datelike, Local};
 use ratatui::{
     Frame,
     buffer::Buffer,
     layout::{Constraint, Layout, Rect},
     style::{Color, Style, Stylize},
-    symbols,
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Widget, Wrap},
+    widgets::{Paragraph, Widget, Wrap},
 };
 use whatsrust as wr;
 
 use crate::app::{App, FileMeta, Metadata};
 
+#[path = "message_formatting.rs"]
+mod message_formatting;
 #[path = "message_helpers.rs"]
 mod message_helpers;
 #[path = "message_layout.rs"]
@@ -28,6 +24,9 @@ mod message_media;
 #[path = "message_viewport.rs"]
 mod message_viewport;
 
+use message_formatting::{
+    author_color, media_paragraph, message_block, message_content_area, reaction_chips,
+};
 pub use message_helpers::{
     AUTHOR_GROUP_MAX_GAP, AuthorGroupContext, get_quoted_text, reply_summary, starts_author_group,
 };
@@ -58,86 +57,6 @@ mod layout_contract_tests {
         assert_eq!(super::message_layout::text_height("café 👩‍💻", 20), 1);
         assert_eq!(super::message_layout::text_height("café 👩‍💻", 4), 2);
     }
-}
-
-/// Palette inspired by WhatsApp's group chat author colors.
-/// Picked for solid contrast on both black and dark-gray backgrounds.
-const AUTHOR_PALETTE: &[Color] = &[
-    Color::Rgb(0xE7, 0x9F, 0x3C), // amber
-    Color::Rgb(0x6F, 0xC9, 0xCE), // teal
-    Color::Rgb(0xC9, 0x8F, 0xE7), // lavender
-    Color::Rgb(0x8F, 0xC9, 0x4F), // lime
-    Color::Rgb(0xE7, 0x6F, 0x8F), // pink
-    Color::Rgb(0x6F, 0x8F, 0xE7), // indigo
-    Color::Rgb(0xE7, 0x4F, 0x4F), // red
-    Color::Rgb(0x4F, 0xC9, 0x8F), // mint
-    Color::Rgb(0xC9, 0x8F, 0x4F), // bronze
-    Color::Rgb(0x8F, 0x4F, 0xC9), // purple
-    Color::Rgb(0x4F, 0x8F, 0xC9), // sky
-    Color::Rgb(0xC9, 0x4F, 0x8F), // magenta
-];
-
-/// Deterministic color for a sender JID. Same sender -> same color everywhere.
-/// Uses FxHash-free, std-only hash so we don't pull in a new dep.
-fn author_color(sender: &wr::JID) -> Color {
-    // FNV-1a over the JID bytes — stable, no allocation, good distribution.
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in sender.0.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100_0000_01b3);
-    }
-    AUTHOR_PALETTE[(hash as usize) % AUTHOR_PALETTE.len()]
-}
-
-fn message_block<'a>(
-    mut header: Vec<Span<'a>>,
-    timestamp: Span<'a>,
-    is_selected: bool,
-    author_group: AuthorGroupContext,
-) -> Block<'a> {
-    if is_selected {
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_set(symbols::border::ROUNDED)
-            .border_style(Style::default().fg(ratatui::style::Color::Green));
-        if author_group.starts_group() {
-            header.insert(0, "─ ".into());
-            block.title(header)
-        } else {
-            block.title_bottom(Line::from(vec!["─ ".into(), timestamp, " ".into()]))
-        }
-    } else if author_group.starts_group() {
-        Block::default().title(header)
-    } else {
-        Block::default()
-    }
-}
-
-fn message_content_area(area: Rect, is_selected: bool) -> Rect {
-    if is_selected {
-        Rect::new(
-            area.x.saturating_add(1),
-            area.y,
-            area.width.saturating_sub(1),
-            area.height,
-        )
-    } else {
-        area
-    }
-}
-
-pub fn reaction_chips(reactions: Option<&HashMap<wr::JID, Arc<str>>>) -> Vec<String> {
-    let mut counts = BTreeMap::new();
-    for reaction in reactions
-        .into_iter()
-        .flat_map(|reactions| reactions.values())
-    {
-        *counts.entry(reaction).or_insert(0) += 1;
-    }
-    counts
-        .into_iter()
-        .map(|(emoji, count)| format!("[{emoji} {count}]"))
-        .collect()
 }
 
 pub fn message_height(
@@ -184,71 +103,6 @@ fn spacing_after_message(
     let selected_at_boundary = selected == Some(index) || selected == Some(index + 1);
 
     usize::from(has_older_neighbor && (!continuation || selected_at_boundary))
-}
-
-const AUDIO_WIDGET_BARS: usize = 16;
-
-fn audio_widget_line(seed: &str, duration: Option<u64>) -> Line<'static> {
-    let mut spans = vec![Span::styled(
-        "|> ",
-        Style::default().fg(Color::Green).bold(),
-    )];
-    if let Some(seconds) = duration {
-        spans.push(Span::styled(
-            format!("{} ", format_duration(seconds)),
-            Style::default().fg(Color::DarkGray),
-        ));
-    }
-    spans.push(Span::raw(waveform_bars(seed, AUDIO_WIDGET_BARS)));
-    Line::from(spans)
-}
-
-fn format_duration(seconds: u64) -> String {
-    let hours = seconds / 3600;
-    let minutes = (seconds % 3600) / 60;
-    let secs = seconds % 60;
-    if hours > 0 {
-        format!("{hours}:{minutes:02}:{secs:02}")
-    } else {
-        format!("{minutes}:{secs:02}")
-    }
-}
-
-fn waveform_bars(seed: &str, len: usize) -> String {
-    let mut state: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in seed.as_bytes() {
-        state ^= u64::from(*byte);
-        state = state.wrapping_mul(0x100_0000_01b3);
-    }
-    let mut next = move || {
-        state ^= state >> 12;
-        state ^= state << 25;
-        state ^= state >> 27;
-        state.wrapping_mul(0x2545_F491_4F6C_DD1D)
-    };
-    const BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-    let mut waveform = String::with_capacity(len);
-    let mut level = 3 + (next() as usize % 3);
-    for _ in 0..len {
-        let step = (next() % 3) as i32 - 1;
-        level = (level as i32 + step).clamp(0, 7) as usize;
-        waveform.push(BARS[level]);
-    }
-    waveform
-}
-
-pub(crate) fn media_paragraph(
-    status: String,
-    is_audio: bool,
-    audio_seed: &str,
-    audio_duration: Option<u64>,
-    alignment: ratatui::layout::Alignment,
-) -> Paragraph<'static> {
-    let mut lines = vec![Line::from(status)];
-    if is_audio {
-        lines.push(audio_widget_line(audio_seed, audio_duration));
-    }
-    Paragraph::new(lines).alignment(alignment)
 }
 
 /// When `render_image` is false (partial path and image fully off-screen), show a placeholder
@@ -666,16 +520,4 @@ fn render_message_items(
     );
 
     None
-}
-
-fn unread_divider_line(width: usize) -> Line<'static> {
-    const TAG: &str = " New ";
-    let style = Style::default().fg(Color::Rgb(237, 66, 69));
-    if width <= 7 {
-        return Line::styled("─".repeat(width), style);
-    }
-    Line::from(vec![
-        Span::styled("─".repeat(width.saturating_sub(TAG.len())), style),
-        Span::styled(TAG, style.bold()),
-    ])
 }
