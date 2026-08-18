@@ -17,6 +17,10 @@ typedef struct {
 } Contact;
 
 typedef struct {
+	char* text;
+} TextMessage;
+
+typedef struct {
 	uint8_t kind;
 	char* path;
 	char* fileID;
@@ -80,6 +84,8 @@ static void callHistorySync(HistorySyncHandler hdl, uint32_t percent) {
 */
 import "C"
 import (
+	"unsafe"
+
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 )
@@ -116,6 +122,22 @@ const (
 	FileTypeDocument
 	FileTypeSticker
 )
+
+func emitTextMessage(cinfo C.MessageInfo, text string, isSync bool) {
+	ctext := C.CString(text)
+	defer C.free(unsafe.Pointer(ctext))
+
+	content := (*C.TextMessage)(C.malloc(C.sizeof_TextMessage))
+	content.text = ctext
+	defer C.free(unsafe.Pointer(content))
+
+	message := C.Message{
+		info:        cinfo,
+		messageType: C.uint8_t(MessageTypeText),
+		message:     unsafe.Pointer(content),
+	}
+	C.callMessageHandler(messageHandler, C.bool(isSync), &message)
+}
 
 func HandleMessage(info types.MessageInfo, msg *waE2E.Message, isSync bool) {
 	msg, viewOnceUnavailable := unavailableViewOnceMessage(msg)

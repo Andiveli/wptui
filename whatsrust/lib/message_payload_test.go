@@ -6,6 +6,21 @@ import (
 	"testing"
 )
 
+func TestHandleMessageOwnsTextPayloadEmission(t *testing.T) {
+	source, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mainSource := string(source)
+
+	if !strings.Contains(mainSource, "func emitTextMessage(") {
+		t.Fatal("text payload emission seam is missing")
+	}
+	if strings.Count(mainSource, "emitTextMessage(cinfo,") != 2 {
+		t.Fatal("conversation and extended-text payloads must use the text seam")
+	}
+}
+
 func TestHandleMessageDelegatesFilePayloadEmission(t *testing.T) {
 	if strings.Contains(string(mustRead(t, "main.go")), "func emitFileMessage(") {
 		t.Fatal("file payload emission must remain outside HandleMessage's composition file")
