@@ -22,6 +22,7 @@ pub mod composer_input_paste;
 pub mod contact_avatars;
 pub mod download_worker;
 pub mod events;
+pub mod file_picker_input;
 pub mod input_mapping;
 pub mod input_reader;
 pub mod inputs;
