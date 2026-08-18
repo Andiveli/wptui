@@ -10,6 +10,14 @@ import (
 	"go.mau.fi/whatsmeow/types"
 )
 
+const (
+	forwardFailureNone uint8 = iota
+	forwardFailureSourceUnavailable
+	forwardFailureInvalidSource
+	forwardFailureInvalidDestination
+	forwardFailureSendFailed
+)
+
 const maxForwardSources = 1000
 
 func forwardSourceKey(chat, sender types.JID, id types.MessageID) string {

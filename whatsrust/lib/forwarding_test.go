@@ -27,6 +27,51 @@ func TestForwardSourceKeyOwnership(t *testing.T) {
 	}
 }
 
+func TestForwardFailureConstantsAreOwnedByForwarding(t *testing.T) {
+	forwardingSource, err := os.ReadFile("forwarding.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mainSource, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, constant := range []string{
+		"forwardFailureNone",
+		"forwardFailureSourceUnavailable",
+		"forwardFailureInvalidSource",
+		"forwardFailureInvalidDestination",
+		"forwardFailureSendFailed",
+	} {
+		if !strings.Contains(string(forwardingSource), constant) {
+			t.Fatalf("forwarding.go must own %s", constant)
+		}
+		if strings.Contains(string(mainSource), constant) {
+			t.Fatalf("main.go must not own %s", constant)
+		}
+	}
+}
+
+func TestForwardFailureValuesRemainStable(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		got  uint8
+		want uint8
+	}{
+		{"none", forwardFailureNone, 0},
+		{"source unavailable", forwardFailureSourceUnavailable, 1},
+		{"invalid source", forwardFailureInvalidSource, 2},
+		{"invalid destination", forwardFailureInvalidDestination, 3},
+		{"send failed", forwardFailureSendFailed, 4},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.got != tt.want {
+				t.Fatalf("value = %d, want %d", tt.got, tt.want)
+			}
+		})
+	}
+}
+
 func TestForwardSourceKeyPreservesCompositeFormat(t *testing.T) {
 	chat := types.NewJID("chat", types.DefaultUserServer)
 	sender := types.NewJID("sender", types.DefaultUserServer)
