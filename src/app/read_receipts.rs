@@ -169,6 +169,10 @@ impl Coordinator {
     pub fn restore_load_submitted(&mut self) {
         self.load_in_flight = true;
     }
+    pub fn restore_load_needed(&mut self) {
+        self.load_in_flight = false;
+        self.restore_retry_at = None;
+    }
     pub fn restore_retry_scheduled(&mut self, now: i64) {
         let delay = (1_i64 << self.restore_attempts.min(5)).min(30);
         self.restore_attempts = self.restore_attempts.saturating_add(1);
@@ -229,10 +233,11 @@ impl Coordinator {
     }
 
     pub fn restore_candidates(&mut self, candidates: Vec<ReceiptCandidate>, now: i64) {
-        self.load_in_flight = false;
         if !self.enabled {
+            self.load_in_flight = false;
             return;
         }
+        // Keep the completed load reserved until a durable terminal result needs a refill.
         self.restore_retry_at = None;
         self.restore_attempts = 0;
         self.durability_error = None;
@@ -711,6 +716,33 @@ mod tests {
         c.restore_candidates(vec![candidate("after-retry")], 11);
         assert_eq!(c.pending_len(), 1);
         assert_eq!(c.durability_error(), None);
+    }
+    #[test]
+    fn successful_restore_is_not_reloaded_by_idle_dispatch_cycles() {
+        let mut c = Coordinator::default();
+        let mut load_requests = 0;
+
+        for _ in 0..2 {
+            if c.restore_load_allowed(10) {
+                load_requests += 1;
+                c.restore_load_submitted();
+                c.restore_candidates(Vec::new(), 10);
+            }
+        }
+
+        assert_eq!(load_requests, 1);
+    }
+    #[test]
+    fn completed_restore_item_reopens_load_for_durable_refill() {
+        let mut c = Coordinator::default();
+        assert!(c.restore_load_allowed(10));
+        c.restore_load_submitted();
+        c.restore_candidates(vec![candidate("restored")], 10);
+        assert!(!c.restore_load_allowed(10));
+
+        c.restore_load_needed();
+
+        assert!(c.restore_load_allowed(10));
     }
     #[test]
     fn geometry_requires_positive_intersection() {
