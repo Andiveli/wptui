@@ -46,12 +46,28 @@ func contactDisplayName(c types.ContactInfo) string {
 }
 
 func lookupContactEntries(ctx context.Context, bridgeClient *whatsmeow.Client) []contactEntry {
-	if bridgeClient == nil || bridgeClient.Store == nil || bridgeClient.Store.Contacts == nil {
+	entries, err := loadContactEntries(ctx, bridgeClient)
+	if err != nil {
+		panic(err)
+	}
+	return entries
+}
+
+func lookupMentionContactEntries() []contactEntry {
+	entries, err := loadContactEntries(context.Background(), client)
+	if err != nil {
 		return nil
+	}
+	return entries
+}
+
+func loadContactEntries(ctx context.Context, bridgeClient *whatsmeow.Client) ([]contactEntry, error) {
+	if bridgeClient == nil || bridgeClient.Store == nil || bridgeClient.Store.Contacts == nil {
+		return nil, nil
 	}
 	contacts, err := bridgeClient.Store.Contacts.GetAllContacts(ctx)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	entries := make([]contactEntry, 0, len(contacts))
 	for jid, contact := range contacts {
@@ -60,13 +76,13 @@ func lookupContactEntries(ctx context.Context, bridgeClient *whatsmeow.Client) [
 			continue
 		}
 		entries = append(entries, contactEntry{jid: jid, name: name})
-		if jid.Server != types.HiddenUserServer {
+		if jid.Server != types.HiddenUserServer && bridgeClient.Store.LIDs != nil {
 			if lid, _ := bridgeClient.Store.LIDs.GetLIDForPN(ctx, jid); !lid.IsEmpty() {
 				entries = append(entries, contactEntry{jid: lid, name: name})
 			}
 		}
 	}
-	return entries
+	return entries, nil
 }
 
 //export C_GetContacts

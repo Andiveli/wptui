@@ -38,7 +38,7 @@ func HandleMessage(info types.MessageInfo, msg *waE2E.Message, isSync bool) {
 			}
 		}
 
-		emitTextMessage(cinfo, ext_msg.GetText(), isSync)
+		emitTextMessage(cinfo, textWithMentionNames(ext_msg.GetText(), context_info), isSync)
 	}
 	if msg.ImageMessage != nil {
 		if !emitImageMessage(cinfo, info.ID, msg.GetImageMessage(), isSync) {
