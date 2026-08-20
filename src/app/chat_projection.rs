@@ -17,6 +17,7 @@ pub enum ContactRow {
     Chat(ChatRow),
     Available {
         name: String,
+        jid: Option<wr::JID>,
         participant_count: Option<u32>,
     },
     Header(String),
@@ -28,6 +29,14 @@ impl ContactRow {
         match self {
             Self::Chat(row) => Some(&row.target),
             Self::Available { .. } | Self::Header(_) | Self::Action(_) => None,
+        }
+    }
+
+    pub fn avatar_target(&self) -> Option<&wr::JID> {
+        match self {
+            Self::Chat(row) => Some(&row.target),
+            Self::Available { jid, .. } => jid.as_ref(),
+            Self::Header(_) | Self::Action(_) => None,
         }
     }
 }
@@ -150,6 +159,7 @@ impl App<'_> {
             (!group.is_joined && announcement.is_none_or(|selected| selected.jid != group.jid))
                 .then(|| ContactRow::Available {
                     name: group.name.clone(),
+                    jid: (!group.jid.0.is_empty()).then(|| group.jid.clone()),
                     participant_count: group.participant_count,
                 })
         }));

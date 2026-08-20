@@ -36,7 +36,17 @@ fn message(chat: &wr::JID, id: &str, timestamp: i64, text: &str, read_by: u16) -
 fn opening_selected_community_renders_the_existing_chat_context() {
     let mut test_app = TestApp::new();
     let group = wr::JID::from("child@g.us".to_owned());
-    test_app.communities = vec![CommunityNode {
+    test_app.communities.push(CommunityNode {
+        jid: jid("root@g.us"),
+        name: "Community".into(),
+        is_root: true,
+        linked_groups: vec![group.clone()],
+        is_joined: true,
+        is_default_subgroup: false,
+        is_announce: None,
+        participant_count: None,
+    });
+    test_app.communities.push(CommunityNode {
         jid: group.clone(),
         name: "Announcements".into(),
         is_root: false,
@@ -45,10 +55,10 @@ fn opening_selected_community_renders_the_existing_chat_context() {
         is_default_subgroup: false,
         is_announce: None,
         participant_count: None,
-    }];
+    });
     test_app.selected_section = Section::Communities;
     test_app.focus_pane = FocusPane::ChatList;
-    test_app.chat_list_state.select(Some(0));
+    test_app.chat_list_state.select(Some(1));
     test_app.add_message(wr::Message {
         info: wr::MessageInfo {
             id: "community-message".into(),
@@ -278,4 +288,92 @@ fn hierarchy_refresh_keeps_selection_on_a_linked_group_when_target_changes() {
     });
     assert_eq!(app.get_selected_chat(), selected);
     assert_eq!(app.chat_rows()[0].target, second);
+}
+
+#[test]
+fn community_root_and_view_all_open_detail_while_group_opens_chat() {
+    let mut app = TestApp::new();
+    let root = jid("root@g.us");
+    let group = jid("group@g.us");
+    app.chats.insert(
+        group.clone(),
+        Chat {
+            jid: group.clone(),
+            last_message_time: Some(1),
+        },
+    );
+    app.communities = vec![
+        CommunityNode {
+            jid: root.clone(),
+            name: "Community".into(),
+            is_root: true,
+            linked_groups: vec![group.clone()],
+            is_joined: true,
+            is_default_subgroup: false,
+            is_announce: None,
+            participant_count: None,
+        },
+        CommunityNode {
+            jid: group.clone(),
+            name: "Group".into(),
+            is_root: false,
+            linked_groups: Vec::new(),
+            is_joined: true,
+            is_default_subgroup: false,
+            is_announce: None,
+            participant_count: None,
+        },
+    ];
+    app.selected_section = Section::Communities;
+    app.chat_list_state.select(Some(0));
+    app.dispatch_action(AppAction::OpenChat);
+    assert_eq!(app.community_detail, Some(root.clone()));
+    app.community_detail = None;
+    app.chat_list_state.select(Some(2));
+    app.dispatch_action(AppAction::OpenChat);
+    assert_eq!(app.community_detail, Some(root));
+}
+
+#[test]
+fn enter_on_joined_group_in_community_detail_opens_chat_without_reopening_root() {
+    let mut app = TestApp::new();
+    let root = jid("root@g.us");
+    let group = jid("group@g.us");
+    app.chats.insert(
+        group.clone(),
+        Chat {
+            jid: group.clone(),
+            last_message_time: Some(1),
+        },
+    );
+    app.communities = vec![
+        CommunityNode {
+            jid: root.clone(),
+            name: "Community".into(),
+            is_root: true,
+            linked_groups: vec![group.clone()],
+            is_joined: true,
+            is_default_subgroup: false,
+            is_announce: None,
+            participant_count: None,
+        },
+        CommunityNode {
+            jid: group.clone(),
+            name: "Group".into(),
+            is_root: false,
+            linked_groups: Vec::new(),
+            is_joined: true,
+            is_default_subgroup: false,
+            is_announce: None,
+            participant_count: None,
+        },
+    ];
+    app.selected_section = Section::Communities;
+    app.community_detail = Some(root.clone());
+    app.chat_list_state.select(Some(1));
+
+    app.dispatch_action(AppAction::OpenChat);
+
+    assert_eq!(app.open_chat(), Some(group));
+    assert_eq!(app.community_detail, Some(root));
 }

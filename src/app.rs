@@ -69,7 +69,7 @@ use crate::app::actions::{
     WhatsAppMessageReactor, WhatsAppMessageRevoker,
 };
 pub use crate::app::chat_projection::{ChatRow, ContactRow};
-pub use crate::app::community_hierarchy::CommunityNode;
+pub use crate::app::community_hierarchy::{CommunityNavigationRow, CommunityNode};
 use crate::app::composer::Composer;
 use crate::app::contact_avatars::ContactAvatars;
 use crate::app::events::{AppEvent, AppInput, AttachmentViewerState, ViewerPreviewState};

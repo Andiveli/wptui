@@ -15,6 +15,14 @@ pub struct CommunityNode {
     pub participant_count: Option<u32>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CommunityNavigationRow {
+    Root(wr::JID),
+    Group(wr::JID),
+    ViewAll(wr::JID),
+    Separator,
+}
+
 fn record_key(
     record: &wr::CommunityInfo,
 ) -> (bool, String, String, bool, bool, Option<bool>, Option<u32>) {
@@ -123,6 +131,34 @@ impl App<'_> {
                 .iter()
                 .filter(|node| !node.is_root && node.is_joined),
         )
+    }
+
+    pub(crate) fn community_navigation_rows(&self) -> Vec<CommunityNavigationRow> {
+        let mut rows = Vec::new();
+        for root in dedupe_nodes(self.communities.iter().filter(|node| node.is_root)) {
+            let groups = root
+                .linked_groups
+                .iter()
+                .filter(|jid| self.chats.contains_key(*jid))
+                .filter_map(|jid| {
+                    dedupe_nodes(self.communities.iter().filter(|node| node.jid == *jid))
+                        .into_iter()
+                        .next()
+                })
+                .collect::<Vec<_>>();
+            if groups.is_empty() {
+                continue;
+            }
+            rows.push(CommunityNavigationRow::Root(root.jid.clone()));
+            rows.extend(
+                groups
+                    .into_iter()
+                    .map(|group| CommunityNavigationRow::Group(group.jid.clone())),
+            );
+            rows.push(CommunityNavigationRow::ViewAll(root.jid.clone()));
+            rows.push(CommunityNavigationRow::Separator);
+        }
+        rows
     }
 
     pub(crate) fn build_community_nodes(records: &[wr::CommunityInfo]) -> Vec<CommunityNode> {

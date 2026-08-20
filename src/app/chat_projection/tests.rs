@@ -273,7 +273,7 @@ fn detail_separates_joined_and_available_groups_without_addressing_available_row
     assert!(matches!(rows[3], ContactRow::Header(ref title) if title == "Groups you can join"));
     assert!(matches!(
         rows[4],
-        ContactRow::Available { ref name, participant_count: Some(23) }
+        ContactRow::Available { ref name, participant_count: Some(23), .. }
             if name == "Available"
     ));
 
@@ -287,10 +287,12 @@ fn detail_separates_joined_and_available_groups_without_addressing_available_row
 fn available_group_count_is_omitted_when_unknown_and_rendered_when_known() {
     let unknown = ContactRow::Available {
         name: "Unknown".into(),
+        jid: None,
         participant_count: None,
     };
     let known = ContactRow::Available {
         name: "Known".into(),
+        jid: None,
         participant_count: Some(42),
     };
     let app = TestApp::new();

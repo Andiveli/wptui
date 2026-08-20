@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use super::contact_list::{
-    AVATAR_HEIGHT, AVATAR_WIDTH, CONTACT_ITEM_HEIGHT, ContactList, ContactListItem,
-    contact_visible_range,
+    AVATAR_HEIGHT, AVATAR_WIDTH, ContactList, ContactListItem, contact_visible_range,
+    visible_contact_rows,
 };
 use crate::app::App;
 use crate::app::actions::FocusPane;
@@ -19,7 +19,7 @@ pub(super) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
     let rows = app.visible_contact_rows();
     let targets = rows
         .iter()
-        .filter_map(|row| row.target().cloned())
+        .filter_map(|row| row.avatar_target().cloned())
         .collect::<Vec<_>>();
     let items = rows
         .iter()
@@ -64,7 +64,8 @@ pub(super) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
         &mut app.chat_list_state,
     );
 
-    let visible = contact_visible_range(
+    let visible = visible_contact_rows(&items, app.chat_list_state.offset(), contacts_area.height);
+    let _legacy_visible_range = contact_visible_range(
         app.chat_list_state.offset(),
         contacts_area.height,
         rows.len(),
@@ -74,11 +75,8 @@ pub(super) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
         app.tx.clone(),
         Arc::clone(&app.picker),
     );
-    for index in visible {
-        let row = index.saturating_sub(app.chat_list_state.offset());
-        let y = contacts_area
-            .y
-            .saturating_add((row * CONTACT_ITEM_HEIGHT) as u16);
+    for (index, relative_y) in visible {
+        let y = contacts_area.y.saturating_add(relative_y);
         let avatar_area = Rect::new(
             contacts_area.x,
             y,
@@ -88,7 +86,7 @@ pub(super) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
         // Partial Kitty placements can leave terminal artifacts after a scroll.
         if avatar_area.width == AVATAR_WIDTH
             && avatar_area.height == AVATAR_HEIGHT
-            && let Some(target) = rows[index].target()
+            && let Some(target) = rows[index].avatar_target()
             && let Some(protocol) = app.contact_avatars.protocol_mut(target)
         {
             StatefulImage::default().render(avatar_area, frame.buffer_mut(), protocol);

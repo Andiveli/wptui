@@ -194,10 +194,25 @@ impl App<'_> {
                             self.message_list_state.select(Some(0));
                         }
                     }
-                } else if self.selected_section == Section::Communities {
-                    if let Some(jid) = self.get_selected_community() {
-                        self.open_chat_by_jid(jid);
-                        self.focus_pane = FocusPane::Conversation;
+                } else if self.selected_section == Section::Communities
+                    && self.community_detail.is_none()
+                {
+                    match self
+                        .community_navigation_rows()
+                        .into_iter()
+                        .filter(|row| !matches!(row, crate::app::CommunityNavigationRow::Separator))
+                        .nth(self.chat_list_state.selected().unwrap_or_default())
+                    {
+                        Some(crate::app::CommunityNavigationRow::Root(jid))
+                        | Some(crate::app::CommunityNavigationRow::ViewAll(jid)) => {
+                            self.open_community_detail(jid);
+                        }
+                        Some(crate::app::CommunityNavigationRow::Group(jid)) => {
+                            self.open_chat_by_jid(jid);
+                            self.focus_pane = FocusPane::Conversation;
+                        }
+                        Some(crate::app::CommunityNavigationRow::Separator) => {}
+                        None => {}
                     }
                 } else if let Some(root) = self.selected_community_contact() {
                     let unread = self

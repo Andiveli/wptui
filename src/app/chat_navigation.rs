@@ -132,7 +132,11 @@ impl App<'_> {
     }
 
     fn clamp_community_selection(&mut self) {
-        let count = self.selectable_community_nodes().len();
+        let count = self
+            .community_navigation_rows()
+            .into_iter()
+            .filter(|row| !matches!(row, crate::app::CommunityNavigationRow::Separator))
+            .count();
         clamp_list_state(&mut self.chat_list_state, count);
     }
 }

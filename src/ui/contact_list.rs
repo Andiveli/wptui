@@ -80,6 +80,7 @@ impl ContactListItem {
             crate::app::ContactRow::Available {
                 name,
                 participant_count,
+                ..
             } => Self {
                 name: name.clone(),
                 initials: initials(name),
@@ -95,6 +96,20 @@ impl ContactListItem {
                 local_time: None,
             },
         }
+    }
+}
+
+fn row_height(item: &ContactListItem) -> usize {
+    if item.initials.is_empty()
+        && item.preview.is_empty()
+        && matches!(
+            item.name.as_str(),
+            "Groups you're in" | "Groups you can join"
+        )
+    {
+        1
+    } else {
+        CONTACT_ITEM_HEIGHT
     }
 }
 
@@ -163,6 +178,23 @@ pub fn contact_visible_range(offset: usize, height: u16, len: usize) -> std::ops
     offset.min(len)..offset.saturating_add(count).min(len)
 }
 
+pub fn visible_contact_rows(
+    items: &[ContactListItem],
+    offset: usize,
+    height: u16,
+) -> Vec<(usize, u16)> {
+    let mut y = 0u16;
+    let mut rows = Vec::new();
+    for (index, item) in items.iter().enumerate().skip(offset) {
+        if y >= height {
+            break;
+        }
+        rows.push((index, y));
+        y = y.saturating_add(row_height(item) as u16);
+    }
+    rows
+}
+
 pub struct ContactList<'a> {
     items: &'a [ContactListItem],
 }
@@ -181,22 +213,45 @@ impl StatefulWidget for ContactList<'_> {
             return;
         }
         let requested = state.selected().unwrap_or_default();
-        let (selected, offset) =
-            contact_viewport(requested, state.offset(), area.height, self.items.len());
+        let selected = requested.min(self.items.len().saturating_sub(1));
+        let mut offset = state.offset().min(selected);
+        loop {
+            let used = self.items[offset..=selected]
+                .iter()
+                .map(row_height)
+                .sum::<usize>();
+            if used <= usize::from(area.height) || offset == selected {
+                break;
+            }
+            offset += 1;
+        }
+        while selected < offset {
+            offset = selected;
+        }
+        while self.items[offset..=selected]
+            .iter()
+            .map(row_height)
+            .sum::<usize>()
+            > usize::from(area.height)
+            && selected > offset
+        {
+            offset += 1;
+        }
         state.select(Some(selected));
         *state.offset_mut() = offset;
 
-        let capacity = usize::from(area.height).div_ceil(CONTACT_ITEM_HEIGHT);
-        for (visible_index, item) in self.items.iter().skip(offset).take(capacity).enumerate() {
-            let item_index = offset + visible_index;
-            let y = area
-                .y
-                .saturating_add((visible_index * CONTACT_ITEM_HEIGHT) as u16);
+        let mut y = area.y;
+        for (item_index, item) in self.items.iter().enumerate().skip(offset) {
+            if y >= area.bottom() {
+                break;
+            }
             let item_area = Rect::new(
                 area.x,
                 y,
                 area.width,
-                AVATAR_HEIGHT.min(area.bottom().saturating_sub(y)),
+                row_height(item)
+                    .min(usize::from(AVATAR_HEIGHT))
+                    .min(area.bottom().saturating_sub(y) as usize) as u16,
             );
             let base = if item_index == selected {
                 Style::default().fg(Color::Green).bg(Color::DarkGray)
@@ -205,6 +260,12 @@ impl StatefulWidget for ContactList<'_> {
             };
             let name_style = base.add_modifier(Modifier::BOLD);
             buf.set_style(item_area, base);
+
+            if row_height(item) == 1 {
+                buf.set_stringn(area.x, y, &item.name, area.width as usize, name_style);
+                y = y.saturating_add(1);
+                continue;
+            }
 
             let avatar_width = AVATAR_WIDTH.min(item_area.width);
             let initials = truncate(&item.initials, avatar_width as usize);
@@ -233,6 +294,7 @@ impl StatefulWidget for ContactList<'_> {
             if item_area.height > 1 {
                 buf.set_stringn(text_x, y.saturating_add(1), second, text_width, base);
             }
+            y = y.saturating_add(row_height(item) as u16);
         }
     }
 }
