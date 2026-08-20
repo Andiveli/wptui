@@ -14,6 +14,7 @@ func TestProfilePictureFFIOwnsProfilePictureExports(t *testing.T) {
 	seamSource := string(seam)
 	for _, export := range []string{
 		"func C_GetProfilePicture(jid *C.char)",
+		"func C_GetCommunityProfilePicture(jid *C.char)",
 		"func C_FreeProfilePicture(result C.ProfilePictureResult)",
 	} {
 		if !strings.Contains(seamSource, export) {

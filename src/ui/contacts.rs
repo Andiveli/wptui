@@ -6,6 +6,7 @@ use super::contact_list::{
 };
 use crate::app::App;
 use crate::app::actions::FocusPane;
+use crate::app::contact_avatars::AvatarTarget;
 use crate::app::contact_avatars::prioritized_avatar_requests;
 use ratatui::{
     Frame,
@@ -19,7 +20,7 @@ pub(crate) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
     let rows = app.visible_contact_rows();
     let targets = rows
         .iter()
-        .filter_map(|row| row.avatar_target().cloned())
+        .filter_map(|row| row.avatar_target().cloned().map(AvatarTarget::Contact))
         .collect::<Vec<_>>();
     let items = rows
         .iter()
@@ -86,8 +87,10 @@ pub(crate) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
         // Partial Kitty placements can leave terminal artifacts after a scroll.
         if avatar_area.width == AVATAR_WIDTH
             && avatar_area.height == AVATAR_HEIGHT
-            && let Some(target) = rows[index].avatar_target()
-            && let Some(protocol) = app.contact_avatars.protocol_mut(target)
+            && let Some(target) = rows[index]
+                .avatar_target()
+                .map(|jid| AvatarTarget::Contact(jid.clone()))
+            && let Some(protocol) = app.contact_avatars.protocol_mut(&target)
         {
             StatefulImage::default().render(avatar_area, frame.buffer_mut(), protocol);
         }

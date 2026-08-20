@@ -881,6 +881,7 @@ unsafe extern "C" {
     fn C_GetCommunities() -> CGetCommunitiesResult;
     fn C_FreeCommunities(result: CGetCommunitiesResult);
     fn C_GetProfilePicture(jid: CJID) -> CProfilePictureResult;
+    fn C_GetCommunityProfilePicture(jid: CJID) -> CProfilePictureResult;
     fn C_FreeProfilePicture(result: CProfilePictureResult);
     fn C_GetChatSettings(jid: CJID) -> CChatSettings;
     fn C_GetGroupInfo(jid: CJID) -> CGroupInfoResult;
@@ -977,9 +978,12 @@ fn profile_picture_from_parts(
     }
 }
 
-pub fn get_profile_picture(jid: &JID) -> Result<ProfilePictureAvailability, ProfilePictureError> {
+fn get_profile_picture_from_bridge(
+    jid: &JID,
+    lookup: unsafe extern "C" fn(CJID) -> CProfilePictureResult,
+) -> Result<ProfilePictureAvailability, ProfilePictureError> {
     let jid = CString::new(jid.0.as_ref()).map_err(|_| ProfilePictureError::InvalidJid)?;
-    let result = unsafe { C_GetProfilePicture(jid.as_ptr()) };
+    let result = unsafe { lookup(jid.as_ptr()) };
     let picture_id = if result.picture_id.is_null() {
         String::new()
     } else {
@@ -1002,6 +1006,16 @@ pub fn get_profile_picture(jid: &JID) -> Result<ProfilePictureAvailability, Prof
     let converted = profile_picture_from_parts(result.status, &picture_id, &picture_type, bytes);
     unsafe { C_FreeProfilePicture(result) };
     converted
+}
+
+pub fn get_profile_picture(jid: &JID) -> Result<ProfilePictureAvailability, ProfilePictureError> {
+    get_profile_picture_from_bridge(jid, C_GetProfilePicture)
+}
+
+pub fn get_community_profile_picture(
+    jid: &JID,
+) -> Result<ProfilePictureAvailability, ProfilePictureError> {
+    get_profile_picture_from_bridge(jid, C_GetCommunityProfilePicture)
 }
 
 #[cfg(test)]

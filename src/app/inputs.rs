@@ -207,7 +207,8 @@ impl App<'_> {
                         | Some(crate::app::CommunityNavigationRow::ViewAll(jid)) => {
                             self.open_community_detail(jid);
                         }
-                        Some(crate::app::CommunityNavigationRow::Group(jid)) => {
+                        Some(crate::app::CommunityNavigationRow::Group(jid))
+                        | Some(crate::app::CommunityNavigationRow::Announcement(jid)) => {
                             self.open_chat_by_jid(jid);
                             self.focus_pane = FocusPane::Conversation;
                         }

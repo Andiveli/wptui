@@ -77,6 +77,11 @@ impl ContactListItem {
                 }
                 item
             }
+            crate::app::ContactRow::VirtualAnnouncement(row) => {
+                let mut item = Self::from_row(app, row);
+                item.initials = "📢".into();
+                item
+            }
             crate::app::ContactRow::Available {
                 name,
                 participant_count,

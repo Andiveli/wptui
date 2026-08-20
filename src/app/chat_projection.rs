@@ -18,6 +18,7 @@ pub struct ChatRow {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ContactRow {
     Chat(ChatRow),
+    VirtualAnnouncement(ChatRow),
     Available {
         name: String,
         jid: Option<wr::JID>,
@@ -30,7 +31,7 @@ pub enum ContactRow {
 impl ContactRow {
     pub fn target(&self) -> Option<&wr::JID> {
         match self {
-            Self::Chat(row) => Some(&row.target),
+            Self::Chat(row) | Self::VirtualAnnouncement(row) => Some(&row.target),
             Self::Available { .. } | Self::Header(_) | Self::Action(_) => None,
         }
     }
@@ -39,7 +40,7 @@ impl ContactRow {
         match self {
             Self::Chat(row) => Some(&row.target),
             Self::Available { jid, .. } => jid.as_ref(),
-            Self::Header(_) | Self::Action(_) => None,
+            Self::VirtualAnnouncement(_) | Self::Header(_) | Self::Action(_) => None,
         }
     }
 }
@@ -137,10 +138,11 @@ impl App<'_> {
 
         let mut rows = Vec::new();
         if let Some(announcement) = announcement {
-            rows.push(chat_row(
-                community_group_label(announcement),
-                &announcement.jid,
-            ));
+            rows.push(ContactRow::VirtualAnnouncement(ChatRow {
+                label: community_group_label(announcement),
+                members: vec![announcement.jid.clone()],
+                target: announcement.jid.clone(),
+            }));
         }
         rows.push(ContactRow::Header("Groups you're in".into()));
         rows.extend(

@@ -19,6 +19,7 @@ pub struct CommunityNode {
 pub enum CommunityNavigationRow {
     Root(wr::JID),
     Group(wr::JID),
+    Announcement(wr::JID),
     ViewAll(wr::JID),
     Separator,
 }
@@ -162,11 +163,13 @@ impl App<'_> {
                 continue;
             }
             rows.push(CommunityNavigationRow::Root(root.jid.clone()));
-            rows.extend(
-                groups
-                    .into_iter()
-                    .map(|group| CommunityNavigationRow::Group(group.jid.clone())),
-            );
+            rows.extend(groups.into_iter().map(|group| {
+                if is_announcement_group(group) {
+                    CommunityNavigationRow::Announcement(group.jid.clone())
+                } else {
+                    CommunityNavigationRow::Group(group.jid.clone())
+                }
+            }));
             rows.push(CommunityNavigationRow::ViewAll(root.jid.clone()));
             rows.push(CommunityNavigationRow::Separator);
         }

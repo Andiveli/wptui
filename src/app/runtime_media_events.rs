@@ -223,8 +223,8 @@ impl App<'_> {
                 true
             }
             AppEvent::ContactAvatar(result) => self.contact_avatars.apply(result),
-            AppEvent::ContactAvatarRefreshed { generation, jid } => {
-                self.contact_avatars.mark_refreshed(generation, jid)
+            AppEvent::ContactAvatarRefreshed { generation, target } => {
+                self.contact_avatars.mark_refreshed(generation, target)
             }
             AppEvent::DownloadFile(message_id, file_id) => {
                 if matches!(

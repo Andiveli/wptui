@@ -61,7 +61,7 @@ type profilePictureOutcome struct {
 	data        []byte
 }
 
-func fetchProfilePicture(ctx context.Context, jidText string, lookup profilePictureLookup, download profilePictureDownload) profilePictureOutcome {
+func fetchProfilePictureWithParams(ctx context.Context, jidText string, isCommunity bool, lookup profilePictureLookup, download profilePictureDownload) profilePictureOutcome {
 	jidText = strings.TrimSpace(jidText)
 	jid, err := types.ParseJID(jidText)
 	if err != nil || strings.Count(jidText, "@") != 1 || jid.User == "" || (jid.Server != types.DefaultUserServer && jid.Server != types.HiddenUserServer && jid.Server != types.GroupServer) {
@@ -71,7 +71,7 @@ func fetchProfilePicture(ctx context.Context, jidText string, lookup profilePict
 		return profilePictureOutcome{status: profilePictureStatusClientUnavailable}
 	}
 
-	info, err := lookup(ctx, jid.ToNonAD(), &whatsmeow.GetProfilePictureParams{Preview: true})
+	info, err := lookup(ctx, jid.ToNonAD(), &whatsmeow.GetProfilePictureParams{Preview: true, IsCommunity: isCommunity})
 	if errors.Is(err, whatsmeow.ErrProfilePictureUnauthorized) || errors.Is(err, whatsmeow.ErrProfilePictureNotSet) {
 		return profilePictureOutcome{status: profilePictureStatusUnavailable}
 	}
@@ -105,6 +105,10 @@ func fetchProfilePicture(ctx context.Context, jidText string, lookup profilePict
 		return profilePictureOutcome{status: profilePictureStatusInvalidImage, pictureID: info.ID, pictureType: info.Type}
 	}
 	return profilePictureOutcome{status: profilePictureStatusAvailable, pictureID: info.ID, pictureType: info.Type, data: data}
+}
+
+func fetchProfilePicture(ctx context.Context, jidText string, lookup profilePictureLookup, download profilePictureDownload) profilePictureOutcome {
+	return fetchProfilePictureWithParams(ctx, jidText, false, lookup, download)
 }
 
 func downloadProfilePicture(ctx context.Context, url string, limit int64) ([]byte, error) {
@@ -149,6 +153,19 @@ func C_GetProfilePicture(jid *C.char) C.ProfilePictureResult {
 	ctx, cancel := context.WithTimeout(context.Background(), profilePictureTimeout)
 	defer cancel()
 	return profilePictureToC(fetchProfilePicture(ctx, C.GoString(jid), client.GetProfilePictureInfo, downloadProfilePicture))
+}
+
+//export C_GetCommunityProfilePicture
+func C_GetCommunityProfilePicture(jid *C.char) C.ProfilePictureResult {
+	if jid == nil {
+		return C.ProfilePictureResult{status: C.uint8_t(profilePictureStatusInvalidJID)}
+	}
+	if client == nil {
+		return C.ProfilePictureResult{status: C.uint8_t(profilePictureStatusClientUnavailable)}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), profilePictureTimeout)
+	defer cancel()
+	return profilePictureToC(fetchProfilePictureWithParams(ctx, C.GoString(jid), true, client.GetProfilePictureInfo, downloadProfilePicture))
 }
 
 //export C_FreeProfilePicture

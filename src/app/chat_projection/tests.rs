@@ -252,9 +252,16 @@ fn virtual_detail_uses_the_confirmed_announcement_subgroup() {
     let rows = app.visible_contact_rows();
     assert!(matches!(
         rows.first(),
-        Some(ContactRow::Chat(ChatRow { label, target, .. }))
-            if label == "Announcements" && target == &announcements
+        Some(ContactRow::VirtualAnnouncement(ChatRow { label, target, .. }))
+            if label == "Announcements"
+                && target == &announcements
+                && rows.first().unwrap().avatar_target().is_none()
+                && rows.first().unwrap().target() == Some(&announcements)
     ));
+    assert_eq!(
+        ContactListItem::from_contact_row(&app, rows.first().unwrap()).initials,
+        "📢"
+    );
 }
 
 #[test]

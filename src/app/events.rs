@@ -7,7 +7,7 @@ use ratatui_image::protocol::StatefulProtocol;
 
 use whatsrust as wr;
 
-use crate::app::contact_avatars::AvatarResult;
+use crate::app::contact_avatars::{AvatarResult, AvatarTarget};
 use crate::app::read_receipts::{
     PersistResult, ReceiptCandidate, ReceiptKey, ReceiptSendStatus, RepositoryError,
 };
@@ -154,7 +154,10 @@ pub enum AppEvent {
     SetFileState(wr::MessageId, FileMeta),
     SetAudioDuration(wr::MessageId, Arc<str>, Option<u64>),
     ContactAvatar(AvatarResult),
-    ContactAvatarRefreshed { generation: u64, jid: wr::JID },
+    ContactAvatarRefreshed {
+        generation: u64,
+        target: AvatarTarget,
+    },
 }
 
 #[derive(Debug)]
@@ -234,12 +237,12 @@ impl fmt::Debug for AppEvent {
             AppEvent::ContactAvatar(result) => f
                 .debug_tuple("ContactAvatar")
                 .field(&result.generation())
-                .field(result.jid())
+                .field(result.target())
                 .finish(),
-            AppEvent::ContactAvatarRefreshed { generation, jid } => f
+            AppEvent::ContactAvatarRefreshed { generation, target } => f
                 .debug_struct("ContactAvatarRefreshed")
                 .field("generation", generation)
-                .field("jid", jid)
+                .field("target", target)
                 .finish(),
         }
     }
