@@ -1,4 +1,4 @@
-use super::{App, CommunityNode};
+use super::{App, CommunityNode, community_group_label};
 use crate::app::test_support::TestApp;
 use ratatui::widgets::ListState;
 use whatsrust as wr;
@@ -179,4 +179,15 @@ fn selection_falls_back_to_no_selection_when_no_groups_exist() {
     app.chat_list_state = ListState::default();
     app.select_community_node(Some(jid("root@g.us")));
     assert_eq!(app.chat_list_state.selected(), None);
+}
+
+#[test]
+fn announcement_groups_use_the_shared_main_list_label() {
+    let mut node = nodes().pop().unwrap();
+    node.is_default_subgroup = true;
+    assert_eq!(community_group_label(&node), "Announcements");
+
+    node.is_default_subgroup = false;
+    node.is_announce = Some(true);
+    assert_eq!(community_group_label(&node), "Announcements");
 }

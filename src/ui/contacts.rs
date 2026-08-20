@@ -15,7 +15,7 @@ use ratatui::{
 };
 use ratatui_image::StatefulImage;
 
-pub(super) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
+pub(crate) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
     let rows = app.visible_contact_rows();
     let targets = rows
         .iter()

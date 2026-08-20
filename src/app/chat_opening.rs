@@ -67,7 +67,7 @@ impl App<'_> {
         });
         self.sort_chats();
         self.open_chat = Some(jid.clone());
-        self.composer.set_blocked(self.composer_blocked());
+        self.refresh_group_permission(&jid);
         self.sort_chat_messages(jid);
         self.message_list_state.reset();
         self.restore_read_cursor_anchor();

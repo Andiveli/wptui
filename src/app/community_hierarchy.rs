@@ -23,6 +23,18 @@ pub enum CommunityNavigationRow {
     Separator,
 }
 
+pub(crate) fn is_announcement_group(node: &CommunityNode) -> bool {
+    node.is_joined && (node.is_default_subgroup || node.is_announce == Some(true))
+}
+
+pub(crate) fn community_group_label(node: &CommunityNode) -> String {
+    if is_announcement_group(node) {
+        "Announcements".into()
+    } else {
+        node.name.clone()
+    }
+}
+
 fn record_key(
     record: &wr::CommunityInfo,
 ) -> (bool, String, String, bool, bool, Option<bool>, Option<u32>) {

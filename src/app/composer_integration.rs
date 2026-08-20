@@ -13,7 +13,7 @@ impl App<'_> {
     /// Returns `true` when the composer owns the current input context.
     pub(crate) fn handle_composer_input(&mut self, key: Key) -> bool {
         if self.focus_pane != FocusPane::Conversation
-            || self.selected_section != Section::Chats
+            || !matches!(self.selected_section, Section::Chats | Section::Communities)
             || !matches!(
                 self.conversation_mode,
                 ConversationMode::ComposerEditing | ConversationMode::EditingMessage
@@ -110,5 +110,18 @@ mod tests {
 
         assert!(app.handle_composer_input(Key::c('x')));
         assert!(app.composer.text().is_empty());
+    }
+
+    #[test]
+    fn communities_conversation_accepts_composer_input_without_auto_activation() {
+        let mut app = TestApp::new();
+        app.open_chat_by_jid(wr::JID::from("group@g.us".to_owned()));
+        app.selected_section = Section::Communities;
+        app.focus_pane = FocusPane::Conversation;
+        assert_eq!(app.conversation_mode, ConversationMode::MessageNavigation);
+
+        app.conversation_mode = ConversationMode::ComposerEditing;
+        assert!(app.handle_composer_input(Key::c('x')));
+        assert_eq!(app.composer.text(), "x");
     }
 }

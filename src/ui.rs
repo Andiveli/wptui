@@ -74,7 +74,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         render_statuses(frame, app, areas.conversation);
     } else if app.selected_section == Section::Communities {
         if let Some(area) = areas.chat_list {
-            communities::render(frame, app, area);
+            if app.community_detail.is_some() {
+                contacts::render_contacts(frame, app, area);
+            } else {
+                communities::render(frame, app, area);
+            }
         }
         render_chats(frame, app, areas.conversation);
     } else {

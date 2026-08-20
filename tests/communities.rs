@@ -98,6 +98,94 @@ fn opening_selected_community_renders_the_existing_chat_context() {
 }
 
 #[test]
+fn communities_root_opens_detail_without_switching_section_and_escape_closes_it() {
+    let mut app = TestApp::new();
+    let root = jid("root@g.us");
+    let group = jid("group@g.us");
+    app.chats.insert(
+        group.clone(),
+        Chat {
+            jid: group.clone(),
+            last_message_time: None,
+        },
+    );
+    app.communities = vec![
+        CommunityNode {
+            jid: root.clone(),
+            name: "Community".into(),
+            is_root: true,
+            linked_groups: vec![group.clone()],
+            is_joined: true,
+            is_default_subgroup: false,
+            is_announce: None,
+            participant_count: None,
+        },
+        CommunityNode {
+            jid: group.clone(),
+            name: "Group".into(),
+            is_root: false,
+            linked_groups: Vec::new(),
+            is_joined: true,
+            is_default_subgroup: false,
+            is_announce: Some(false),
+            participant_count: None,
+        },
+    ];
+    app.selected_section = Section::Communities;
+    app.focus_pane = FocusPane::ChatList;
+    app.chat_list_state.select(Some(0));
+
+    app.dispatch_action(AppAction::OpenChat);
+    assert_eq!(app.selected_section, Section::Communities);
+    assert_eq!(app.community_detail, Some(root));
+    assert!(
+        app.visible_contact_rows()
+            .iter()
+            .any(|row| row.target() == Some(&group))
+    );
+
+    app.on_terminal_event(ratatui::crossterm::event::Event::Key(
+        ratatui::crossterm::event::KeyEvent::new(
+            ratatui::crossterm::event::KeyCode::Esc,
+            ratatui::crossterm::event::KeyModifiers::NONE,
+        ),
+    ));
+    assert_eq!(app.community_detail, None);
+}
+
+#[test]
+fn chats_root_opens_detail_without_forcing_communities_section() {
+    let mut app = TestApp::new();
+    let root = jid("root@g.us");
+    let group = jid("group@g.us");
+    app.chats.insert(
+        group.clone(),
+        Chat {
+            jid: group.clone(),
+            last_message_time: None,
+        },
+    );
+    app.sorted_chats = vec![group.clone()];
+    app.communities = vec![CommunityNode {
+        jid: root.clone(),
+        name: "Community".into(),
+        is_root: true,
+        linked_groups: vec![group],
+        is_joined: true,
+        is_default_subgroup: false,
+        is_announce: None,
+        participant_count: None,
+    }];
+    app.selected_section = Section::Chats;
+    app.focus_pane = FocusPane::ChatList;
+    app.chat_list_state.select(Some(0));
+
+    app.dispatch_action(AppAction::OpenChat);
+    assert_eq!(app.selected_section, Section::Chats);
+    assert_eq!(app.community_detail, Some(root));
+}
+
+#[test]
 fn community_row_collapses_linked_groups_and_preserves_latest_target() {
     let mut app = TestApp::new();
     let root = jid("community@g.us");

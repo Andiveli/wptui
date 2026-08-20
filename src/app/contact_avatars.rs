@@ -479,7 +479,10 @@ fn decode_protocol(picker: &Arc<Mutex<Picker>>, bytes: &[u8]) -> Option<Stateful
 
 #[cfg(test)]
 mod tests {
+    use super::super::{Chat, CommunityNode, test_support::TestApp};
     use super::*;
+    use crate::ui::communities;
+    use ratatui::{Terminal, backend::TestBackend};
     use tempfile::tempdir;
 
     fn jid(index: usize) -> wr::JID {
@@ -489,6 +492,61 @@ mod tests {
     fn protocol() -> StatefulProtocol {
         let picker = Picker::halfblocks();
         picker.new_resize_protocol(image::DynamicImage::new_rgb8(1, 1))
+    }
+
+    #[test]
+    fn repeated_communities_render_keeps_avatar_requests_and_initials_stable() {
+        let mut test_app = TestApp::new();
+        let root = wr::JID::from("root@g.us".to_owned());
+        let group = wr::JID::from("group@g.us".to_owned());
+        test_app.chats.insert(
+            group.clone(),
+            Chat {
+                jid: group.clone(),
+                last_message_time: None,
+            },
+        );
+        test_app.communities = vec![
+            CommunityNode {
+                jid: root,
+                name: "Community".into(),
+                is_root: true,
+                linked_groups: vec![group.clone()],
+                is_joined: true,
+                is_default_subgroup: false,
+                is_announce: None,
+                participant_count: None,
+            },
+            CommunityNode {
+                jid: group,
+                name: "Group".into(),
+                is_root: false,
+                linked_groups: Vec::new(),
+                is_joined: true,
+                is_default_subgroup: false,
+                is_announce: Some(false),
+                participant_count: None,
+            },
+        ];
+        let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+
+        terminal
+            .draw(|frame| communities::render(frame, &mut test_app, frame.area()))
+            .unwrap();
+        let generation = test_app.contact_avatars.generation;
+        let requested = test_app.contact_avatars.requested.clone();
+        let first = terminal.backend().buffer().clone();
+
+        terminal
+            .draw(|frame| communities::render(frame, &mut test_app, frame.area()))
+            .unwrap();
+        let second = terminal.backend().buffer();
+
+        assert_eq!(test_app.contact_avatars.generation, generation);
+        assert_eq!(test_app.contact_avatars.requested, requested);
+        assert_eq!(first[(1, 1)].symbol(), "C");
+        assert_eq!(second[(1, 1)].symbol(), "C");
+        assert_eq!(second[(1, 4)].symbol(), "G");
     }
 
     #[test]

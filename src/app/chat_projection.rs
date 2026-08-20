@@ -1,6 +1,9 @@
 use std::collections::HashSet;
 
-use super::{App, CommunityNode, community_hierarchy::dedupe_nodes};
+use super::{
+    App, CommunityNode,
+    community_hierarchy::{community_group_label, dedupe_nodes, is_announcement_group},
+};
 use whatsrust as wr;
 
 /// Presentation-only Chats row. `target` and `members` are always real chat
@@ -122,11 +125,7 @@ impl App<'_> {
 
         let announcement = groups
             .iter()
-            .filter(|group| {
-                group.is_joined
-                    && (group.is_default_subgroup || group.is_announce == Some(true))
-                    && self.chats.contains_key(&group.jid)
-            })
+            .filter(|group| is_announcement_group(group) && self.chats.contains_key(&group.jid))
             .min_by_key(|group| {
                 (
                     !group.is_default_subgroup,
@@ -138,7 +137,10 @@ impl App<'_> {
 
         let mut rows = Vec::new();
         if let Some(announcement) = announcement {
-            rows.push(chat_row("Announcements".into(), &announcement.jid));
+            rows.push(chat_row(
+                community_group_label(announcement),
+                &announcement.jid,
+            ));
         }
         rows.push(ContactRow::Header("Groups you're in".into()));
         rows.extend(

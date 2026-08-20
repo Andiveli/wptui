@@ -171,6 +171,41 @@ fn zero_unread_linked_groups_open_virtual_detail_rows() {
     app.dispatch_action(crate::app::actions::AppAction::OpenChat);
     assert_eq!(app.open_chat(), Some(group));
 }
+
+#[test]
+fn detail_available_groups_with_group_jids_are_avatar_targets() {
+    let mut app = TestApp::new();
+    let root = jid("root@g.us");
+    let available = jid("available@g.us");
+    app.communities = super::super::App::build_community_nodes(&[
+        wr::CommunityInfo {
+            jid: root.clone(),
+            name: "Project Team".into(),
+            parent_jid: None,
+            is_parent: true,
+            is_joined: true,
+            is_default_subgroup: false,
+            is_announce: None,
+            participant_count: None,
+        },
+        wr::CommunityInfo {
+            jid: available.clone(),
+            name: "Available".into(),
+            parent_jid: Some(root.clone()),
+            is_parent: false,
+            is_joined: false,
+            is_default_subgroup: false,
+            is_announce: Some(false),
+            participant_count: Some(2),
+        },
+    ]);
+    app.community_detail = Some(root);
+
+    assert_eq!(
+        app.visible_contact_rows()[3].avatar_target(),
+        Some(&available)
+    );
+}
 #[test]
 fn virtual_detail_uses_the_confirmed_announcement_subgroup() {
     let mut app = TestApp::new();
