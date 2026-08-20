@@ -86,7 +86,7 @@ pub use crate::app::notifications::{
 };
 use crate::app::presence::{PresenceDiagnostics, SelectedPresence};
 use crate::app::read_receipts::Coordinator as ReadReceiptCoordinator;
-use crate::app::runtime_diagnostics::{Phase, RuntimeDiagnostics};
+use crate::app::runtime_diagnostics::{MessageListCounts, Phase, RuntimeDiagnostics};
 pub use crate::app::share_picker::SharePicker;
 pub use crate::app::status_projection::STATUS_BROADCAST_CHAT;
 use crate::db;
@@ -308,6 +308,21 @@ impl App<'_> {
                 .record_phase_finished(phase, started);
         }
         result
+    }
+
+    pub(crate) fn message_list_phase_started(&mut self) -> Option<u64> {
+        self.runtime_diagnostics.phase_started()
+    }
+
+    pub(crate) fn finish_message_list_phase(&mut self, phase: Phase, started: Option<u64>) {
+        if let Some(started) = started {
+            self.runtime_diagnostics
+                .record_phase_finished(phase, started);
+        }
+    }
+
+    pub(crate) fn record_message_list_counts(&mut self, counts: MessageListCounts) {
+        self.runtime_diagnostics.record_message_list_counts(counts);
     }
 
     pub(crate) fn finalize_runtime_diagnostics(&mut self) {

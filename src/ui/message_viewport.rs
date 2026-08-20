@@ -7,6 +7,7 @@ use ratatui::{
 };
 use whatsrust::{self as wr, FileKind};
 
+use crate::app::runtime_diagnostics::MessageListCounts;
 use crate::app::{App, FileMeta, Metadata};
 
 use super::message_formatting::unread_divider_line;
@@ -25,6 +26,7 @@ pub(super) fn render(
     width: isize,
     start_index: usize,
     mut y: isize,
+    counts: &mut MessageListCounts,
 ) -> Option<ViewportAnchor> {
     let divider_after = unread_count.checked_sub(1);
     let mut viewport_anchor = None;
@@ -53,6 +55,8 @@ pub(super) fn render(
             i64::from(list_area.top()),
             i64::from(list_area.bottom()),
         ) {
+            counts.visible_rows = counts.visible_rows.saturating_add(1);
+            counts.receipt_candidates = counts.receipt_candidates.saturating_add(1);
             viewport_anchor.get_or_insert((i, y));
             app.observe_visible_message(item, true);
             let too_low = top < list_area.top() as isize;
@@ -66,6 +70,9 @@ pub(super) fn render(
                 let available_bottom = min(bottom, list_area.bottom() as isize) as u16;
                 let visible_buf_top = (available_top as isize - top) as u16;
                 let visible_buf_height = available_bottom - available_top;
+                counts.temporary_buffer_rows = counts
+                    .temporary_buffer_rows
+                    .saturating_add(u64::from(visible_buf_height));
 
                 let render_image = match &item.message {
                     wr::MessageContent::File(data)
@@ -77,6 +84,7 @@ pub(super) fn render(
                             FileKind::Image | FileKind::Sticker | FileKind::Video
                         ) =>
                     {
+                        counts.media_rows = counts.media_rows.saturating_add(1);
                         let image_top = u16::from(is_selected || author_group.starts_group())
                             + u16::from(item.info.quote_id.is_some());
                         let image_bottom = image_top + preview_height(&data.kind) as u16;
@@ -147,6 +155,16 @@ pub(super) fn render(
                     }
                 }
             } else {
+                if matches!(
+                    &item.message,
+                    wr::MessageContent::File(data)
+                        if matches!(
+                            app.metadata.get(&item.info.id),
+                            Some(Metadata::File(FileMeta::Loaded))
+                        ) && matches!(data.kind, FileKind::Image | FileKind::Sticker | FileKind::Video)
+                ) {
+                    counts.media_rows = counts.media_rows.saturating_add(1);
+                }
                 let item_area = Rect {
                     x: list_area.left(),
                     y: top as u16,

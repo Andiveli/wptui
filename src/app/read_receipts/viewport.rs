@@ -19,7 +19,6 @@ impl App<'_> {
         self.initialize_read_receipts(enabled);
     }
     pub fn observe_visible_message(&mut self, message: &wr::Message, visible: bool) {
-        let started = self.runtime_diagnostics.phase_started();
         let is_status =
             message.info.chat.0.as_ref() == super::super::status_projection::STATUS_BROADCAST_CHAT;
         let active = active_view(
@@ -59,10 +58,6 @@ impl App<'_> {
             },
             self.now(),
         );
-        if let Some(started) = started {
-            self.runtime_diagnostics
-                .record_phase_finished(Phase::ReadReceiptObservationDispatch, started);
-        }
     }
     pub fn set_read_receipt_readiness(&mut self, readiness: Readiness) {
         self.read_receipts.set_readiness(readiness);

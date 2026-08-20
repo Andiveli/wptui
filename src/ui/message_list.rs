@@ -175,7 +175,15 @@ mod layout_contract_tests {
                     "canonical-row",
                     ratatui::style::Style::default(),
                 );
-                super::render_pending_tail(frame, &mut test_app, Rect::new(0, 3, 24, 5), &items);
+                assert_eq!(
+                    super::render_pending_tail(
+                        frame,
+                        &mut test_app,
+                        Rect::new(0, 3, 24, 5),
+                        &items,
+                    ),
+                    2
+                );
             })
             .unwrap();
         let rendered = terminal
@@ -381,6 +389,7 @@ pub fn render_messages(frame: &mut Frame, app: &mut App, area: Rect) -> Option<(
     if area.is_empty() {
         return Some(());
     }
+    let assembly_started = app.message_list_phase_started();
 
     let unread_count = app.unread_boundary(&chat_jid).map_or(0, |(count, _)| count);
     let banner = app.unread_boundary(&chat_jid).map(|(count, since)| {
@@ -429,9 +438,28 @@ pub fn render_messages(frame: &mut Frame, app: &mut App, area: Rect) -> Option<(
         .rev()
         .filter_map(|msg_id| app.messages.get(msg_id).cloned())
         .collect();
+    app.record_message_list_counts(crate::app::runtime_diagnostics::MessageListCounts {
+        canonical_messages_cloned: items.len() as u64,
+        pending_candidates: optimistic_items.len() as u64,
+        ..Default::default()
+    });
+    app.finish_message_list_phase(
+        crate::app::runtime_diagnostics::Phase::MessageAssembly,
+        assembly_started,
+    );
     let result = render_message_items(frame, app, list_area, items, unread_count);
-    render_pending_tail(frame, app, optimistic_area, &optimistic_items);
+    let pending_started = app.message_list_phase_started();
+    let pending_rows_rendered = render_pending_tail(frame, app, optimistic_area, &optimistic_items);
+    app.record_message_list_counts(crate::app::runtime_diagnostics::MessageListCounts {
+        pending_rows_rendered: pending_rows_rendered as u64,
+        ..Default::default()
+    });
+    app.finish_message_list_phase(
+        crate::app::runtime_diagnostics::Phase::MessagePendingTail,
+        pending_started,
+    );
     crate::crash_diagnostics::breadcrumb("first-message-render", "complete");
+    let overlays_started = app.message_list_phase_started();
     if let Some(text) = banner {
         Paragraph::new(text)
             .style(
@@ -448,6 +476,10 @@ pub fn render_messages(frame: &mut Frame, app: &mut App, area: Rect) -> Option<(
         Paragraph::new(Line::styled(label, Style::default().fg(Color::Cyan).bold()))
             .render(Rect::new(x, pending_area.y, width, 1), frame.buffer_mut());
     }
+    app.finish_message_list_phase(
+        crate::app::runtime_diagnostics::Phase::MessageOverlays,
+        overlays_started,
+    );
     result
 }
 
@@ -470,9 +502,14 @@ fn pending_tail_height(app: &mut App, items: &[wr::Message], width: usize) -> u1
         .min(u16::MAX as usize) as u16
 }
 
-fn render_pending_tail(frame: &mut Frame, app: &mut App, area: Rect, items: &[wr::Message]) {
+fn render_pending_tail(
+    frame: &mut Frame,
+    app: &mut App,
+    area: Rect,
+    items: &[wr::Message],
+) -> usize {
     if area.is_empty() || items.is_empty() {
-        return;
+        return 0;
     }
     let groups = items
         .iter()
@@ -501,6 +538,7 @@ fn render_pending_tail(frame: &mut Frame, app: &mut App, area: Rect, items: &[wr
         used = candidate;
     }
     let mut y = area.bottom().saturating_sub(used as u16);
+    let mut rendered_rows = 0;
     for (index, message) in items.iter().enumerate().skip(first) {
         let height =
             heights[index].saturating_sub(spacing_after_message(index, &groups, None)) as u16;
@@ -517,8 +555,10 @@ fn render_pending_tail(frame: &mut Frame, app: &mut App, area: Rect, items: &[wr
             Rect::new(area.x, y, area.width, render_height),
             false,
         );
+        rendered_rows += 1;
         y = y.saturating_add(heights[index] as u16);
     }
+    rendered_rows
 }
 
 /// Read-only statuses of the opened status contact, rendered with the
@@ -550,6 +590,8 @@ fn render_message_items(
         return Some(());
     }
 
+    let preparation_started = app.message_list_phase_started();
+    let measurements_before = app.message_height_cache.measurement_count();
     let author_groups = items
         .iter()
         .enumerate()
@@ -557,8 +599,20 @@ fn render_message_items(
             AuthorGroupContext::new(starts_author_group(items.get(index + 1), message))
         })
         .collect::<Vec<_>>();
+    app.record_message_list_counts(crate::app::runtime_diagnostics::MessageListCounts {
+        author_groups_built: author_groups.len() as u64,
+        ..Default::default()
+    });
 
     message_layout_integration::retain_message_heights(app, &items);
+    app.record_message_list_counts(crate::app::runtime_diagnostics::MessageListCounts {
+        height_cache_retained_count: app.message_height_cache.len() as u64,
+        ..Default::default()
+    });
+    app.finish_message_list_phase(
+        crate::app::runtime_diagnostics::Phase::MessagePreparation,
+        preparation_started,
+    );
 
     if items.is_empty() {
         app.message_list_state.select(None);
@@ -566,6 +620,7 @@ fn render_message_items(
     }
 
     let width = list_area.width as isize;
+    let selection_started = app.message_list_phase_started();
     let (start_index, y) = message_list_reconciliation::reconcile(
         app,
         list_area,
@@ -573,6 +628,12 @@ fn render_message_items(
         &author_groups,
         unread_count,
     );
+    app.finish_message_list_phase(
+        crate::app::runtime_diagnostics::Phase::MessageSelectionReconciliation,
+        selection_started,
+    );
+    let viewport_started = app.message_list_phase_started();
+    let mut viewport_counts = crate::app::runtime_diagnostics::MessageListCounts::default();
     app.message_list_state.viewport_anchor = message_viewport::render(
         frame,
         app,
@@ -583,6 +644,22 @@ fn render_message_items(
         width,
         start_index,
         y,
+        &mut viewport_counts,
+    );
+    app.record_message_list_counts(crate::app::runtime_diagnostics::MessageListCounts {
+        visible_rows: viewport_counts.visible_rows,
+        temporary_buffer_rows: viewport_counts.temporary_buffer_rows,
+        media_rows: viewport_counts.media_rows,
+        receipt_candidates: viewport_counts.receipt_candidates,
+        height_measurements: app
+            .message_height_cache
+            .measurement_count()
+            .saturating_sub(measurements_before),
+        ..Default::default()
+    });
+    app.finish_message_list_phase(
+        crate::app::runtime_diagnostics::Phase::MessageViewportTotal,
+        viewport_started,
     );
 
     None

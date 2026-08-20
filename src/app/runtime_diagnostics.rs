@@ -18,7 +18,7 @@ const CATEGORY_NAMES: [&str; 8] = [
     "community_readiness",
     "other",
 ];
-const PHASE_NAMES: [&str; 8] = [
+const PHASE_NAMES: [&str; 14] = [
     "contacts_chat_projection_rows",
     "message_list_render_layout",
     "community_detail_list",
@@ -27,6 +27,12 @@ const PHASE_NAMES: [&str; 8] = [
     "composer_submit_send",
     "message_ingestion_db",
     "other",
+    "message_assembly",
+    "message_preparation",
+    "message_selection_reconciliation",
+    "message_viewport_total",
+    "message_pending_tail",
+    "message_overlays",
 ];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -39,6 +45,12 @@ pub enum Phase {
     ComposerSubmitSend,
     MessageIngestionDb,
     Other,
+    MessageAssembly,
+    MessagePreparation,
+    MessageSelectionReconciliation,
+    MessageViewportTotal,
+    MessagePendingTail,
+    MessageOverlays,
 }
 
 impl Phase {
@@ -52,6 +64,12 @@ impl Phase {
             Self::ComposerSubmitSend => 5,
             Self::MessageIngestionDb => 6,
             Self::Other => 7,
+            Self::MessageAssembly => 8,
+            Self::MessagePreparation => 9,
+            Self::MessageSelectionReconciliation => 10,
+            Self::MessageViewportTotal => 11,
+            Self::MessagePendingTail => 12,
+            Self::MessageOverlays => 13,
         }
     }
 }
@@ -69,11 +87,26 @@ struct Counters {
     draw_max_us: u64,
     draw_total_us: u128,
     draw_histogram: [u64; 8],
-    phases: [PhaseCounters; 8],
+    phases: [PhaseCounters; 14],
+    message_counts: MessageListCounts,
     send_sequences: [u64; 5],
     chat_view_rebuilds: u64,
     chat_view_cache_hits: u64,
     chat_view_rebuild_total_us: u128,
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct MessageListCounts {
+    pub canonical_messages_cloned: u64,
+    pub author_groups_built: u64,
+    pub height_measurements: u64,
+    pub height_cache_retained_count: u64,
+    pub visible_rows: u64,
+    pub temporary_buffer_rows: u64,
+    pub media_rows: u64,
+    pub receipt_candidates: u64,
+    pub pending_candidates: u64,
+    pub pending_rows_rendered: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -170,7 +203,8 @@ impl RuntimeDiagnostics {
                 draw_max_us: 0,
                 draw_total_us: 0,
                 draw_histogram: [0; 8],
-                phases: [PhaseCounters::default(); 8],
+                phases: [PhaseCounters::default(); 14],
+                message_counts: MessageListCounts::default(),
                 send_sequences: [0; 5],
                 chat_view_rebuilds: 0,
                 chat_view_cache_hits: 0,
@@ -306,6 +340,38 @@ impl RuntimeDiagnostics {
         counters.max_us = counters.max_us.max(us);
     }
 
+    pub fn record_message_list_counts(&mut self, counts: MessageListCounts) {
+        let Some(total) = self.state.as_mut().map(|state| &mut state.message_counts) else {
+            return;
+        };
+        total.canonical_messages_cloned = total
+            .canonical_messages_cloned
+            .saturating_add(counts.canonical_messages_cloned);
+        total.author_groups_built = total
+            .author_groups_built
+            .saturating_add(counts.author_groups_built);
+        total.height_measurements = total
+            .height_measurements
+            .saturating_add(counts.height_measurements);
+        total.height_cache_retained_count = total
+            .height_cache_retained_count
+            .saturating_add(counts.height_cache_retained_count);
+        total.visible_rows = total.visible_rows.saturating_add(counts.visible_rows);
+        total.temporary_buffer_rows = total
+            .temporary_buffer_rows
+            .saturating_add(counts.temporary_buffer_rows);
+        total.media_rows = total.media_rows.saturating_add(counts.media_rows);
+        total.receipt_candidates = total
+            .receipt_candidates
+            .saturating_add(counts.receipt_candidates);
+        total.pending_candidates = total
+            .pending_candidates
+            .saturating_add(counts.pending_candidates);
+        total.pending_rows_rendered = total
+            .pending_rows_rendered
+            .saturating_add(counts.pending_rows_rendered);
+    }
+
     pub fn record_send_sequence(&mut self, messages: usize) {
         if let Some(state) = self.state.as_mut() {
             let bucket = messages.min(4);
@@ -353,7 +419,7 @@ impl RuntimeDiagnostics {
             clock.now_us().saturating_sub(state.started_us) / 1000
         });
         writeln!(out, "wptui runtime performance report").unwrap();
-        writeln!(out, "format=2").unwrap();
+        writeln!(out, "format=4").unwrap();
         writeln!(out, "build_source=package-{}", env!("CARGO_PKG_VERSION")).unwrap();
         writeln!(out, "run_duration_ms={duration_ms}").unwrap();
         writeln!(out, "events:").unwrap();
@@ -421,6 +487,38 @@ impl RuntimeDiagnostics {
             )
             .unwrap();
         }
+        writeln!(out, "message_list_counts:").unwrap();
+        let counts = state.message_counts;
+        writeln!(
+            out,
+            "  canonical_messages_cloned={}",
+            counts.canonical_messages_cloned
+        )
+        .unwrap();
+        writeln!(out, "  author_groups_built={}", counts.author_groups_built).unwrap();
+        writeln!(out, "  height_measurements={}", counts.height_measurements).unwrap();
+        writeln!(
+            out,
+            "  height_cache_retained_count={}",
+            counts.height_cache_retained_count
+        )
+        .unwrap();
+        writeln!(out, "  visible_rows={}", counts.visible_rows).unwrap();
+        writeln!(
+            out,
+            "  temporary_buffer_rows={}",
+            counts.temporary_buffer_rows
+        )
+        .unwrap();
+        writeln!(out, "  media_rows={}", counts.media_rows).unwrap();
+        writeln!(out, "  receipt_candidates={}", counts.receipt_candidates).unwrap();
+        writeln!(out, "  pending_candidates={}", counts.pending_candidates).unwrap();
+        writeln!(
+            out,
+            "  pending_rows_rendered={}",
+            counts.pending_rows_rendered
+        )
+        .unwrap();
         writeln!(
             out,
             "send_sequences=0:{},1:{},2:{},3:{},4+:{}",
@@ -523,7 +621,8 @@ mod tests {
                 draw_max_us: 0,
                 draw_total_us: 0,
                 draw_histogram: [0; 8],
-                phases: [PhaseCounters::default(); 8],
+                phases: [PhaseCounters::default(); 14],
+                message_counts: MessageListCounts::default(),
                 send_sequences: [0; 5],
                 chat_view_rebuilds: 0,
                 chat_view_cache_hits: 0,
@@ -573,6 +672,50 @@ mod tests {
         let report = profiler.report(profiler.state.as_ref().unwrap());
         assert!(report.contains("count:2 min:2 max:10 mean:6"));
         assert!(report.contains("0-1:0,2-5:1,6-10:1"));
+    }
+
+    #[test]
+    fn message_list_report_uses_fixed_subphases_and_counts() {
+        let mut profiler = profiler(None);
+        for phase in [
+            Phase::MessageAssembly,
+            Phase::MessagePreparation,
+            Phase::MessageSelectionReconciliation,
+            Phase::MessageViewportTotal,
+            Phase::MessagePendingTail,
+            Phase::MessageOverlays,
+        ] {
+            profiler.record_phase(phase, Duration::from_micros(7));
+        }
+        profiler.record_message_list_counts(MessageListCounts {
+            canonical_messages_cloned: 2,
+            author_groups_built: 2,
+            height_measurements: 1,
+            height_cache_retained_count: 2,
+            visible_rows: 1,
+            temporary_buffer_rows: 2,
+            media_rows: 1,
+            receipt_candidates: 1,
+            pending_candidates: 1,
+            pending_rows_rendered: 1,
+        });
+        let report = profiler.report(profiler.state.as_ref().unwrap());
+        assert!(report.len() < REPORT_LIMIT);
+        assert_eq!(report.matches("count:1 min:7 max:7 mean:7").count(), 6);
+        for phase in [
+            "message_assembly",
+            "message_preparation",
+            "message_selection_reconciliation",
+            "message_viewport_total",
+            "message_pending_tail",
+            "message_overlays",
+        ] {
+            assert!(report.contains(&format!("{phase}=count:1 min:7 max:7 mean:7")));
+        }
+        assert!(report.contains("message_list_counts:"));
+        assert!(report.contains("canonical_messages_cloned=2"));
+        assert!(report.contains("receipt_candidates=1"));
+        assert!(report.contains("pending_rows_rendered=1"));
     }
 
     #[test]
