@@ -62,6 +62,7 @@ struct Counters {
     draws_should: u64,
     draws_actual: u64,
     draws_go_log: u64,
+    draws_go_log_suppressed: u64,
     draws_ordinary: u64,
     draw_count: u64,
     draw_min_us: u64,
@@ -159,6 +160,7 @@ impl RuntimeDiagnostics {
                 draws_should: 0,
                 draws_actual: 0,
                 draws_go_log: 0,
+                draws_go_log_suppressed: 0,
                 draws_ordinary: 0,
                 draw_count: 0,
                 draw_min_us: u64::MAX,
@@ -231,6 +233,12 @@ impl RuntimeDiagnostics {
         match source {
             DrawSource::GoLog => state.draws_go_log = state.draws_go_log.saturating_add(1),
             DrawSource::Ordinary => state.draws_ordinary = state.draws_ordinary.saturating_add(1),
+        }
+    }
+
+    pub fn record_go_log_draw_suppressed(&mut self) {
+        if let Some(state) = self.state.as_mut() {
+            state.draws_go_log_suppressed = state.draws_go_log_suppressed.saturating_add(1);
         }
     }
 
@@ -317,7 +325,7 @@ impl RuntimeDiagnostics {
             clock.now_us().saturating_sub(state.started_us) / 1000
         });
         writeln!(out, "wptui runtime performance report").unwrap();
-        writeln!(out, "format=1").unwrap();
+        writeln!(out, "format=2").unwrap();
         writeln!(out, "build_source=package-{}", env!("CARGO_PKG_VERSION")).unwrap();
         writeln!(out, "run_duration_ms={duration_ms}").unwrap();
         writeln!(out, "events:").unwrap();
@@ -327,6 +335,12 @@ impl RuntimeDiagnostics {
         writeln!(out, "draws_should={}", state.draws_should).unwrap();
         writeln!(out, "draws_actual={}", state.draws_actual).unwrap();
         writeln!(out, "draws_go_log={}", state.draws_go_log).unwrap();
+        writeln!(
+            out,
+            "draws_go_log_suppressed={}",
+            state.draws_go_log_suppressed
+        )
+        .unwrap();
         writeln!(out, "draws_ordinary={}", state.draws_ordinary).unwrap();
         let mean = if state.draw_count == 0 {
             0
@@ -462,6 +476,7 @@ mod tests {
                 draws_should: 0,
                 draws_actual: 0,
                 draws_go_log: 0,
+                draws_go_log_suppressed: 0,
                 draws_ordinary: 0,
                 draw_count: 0,
                 draw_min_us: u64::MAX,
@@ -488,6 +503,8 @@ mod tests {
         };
         assert!(!profiler.enabled());
         assert!(profiler.draw_started().is_none());
+        profiler.record_draw_source(DrawSource::GoLog);
+        profiler.record_go_log_draw_suppressed();
         profiler.finalize().unwrap();
         assert!(!dir.path().join("perf-report.txt").exists());
     }
@@ -536,14 +553,18 @@ mod tests {
         let mut profiler = profiler(None);
         profiler.record_input(&AppInput::Draw(DrawSource::GoLog));
         profiler.record_draw_source(DrawSource::GoLog);
+        profiler.record_go_log_draw_suppressed();
         profiler.record_input(&AppInput::Draw(DrawSource::Ordinary));
         profiler.record_draw_source(DrawSource::Ordinary);
         profiler.record_should_draw();
+        profiler.record_draw_duration(Duration::from_micros(1));
         let report = profiler.report(profiler.state.as_ref().unwrap());
         assert!(report.contains("draw_log_triggered=2"));
         assert!(report.contains("draws_go_log=1"));
+        assert!(report.contains("draws_go_log_suppressed=1"));
         assert!(report.contains("draws_ordinary=1"));
         assert!(report.contains("draws_should=1"));
+        assert!(report.contains("draws_actual=1"));
     }
 
     #[test]

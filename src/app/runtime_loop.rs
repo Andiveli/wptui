@@ -10,6 +10,13 @@ use crate::ui;
 
 type DownloadSender = Sender<(wr::MessageId, wr::FileId)>;
 
+fn should_draw_for_source(app: &App<'_>, source: DrawSource) -> bool {
+    match source {
+        DrawSource::Ordinary => true,
+        DrawSource::GoLog => app.show_logs,
+    }
+}
+
 /// Owns the terminal runtime: input pumping, event dispatch, redraws, and shutdown.
 ///
 /// Bootstrap stays in `App::run`; this phase consumes the already-created download
@@ -79,7 +86,11 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
             }
             Ok(AppInput::Draw(source)) => {
                 app.runtime_diagnostics.record_draw_source(source);
-                true
+                let should_draw = should_draw_for_source(app, source);
+                if !should_draw && matches!(source, DrawSource::GoLog) {
+                    app.runtime_diagnostics.record_go_log_draw_suppressed();
+                }
+                should_draw
             }
             Err(_) => {
                 error!("Failed to receive input from channel");
@@ -124,4 +135,39 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
         .message_action_diagnostics
         .write_report(std::io::stderr());
     app.finalize_runtime_diagnostics();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::test_support::TestApp;
+
+    #[test]
+    fn hidden_log_panel_suppresses_only_go_log_draws() {
+        let mut app = TestApp::new();
+        app.show_logs = false;
+
+        assert!(!should_draw_for_source(&app, DrawSource::GoLog));
+        assert!(should_draw_for_source(&app, DrawSource::Ordinary));
+    }
+
+    #[test]
+    fn visible_log_panel_requests_go_log_draws() {
+        let mut app = TestApp::new();
+        app.show_logs = true;
+
+        assert!(should_draw_for_source(&app, DrawSource::GoLog));
+        assert!(should_draw_for_source(&app, DrawSource::Ordinary));
+    }
+
+    #[test]
+    fn draw_event_order_is_preserved_while_only_hidden_go_logs_are_suppressed() {
+        let mut app = TestApp::new();
+        app.show_logs = false;
+
+        let results = [DrawSource::GoLog, DrawSource::Ordinary, DrawSource::GoLog]
+            .map(|source| should_draw_for_source(&app, source));
+
+        assert_eq!(results, [false, true, false]);
+    }
 }
