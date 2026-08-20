@@ -3,7 +3,6 @@ package main
 /*
 #include <stdint.h>
 #include <stdlib.h>
-#include <stdbool.h>
 
 typedef struct {
 	uint8_t status;
@@ -43,8 +42,6 @@ const (
 	profilePictureStatusDownloadFailed
 	profilePictureStatusOversized
 	profilePictureStatusInvalidImage
-	profilePictureStatusUnauthorized
-	profilePictureStatusNotSet
 )
 
 const (
@@ -57,11 +54,6 @@ var errProfilePictureOversized = errors.New("profile picture exceeds size limit"
 type profilePictureLookup func(context.Context, types.JID, *whatsmeow.GetProfilePictureParams) (*types.ProfilePictureInfo, error)
 type profilePictureDownload func(context.Context, string, int64) ([]byte, error)
 
-type profilePictureTarget struct {
-	IsCommunity bool
-	CommonGID   types.JID
-}
-
 type profilePictureOutcome struct {
 	status      uint8
 	pictureID   string
@@ -69,7 +61,7 @@ type profilePictureOutcome struct {
 	data        []byte
 }
 
-func fetchProfilePicture(ctx context.Context, jidText string, target profilePictureTarget, lookup profilePictureLookup, download profilePictureDownload) profilePictureOutcome {
+func fetchProfilePicture(ctx context.Context, jidText string, lookup profilePictureLookup, download profilePictureDownload) profilePictureOutcome {
 	jidText = strings.TrimSpace(jidText)
 	jid, err := types.ParseJID(jidText)
 	if err != nil || strings.Count(jidText, "@") != 1 || jid.User == "" || (jid.Server != types.DefaultUserServer && jid.Server != types.HiddenUserServer && jid.Server != types.GroupServer) {
@@ -79,16 +71,9 @@ func fetchProfilePicture(ctx context.Context, jidText string, target profilePict
 		return profilePictureOutcome{status: profilePictureStatusClientUnavailable}
 	}
 
-	info, err := lookup(ctx, jid.ToNonAD(), &whatsmeow.GetProfilePictureParams{
-		Preview:     true,
-		IsCommunity: target.IsCommunity,
-		CommonGID:   target.CommonGID,
-	})
-	if errors.Is(err, whatsmeow.ErrProfilePictureUnauthorized) {
-		return profilePictureOutcome{status: profilePictureStatusUnauthorized}
-	}
-	if errors.Is(err, whatsmeow.ErrProfilePictureNotSet) {
-		return profilePictureOutcome{status: profilePictureStatusNotSet}
+	info, err := lookup(ctx, jid.ToNonAD(), &whatsmeow.GetProfilePictureParams{Preview: true})
+	if errors.Is(err, whatsmeow.ErrProfilePictureUnauthorized) || errors.Is(err, whatsmeow.ErrProfilePictureNotSet) {
+		return profilePictureOutcome{status: profilePictureStatusUnavailable}
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
 		return profilePictureOutcome{status: profilePictureStatusCancelled}
@@ -154,7 +139,7 @@ func profilePictureToC(outcome profilePictureOutcome) C.ProfilePictureResult {
 }
 
 //export C_GetProfilePicture
-func C_GetProfilePicture(jid *C.char, isCommunity C.bool, commonGID *C.char) C.ProfilePictureResult {
+func C_GetProfilePicture(jid *C.char) C.ProfilePictureResult {
 	if jid == nil {
 		return C.ProfilePictureResult{status: C.uint8_t(profilePictureStatusInvalidJID)}
 	}
@@ -163,13 +148,7 @@ func C_GetProfilePicture(jid *C.char, isCommunity C.bool, commonGID *C.char) C.P
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), profilePictureTimeout)
 	defer cancel()
-	target := profilePictureTarget{IsCommunity: bool(isCommunity)}
-	if commonGID != nil && C.GoString(commonGID) != "" {
-		if parsed, err := types.ParseJID(C.GoString(commonGID)); err == nil {
-			target.CommonGID = parsed.ToNonAD()
-		}
-	}
-	return profilePictureToC(fetchProfilePicture(ctx, C.GoString(jid), target, client.GetProfilePictureInfo, downloadProfilePicture))
+	return profilePictureToC(fetchProfilePicture(ctx, C.GoString(jid), client.GetProfilePictureInfo, downloadProfilePicture))
 }
 
 //export C_FreeProfilePicture

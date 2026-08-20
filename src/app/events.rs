@@ -154,10 +154,7 @@ pub enum AppEvent {
     SetFileState(wr::MessageId, FileMeta),
     SetAudioDuration(wr::MessageId, Arc<str>, Option<u64>),
     ContactAvatar(AvatarResult),
-    ContactAvatarRefreshed {
-        generation: u64,
-        target: wr::ProfilePictureTarget,
-    },
+    ContactAvatarRefreshed { generation: u64, jid: wr::JID },
 }
 
 #[derive(Debug)]
@@ -237,12 +234,12 @@ impl fmt::Debug for AppEvent {
             AppEvent::ContactAvatar(result) => f
                 .debug_tuple("ContactAvatar")
                 .field(&result.generation())
-                .field(result.target())
+                .field(result.jid())
                 .finish(),
-            AppEvent::ContactAvatarRefreshed { generation, target } => f
+            AppEvent::ContactAvatarRefreshed { generation, jid } => f
                 .debug_struct("ContactAvatarRefreshed")
                 .field("generation", generation)
-                .field("target", target)
+                .field("jid", jid)
                 .finish(),
         }
     }
