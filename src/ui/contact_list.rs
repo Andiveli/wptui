@@ -24,6 +24,28 @@ pub struct ContactListItem {
 }
 
 impl ContactListItem {
+    pub(crate) fn from_summary(
+        row: &ChatRow,
+        latest: Option<&wr::Message>,
+        fallback_timestamp: Option<i64>,
+        unread: usize,
+    ) -> Self {
+        let name = row.label.clone();
+        Self {
+            initials: initials(&name),
+            name,
+            preview: if unread > 0 {
+                format!("{unread} unread")
+            } else {
+                latest.map(message_preview).unwrap_or_default()
+            },
+            local_time: latest
+                .map(|message| message.info.timestamp)
+                .or(fallback_timestamp)
+                .and_then(local_time),
+        }
+    }
+
     pub fn from_chat(app: &App<'_>, chat: &wr::JID) -> Self {
         Self::from_row(
             app,

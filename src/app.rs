@@ -246,6 +246,10 @@ pub struct App<'a> {
     pub rx: mpsc::Receiver<AppInput>,
     input_reader: InputReader,
     pub(crate) runtime_diagnostics: RuntimeDiagnostics,
+    pub(crate) chat_list_view: Option<chat_projection::ChatListViewModel>,
+    pub(crate) chat_list_revision: u64,
+    pub(crate) chat_list_mutation_depth: usize,
+    pub(crate) chat_list_mutation_pending: bool,
 }
 
 impl Default for App<'_> {

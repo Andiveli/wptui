@@ -61,10 +61,14 @@ impl App<'_> {
     /// recipient shows up as a row; the database row is created on the first
     /// real message, so an empty conversation is never persisted.
     pub fn open_chat_by_jid(&mut self, jid: wr::JID) {
+        let missing = !self.chats.contains_key(&jid);
         self.chats.entry(jid.clone()).or_insert_with(|| Chat {
             jid: jid.clone(),
             last_message_time: None,
         });
+        if missing {
+            self.invalidate_chat_list();
+        }
         self.sort_chats();
         self.open_chat = Some(jid.clone());
         self.refresh_group_permission(&jid);

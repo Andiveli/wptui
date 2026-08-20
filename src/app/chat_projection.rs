@@ -1,10 +1,22 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::{
     App, CommunityNode,
     community_hierarchy::{community_group_label, dedupe_nodes, is_announcement_group},
 };
 use whatsrust as wr;
+
+#[derive(Clone, Debug, Default)]
+pub struct ChatListViewModel {
+    pub rows: Vec<ChatRow>,
+    pub items: Vec<crate::ui::contact_list::ContactListItem>,
+    pub visible_indices: Vec<usize>,
+    pub revision: u64,
+    pub query: String,
+    pub detail_rows: Vec<ContactRow>,
+    pub detail_items: Vec<crate::ui::contact_list::ContactListItem>,
+    pub detail_jid: Option<wr::JID>,
+}
 
 /// Presentation-only Chats row. `target` and `members` are always real chat
 /// JIDs; a community never becomes a persisted or addressable chat.
@@ -89,21 +101,27 @@ impl App<'_> {
         groups
     }
 
-    pub fn get_selected_chat(&self) -> Option<wr::JID> {
+    pub fn get_selected_chat(&mut self) -> Option<wr::JID> {
         self.selected_contact_row()?.target().cloned()
     }
 
-    pub fn visible_contact_rows(&self) -> Vec<ContactRow> {
+    pub fn visible_contact_rows(&mut self) -> Vec<ContactRow> {
         if self.community_detail.is_some() {
-            return self.community_detail_rows();
+            self.ensure_detail_view();
+            return self.chat_list_view.as_ref().unwrap().detail_rows.clone();
         }
-        self.visible_chat_rows()
-            .into_iter()
+        self.ensure_chat_list_view();
+        self.chat_list_view
+            .as_ref()
+            .expect("chat view is built")
+            .visible_indices
+            .iter()
+            .map(|index| self.chat_list_view.as_ref().unwrap().rows[*index].clone())
             .map(ContactRow::Chat)
             .collect()
     }
 
-    fn selected_contact_row(&self) -> Option<ContactRow> {
+    fn selected_contact_row(&mut self) -> Option<ContactRow> {
         self.chat_list_state
             .selected()
             .and_then(|index| self.visible_contact_rows().into_iter().nth(index))
@@ -170,7 +188,7 @@ impl App<'_> {
         rows
     }
 
-    pub fn selected_community_contact(&self) -> Option<wr::JID> {
+    pub fn selected_community_contact(&mut self) -> Option<wr::JID> {
         if self.community_detail.is_some() {
             return None;
         }
@@ -194,17 +212,17 @@ impl App<'_> {
 
     pub(crate) fn open_community_detail(&mut self, root: wr::JID) {
         self.community_detail = Some(root);
-        self.chat_list_state
-            .select(first_chat_index(&self.community_detail_rows()));
+        let selected = first_chat_index(&self.community_detail_rows());
+        self.chat_list_state.select(selected);
     }
 
     pub(crate) fn close_community_detail(&mut self) {
         self.community_detail = None;
-        self.chat_list_state
-            .select(first_chat_index(&self.visible_contact_rows()));
+        let selected = first_chat_index(&self.visible_contact_rows());
+        self.chat_list_state.select(selected);
     }
 
-    pub fn chat_rows(&self) -> Vec<ChatRow> {
+    fn build_chat_rows(&self, recency: &HashMap<wr::JID, i64>) -> Vec<ChatRow> {
         let mut grouped = HashSet::new();
         let community_metadata = self
             .communities
@@ -225,7 +243,7 @@ impl App<'_> {
             grouped.extend(members.iter().cloned());
             let target = members
                 .iter()
-                .max_by_key(|jid| self.chat_recency(jid))
+                .max_by_key(|jid| recency.get(*jid).copied().unwrap_or_default())
                 .expect("non-empty community members")
                 .clone();
             rows.push(ChatRow {
@@ -246,42 +264,238 @@ impl App<'_> {
                 }),
         );
         rows.sort_by(|left, right| {
-            self.chat_recency(&right.target)
-                .cmp(&self.chat_recency(&left.target))
+            recency
+                .get(&right.target)
+                .copied()
+                .unwrap_or_default()
+                .cmp(&recency.get(&left.target).copied().unwrap_or_default())
                 .then_with(|| left.label.cmp(&right.label))
                 .then_with(|| left.target.0.cmp(&right.target.0))
         });
         rows
     }
 
-    pub fn visible_chat_rows(&self) -> Vec<ChatRow> {
-        let query = self.contact_search.input.to_lowercase();
-        self.chat_rows()
-            .into_iter()
-            .filter(|row| {
+    fn build_visible_chat_indices(&self, rows: &[ChatRow], query: &str) -> Vec<usize> {
+        rows.iter()
+            .enumerate()
+            .filter(|(_, row)| {
                 query.is_empty()
-                    || row.label.to_lowercase().contains(&query)
+                    || row.label.to_lowercase().contains(query)
                     || row
                         .members
                         .iter()
-                        .any(|jid| self.contact_name(jid).to_lowercase().contains(&query))
+                        .any(|jid| self.contact_name(jid).to_lowercase().contains(query))
+            })
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    fn latest_messages(&self) -> HashMap<wr::JID, Option<wr::Message>> {
+        let mut chat_ids = self.chats.keys().cloned().collect::<HashSet<_>>();
+        chat_ids.extend(self.chat_messages.keys().cloned());
+        chat_ids.extend(self.sorted_chats.iter().cloned());
+        chat_ids
+            .into_iter()
+            .map(|jid| {
+                let latest = self
+                    .chat_messages
+                    .get(&jid)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|id| self.messages.get(id))
+                    .max_by(|left, right| {
+                        left.info
+                            .timestamp
+                            .cmp(&right.info.timestamp)
+                            .then_with(|| left.info.id.cmp(&right.info.id))
+                    })
+                    .cloned();
+                (jid.clone(), latest)
             })
             .collect()
     }
 
-    pub fn chat_row_item(&self, row: &ChatRow) -> crate::ui::contact_list::ContactListItem {
-        crate::ui::contact_list::ContactListItem::from_row(self, row)
+    fn ensure_chat_list_view(&mut self) {
+        let query = self.contact_search.input.to_lowercase();
+        let needs_semantic = self
+            .chat_list_view
+            .as_ref()
+            .is_none_or(|view| view.revision != self.chat_list_revision);
+        if needs_semantic {
+            let started = std::time::Instant::now();
+            let latest = self.latest_messages();
+            let recency = latest
+                .keys()
+                .map(|jid| {
+                    (
+                        jid.clone(),
+                        latest.get(jid).and_then(Option::as_ref).map_or_else(
+                            || {
+                                self.chats
+                                    .get(jid)
+                                    .and_then(|chat| chat.last_message_time)
+                                    .unwrap_or_default()
+                            },
+                            |message| message.info.timestamp,
+                        ),
+                    )
+                })
+                .collect::<HashMap<_, _>>();
+            let rows = self.build_chat_rows(&recency);
+            let items = rows
+                .iter()
+                .map(|row| {
+                    let latest_message = row
+                        .members
+                        .iter()
+                        .filter_map(|jid| latest.get(jid).and_then(Option::as_ref))
+                        .max_by(|left, right| {
+                            left.info
+                                .timestamp
+                                .cmp(&right.info.timestamp)
+                                .then_with(|| left.info.id.cmp(&right.info.id))
+                        });
+                    let fallback = row
+                        .members
+                        .iter()
+                        .filter_map(|jid| {
+                            self.chats.get(jid).and_then(|chat| chat.last_message_time)
+                        })
+                        .max();
+                    let unread = row
+                        .members
+                        .iter()
+                        .map(|jid| self.pending_new_messages(jid))
+                        .sum();
+                    crate::ui::contact_list::ContactListItem::from_summary(
+                        row,
+                        latest_message,
+                        fallback,
+                        unread,
+                    )
+                })
+                .collect::<Vec<_>>();
+            self.chat_list_view = Some(ChatListViewModel {
+                rows,
+                items,
+                visible_indices: Vec::new(),
+                revision: self.chat_list_revision,
+                query: "\0".into(),
+                detail_rows: Vec::new(),
+                detail_items: Vec::new(),
+                detail_jid: None,
+            });
+            self.runtime_diagnostics
+                .record_chat_view_rebuild(started.elapsed());
+        } else {
+            self.runtime_diagnostics.record_chat_view_cache_hit();
+        }
+        let query_changed = self
+            .chat_list_view
+            .as_ref()
+            .is_none_or(|view| view.query != query);
+        if query_changed {
+            let indices = self.build_visible_chat_indices(
+                &self
+                    .chat_list_view
+                    .as_ref()
+                    .expect("chat view is built")
+                    .rows,
+                &query,
+            );
+            let view = self.chat_list_view.as_mut().expect("chat view is built");
+            view.visible_indices = indices;
+            view.query = query;
+        }
     }
 
-    fn chat_recency(&self, jid: &wr::JID) -> i64 {
-        self.chat_messages
-            .get(jid)
-            .into_iter()
-            .flatten()
-            .filter_map(|id| self.messages.get(id).map(|message| message.info.timestamp))
-            .max()
-            .or_else(|| self.chats.get(jid).and_then(|chat| chat.last_message_time))
-            .unwrap_or_default()
+    pub fn chat_rows(&mut self) -> Vec<ChatRow> {
+        self.ensure_chat_list_view();
+        self.chat_list_view.as_ref().unwrap().rows.clone()
+    }
+
+    pub fn visible_chat_rows(&mut self) -> Vec<ChatRow> {
+        self.ensure_chat_list_view();
+        let view = self.chat_list_view.as_ref().unwrap();
+        view.visible_indices
+            .iter()
+            .map(|index| view.rows[*index].clone())
+            .collect()
+    }
+
+    pub(crate) fn cached_contact_view(
+        &mut self,
+    ) -> (
+        Vec<ContactRow>,
+        Vec<crate::ui::contact_list::ContactListItem>,
+    ) {
+        if self.community_detail.is_some() {
+            self.ensure_detail_view();
+            let view = self.chat_list_view.as_ref().unwrap();
+            return (view.detail_rows.clone(), view.detail_items.clone());
+        }
+        self.ensure_chat_list_view();
+        let view = self.chat_list_view.as_ref().unwrap();
+        let rows = view
+            .visible_indices
+            .iter()
+            .map(|index| ContactRow::Chat(view.rows[*index].clone()))
+            .collect();
+        let items = view
+            .visible_indices
+            .iter()
+            .map(|index| view.items[*index].clone())
+            .collect();
+        (rows, items)
+    }
+
+    fn ensure_detail_view(&mut self) {
+        self.ensure_chat_list_view();
+        let detail_jid = self.community_detail.clone();
+        let stale = self.chat_list_view.as_ref().is_none_or(|view| {
+            view.revision != self.chat_list_revision || view.detail_jid != detail_jid
+        });
+        if stale {
+            let rows = self.community_detail_rows();
+            let items = rows
+                .iter()
+                .map(|row| crate::ui::contact_list::ContactListItem::from_contact_row(self, row))
+                .collect();
+            let view = self.chat_list_view.as_mut().unwrap();
+            view.detail_rows = rows;
+            view.detail_items = items;
+            view.detail_jid = detail_jid;
+        }
+    }
+
+    pub(crate) fn invalidate_chat_list(&mut self) {
+        if self.chat_list_mutation_depth > 0 {
+            self.chat_list_mutation_pending = true;
+        } else {
+            self.chat_list_revision = self.chat_list_revision.wrapping_add(1);
+        }
+    }
+
+    pub(crate) fn with_chat_list_mutation<T>(&mut self, work: impl FnOnce(&mut Self) -> T) -> T {
+        self.chat_list_mutation_depth += 1;
+        let result = work(self);
+        self.chat_list_mutation_depth -= 1;
+        if self.chat_list_mutation_depth == 0 && self.chat_list_mutation_pending {
+            self.chat_list_mutation_pending = false;
+            self.chat_list_revision = self.chat_list_revision.wrapping_add(1);
+        }
+        result
+    }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub(crate) fn rebuild_chat_list_view_for_tests(&mut self) {
+        self.invalidate_chat_list();
+        self.ensure_chat_list_view();
+    }
+
+    pub fn chat_row_item(&self, row: &ChatRow) -> crate::ui::contact_list::ContactListItem {
+        crate::ui::contact_list::ContactListItem::from_row(self, row)
     }
 }
 

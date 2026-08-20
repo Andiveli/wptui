@@ -464,3 +464,33 @@ fn root_linked_jid_without_child_is_projected_as_joined_chat() {
         ] if label == "group@g.us" && target == &group
     ));
 }
+
+#[test]
+fn cached_chat_view_reuses_semantic_rows_and_only_refilters_search() {
+    let mut app = TestApp::new();
+    let chat = jid("cached@example.test");
+    add_chat(&mut app, &chat);
+    app.sorted_chats = vec![chat.clone()];
+
+    assert_eq!(app.visible_chat_rows().len(), 1);
+    let revision = app.chat_list_revision;
+    assert_eq!(app.visible_chat_rows().len(), 1);
+    assert_eq!(app.chat_list_revision, revision);
+
+    app.contact_search.input = "cached".into();
+    assert_eq!(app.visible_chat_rows().len(), 1);
+    assert_eq!(app.chat_list_revision, revision);
+}
+
+#[test]
+fn duplicate_message_does_not_advance_chat_view_revision() {
+    let mut app = TestApp::new();
+    let chat = jid("duplicate@example.test");
+    app.add_message(crate::app::test_support::message(&chat, "message", 1));
+    let _ = app.visible_chat_rows();
+    let revision = app.chat_list_revision;
+
+    app.add_message(crate::app::test_support::message(&chat, "message", 1));
+
+    assert_eq!(app.chat_list_revision, revision);
+}

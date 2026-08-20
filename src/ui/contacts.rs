@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use super::contact_list::{
-    AVATAR_HEIGHT, AVATAR_WIDTH, ContactList, ContactListItem, contact_visible_range,
-    visible_contact_rows,
+    AVATAR_HEIGHT, AVATAR_WIDTH, ContactList, contact_visible_range, visible_contact_rows,
 };
 use crate::app::App;
 use crate::app::actions::FocusPane;
@@ -18,16 +17,11 @@ use ratatui::{
 use ratatui_image::StatefulImage;
 
 pub(crate) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
-    let rows = app.visible_contact_rows();
+    let (rows, items) = app.cached_contact_view();
     let targets = rows
         .iter()
         .filter_map(|row| row.avatar_target().cloned().map(AvatarTarget::Contact))
         .collect::<Vec<_>>();
-    let items = rows
-        .iter()
-        .map(|row| ContactListItem::from_contact_row(app, row))
-        .collect::<Vec<_>>();
-
     let mut list_area = area;
     if !app.contact_search.input.is_empty() || app.contact_search_active {
         let [search_area, new_list_area] =
@@ -100,5 +94,68 @@ pub(crate) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
         {
             StatefulImage::default().render(avatar_area, frame.buffer_mut(), protocol);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::Chat;
+    use crate::app::runtime_diagnostics::{PerfClock, PerfEnvironment, RuntimeDiagnostics};
+    use crate::app::test_support::TestApp;
+    use ratatui::{Terminal, backend::TestBackend};
+    use whatsrust as wr;
+
+    struct EnabledEnvironment;
+
+    impl PerfEnvironment for EnabledEnvironment {
+        fn value(&self, name: &str) -> Option<String> {
+            (name == "WPTUI_PERF").then(|| "1".into())
+        }
+    }
+
+    struct FixedPerfClock;
+
+    impl PerfClock for FixedPerfClock {
+        fn now_us(&self) -> u64 {
+            1
+        }
+    }
+
+    #[test]
+    fn stable_double_render_reuses_the_chat_view_cache() {
+        let mut test_app = TestApp::new();
+        let chat: wr::JID = "render@example.test".to_owned().into();
+        test_app.chats.insert(
+            chat.clone(),
+            Chat {
+                jid: chat.clone(),
+                last_message_time: Some(1),
+            },
+        );
+        test_app.sorted_chats = vec![chat];
+        let cache_dir = tempfile::tempdir().unwrap();
+        test_app.app.runtime_diagnostics = RuntimeDiagnostics::from_environment_with(
+            &EnabledEnvironment,
+            cache_dir.path(),
+            || Box::new(FixedPerfClock),
+        );
+        let mut terminal = Terminal::new(TestBackend::new(80, 10)).unwrap();
+
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                render_contacts(frame, &mut test_app.app, area)
+            })
+            .unwrap();
+        assert_eq!(test_app.app.runtime_diagnostics.chat_view_counts(), (1, 0));
+
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                render_contacts(frame, &mut test_app.app, area)
+            })
+            .unwrap();
+        assert_eq!(test_app.app.runtime_diagnostics.chat_view_counts(), (1, 1));
     }
 }

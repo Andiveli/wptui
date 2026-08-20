@@ -57,6 +57,7 @@ impl App<'_> {
             self.chats.len(),
             self.messages.len()
         );
+        self.invalidate_chat_list();
     }
 
     /// Display name for a JID (chat or sender). Falls back to the JID string if not in contacts.
@@ -78,13 +79,20 @@ impl App<'_> {
     }
 
     pub fn add_message(&mut self, message: wr::Message) {
+        self.with_chat_list_mutation(|app| app.add_message_inner(message));
+    }
+
+    fn add_message_inner(&mut self, message: wr::Message) {
         let chat_jid = message.info.chat.clone();
         let is_open_chat = self.open_chat.as_ref() == Some(&chat_jid);
         let is_inbound = !message.info.is_from_me && !App::is_status_chat(&chat_jid);
         let is_confirmed_own_message = message.info.is_from_me && !App::is_status_chat(&chat_jid);
         let was_at_latest = self.is_viewing_latest_message(&chat_jid);
-        self.add_message_without_sort(message);
+        let projection_changed = self.add_message_without_sort(message);
         self.sort_chat_messages(chat_jid.clone());
+        if !projection_changed {
+            return;
+        }
         if is_open_chat {
             if is_confirmed_own_message || (is_inbound && was_at_latest) {
                 self.catch_up_to_latest(&chat_jid);
@@ -104,6 +112,9 @@ impl App<'_> {
                 .entry(chat_jid)
                 .or_default()
                 .pending_new_messages += 1;
+        }
+        if projection_changed {
+            self.invalidate_chat_list();
         }
     }
 
@@ -144,12 +155,18 @@ impl App<'_> {
             .and_then(|id| self.messages.get(id))
             .map_or(0, |message| message.info.timestamp);
         let timeline = self.timeline.entry(chat.clone()).or_default();
+        let changed = timeline.pending_new_messages != 0
+            || timeline.last_read_message != latest
+            || timeline.last_read_at != Some(timestamp);
         timeline.pending_new_messages = 0;
         timeline.last_read_message = latest.clone();
         timeline.last_read_at = Some(timestamp);
         if let Some(message_id) = latest {
             self.db_handler
                 .set_last_read_cursor(chat, Some(message_id), timestamp);
+        }
+        if changed {
+            self.invalidate_chat_list();
         }
     }
 
@@ -174,9 +191,9 @@ impl App<'_> {
             .map(|message| (unread.len(), message.info.timestamp))
     }
 
-    pub(crate) fn add_message_without_sort(&mut self, message: wr::Message) {
+    pub(crate) fn add_message_without_sort(&mut self, message: wr::Message) -> bool {
         let chat_jid = message.info.chat.clone();
-        self.add_or_update_chat(
+        let chat_changed = self.add_or_update_chat(
             Chat {
                 jid: chat_jid.clone(),
                 last_message_time: Some(message.info.timestamp),
@@ -205,22 +222,35 @@ impl App<'_> {
         }
         self.refresh_message_projection(&id);
         self.refresh_status_contacts();
+        chat_changed || is_new || should_replace
     }
 
-    pub(crate) fn add_or_update_chat<F: FnOnce(&mut Chat)>(&mut self, chat: Chat, callback: F) {
+    pub(crate) fn add_or_update_chat<F: FnOnce(&mut Chat)>(
+        &mut self,
+        chat: Chat,
+        callback: F,
+    ) -> bool {
         if let Some(existing_chat) = self.chats.get_mut(&chat.jid) {
+            let before = existing_chat.last_message_time;
             callback(existing_chat);
             self.db_handler.add_chat(existing_chat);
+            before != existing_chat.last_message_time
         } else {
             self.db_handler.add_chat(&chat);
             self.chats.insert(chat.jid.clone(), chat);
+            true
         }
     }
 
     pub(crate) fn get_contacts(&mut self) {
+        let mut changed = false;
         for (jid, name) in wr::get_contacts() {
+            changed |= self.contacts.get(&jid) != Some(&name);
             self.contacts.insert(jid.clone(), name.clone());
             self.db_handler.add_contact(&jid, name.as_ref());
+        }
+        if changed {
+            self.invalidate_chat_list();
         }
     }
 }

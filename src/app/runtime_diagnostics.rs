@@ -71,6 +71,9 @@ struct Counters {
     draw_histogram: [u64; 8],
     phases: [PhaseCounters; 8],
     send_sequences: [u64; 5],
+    chat_view_rebuilds: u64,
+    chat_view_cache_hits: u64,
+    chat_view_rebuild_total_us: u128,
 }
 
 #[derive(Clone, Copy)]
@@ -169,6 +172,9 @@ impl RuntimeDiagnostics {
                 draw_histogram: [0; 8],
                 phases: [PhaseCounters::default(); 8],
                 send_sequences: [0; 5],
+                chat_view_rebuilds: 0,
+                chat_view_cache_hits: 0,
+                chat_view_rebuild_total_us: 0,
             }),
             report_path: Some(cache_dir.join("perf-report.txt")),
             clock: Some(clock),
@@ -306,6 +312,27 @@ impl RuntimeDiagnostics {
         }
     }
 
+    pub fn record_chat_view_rebuild(&mut self, duration: Duration) {
+        if let Some(state) = self.state.as_mut() {
+            state.chat_view_rebuilds = state.chat_view_rebuilds.saturating_add(1);
+            state.chat_view_rebuild_total_us = state
+                .chat_view_rebuild_total_us
+                .saturating_add(duration.as_micros() as u128);
+        }
+    }
+
+    pub fn record_chat_view_cache_hit(&mut self) {
+        if let Some(state) = self.state.as_mut() {
+            state.chat_view_cache_hits = state.chat_view_cache_hits.saturating_add(1);
+        }
+    }
+
+    pub fn chat_view_counts(&self) -> (u64, u64) {
+        self.state.as_ref().map_or((0, 0), |state| {
+            (state.chat_view_rebuilds, state.chat_view_cache_hits)
+        })
+    }
+
     pub fn finalize(&mut self) -> io::Result<()> {
         if self.finalized {
             return Ok(());
@@ -403,6 +430,18 @@ impl RuntimeDiagnostics {
             state.send_sequences[4]
         )
         .unwrap();
+        writeln!(
+            out,
+            "chat_view_rebuild=count:{} total_us:{}",
+            state.chat_view_rebuilds, state.chat_view_rebuild_total_us
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "chat_view_cache_hit=count:{}",
+            state.chat_view_cache_hits
+        )
+        .unwrap();
         out
     }
 }
@@ -485,6 +524,9 @@ mod tests {
                 draw_histogram: [0; 8],
                 phases: [PhaseCounters::default(); 8],
                 send_sequences: [0; 5],
+                chat_view_rebuilds: 0,
+                chat_view_cache_hits: 0,
+                chat_view_rebuild_total_us: 0,
             }),
             report_path: path,
             clock: Some(Box::new(FixedClock(6_000))),

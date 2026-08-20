@@ -16,7 +16,7 @@ pub(crate) fn handle(app: &mut App<'_>, event: wr::Event) -> bool {
             // History sync reports chats that may carry no messages. Keep
             // them so the chat list reflects the full account, not only
             // conversations that shipped a message in the sync batch.
-            app.add_or_update_chat(
+            let changed = app.add_or_update_chat(
                 Chat {
                     jid,
                     last_message_time: (last_message_time > 0).then_some(last_message_time),
@@ -27,6 +27,9 @@ pub(crate) fn handle(app: &mut App<'_>, event: wr::Event) -> bool {
                     }
                 },
             );
+            if changed {
+                app.invalidate_chat_list();
+            }
             app.sort_chats();
             true
         }

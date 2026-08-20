@@ -46,8 +46,13 @@ impl App<'_> {
             app.db_handler.add_message(&message);
             if is_sync {
                 let chat = message.info.chat.clone();
-                app.add_message_without_sort(message);
-                app.sort_chat_messages(chat);
+                app.with_chat_list_mutation(|app| {
+                    let changed = app.add_message_without_sort(message);
+                    app.sort_chat_messages(chat);
+                    if changed {
+                        app.invalidate_chat_list();
+                    }
+                });
             } else {
                 app.add_message(message);
             }
