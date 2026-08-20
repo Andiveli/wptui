@@ -22,8 +22,10 @@ pub const AVATAR_WORKERS: usize = 2;
 const MAX_PERSISTED_BYTES: usize = 512 * 1024;
 const RETRY_COOLDOWN: Duration = Duration::from_secs(30);
 
-fn retry_eligible(failure: Option<&(u64, Instant)>, now: Instant) -> bool {
-    failure.is_none_or(|(_, retry_at)| now >= *retry_at)
+fn retry_eligible(failure: Option<&(u64, Instant)>, generation: u64, now: Instant) -> bool {
+    failure.is_none_or(|(failure_generation, retry_at)| {
+        *failure_generation != generation || now >= *retry_at
+    })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -266,30 +268,38 @@ impl ContactAvatars {
         if changed {
             self.generation = self.generation.wrapping_add(1);
             self.requested = requests;
+            self.in_flight.clear();
         }
         let desired = self.requested.iter().cloned().collect::<HashSet<_>>();
-        self.in_flight.retain(|jid| desired.contains(jid));
+        let requests = self.take_requests(Instant::now());
         let runtime = self
             .runtime
             .get_or_insert_with(|| start_runtime(self.disk_root.clone(), tx, picker));
         *runtime.desired.lock().unwrap() = (self.generation, desired);
-        let now = Instant::now();
-        for jid in &self.requested {
-            let retryable = retry_eligible(self.failures.get(jid), now);
-            if (!self.protocols.contains_key(jid) || !self.refreshed.contains(jid))
-                && !self.in_flight.contains(jid)
-                && !self.unavailable.contains(jid)
+        for request in requests {
+            let _ = runtime.sender.send(request);
+        }
+    }
+
+    fn take_requests(&mut self, now: Instant) -> Vec<AvatarRequest> {
+        let mut requests = Vec::new();
+        for target in self.requested.clone() {
+            let retryable = retry_eligible(self.failures.get(&target), self.generation, now);
+            if (!self.protocols.contains_key(&target) || !self.refreshed.contains(&target))
+                && !self.in_flight.contains(&target)
+                && !self.unavailable.contains(&target)
                 && retryable
             {
-                let has_protocol = self.protocols.contains_key(jid);
-                self.in_flight.insert(jid.clone());
-                let _ = runtime.sender.send(AvatarRequest {
+                let has_protocol = self.protocols.contains_key(&target);
+                self.in_flight.insert(target.clone());
+                requests.push(AvatarRequest {
                     generation: self.generation,
-                    target: jid.clone(),
-                    refresh: !has_protocol || !self.refreshed.contains(jid),
+                    target: target.clone(),
+                    refresh: !has_protocol || !self.refreshed.contains(&target),
                 });
             }
         }
+        requests
     }
 
     pub fn clear_window(&mut self) {
@@ -306,7 +316,6 @@ impl ContactAvatars {
 
     pub fn apply(&mut self, result: AvatarResult) -> bool {
         let target = result.target().clone();
-        self.in_flight.remove(&target);
         if result.generation() != self.generation || !self.requested.contains(&target) {
             return false;
         }
@@ -323,6 +332,7 @@ impl ContactAvatars {
                 protocol,
                 ..
             } => {
+                self.in_flight.remove(&target);
                 let changed = self
                     .protocols
                     .get(&target)
@@ -333,12 +343,14 @@ impl ContactAvatars {
                 self.refreshed.insert(target);
             }
             AvatarResult::Unavailable { .. } => {
+                self.in_flight.remove(&target);
                 self.protocols.remove(&target);
                 self.order.retain(|cached| cached != &target);
                 self.unavailable.insert(target.clone());
                 self.refreshed.insert(target);
             }
             AvatarResult::Failed { generation, .. } => {
+                self.in_flight.remove(&target);
                 self.failures
                     .insert(target, (generation, Instant::now() + RETRY_COOLDOWN));
             }
@@ -347,10 +359,10 @@ impl ContactAvatars {
     }
 
     pub fn mark_refreshed(&mut self, generation: u64, target: wr::ProfilePictureTarget) -> bool {
-        self.in_flight.remove(&target);
         if generation != self.generation || !self.requested.contains(&target) {
             return false;
         }
+        self.in_flight.remove(&target);
         self.refreshed.insert(target);
         true
     }
@@ -643,10 +655,11 @@ mod tests {
 
         assert!(!retry_eligible(
             Some(&failure),
+            7,
             failed_at + RETRY_COOLDOWN - Duration::from_millis(1)
         ));
-        assert!(retry_eligible(Some(&failure), retry_at));
-        assert!(retry_eligible(None, failed_at));
+        assert!(retry_eligible(Some(&failure), 7, retry_at));
+        assert!(retry_eligible(None, 7, failed_at));
     }
 
     #[test]
@@ -703,6 +716,76 @@ mod tests {
             protocol: protocol(),
         });
         assert_eq!(avatars.protocols[&contact].0.as_ref(), "new");
+    }
+
+    #[test]
+    fn cached_intermediate_result_does_not_reenqueue_refresh() {
+        let root = tempdir().unwrap();
+        let mut avatars = ContactAvatars::new(root.path().into());
+        let contact = target(1);
+        avatars.generation = 1;
+        avatars.requested = vec![contact.clone()];
+        avatars.in_flight.insert(contact.clone());
+
+        assert!(avatars.apply(AvatarResult::Cached {
+            generation: 1,
+            target: contact.clone(),
+            picture_id: "cached".into(),
+            protocol: protocol(),
+        }));
+        assert!(avatars.in_flight.contains(&contact));
+        assert!(avatars.take_requests(Instant::now()).is_empty());
+    }
+
+    #[test]
+    fn stale_generation_result_does_not_clear_current_in_flight() {
+        let root = tempdir().unwrap();
+        let mut avatars = ContactAvatars::new(root.path().into());
+        let contact = target(1);
+        avatars.generation = 2;
+        avatars.requested = vec![contact.clone()];
+        avatars.in_flight.insert(contact.clone());
+
+        assert!(!avatars.apply(AvatarResult::Available {
+            generation: 1,
+            target: contact.clone(),
+            picture_id: "stale".into(),
+            protocol: protocol(),
+        }));
+        assert!(avatars.in_flight.contains(&contact));
+    }
+
+    #[test]
+    fn unchanged_window_failure_emits_no_request_before_cooldown() {
+        let root = tempdir().unwrap();
+        let mut avatars = ContactAvatars::new(root.path().into());
+        let contact = target(1);
+        avatars.generation = 1;
+        avatars.requested = vec![contact.clone()];
+        avatars.in_flight.insert(contact.clone());
+        avatars.apply(AvatarResult::Failed {
+            generation: 1,
+            target: contact.clone(),
+        });
+
+        let now = Instant::now();
+        assert!(avatars.take_requests(now).is_empty());
+        assert!(avatars.take_requests(now).is_empty());
+    }
+
+    #[test]
+    fn unchanged_window_failure_enqueues_exactly_one_request_at_cooldown() {
+        let root = tempdir().unwrap();
+        let mut avatars = ContactAvatars::new(root.path().into());
+        let contact = target(1);
+        let retry_at = Instant::now();
+        avatars.generation = 1;
+        avatars.requested = vec![contact.clone()];
+        avatars.failures.insert(contact.clone(), (1, retry_at));
+
+        assert_eq!(avatars.take_requests(retry_at).len(), 1);
+        assert!(avatars.take_requests(retry_at).is_empty());
+        assert!(avatars.in_flight.contains(&contact));
     }
 
     #[test]
