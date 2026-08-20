@@ -147,6 +147,13 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
                 ),
             ),
         ),
+        optimistic_text_send_worker: crate::app::optimistic_text_send::Worker::new(
+            tx.clone(),
+            Box::new(crate::app::optimistic_text_send::WhatsAppTextSendPort),
+        ),
+        pending_outgoing_text: HashMap::new(),
+        completed_text_send_ids: VecDeque::new(),
+        next_local_send_id: 1,
         kh: KeybindHandler::default(),
         contact_search_active: false,
         contact_search: TextInput::new(),

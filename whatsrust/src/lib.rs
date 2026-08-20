@@ -840,6 +840,7 @@ impl From<&CContact> for Contact {
 type CLogCallback = extern "C" fn(*const c_char, u8, *mut c_void);
 type CQrCallback = extern "C" fn(*const c_char, *mut c_void);
 type CMessageCallback = extern "C" fn(*const CMessage, bool, *mut c_void);
+type COptimisticTextSentCallback = extern "C" fn(u64, *const CMessage, *mut c_void);
 type CEventCallback = extern "C" fn(*const CEvent, *mut c_void);
 type CPresenceCallback = extern "C" fn(CJID, bool, i64, *mut c_void);
 
@@ -867,6 +868,16 @@ unsafe extern "C" {
         quote_message_type: u8,
         quote_message_content: *const c_void,
     );
+    fn C_SendTextMessage(
+        jid: CJID,
+        message_content: *const c_void,
+        quote_id: *const c_char,
+        quote_sender: CJID,
+        quote_chat: CJID,
+        quote_message_type: u8,
+        quote_message_content: *const c_void,
+        local_send_id: u64,
+    ) -> u8;
     fn C_ForwardMessage(
         source_id: *const c_char,
         source_chat: CJID,
@@ -909,6 +920,7 @@ unsafe extern "C" {
     fn C_MarkAsRead(msg_id: *const c_char, chat_jid: CJID, sender_jid: CJID) -> i32;
 
     fn C_SetMessageHandler(message_cb: CMessageCallback, data: *mut c_void);
+    fn C_SetOptimisticTextSentHandler(callback: COptimisticTextSentCallback, data: *mut c_void);
     fn C_SetEventHandler(event_cb: CEventCallback, data: *mut c_void);
     fn C_SetPresenceHandler(presence_cb: CPresenceCallback, data: *mut c_void);
     fn C_SetLogHandler(log_fn: CLogCallback, data: *mut c_void);
@@ -1532,11 +1544,24 @@ impl CallbackTranslator<bool> for bool {
     }
 }
 
+impl CallbackTranslator<u64> for u64 {
+    unsafe fn to_rust(value: u64) -> Self {
+        value
+    }
+}
+
 setup_handler!(
     set_message_handler,
     C_SetMessageHandler,
     msg: *const CMessage => Message,
     is_sync: bool => bool
+);
+
+setup_handler!(
+    set_optimistic_text_sent_handler,
+    C_SetOptimisticTextSentHandler,
+    local_send_id: u64 => u64,
+    msg: *const CMessage => Message
 );
 
 impl CallbackTranslator<*const c_char> for String {
@@ -1914,6 +1939,50 @@ pub fn send_message(
             quote_message_type,
             quote_message_content,
         )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TextSendResult {
+    Sent,
+    Failed,
+}
+
+pub fn send_text_message(
+    jid: &JID,
+    content: &MessageContent,
+    quoted_message: Option<&Message>,
+    mentions: &[Mention],
+    local_send_id: u64,
+) -> TextSendResult {
+    let MessageContent::Text(_) = content else {
+        return TextSendResult::Failed;
+    };
+    let jid_c = CJID::from(jid);
+    let (_message_type, content_ptr, _holder) = build_content_for_ffi(content, mentions);
+    let (_quote_id_owner, quote_id, quote_sender, quote_chat) = quote_to_ffi(quoted_message);
+    let quote_content = quoted_message.map(|message| build_content_for_ffi(&message.message, &[]));
+    let (quote_message_type, quote_message_content) = quote_content
+        .as_ref()
+        .map_or((0, std::ptr::null()), |(message_type, pointer, _)| {
+            (*message_type, *pointer)
+        });
+    let status = unsafe {
+        C_SendTextMessage(
+            jid_c,
+            content_ptr,
+            quote_id,
+            quote_sender,
+            quote_chat,
+            quote_message_type,
+            quote_message_content,
+            local_send_id,
+        )
+    };
+    if status == 0 {
+        TextSendResult::Sent
+    } else {
+        TextSendResult::Failed
     }
 }
 

@@ -140,6 +140,13 @@ impl AttachmentViewerState {
 }
 
 pub enum AppEvent {
+    OptimisticTextSent {
+        local_send_id: u64,
+        message: wr::Message,
+    },
+    TextSendFailed {
+        local_send_id: u64,
+    },
     ReadReceiptResult(ReceiptKey, ReceiptSendStatus),
     ReadReceiptRestored(Result<Vec<ReceiptCandidate>, RepositoryError>),
     ReadReceiptPersisted(ReceiptCandidate, PersistResult),
@@ -179,6 +186,18 @@ pub enum DrawSource {
 impl fmt::Debug for AppEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            AppEvent::OptimisticTextSent {
+                local_send_id,
+                message,
+            } => f
+                .debug_struct("OptimisticTextSent")
+                .field("local_send_id", local_send_id)
+                .field("server_message_id", &message.info.id)
+                .finish(),
+            AppEvent::TextSendFailed { local_send_id } => f
+                .debug_struct("TextSendFailed")
+                .field("local_send_id", local_send_id)
+                .finish(),
             AppEvent::ReadReceiptResult(key, status) => f
                 .debug_tuple("ReadReceiptResult")
                 .field(key)

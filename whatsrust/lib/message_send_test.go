@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -119,5 +121,49 @@ func TestMessageSendKeepsExportedBridgeContractInDedicatedOrchestration(t *testi
 		if !strings.Contains(string(source), fragment) {
 			t.Fatalf("message send orchestration missing %q", fragment)
 		}
+	}
+}
+
+func TestOptimisticTextSendUsesRequestScopedCallbackInsteadOfGenericLocalState(t *testing.T) {
+	source, err := os.ReadFile("message_send.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, fragment := range []string{
+		"//export C_SendTextMessage",
+		"HandleOptimisticTextSent(localSendID, messageInfo, message)",
+		"if localSendID != 0",
+		"context.WithTimeout",
+	} {
+		if !strings.Contains(text, fragment) {
+			t.Fatalf("optimistic text send missing request-scoped fragment %q", fragment)
+		}
+	}
+	if strings.Contains(text, "activeLocalSendID") {
+		t.Fatal("optimistic text send must not use process-global local-send state")
+	}
+}
+
+func TestOptimisticTextSendContextBoundsBlockingSendWithoutFiveSecondSleep(t *testing.T) {
+	ctx, cancel := optimisticTextSendContext(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	blockingSend := func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	if err := blockingSend(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("blocking send error = %v, want deadline exceeded", err)
+	}
+	if ctx.Err() == nil {
+		t.Fatal("bounded context did not finish")
+	}
+}
+
+func TestOptimisticTextSendContextHonorsCancellation(t *testing.T) {
+	ctx, cancel := optimisticTextSendContext(context.Background(), optimisticTextSendTimeout)
+	cancel()
+	if err := ctx.Err(); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled context error = %v, want context canceled", err)
 	}
 }

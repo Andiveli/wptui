@@ -54,10 +54,157 @@ fn status_label(app: &App, message_id: &wr::MessageId) -> Option<StatusLabel> {
 
 #[cfg(test)]
 mod layout_contract_tests {
+    use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Modifier};
+    use whatsrust as wr;
+
+    use super::message_list_state::ViewportAnchor;
+
     #[test]
     fn text_height_contract_handles_unicode_and_narrow_widths() {
         assert_eq!(super::message_layout::text_height("café 👩‍💻", 20), 1);
         assert_eq!(super::message_layout::text_height("café 👩‍💻", 4), 2);
+    }
+
+    #[test]
+    fn pending_backend_cells_are_dimmed_for_quote_and_semantic_mention() {
+        let mut test_app = crate::app::test_support::TestApp::new();
+        let chat: wr::JID = "chat@g.us".to_owned().into();
+        let quote_id: wr::MessageId = "quote".into();
+        test_app.messages.insert(
+            quote_id.clone(),
+            wr::Message {
+                info: wr::MessageInfo {
+                    id: quote_id.clone(),
+                    chat: chat.clone(),
+                    sender: chat.clone(),
+                    mentions_self: false,
+                    timestamp: 1,
+                    is_from_me: false,
+                    quote_id: None,
+                    read_by: 0,
+                    forwarding: Default::default(),
+                },
+                message: wr::MessageContent::Text("quoted".into()),
+            },
+        );
+        let pending_id: wr::MessageId = "local-send-1".into();
+        wr::store_message_mention_ranges(&pending_id, "@111", vec![0..4]);
+        let pending = wr::Message {
+            info: wr::MessageInfo {
+                id: pending_id,
+                chat: chat.clone(),
+                sender: chat,
+                mentions_self: false,
+                timestamp: 2,
+                is_from_me: true,
+                quote_id: Some(quote_id),
+                read_by: 0,
+                forwarding: Default::default(),
+            },
+            message: wr::MessageContent::Text("@111".into()),
+        };
+        let backend = TestBackend::new(40, 8);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                super::render_message(
+                    frame.buffer_mut(),
+                    &pending,
+                    false,
+                    super::AuthorGroupContext::STARTS_GROUP,
+                    &mut test_app,
+                    Rect::new(0, 0, 40, 8),
+                    false,
+                );
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let mut rendered = buffer.content.iter().filter(|cell| {
+            let symbol = cell.symbol();
+            symbol.contains('@') || symbol.contains('1') || symbol.contains('q')
+        });
+        assert!(rendered.clone().next().is_some());
+        assert!(rendered.all(|cell| cell.modifier.contains(Modifier::DIM)));
+    }
+
+    #[test]
+    fn pending_tail_overflow_keeps_newest_fit_in_local_order() {
+        let mut test_app = crate::app::test_support::TestApp::new();
+        test_app.message_list_state.select(Some(7));
+        test_app.message_list_state.offset = 3;
+        test_app.message_list_state.selected_message = Some("canonical".into());
+        test_app.message_list_state.viewport_anchor = Some(ViewportAnchor {
+            index: 2,
+            y: 4,
+            width: 24,
+            offset: 3,
+            generation: 9,
+            message_id: "canonical".into(),
+            bottom: 8,
+        });
+        let state_before = test_app.message_list_state.clone();
+        let chat: wr::JID = "chat@g.us".to_owned().into();
+        test_app
+            .chat_messages
+            .insert(chat.clone(), vec!["canonical".into()]);
+        let items = ["oldest-pending", "middle-pending", "newest-pending"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, text)| wr::Message {
+                info: wr::MessageInfo {
+                    id: format!("local-send-{}", index + 1).into(),
+                    chat: chat.clone(),
+                    sender: chat.clone(),
+                    mentions_self: false,
+                    timestamp: (index + 1) as i64,
+                    is_from_me: true,
+                    quote_id: None,
+                    read_by: 0,
+                    forwarding: Default::default(),
+                },
+                message: wr::MessageContent::Text(text.into()),
+            })
+            .collect::<Vec<_>>();
+        let backend = TestBackend::new(24, 8);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.buffer_mut().set_string(
+                    0,
+                    0,
+                    "canonical-row",
+                    ratatui::style::Style::default(),
+                );
+                super::render_pending_tail(frame, &mut test_app, Rect::new(0, 3, 24, 5), &items);
+            })
+            .unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(!rendered.contains("oldest-pending"));
+        let middle = rendered
+            .find("middle-pending")
+            .expect("middle pending suffix row");
+        let newest = rendered
+            .find("newest-pending")
+            .expect("newest pending suffix row");
+        assert!(middle < newest, "pending suffix order was not local order");
+        assert!(rendered.contains("canonical-row"));
+        assert_eq!(test_app.message_list_state, state_before);
+        assert_eq!(test_app.chat_messages[&chat], vec!["canonical".into()]);
+
+        let narrow = TestBackend::new(12, 3);
+        let mut narrow_terminal = Terminal::new(narrow).unwrap();
+        narrow_terminal
+            .draw(|frame| {
+                super::render_pending_tail(frame, &mut test_app, Rect::new(0, 0, 12, 3), &items);
+            })
+            .unwrap();
+        assert_eq!(test_app.message_list_state, state_before);
     }
 }
 
@@ -87,6 +234,7 @@ fn render_message(
     area: Rect,
     render_image: bool,
 ) {
+    let is_pending = App::is_pending_message_id(&message.info.id);
     let alignment = ratatui::layout::Alignment::Left;
     // let alignment = if message.info.is_from_me {
     //     ratatui::layout::Alignment::Right
@@ -129,7 +277,10 @@ fn render_message(
         header.push(" ✓".into());
     }
     header.push(" ".into());
-    let msg_block = message_block(header, timestamp, is_selected, author_group);
+    let mut msg_block = message_block(header, timestamp, is_selected, author_group);
+    if is_pending {
+        msg_block = msg_block.dim();
+    }
 
     // let sender_widget = Line::from_iter(header).alignment(alignment).bold();
 
@@ -142,7 +293,10 @@ fn render_message(
     let quote_widget = message.info.quote_id.as_ref().map(|_quote_id| {
         let quoted_text = quoted_text.unwrap_or_else(|| "not found".into());
 
-        Line::from(quoted_text).alignment(alignment).dark_gray()
+        Line::from(quoted_text)
+            .alignment(alignment)
+            .dark_gray()
+            .dim()
     });
     let status = status_label(app, &message.info.id);
     let forwarding = forwarding_label(message);
@@ -179,7 +333,11 @@ fn render_message(
     }
     if let Some(forwarding) = forwarding {
         Paragraph::new(forwarding.text())
-            .dark_gray()
+            .style(if is_pending {
+                Style::default().dark_gray().dim()
+            } else {
+                Style::default().dark_gray()
+            })
             .wrap(Wrap { trim: true })
             .render(forwarding_area, buf);
     }
@@ -189,6 +347,11 @@ fn render_message(
             let lines =
                 inline_content_lines(text, &mention_ranges, status, content_area.width as usize);
             Paragraph::new(lines)
+                .style(if is_pending {
+                    Style::default().dim()
+                } else {
+                    Style::default()
+                })
                 .alignment(alignment)
                 .render(content_area, buf);
         }
@@ -230,8 +393,10 @@ pub fn render_messages(frame: &mut Frame, app: &mut App, area: Rect) -> Option<(
         )
     });
     let pending = app.pending_new_messages(&chat_jid);
+    let optimistic_items = app.pending_messages_for_chat(&chat_jid);
     let notice_height = u16::from(banner.is_some());
     let pending_height = u16::from(pending > 0);
+    let optimistic_height = pending_tail_height(app, &optimistic_items, area.width as usize);
     let notice_area = Rect::new(area.x, area.y, area.width, notice_height);
     let list_area = Rect::new(
         area.x,
@@ -239,13 +404,22 @@ pub fn render_messages(frame: &mut Frame, app: &mut App, area: Rect) -> Option<(
         area.width,
         area.height
             .saturating_sub(notice_height)
-            .saturating_sub(pending_height),
+            .saturating_sub(pending_height)
+            .saturating_sub(optimistic_height),
     );
     let pending_area = Rect::new(
         area.x,
-        area.bottom().saturating_sub(pending_height),
+        area.bottom()
+            .saturating_sub(optimistic_height)
+            .saturating_sub(pending_height),
         area.width,
         pending_height,
+    );
+    let optimistic_area = Rect::new(
+        area.x,
+        area.bottom().saturating_sub(optimistic_height),
+        area.width,
+        optimistic_height,
     );
 
     let items: Vec<_> = app
@@ -256,6 +430,7 @@ pub fn render_messages(frame: &mut Frame, app: &mut App, area: Rect) -> Option<(
         .filter_map(|msg_id| app.messages.get(msg_id).cloned())
         .collect();
     let result = render_message_items(frame, app, list_area, items, unread_count);
+    render_pending_tail(frame, app, optimistic_area, &optimistic_items);
     crate::crash_diagnostics::breadcrumb("first-message-render", "complete");
     if let Some(text) = banner {
         Paragraph::new(text)
@@ -274,6 +449,76 @@ pub fn render_messages(frame: &mut Frame, app: &mut App, area: Rect) -> Option<(
             .render(Rect::new(x, pending_area.y, width, 1), frame.buffer_mut());
     }
     result
+}
+
+fn pending_tail_height(app: &mut App, items: &[wr::Message], width: usize) -> u16 {
+    let groups = items
+        .iter()
+        .enumerate()
+        .map(|(index, message)| {
+            AuthorGroupContext::new(starts_author_group(items.get(index + 1), message))
+        })
+        .collect::<Vec<_>>();
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, message)| {
+            message_height(message, width, false, groups[index], app)
+                + spacing_after_message(index, &groups, None)
+        })
+        .sum::<usize>()
+        .min(u16::MAX as usize) as u16
+}
+
+fn render_pending_tail(frame: &mut Frame, app: &mut App, area: Rect, items: &[wr::Message]) {
+    if area.is_empty() || items.is_empty() {
+        return;
+    }
+    let groups = items
+        .iter()
+        .enumerate()
+        .map(|(index, message)| {
+            AuthorGroupContext::new(starts_author_group(items.get(index + 1), message))
+        })
+        .collect::<Vec<_>>();
+    let heights = items
+        .iter()
+        .enumerate()
+        .map(|(index, message)| {
+            message_height(message, area.width as usize, false, groups[index], app)
+                + spacing_after_message(index, &groups, None)
+        })
+        .collect::<Vec<_>>();
+    let newest = items.len() - 1;
+    let mut first = newest;
+    let mut used = heights[newest].min(area.height as usize);
+    for index in (0..newest).rev() {
+        let candidate = used.saturating_add(heights[index]);
+        if candidate > area.height as usize {
+            break;
+        }
+        first = index;
+        used = candidate;
+    }
+    let mut y = area.bottom().saturating_sub(used as u16);
+    for (index, message) in items.iter().enumerate().skip(first) {
+        let height =
+            heights[index].saturating_sub(spacing_after_message(index, &groups, None)) as u16;
+        if height == 0 || y >= area.bottom() {
+            continue;
+        }
+        let render_height = height.min(area.bottom().saturating_sub(y));
+        render_message(
+            frame.buffer_mut(),
+            message,
+            false,
+            groups[index],
+            app,
+            Rect::new(area.x, y, area.width, render_height),
+            false,
+        );
+        y = y.saturating_add(heights[index] as u16);
+    }
 }
 
 /// Read-only statuses of the opened status contact, rendered with the

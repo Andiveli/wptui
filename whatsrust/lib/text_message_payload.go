@@ -22,6 +22,7 @@ typedef struct {
 } MentionedTextMessage;
 
 extern void callMessageHandler(MessageHandler hdl, bool isSync, const Message* data);
+extern void callOptimisticTextSentHandler(OptimisticTextSentHandler hdl, uint64_t localSendID, const Message* data);
 */
 import "C"
 
@@ -58,4 +59,16 @@ func emitTextMessage(cinfo C.MessageInfo, text string, isSync bool) {
 		message:     unsafe.Pointer(content),
 	}
 	C.callMessageHandler(messageHandler, C.bool(isSync), &message)
+}
+
+func emitOptimisticTextMessage(cinfo C.MessageInfo, text string, localSendID uint64) {
+	ctext := C.CString(text)
+	defer C.free(unsafe.Pointer(ctext))
+	content := (*C.MentionedTextMessage)(C.malloc(C.sizeof_MentionedTextMessage))
+	content.text = ctext
+	content.mentionRanges = nil
+	content.mentionRangeCount = 0
+	defer C.free(unsafe.Pointer(content))
+	message := C.Message{info: cinfo, messageType: C.uint8_t(MessageTypeText), message: unsafe.Pointer(content)}
+	C.callOptimisticTextSentHandler(optimisticTextSentHandler, C.uint64_t(localSendID), &message)
 }

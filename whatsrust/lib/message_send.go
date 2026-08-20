@@ -26,11 +26,18 @@ import "C"
 import (
 	"context"
 	"fmt"
+	"time"
 	"unsafe"
 
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 )
+
+const optimisticTextSendTimeout = 5 * time.Second
+
+func optimisticTextSendContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(parent, timeout)
+}
 
 // ContentToWaE2EMessage converts the public FFI payload into a WhatsApp
 // message. File construction remains delegated to the injectable builder.
@@ -177,9 +184,18 @@ func quotedMessageFromContent(messageType C.uint8_t, messageContent unsafe.Point
 
 //export C_SendMessage
 func C_SendMessage(cjid C.JID, messageType C.uint8_t, messageContent unsafe.Pointer, quoteId *C.char, quoteSender C.JID, quoteChat C.JID, quoteMessageType C.uint8_t, quoteMessageContent unsafe.Pointer) {
+	_ = sendMessage(cjid, messageType, messageContent, quoteId, quoteSender, quoteChat, quoteMessageType, quoteMessageContent, 0)
+}
+
+//export C_SendTextMessage
+func C_SendTextMessage(cjid C.JID, messageContent unsafe.Pointer, quoteId *C.char, quoteSender C.JID, quoteChat C.JID, quoteMessageType C.uint8_t, quoteMessageContent unsafe.Pointer, localSendID C.uint64_t) C.uint8_t {
+	return C.uint8_t(sendMessage(cjid, C.uint8_t(MessageTypeText), messageContent, quoteId, quoteSender, quoteChat, quoteMessageType, quoteMessageContent, uint64(localSendID)))
+}
+
+func sendMessage(cjid C.JID, messageType C.uint8_t, messageContent unsafe.Pointer, quoteId *C.char, quoteSender C.JID, quoteChat C.JID, quoteMessageType C.uint8_t, quoteMessageContent unsafe.Pointer, localSendID uint64) uint8 {
 	if cjid == nil || messageContent == nil || client == nil || client.Store == nil || client.Store.ID == nil {
 		LOG_WARN("message send rejected: client or message is unavailable")
-		return
+		return 1
 	}
 	jid := cToJid(cjid)
 
@@ -191,10 +207,16 @@ func C_SendMessage(cjid C.JID, messageType C.uint8_t, messageContent unsafe.Poin
 
 	message := ContentToWaE2EMessage(messageType, messageContent, contextInfo)
 
-	sendResponse, err := client.SendMessage(context.Background(), jid, message)
+	sendContext := context.Background()
+	if localSendID != 0 {
+		var cancel context.CancelFunc
+		sendContext, cancel = optimisticTextSendContext(sendContext, optimisticTextSendTimeout)
+		defer cancel()
+	}
+	sendResponse, err := client.SendMessage(sendContext, jid, message)
 	if err != nil {
 		LOG_WARN("message send failed: %v", err)
-		return
+		return 1
 	}
 
 	messageInfo := types.MessageInfo{
@@ -203,5 +225,10 @@ func C_SendMessage(cjid C.JID, messageType C.uint8_t, messageContent unsafe.Poin
 		Timestamp:     sendResponse.Timestamp,
 	}
 	LOG_INFO("Message sent: %s %s", messageInfo.ID, messageInfo.Chat)
-	HandleMessage(messageInfo, message, false)
+	if localSendID != 0 {
+		HandleOptimisticTextSent(localSendID, messageInfo, message)
+	} else {
+		HandleMessage(messageInfo, message, false)
+	}
+	return 0
 }

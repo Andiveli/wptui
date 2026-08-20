@@ -75,15 +75,31 @@ impl App<'_> {
                     messages,
                     quote,
                     mentions,
+                    mention_ranges,
+                    draft,
                 } => {
                     if let Some(chat) = self.open_chat() {
                         let count = messages.len();
                         self.runtime_diagnostics.record_send_sequence(count);
-                        self.record_phase(Phase::ComposerSubmitSend, |_app| {
-                            for message in messages {
-                                wr::send_message(&chat, &message, quote.as_ref(), &mentions);
+                        if count == 1
+                            && matches!(messages.first(), Some(wr::MessageContent::Text(_)))
+                        {
+                            let message = messages.into_iter().next().unwrap();
+                            let accepted = self.record_phase(Phase::ComposerSubmitSend, |app| {
+                                app.stage_text_send(chat, message, quote, mentions, mention_ranges)
+                            });
+                            if !accepted {
+                                if let Some(draft) = draft {
+                                    self.composer.restore_text_draft(draft);
+                                }
                             }
-                        });
+                        } else {
+                            self.record_phase(Phase::ComposerSubmitSend, |_app| {
+                                for message in messages {
+                                    wr::send_message(&chat, &message, quote.as_ref(), &mentions);
+                                }
+                            });
+                        }
                     }
                 }
             },

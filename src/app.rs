@@ -40,6 +40,7 @@ pub mod message_menu;
 pub mod message_navigation;
 pub mod message_opening;
 pub mod notifications;
+pub mod optimistic_text_send;
 pub mod presence;
 pub mod presence_bridge;
 pub mod private_reply;
@@ -209,6 +210,10 @@ pub struct App<'a> {
     pub viewer_zoom: u16,
     pub read_receipts: ReadReceiptCoordinator,
     pub read_receipt_worker: read_receipts::worker::Worker,
+    pub optimistic_text_send_worker: optimistic_text_send::Worker,
+    pub pending_outgoing_text: HashMap<u64, optimistic_text_send::TextSendRequest>,
+    pub completed_text_send_ids: VecDeque<u64>,
+    pub next_local_send_id: u64,
 
     pub kh: KeybindHandler,
 

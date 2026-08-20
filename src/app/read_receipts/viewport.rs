@@ -122,6 +122,7 @@ impl App<'_> {
         self.read_receipts.set_enabled(false);
         self.read_receipt_worker.set_enabled(false);
         self.read_receipt_worker.shutdown();
+        self.optimistic_text_send_worker.shutdown();
     }
 }
 

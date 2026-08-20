@@ -73,3 +73,24 @@ func HandleMessage(info types.MessageInfo, msg *waE2E.Message, isSync bool) {
 		}
 	}
 }
+
+// HandleOptimisticTextSent delivers the immediate canonical result through a
+// request-scoped callback. It deliberately bypasses HandleMessage so the later
+// server echo remains a normal generic callback deduped by its server ID.
+func HandleOptimisticTextSent(localSendID uint64, info types.MessageInfo, msg *waE2E.Message) {
+	info = normalizeMessageInfo(info)
+	callback := beginMessageCallback(info, msg, nil)
+	defer callback.close()
+	if msg.ExtendedTextMessage != nil {
+		ext := msg.GetExtendedTextMessage()
+		contextInfo := ext.GetContextInfo()
+		if id := contextInfo.GetStanzaID(); id != "" {
+			callback.info.quoteID = C.CString(id)
+		}
+		emitOptimisticTextMessage(callback.info, ext.GetText(), localSendID)
+		return
+	}
+	if msg.Conversation != nil {
+		emitOptimisticTextMessage(callback.info, msg.GetConversation(), localSendID)
+	}
+}

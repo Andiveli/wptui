@@ -1,4 +1,4 @@
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashSet, ops::Range, sync::Arc};
 
 use ratatui_textarea::{CursorMove, TextArea};
 use whatsrust as wr;
@@ -27,7 +27,16 @@ pub enum ComposerOutcome {
         messages: Vec<wr::MessageContent>,
         quote: Option<wr::Message>,
         mentions: Vec<wr::Mention>,
+        mention_ranges: Vec<Range<usize>>,
+        draft: Option<ComposerDraft>,
     },
+}
+
+#[derive(Clone, Debug)]
+pub struct ComposerDraft {
+    text: String,
+    quote: Option<wr::Message>,
+    mentions: Vec<MentionMark>,
 }
 
 impl ComposerOutcome {
@@ -253,7 +262,12 @@ impl Composer<'_> {
     }
 
     fn submit(&mut self) -> ComposerOutcome {
-        let (expanded, mentions) = self.expanded_text();
+        let draft = ComposerDraft {
+            text: self.text(),
+            quote: self.quote.clone(),
+            mentions: self.mentions.clone(),
+        };
+        let (expanded, mentions, mention_ranges) = self.expanded_text();
         let text: Arc<str> = expanded.into();
         if text.trim().is_empty() && self.pending.is_empty() {
             return ComposerOutcome::Idle;
@@ -285,7 +299,16 @@ impl Composer<'_> {
             messages,
             quote: self.quote.take(),
             mentions,
+            mention_ranges,
+            draft: Some(draft),
         }
+    }
+
+    pub(crate) fn restore_text_draft(&mut self, draft: ComposerDraft) {
+        self.replace_text(&draft.text);
+        self.quote = draft.quote;
+        self.mentions = draft.mentions;
+        self.refresh_mention_picker();
     }
 
     fn cursor_offset(&self) -> usize {
@@ -386,13 +409,14 @@ impl Composer<'_> {
         self.mention_picker = None;
     }
 
-    fn expanded_text(&self) -> (String, Vec<wr::Mention>) {
+    fn expanded_text(&self) -> (String, Vec<wr::Mention>, Vec<Range<usize>>) {
         let text = self.text();
         let mut marks = self.mentions.clone();
         marks.sort_by_key(|mark| mark.start);
         let mut output = String::new();
         let mut last = 0;
         let mut mentions = Vec::new();
+        let mut mention_ranges = Vec::new();
         for mark in marks {
             if mark.end > text.chars().count() {
                 continue;
@@ -410,8 +434,10 @@ impl Composer<'_> {
                 .next()
                 .unwrap_or("")
                 .to_owned();
+            let mention_start = output.len();
             output.push('@');
             output.push_str(&wire_user);
+            mention_ranges.push(mention_start..output.len());
             last = mark.end;
             mentions.push(wr::Mention {
                 jid: mark.participant.jid,
@@ -420,7 +446,7 @@ impl Composer<'_> {
         }
         let chars: Vec<char> = text.chars().collect();
         output.extend(chars[last..].iter());
-        (output, mentions)
+        (output, mentions, mention_ranges)
     }
 }
 
