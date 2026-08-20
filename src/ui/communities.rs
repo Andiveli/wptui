@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::app::actions::FocusPane;
-use crate::app::contact_avatars::prioritized_avatar_requests;
+use crate::app::contact_avatars::AvatarTarget;
 use crate::app::{App, CommunityNavigationRow, community_hierarchy::community_group_label};
 use crate::ui::contact_list::{
     AVATAR_HEIGHT, AVATAR_WIDTH, CONTACT_ITEM_HEIGHT, initials, truncate,
@@ -12,7 +12,6 @@ use ratatui::{
     style::{Color, Modifier, Style},
     widgets::{Block, Paragraph, StatefulWidget},
 };
-use whatsrust as wr;
 
 fn community_layout(
     rows: &[CommunityNavigationRow],
@@ -93,12 +92,24 @@ fn community_layout(
         .collect()
 }
 
-fn community_avatar_targets(rows: &[CommunityNavigationRow]) -> Vec<wr::JID> {
+fn community_avatar_targets(app: &App, rows: &[CommunityNavigationRow]) -> Vec<AvatarTarget> {
     rows.iter()
         .filter_map(|row| match row {
-            CommunityNavigationRow::Root(jid)
-            | CommunityNavigationRow::Group(jid)
-            | CommunityNavigationRow::ViewAll(jid) => Some(jid.clone()),
+            CommunityNavigationRow::Root(jid) | CommunityNavigationRow::ViewAll(jid) => {
+                Some(AvatarTarget::CommunityRoot { jid: jid.clone() })
+            }
+            CommunityNavigationRow::Group(jid) => {
+                let parent_jid = app
+                    .communities
+                    .iter()
+                    .find(|node| node.is_root && node.linked_groups.contains(jid))
+                    .map(|node| node.jid.clone());
+                Some(AvatarTarget::CommunityGroup {
+                    jid: jid.clone(),
+                    parent_jid,
+                    is_joined: true,
+                })
+            }
             CommunityNavigationRow::Separator => None,
         })
         .collect()
@@ -127,12 +138,9 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 
     let selected = app.chat_list_state.selected();
-    let targets = community_avatar_targets(&rows);
-    app.contact_avatars.schedule(
-        prioritized_avatar_requests(&targets, None, 0, targets.len()),
-        app.tx.clone(),
-        Arc::clone(&app.picker),
-    );
+    let targets = community_avatar_targets(app, &rows);
+    app.contact_avatars
+        .schedule(targets, app.tx.clone(), Arc::clone(&app.picker));
     for (row, row_area, selectable_index) in community_layout(&rows, selected, inner) {
         let selected = selectable_index == selected;
         let base = if selected {
@@ -148,20 +156,33 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
                 (
                     node.map(|node| node.name.clone())
                         .unwrap_or_else(|| jid.0.to_string()),
-                    Some(jid.clone()),
+                    Some(AvatarTarget::CommunityRoot { jid: jid.clone() }),
                     false,
                 )
             }
             CommunityNavigationRow::Group(jid) => {
                 let node = app.communities.iter().find(|node| node.jid == *jid);
+                let parent_jid = app
+                    .communities
+                    .iter()
+                    .find(|node| node.is_root && node.linked_groups.contains(jid))
+                    .map(|node| node.jid.clone());
                 (
                     node.map(community_group_label)
                         .unwrap_or_else(|| jid.0.to_string()),
-                    Some(jid.clone()),
+                    Some(AvatarTarget::CommunityGroup {
+                        jid: jid.clone(),
+                        parent_jid,
+                        is_joined: true,
+                    }),
                     false,
                 )
             }
-            CommunityNavigationRow::ViewAll(jid) => ("View all".into(), Some(jid.clone()), false),
+            CommunityNavigationRow::ViewAll(jid) => (
+                "View all".into(),
+                Some(AvatarTarget::CommunityRoot { jid: jid.clone() }),
+                false,
+            ),
             CommunityNavigationRow::Separator => ("────────────────".into(), None, true),
         };
         let style = if is_root {
@@ -216,7 +237,7 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
 
 #[cfg(test)]
 mod tests {
-    use super::{community_avatar_targets, community_layout, render};
+    use super::{AvatarTarget, community_avatar_targets, community_layout, render};
     use crate::app::{Chat, CommunityNavigationRow, CommunityNode, test_support::TestApp};
     use ratatui::{Terminal, backend::TestBackend, layout::Rect};
     use whatsrust::JID;
@@ -256,10 +277,24 @@ mod tests {
 
     #[test]
     fn avatar_targets_include_roots_groups_and_view_all() {
-        let targets = community_avatar_targets(&rows(2));
+        let mut app = TestApp::new();
+        app.communities = vec![CommunityNode {
+            jid: JID::from("root@g.us".to_owned()),
+            name: "Community".into(),
+            is_root: true,
+            linked_groups: vec![
+                JID::from("group-0@g.us".to_owned()),
+                JID::from("group-1@g.us".to_owned()),
+            ],
+            is_joined: true,
+            is_default_subgroup: false,
+            is_announce: None,
+            participant_count: None,
+        }];
+        let targets = community_avatar_targets(&app, &rows(2));
         assert_eq!(targets.len(), 4);
-        assert_eq!(targets[0].0.as_ref(), "root@g.us");
-        assert_eq!(targets[3].0.as_ref(), "root@g.us");
+        assert!(matches!(targets[0], AvatarTarget::CommunityRoot { .. }));
+        assert!(matches!(targets[3], AvatarTarget::CommunityRoot { .. }));
     }
 
     fn community_app(child_announce: Option<bool>) -> TestApp {

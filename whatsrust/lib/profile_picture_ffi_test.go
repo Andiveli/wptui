@@ -13,7 +13,7 @@ func TestProfilePictureFFIOwnsProfilePictureExports(t *testing.T) {
 	}
 	seamSource := string(seam)
 	for _, export := range []string{
-		"func C_GetProfilePicture(jid *C.char)",
+		"func C_GetProfilePicture(jid *C.char, isCommunity C.bool, commonGID *C.char)",
 		"func C_FreeProfilePicture(result C.ProfilePictureResult)",
 	} {
 		if !strings.Contains(seamSource, export) {

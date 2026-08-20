@@ -199,11 +199,17 @@ fn detail_available_groups_with_group_jids_are_avatar_targets() {
             participant_count: Some(2),
         },
     ]);
-    app.community_detail = Some(root);
+    app.community_detail = Some(root.clone());
 
     assert_eq!(
         app.visible_contact_rows()[3].avatar_target(),
-        Some(&available)
+        Some(
+            super::super::contact_avatars::AvatarTarget::CommunityGroup {
+                jid: available,
+                parent_jid: Some(root),
+                is_joined: false,
+            }
+        )
     );
 }
 #[test]
@@ -323,11 +329,13 @@ fn available_group_count_is_omitted_when_unknown_and_rendered_when_known() {
     let unknown = ContactRow::Available {
         name: "Unknown".into(),
         jid: None,
+        parent_jid: None,
         participant_count: None,
     };
     let known = ContactRow::Available {
         name: "Known".into(),
         jid: None,
+        parent_jid: None,
         participant_count: Some(42),
     };
     let app = TestApp::new();

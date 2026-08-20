@@ -60,7 +60,7 @@ func TestFetchProfilePictureAvailablePreview(t *testing.T) {
 	want := profilePicturePNG(t)
 	lookupCalled := false
 	downloadCalled := false
-	outcome := fetchProfilePicture(context.Background(), "12345@g.us", func(_ context.Context, jid types.JID, params *whatsmeow.GetProfilePictureParams) (*types.ProfilePictureInfo, error) {
+	outcome := fetchProfilePicture(context.Background(), "12345@g.us", profilePictureTarget{}, func(_ context.Context, jid types.JID, params *whatsmeow.GetProfilePictureParams) (*types.ProfilePictureInfo, error) {
 		lookupCalled = true
 		if jid.Server != types.GroupServer || params == nil || !params.Preview {
 			t.Fatalf("unexpected lookup request: jid=%s params=%#v", jid, params)

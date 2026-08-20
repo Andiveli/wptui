@@ -880,7 +880,7 @@ unsafe extern "C" {
     fn C_GetContacts() -> CGetContactsResult;
     fn C_GetCommunities() -> CGetCommunitiesResult;
     fn C_FreeCommunities(result: CGetCommunitiesResult);
-    fn C_GetProfilePicture(jid: CJID) -> CProfilePictureResult;
+    fn C_GetProfilePicture(jid: CJID, is_community: bool, common_gid: CJID) -> CProfilePictureResult;
     fn C_FreeProfilePicture(result: CProfilePictureResult);
     fn C_GetChatSettings(jid: CJID) -> CChatSettings;
     fn C_GetGroupInfo(jid: CJID) -> CGroupInfoResult;
@@ -938,6 +938,33 @@ pub enum ProfilePictureAvailability {
     Unavailable,
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum ProfilePictureTarget {
+    Contact { jid: JID },
+    CommunityRoot { jid: JID },
+    CommunityGroup { jid: JID, parent_jid: Option<JID>, is_joined: bool },
+}
+
+impl ProfilePictureTarget {
+    pub fn jid(&self) -> &JID {
+        match self {
+            Self::Contact { jid }
+            | Self::CommunityRoot { jid }
+            | Self::CommunityGroup { jid, .. } => jid,
+        }
+    }
+
+    fn request_context(&self) -> (bool, Option<&JID>) {
+        match self {
+            Self::Contact { .. } => (false, None),
+            Self::CommunityRoot { .. } => (true, None),
+            Self::CommunityGroup { parent_jid, is_joined, .. } => {
+                (false, (!is_joined).then_some(parent_jid.as_ref()).flatten())
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProfilePictureError {
     InvalidJid,
@@ -964,7 +991,7 @@ fn profile_picture_from_parts(
             bytes,
         })),
         0 => Err(ProfilePictureError::InvalidBridgeResult),
-        1 => Ok(ProfilePictureAvailability::Unavailable),
+        1 | 10 | 11 => Ok(ProfilePictureAvailability::Unavailable),
         2 => Err(ProfilePictureError::InvalidJid),
         3 => Err(ProfilePictureError::ClientUnavailable),
         4 => Err(ProfilePictureError::RequestCancelled),
@@ -977,9 +1004,34 @@ fn profile_picture_from_parts(
     }
 }
 
+/// Retrieves a standard contact/group profile picture.
+///
+/// This wrapper preserves the public JID-based API for existing callers. Use
+/// `get_profile_picture_for_target` when request context is significant.
 pub fn get_profile_picture(jid: &JID) -> Result<ProfilePictureAvailability, ProfilePictureError> {
-    let jid = CString::new(jid.0.as_ref()).map_err(|_| ProfilePictureError::InvalidJid)?;
-    let result = unsafe { C_GetProfilePicture(jid.as_ptr()) };
+    get_profile_picture_for_target(&standard_profile_picture_target(jid))
+}
+
+fn standard_profile_picture_target(jid: &JID) -> ProfilePictureTarget {
+    ProfilePictureTarget::Contact { jid: jid.clone() }
+}
+
+pub fn get_profile_picture_for_target(
+    target: &ProfilePictureTarget,
+) -> Result<ProfilePictureAvailability, ProfilePictureError> {
+    let jid = CString::new(target.jid().0.as_ref()).map_err(|_| ProfilePictureError::InvalidJid)?;
+    let (is_community, common_gid) = target.request_context();
+    let common_gid = common_gid
+        .map(|jid| CString::new(jid.0.as_ref()))
+        .transpose()
+        .map_err(|_| ProfilePictureError::InvalidJid)?;
+    let result = unsafe {
+        C_GetProfilePicture(
+            jid.as_ptr(),
+            is_community,
+            common_gid.as_ref().map_or(std::ptr::null(), |jid| jid.as_ptr()),
+        )
+    };
     let picture_id = if result.picture_id.is_null() {
         String::new()
     } else {
@@ -1006,7 +1058,7 @@ pub fn get_profile_picture(jid: &JID) -> Result<ProfilePictureAvailability, Prof
 
 #[cfg(test)]
 mod profile_picture_tests {
-    use super::{ProfilePictureAvailability, ProfilePictureError, profile_picture_from_parts};
+    use super::{JID, ProfilePictureAvailability, ProfilePictureError, ProfilePictureTarget, profile_picture_from_parts};
 
     #[test]
     fn maps_available_payload_without_exposing_the_temporary_url() {
@@ -1018,6 +1070,33 @@ mod profile_picture_tests {
         assert_eq!(picture.id.as_ref(), "picture-42");
         assert_eq!(picture.picture_type.as_ref(), "preview");
         assert_eq!(picture.bytes, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn typed_targets_keep_community_and_parent_access_context_separate() {
+        let root = ProfilePictureTarget::CommunityRoot { jid: JID("root@g.us".into()) };
+        let available = ProfilePictureTarget::CommunityGroup {
+            jid: JID("child@g.us".into()),
+            parent_jid: Some(JID("root@g.us".into())),
+            is_joined: false,
+        };
+        let contact = ProfilePictureTarget::Contact { jid: JID("child@g.us".into()) };
+
+        assert_eq!(root.request_context(), (true, None));
+        assert_eq!(available.request_context().0, false);
+        assert_eq!(available.request_context().1, Some(&JID("root@g.us".into())));
+        assert_eq!(contact.request_context(), (false, None));
+        assert_ne!(available, contact);
+    }
+
+    #[test]
+    fn jid_api_remains_a_standard_contact_request() {
+        let _standard_api: fn(&JID) -> Result<ProfilePictureAvailability, ProfilePictureError> =
+            super::get_profile_picture;
+        let jid = JID("contact@s.whatsapp.net".into());
+        let standard_target = super::standard_profile_picture_target(&jid);
+
+        assert_eq!(standard_target.request_context(), (false, None));
     }
 
     #[test]

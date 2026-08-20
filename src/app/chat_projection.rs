@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use super::contact_avatars::AvatarTarget;
 use super::{
     App, CommunityNode,
     community_hierarchy::{community_group_label, dedupe_nodes, is_announcement_group},
@@ -21,6 +22,7 @@ pub enum ContactRow {
     Available {
         name: String,
         jid: Option<wr::JID>,
+        parent_jid: Option<wr::JID>,
         participant_count: Option<u32>,
     },
     Header(String),
@@ -35,10 +37,21 @@ impl ContactRow {
         }
     }
 
-    pub fn avatar_target(&self) -> Option<&wr::JID> {
+    pub fn avatar_target(&self) -> Option<AvatarTarget> {
         match self {
-            Self::Chat(row) => Some(&row.target),
-            Self::Available { jid, .. } => jid.as_ref(),
+            Self::Chat(row) => Some(AvatarTarget::Contact {
+                jid: row.target.clone(),
+            }),
+            Self::Available {
+                jid: Some(jid),
+                parent_jid,
+                ..
+            } => Some(AvatarTarget::CommunityGroup {
+                jid: jid.clone(),
+                parent_jid: parent_jid.clone(),
+                is_joined: false,
+            }),
+            Self::Available { jid: None, .. } => None,
             Self::Header(_) | Self::Action(_) => None,
         }
     }
@@ -162,6 +175,7 @@ impl App<'_> {
                 .then(|| ContactRow::Available {
                     name: group.name.clone(),
                     jid: (!group.jid.0.is_empty()).then(|| group.jid.clone()),
+                    parent_jid: self.community_detail.clone(),
                     participant_count: group.participant_count,
                 })
         }));
