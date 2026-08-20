@@ -37,6 +37,24 @@ impl App<'_> {
     }
 
     pub(crate) fn sort_chat_messages(&mut self, chat_jid: wr::JID) {
+        let revision = self
+            .message_sequence_revisions
+            .get(&chat_jid)
+            .copied()
+            .unwrap_or(0);
+        let cache_was_valid = self
+            .message_sequence_cache
+            .get(&chat_jid)
+            .is_some_and(|cache| cache.is_valid_for(revision));
+        let before = self
+            .chat_messages
+            .get(&chat_jid)
+            .cloned()
+            .unwrap_or_default();
+        let before_keys = before
+            .iter()
+            .map(|id| message_order_key(self.messages.get(id)))
+            .collect::<Vec<_>>();
         if let Some(messages) = self.chat_messages.get_mut(&chat_jid) {
             messages.sort_by_cached_key(|msg_id| {
                 (
@@ -47,9 +65,26 @@ impl App<'_> {
                     msg_id.clone(),
                 )
             });
-            self.message_height_cache.mark_layout_changed();
+            let after_keys = messages
+                .iter()
+                .map(|id| message_order_key(self.messages.get(id)))
+                .collect::<Vec<_>>();
+            if cache_was_valid && (*messages != before || before_keys != after_keys) {
+                self.invalidate_message_sequence(&chat_jid);
+                self.message_height_cache.mark_layout_changed();
+            }
         }
     }
+}
+
+fn message_order_key(message: Option<&wr::Message>) -> Option<(i64, wr::JID, bool)> {
+    message.map(|message| {
+        (
+            message.info.timestamp,
+            message.info.sender.clone(),
+            message.info.is_from_me,
+        )
+    })
 }
 
 #[cfg(test)]

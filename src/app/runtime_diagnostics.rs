@@ -93,6 +93,9 @@ struct Counters {
     chat_view_rebuilds: u64,
     chat_view_cache_hits: u64,
     chat_view_rebuild_total_us: u128,
+    message_sequence_rebuilds: u64,
+    message_sequence_cache_hits: u64,
+    message_sequence_rebuild_total_us: u128,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -209,6 +212,9 @@ impl RuntimeDiagnostics {
                 chat_view_rebuilds: 0,
                 chat_view_cache_hits: 0,
                 chat_view_rebuild_total_us: 0,
+                message_sequence_rebuilds: 0,
+                message_sequence_cache_hits: 0,
+                message_sequence_rebuild_total_us: 0,
             }),
             report_path: Some(cache_dir.join("perf-report.txt")),
             clock: Some(clock),
@@ -394,6 +400,30 @@ impl RuntimeDiagnostics {
         }
     }
 
+    pub fn record_message_sequence_rebuild(&mut self, duration: Duration) {
+        if let Some(state) = self.state.as_mut() {
+            state.message_sequence_rebuilds = state.message_sequence_rebuilds.saturating_add(1);
+            state.message_sequence_rebuild_total_us = state
+                .message_sequence_rebuild_total_us
+                .saturating_add(duration.as_micros() as u128);
+        }
+    }
+
+    pub fn record_message_sequence_rebuild_finished(&mut self, started_us: u64) {
+        let Some(now_us) = self.clock.as_ref().map(|clock| clock.now_us()) else {
+            return;
+        };
+        self.record_message_sequence_rebuild(Duration::from_micros(
+            now_us.saturating_sub(started_us),
+        ));
+    }
+
+    pub fn record_message_sequence_cache_hit(&mut self) {
+        if let Some(state) = self.state.as_mut() {
+            state.message_sequence_cache_hits = state.message_sequence_cache_hits.saturating_add(1);
+        }
+    }
+
     pub fn chat_view_counts(&self) -> (u64, u64) {
         self.state.as_ref().map_or((0, 0), |state| {
             (state.chat_view_rebuilds, state.chat_view_cache_hits)
@@ -541,6 +571,18 @@ impl RuntimeDiagnostics {
             state.chat_view_cache_hits
         )
         .unwrap();
+        writeln!(
+            out,
+            "message_sequence_rebuild=count:{} total_us:{}",
+            state.message_sequence_rebuilds, state.message_sequence_rebuild_total_us
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "message_sequence_cache_hit=count:{}",
+            state.message_sequence_cache_hits
+        )
+        .unwrap();
         out
     }
 }
@@ -627,6 +669,9 @@ mod tests {
                 chat_view_rebuilds: 0,
                 chat_view_cache_hits: 0,
                 chat_view_rebuild_total_us: 0,
+                message_sequence_rebuilds: 0,
+                message_sequence_cache_hits: 0,
+                message_sequence_rebuild_total_us: 0,
             }),
             report_path: path,
             clock: Some(Box::new(FixedClock(6_000))),

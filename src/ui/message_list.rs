@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use chrono::{DateTime, Datelike, Local};
 use ratatui::{
     Frame,
@@ -43,6 +45,158 @@ pub use message_layout::{
 pub use message_list_state::MessageListState;
 pub use message_media::preview_height;
 use message_media::render_file;
+
+#[derive(Default)]
+pub struct MessageSequenceCache {
+    pub ids: Option<Arc<[wr::MessageId]>>,
+    pub author_groups: Option<Arc<[AuthorGroupContext]>>,
+    built_revision: u64,
+    #[cfg(test)]
+    operation_counts: SequenceCacheOperationCounts,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Default, Debug, Eq, PartialEq)]
+struct SequenceCacheOperationCounts {
+    source_id_iterations: u64,
+    message_lookups: u64,
+    group_builds: u64,
+    signature_allocations: u64,
+}
+
+impl MessageSequenceCache {
+    pub(crate) fn invalidate(&mut self) {
+        self.ids = None;
+        self.author_groups = None;
+    }
+
+    pub(crate) fn is_valid_for(&self, revision: u64) -> bool {
+        self.ids.is_some() && self.author_groups.is_some() && self.built_revision == revision
+    }
+}
+
+pub(crate) fn chat_message_sequence(
+    app: &mut App,
+    chat: &wr::JID,
+) -> Option<(Arc<[wr::MessageId]>, Arc<[AuthorGroupContext]>, bool)> {
+    let revision = app
+        .message_sequence_revisions
+        .get(chat)
+        .copied()
+        .unwrap_or(0);
+    let cached = app
+        .message_sequence_cache
+        .get(chat)
+        .filter(|cache| cache.is_valid_for(revision))
+        .and_then(|cache| cache.ids.as_ref().zip(cache.author_groups.as_ref()))
+        .map(|(ids, groups)| (ids.clone(), groups.clone()));
+    if let Some((ids, groups)) = cached {
+        app.runtime_diagnostics.record_message_sequence_cache_hit();
+        return Some((ids, groups, false));
+    }
+
+    let started = app.message_sequence_started();
+    let source_ids = app.chat_messages.get(chat)?;
+    #[cfg(test)]
+    let mut operation_counts = SequenceCacheOperationCounts::default();
+    let ids = source_ids
+        .iter()
+        .rev()
+        .filter(|id| {
+            #[cfg(test)]
+            {
+                operation_counts.source_id_iterations += 1;
+                operation_counts.message_lookups += 1;
+            }
+            app.messages.contains_key(*id)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let groups = ids
+        .iter()
+        .enumerate()
+        .map(|(index, id)| {
+            #[cfg(test)]
+            {
+                operation_counts.group_builds += 1;
+                operation_counts.message_lookups += 1;
+            }
+            let message = &app.messages[id];
+            let previous = ids
+                .get(index + 1)
+                .and_then(|previous| app.messages.get(previous));
+            AuthorGroupContext::new(starts_author_group(previous, message))
+        })
+        .collect::<Vec<_>>();
+    let ids: Arc<[wr::MessageId]> = ids.into();
+    let groups: Arc<[AuthorGroupContext]> = groups.into();
+    let cache = app.message_sequence_cache.entry(chat.clone()).or_default();
+    cache.ids = Some(ids.clone());
+    cache.author_groups = Some(groups.clone());
+    cache.built_revision = revision;
+    #[cfg(test)]
+    {
+        cache.operation_counts = operation_counts;
+    }
+    app.record_message_sequence_finished(started);
+    Some((ids, groups, true))
+}
+
+#[cfg(test)]
+mod sequence_cache_tests {
+    use super::*;
+    use crate::app::test_support::TestApp;
+
+    #[test]
+    fn stable_five_thousand_message_hit_does_no_source_or_message_work() {
+        let mut test_app = TestApp::new();
+        let chat: wr::JID = "cache-test@example.test".to_owned().into();
+        let mut ids = Vec::with_capacity(5_000);
+        for index in 0..5_000 {
+            let id: wr::MessageId = format!("message-{index}").into();
+            ids.push(id.clone());
+            test_app.app.messages.insert(
+                id.clone(),
+                wr::Message {
+                    info: wr::MessageInfo {
+                        id,
+                        chat: chat.clone(),
+                        sender: "sender@example.test".to_owned().into(),
+                        mentions_self: false,
+                        timestamp: index,
+                        is_from_me: false,
+                        quote_id: None,
+                        read_by: 0,
+                        forwarding: Default::default(),
+                    },
+                    message: wr::MessageContent::Text("body".into()),
+                },
+            );
+        }
+        test_app.app.chat_messages.insert(chat.clone(), ids);
+
+        let (_, _, rebuilt) = chat_message_sequence(&mut test_app.app, &chat).unwrap();
+        assert!(rebuilt);
+        let before = test_app
+            .app
+            .message_sequence_cache
+            .get(&chat)
+            .unwrap()
+            .operation_counts;
+        let (_, _, rebuilt) = chat_message_sequence(&mut test_app.app, &chat).unwrap();
+        assert!(!rebuilt);
+        let after = test_app
+            .app
+            .message_sequence_cache
+            .get(&chat)
+            .unwrap()
+            .operation_counts;
+        assert_eq!(before, after);
+        assert_eq!(after.signature_allocations, 0);
+        assert_eq!(after.source_id_iterations, 5_000);
+        assert_eq!(after.group_builds, 5_000);
+    }
+}
 
 fn status_label(app: &App, message_id: &wr::MessageId) -> Option<StatusLabel> {
     let status = app.message_status(message_id);
@@ -431,15 +585,10 @@ pub fn render_messages(frame: &mut Frame, app: &mut App, area: Rect) -> Option<(
         optimistic_height,
     );
 
-    let items: Vec<_> = app
-        .chat_messages
-        .get(&chat_jid)?
-        .iter()
-        .rev()
-        .filter_map(|msg_id| app.messages.get(msg_id).cloned())
-        .collect();
+    let (items, author_groups, sequence_rebuilt) = chat_message_sequence(app, &chat_jid)?;
+    let author_groups_built = u64::from(sequence_rebuilt) * items.len() as u64;
     app.record_message_list_counts(crate::app::runtime_diagnostics::MessageListCounts {
-        canonical_messages_cloned: items.len() as u64,
+        canonical_messages_cloned: 0,
         pending_candidates: optimistic_items.len() as u64,
         ..Default::default()
     });
@@ -447,7 +596,16 @@ pub fn render_messages(frame: &mut Frame, app: &mut App, area: Rect) -> Option<(
         crate::app::runtime_diagnostics::Phase::MessageAssembly,
         assembly_started,
     );
-    let result = render_message_items(frame, app, list_area, items, unread_count);
+    let result = render_message_items(
+        frame,
+        app,
+        list_area,
+        items,
+        author_groups,
+        sequence_rebuilt,
+        author_groups_built,
+        unread_count,
+    );
     let pending_started = app.message_list_phase_started();
     let pending_rows_rendered = render_pending_tail(frame, app, optimistic_area, &optimistic_items);
     app.record_message_list_counts(crate::app::runtime_diagnostics::MessageListCounts {
@@ -567,13 +725,35 @@ pub fn render_status_messages(frame: &mut Frame, app: &mut App, area: Rect) {
     let Some(contact) = app.open_status_contact() else {
         return;
     };
-    let items = app
+    let items: Arc<[wr::MessageId]> = app
         .status_messages(&contact)
         .iter()
         .rev()
-        .filter_map(|id| app.messages.get(id).cloned())
-        .collect::<Vec<_>>();
-    render_message_items(frame, app, area, items, 0);
+        .filter(|id| app.messages.contains_key(*id))
+        .cloned()
+        .collect::<Vec<_>>()
+        .into();
+    let author_groups: Arc<[AuthorGroupContext]> = items
+        .iter()
+        .enumerate()
+        .map(|(index, id)| {
+            AuthorGroupContext::new(starts_author_group(
+                items.get(index + 1).and_then(|id| app.messages.get(id)),
+                app.messages.get(id).expect("status message must exist"),
+            ))
+        })
+        .collect::<Vec<_>>()
+        .into();
+    render_message_items(
+        frame,
+        app,
+        area,
+        items.clone(),
+        author_groups,
+        true,
+        items.len() as u64,
+        0,
+    );
 }
 
 /// Shared core of chat and status message rendering. The caller supplies
@@ -582,7 +762,10 @@ fn render_message_items(
     frame: &mut Frame,
     app: &mut App,
     area: Rect,
-    items: Vec<wr::Message>,
+    items: Arc<[wr::MessageId]>,
+    author_groups: Arc<[AuthorGroupContext]>,
+    sequence_rebuilt: bool,
+    author_groups_built: u64,
     unread_count: usize,
 ) -> Option<()> {
     let list_area = area;
@@ -592,23 +775,18 @@ fn render_message_items(
 
     let preparation_started = app.message_list_phase_started();
     let measurements_before = app.message_height_cache.measurement_count();
-    let author_groups = items
-        .iter()
-        .enumerate()
-        .map(|(index, message)| {
-            AuthorGroupContext::new(starts_author_group(items.get(index + 1), message))
-        })
-        .collect::<Vec<_>>();
     app.record_message_list_counts(crate::app::runtime_diagnostics::MessageListCounts {
-        author_groups_built: author_groups.len() as u64,
+        author_groups_built,
         ..Default::default()
     });
 
-    message_layout_integration::retain_message_heights(app, &items);
-    app.record_message_list_counts(crate::app::runtime_diagnostics::MessageListCounts {
-        height_cache_retained_count: app.message_height_cache.len() as u64,
-        ..Default::default()
-    });
+    if sequence_rebuilt {
+        message_layout_integration::retain_message_heights(app, &items);
+        app.record_message_list_counts(crate::app::runtime_diagnostics::MessageListCounts {
+            height_cache_retained_count: app.message_height_cache.len() as u64,
+            ..Default::default()
+        });
+    }
     app.finish_message_list_phase(
         crate::app::runtime_diagnostics::Phase::MessagePreparation,
         preparation_started,

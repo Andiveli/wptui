@@ -114,6 +114,8 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         image_cache_order: VecDeque::new(),
         audio_durations: HashMap::new(),
         message_height_cache: MessageHeightCache::default(),
+        message_sequence_cache: HashMap::new(),
+        message_sequence_revisions: HashMap::new(),
         default_protocol_type,
         composer: Composer::default(),
         picker: Arc::new(Mutex::new(picker)),

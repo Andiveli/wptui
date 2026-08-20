@@ -207,6 +207,13 @@ impl App<'_> {
 
         let id = message.info.id.clone();
         let is_new = !self.messages.contains_key(&id);
+        let old_order_key = self.messages.get(&id).map(|existing| {
+            (
+                existing.info.timestamp,
+                existing.info.sender.clone(),
+                existing.info.is_from_me,
+            )
+        });
         let should_replace = self
             .messages
             .get(&id)
@@ -219,6 +226,16 @@ impl App<'_> {
                 .entry(chat_jid.clone())
                 .or_default()
                 .push(id.clone());
+        }
+        let new_order_key = self.messages.get(&id).map(|current| {
+            (
+                current.info.timestamp,
+                current.info.sender.clone(),
+                current.info.is_from_me,
+            )
+        });
+        if is_new || old_order_key != new_order_key {
+            self.invalidate_message_sequence(&chat_jid);
         }
         self.refresh_message_projection(&id);
         self.refresh_status_contacts();

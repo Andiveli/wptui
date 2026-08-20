@@ -94,7 +94,7 @@ use crate::file_picker::FilePickerState;
 use crate::key_handler::KeybindHandler;
 // use crate::key_handler;
 
-use crate::ui::message_list::{MessageHeightCache, MessageListState};
+use crate::ui::message_list::{MessageHeightCache, MessageListState, MessageSequenceCache};
 use db::DatabaseHandler;
 use ratatui::widgets::ListState;
 use ratatui_image::picker::{Picker, ProtocolType};
@@ -185,6 +185,8 @@ pub struct App<'a> {
     /// by a background thread once the file is on disk.
     pub audio_durations: HashMap<Arc<str>, u64>,
     pub message_height_cache: MessageHeightCache,
+    pub(crate) message_sequence_cache: HashMap<wr::JID, MessageSequenceCache>,
+    pub(crate) message_sequence_revisions: HashMap<wr::JID, u64>,
     pub default_protocol_type: ProtocolType,
     pub picker: Arc<Mutex<Picker>>,
     pub contact_avatars: ContactAvatars,
@@ -323,6 +325,50 @@ impl App<'_> {
 
     pub(crate) fn record_message_list_counts(&mut self, counts: MessageListCounts) {
         self.runtime_diagnostics.record_message_list_counts(counts);
+    }
+
+    pub(crate) fn invalidate_message_sequence(&mut self, chat: &wr::JID) {
+        *self
+            .message_sequence_revisions
+            .entry(chat.clone())
+            .or_default() += 1;
+        self.message_sequence_cache
+            .entry(chat.clone())
+            .or_default()
+            .invalidate();
+    }
+
+    pub(crate) fn invalidate_message_sequences_containing(&mut self, id: &wr::MessageId) {
+        let chats = self
+            .message_sequence_cache
+            .iter()
+            .filter(|(_, cache)| {
+                cache
+                    .ids
+                    .as_ref()
+                    .is_some_and(|ids| ids.iter().any(|cached| cached == id))
+            })
+            .map(|(chat, _)| chat.clone())
+            .collect::<Vec<_>>();
+        for chat in chats {
+            self.invalidate_message_sequence(&chat);
+        }
+    }
+
+    /// Explicit invalidation hook for fixture code that mutates public stores directly.
+    pub fn invalidate_message_sequence_for_test(&mut self, chat: &wr::JID) {
+        self.invalidate_message_sequence(chat);
+    }
+
+    pub(crate) fn message_sequence_started(&mut self) -> Option<u64> {
+        self.runtime_diagnostics.phase_started()
+    }
+
+    pub(crate) fn record_message_sequence_finished(&mut self, started: Option<u64>) {
+        if let Some(started) = started {
+            self.runtime_diagnostics
+                .record_message_sequence_rebuild_finished(started);
+        }
     }
 
     pub(crate) fn finalize_runtime_diagnostics(&mut self) {

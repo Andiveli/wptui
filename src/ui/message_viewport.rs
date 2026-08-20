@@ -12,15 +12,13 @@ use crate::app::{App, FileMeta, Metadata};
 
 use super::message_formatting::unread_divider_line;
 use super::message_list_state::ViewportAnchor;
-use super::{
-    AuthorGroupContext, message_height, preview_height, render_message, spacing_after_message,
-};
+use super::{AuthorGroupContext, preview_height, render_message, spacing_after_message};
 
 pub(super) fn render(
     frame: &mut ratatui::Frame,
     app: &mut App,
     list_area: Rect,
-    items: &[wr::Message],
+    items: &[wr::MessageId],
     author_groups: &[AuthorGroupContext],
     unread_count: usize,
     width: isize,
@@ -31,10 +29,20 @@ pub(super) fn render(
     let divider_after = unread_count.checked_sub(1);
     let mut viewport_anchor = None;
 
-    for (i, item) in items.iter().enumerate().skip(start_index) {
+    for (i, item_id) in items.iter().enumerate().skip(start_index) {
+        let Some(item) = app.messages.get(item_id).cloned() else {
+            app.invalidate_message_sequences_containing(item_id);
+            continue;
+        };
         let is_selected = app.message_list_state.selected == Some(i);
         let author_group = author_groups[i];
-        let height = message_height(item, width as usize, is_selected, author_group, app) as isize;
+        let height = super::message_layout_integration::message_height_for_id(
+            item_id,
+            width as usize,
+            is_selected,
+            author_group,
+            app,
+        ) as isize;
 
         let bottom = y;
         let top = y - height;
@@ -58,7 +66,7 @@ pub(super) fn render(
             counts.visible_rows = counts.visible_rows.saturating_add(1);
             counts.receipt_candidates = counts.receipt_candidates.saturating_add(1);
             viewport_anchor.get_or_insert((i, y));
-            app.observe_visible_message(item, true);
+            app.observe_visible_message(&item, true);
             let too_low = top < list_area.top() as isize;
             let too_high = bottom > list_area.bottom() as isize;
 
@@ -96,7 +104,7 @@ pub(super) fn render(
 
                 render_message(
                     &mut buf,
-                    item,
+                    &item,
                     is_selected,
                     author_group,
                     app,
@@ -174,7 +182,7 @@ pub(super) fn render(
 
                 render_message(
                     frame.buffer_mut(),
-                    item,
+                    &item,
                     is_selected,
                     author_group,
                     app,
@@ -204,7 +212,7 @@ pub(super) fn render(
             width: width as usize,
             offset: app.message_list_state.offset,
             generation: app.message_height_cache.generation(),
-            message_id: item.info.id.clone(),
+            message_id: item.clone(),
             bottom: list_area.bottom(),
         })
     })
