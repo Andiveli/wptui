@@ -4,6 +4,7 @@ use ratatui_textarea::{CursorMove, TextArea};
 use whatsrust as wr;
 
 use crate::app::actions::ComposerAction;
+use crate::app::composer_input_mapping::textarea_input;
 #[derive(Clone, Debug)]
 pub struct PendingAttachment {
     pub path: Arc<str>,
@@ -124,7 +125,7 @@ impl Composer<'_> {
             }
             ComposerAction::Edit(key) => {
                 let before = self.text();
-                self.input.input(key);
+                self.input.input(textarea_input(&key));
                 let after = self.text();
                 self.reconcile_mentions(&before, &after);
                 self.refresh_mention_picker();
@@ -490,10 +491,10 @@ fn participant_identity_ids(participant: &wr::GroupParticipant) -> HashSet<Strin
 
 #[cfg(test)]
 mod tests {
-    use ratatui::crossterm::event::KeyCode;
+    use crate::input_key::KeyCode;
 
     use super::*;
-    use crate::key_handler::Key;
+    use crate::input_key::Key;
 
     fn participant(name: &str, phone: &str) -> wr::GroupParticipant {
         wr::GroupParticipant {

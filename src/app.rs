@@ -22,12 +22,16 @@ pub mod composer_input_mapping;
 pub mod composer_input_paste;
 pub mod composer_integration;
 pub mod contact_avatars;
+pub mod contextual_actions;
+pub mod contextual_activation;
+pub mod contextual_routing;
 pub mod download_worker;
 pub mod events;
 pub mod file_picker_input;
 pub mod input_mapping;
 pub mod input_reader;
 pub mod inputs;
+pub mod leader_menu;
 pub mod log_toggle;
 pub mod logout;
 pub mod media_cache;
@@ -202,6 +206,12 @@ pub struct App<'a> {
     pub message_revoker: Box<dyn MessageRevoker>,
     pub action_notice: Option<ActionNotice>,
     pub message_menu: Option<(Vec<MessageMenuAction>, usize)>,
+    pub contextual_menu: Option<(
+        Vec<crate::app::contextual_actions::ContextualMenuRow>,
+        usize,
+    )>,
+    pub leader_menu: Option<(Vec<crate::app::leader_menu::LeaderMenuRow>, usize)>,
+    pub shortcut_popup: bool,
     pub reaction_picker: Option<(Vec<String>, usize)>,
     pub share_picker: Option<SharePicker>,
     pub url_picker: Option<(Vec<String>, usize)>,

@@ -1,7 +1,7 @@
-use ratatui::crossterm::event::KeyCode;
+use crate::input_key::KeyCode;
 
 use crate::app::actions::AppAction;
-use crate::key_handler::Key;
+use crate::input_key::Key;
 
 pub(crate) fn attachment_viewer_action(key: &Key) -> Option<AppAction> {
     Some(match key.code {

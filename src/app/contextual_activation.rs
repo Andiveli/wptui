@@ -1,0 +1,81 @@
+use super::App;
+use crate::app::actions::AppAction;
+use crate::app::contextual_actions::{
+    AvailabilityFacts, ContextualAction, ContextualContext, ImplementationStatus,
+    contextual_menu_rows, evaluate_availability,
+};
+
+impl App<'_> {
+    pub(crate) fn contextual_context(&self) -> ContextualContext {
+        let selected = self.selected_message();
+        ContextualContext {
+            focus: self.focus_pane,
+            section: self.selected_section,
+            has_selected_message: selected.is_some(),
+            selected_text: selected.is_some_and(|message| {
+                matches!(message.message, whatsrust::MessageContent::Text(_))
+            }),
+            has_reference: selected.is_some_and(|message| message.info.quote_id.is_some()),
+        }
+    }
+
+    pub fn open_contextual_actions(&mut self) {
+        self.contextual_menu = Some((contextual_menu_rows(self.contextual_context()), 0));
+    }
+
+    pub fn move_contextual_menu(&mut self, delta: isize) {
+        if let Some((rows, selected)) = &mut self.contextual_menu {
+            *selected = selected
+                .saturating_add_signed(delta)
+                .min(rows.len().saturating_sub(1));
+        }
+    }
+
+    pub fn activate_contextual_action(&mut self) {
+        let Some((rows, selected)) = self.contextual_menu.as_ref() else {
+            return;
+        };
+        let Some(row) = rows.get(*selected).copied() else {
+            return;
+        };
+        let context = self.contextual_context();
+        let available = evaluate_availability(
+            crate::app::contextual_actions::CONTEXTUAL_ACTION_METADATA
+                .iter()
+                .find(|metadata| metadata.action == row.action_token)
+                .map_or(ImplementationStatus::Planned, |metadata| {
+                    metadata.implementation
+                }),
+            Some(row.action_token),
+            AvailabilityFacts {
+                contextual: Some(context),
+                contextual_activatable: false,
+            },
+        );
+        if !available.activatable() {
+            return;
+        }
+        self.contextual_menu = None;
+        self.dispatch_action(contextual_action_to_app_action(row.action_token));
+    }
+}
+
+fn contextual_action_to_app_action(action: ContextualAction) -> AppAction {
+    match action {
+        ContextualAction::Copy => AppAction::CopyMessage,
+        ContextualAction::React => AppAction::ReactMessage,
+        ContextualAction::Reply => AppAction::ReplyMessage,
+        ContextualAction::Share => AppAction::ShareMessage,
+        ContextualAction::ReplyPrivately => AppAction::ReplyPrivately,
+        ContextualAction::Open => AppAction::OpenMessage,
+        ContextualAction::ViewAttachment => AppAction::ViewMessage,
+        ContextualAction::GoToReference => AppAction::GoToReference,
+        ContextualAction::DeleteForEveryone => AppAction::DeleteMessage,
+        _ => AppAction::PlannedLeaderAction(
+            crate::app::contextual_actions::CONTEXTUAL_ACTION_METADATA
+                .iter()
+                .find(|meta| meta.action == action)
+                .map_or("Contextual action", |meta| meta.label),
+        ),
+    }
+}

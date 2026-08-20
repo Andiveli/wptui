@@ -1,8 +1,8 @@
 use super::super::Chat;
 use crate::app::actions::FocusPane;
 use crate::app::test_support::TestApp;
+use crate::input_key::KeyCode;
 use crate::key_handler::Key;
-use ratatui::crossterm::event::KeyCode;
 use whatsrust as wr;
 
 fn jid(value: &str) -> wr::JID {

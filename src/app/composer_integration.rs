@@ -1,11 +1,11 @@
-use ratatui::crossterm::event::KeyCode;
+use crate::input_key::KeyCode;
 
 use crate::app::App;
 use crate::app::actions::{AppAction, ComposerAction, ConversationMode, FocusPane, Section};
 use crate::app::composer_input_mapping::composer_action_for_editing_key;
 use crate::app::composer_input_paste::apply_clipboard_paste;
 use crate::app::runtime_diagnostics::Phase;
-use crate::key_handler::Key;
+use crate::input_key::Key;
 use whatsrust as wr;
 
 impl App<'_> {

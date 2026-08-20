@@ -1,6 +1,4 @@
-use ratatui::crossterm::event::KeyCode;
-
-use crate::key_handler::Key;
+use crate::input_key::Key;
 use whatsrust as wr;
 
 pub const COMMON_REACTIONS: [&str; 6] = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
@@ -14,6 +12,10 @@ pub enum AppAction {
     ToggleLogs,
     ToggleSectionRail,
     ToggleChatList,
+    FocusPane(FocusPane),
+    OpenContextualActions,
+    ToggleShortcutPopup,
+    PlannedLeaderAction(&'static str),
     FocusNext,
     FocusPrevious,
     SelectNext,
@@ -416,72 +418,5 @@ pub fn focus_after(focus: FocusPane, action: &AppAction, visibility: PaneVisibil
         AppAction::FocusNext => focus.next(visibility),
         AppAction::FocusPrevious => focus.previous(visibility),
         _ => focus,
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum SequenceResolution {
-    Partial,
-    Complete(AppAction),
-    Cancelled,
-}
-
-pub fn default_bindings() -> Vec<(Vec<Key>, AppAction)> {
-    vec![
-        (vec![Key::ctrl('q')], AppAction::Quit),
-        (vec![Key::ctrl_shift('O')], AppAction::Logout),
-        (vec![Key::ctrl_shift('L')], AppAction::ToggleLogs),
-        (vec![Key::ctrl_shift('l')], AppAction::ToggleLogs),
-        (vec![Key::c(' '), Key::c('1')], AppAction::ToggleSectionRail),
-        (vec![Key::c(' '), Key::c('2')], AppAction::ToggleChatList),
-        (vec![Key::c('h')], AppAction::FocusPrevious),
-        (vec![Key::c('l')], AppAction::FocusNext),
-        (vec![Key::c('j')], AppAction::SelectNext),
-        (vec![Key::c('k')], AppAction::SelectPrevious),
-        (vec![Key::c('g'), Key::c('g')], AppAction::JumpTop),
-        (vec![Key::c('g'), Key::c('r')], AppAction::GoToReference),
-        (vec![Key::c('G')], AppAction::JumpBottom),
-        (vec![Key::ctrl('d')], AppAction::HalfPageDown),
-        (vec![Key::ctrl('u')], AppAction::HalfPageUp),
-        (vec![Key::c('i')], AppAction::InsertMode),
-        (vec![Key::c('y')], AppAction::CopyMessage),
-        (vec![Key::c('r')], AppAction::ReactMessage),
-        (vec![Key::c('s')], AppAction::ShareMessage),
-        (vec![Key::c('R')], AppAction::ReplyMessage),
-        (vec![Key::c('P')], AppAction::ReplyPrivately),
-        (vec![Key::c('d')], AppAction::DeleteMessage),
-        (vec![Key::c('e')], AppAction::EditMessage),
-        (vec![Key::c('o')], AppAction::OpenMessage),
-        (vec![Key::c('a')], AppAction::AttachFile),
-        (vec![Key::c('x')], AppAction::DownloadMessage),
-        (vec![Key::c('v')], AppAction::ViewMessage),
-        (vec![Key::k(KeyCode::Enter)], AppAction::OpenMessageMenu),
-    ]
-}
-
-pub fn resolve_sequence(keys: &[Key]) -> SequenceResolution {
-    let mut partial = false;
-
-    for (binding, action) in default_bindings() {
-        if keys.len() > binding.len()
-            || !keys
-                .iter()
-                .zip(binding.iter())
-                .all(|(key, expected)| key == expected)
-        {
-            continue;
-        }
-
-        if keys.len() == binding.len() {
-            return SequenceResolution::Complete(action.clone());
-        }
-
-        partial = true;
-    }
-
-    if partial {
-        SequenceResolution::Partial
-    } else {
-        SequenceResolution::Cancelled
     }
 }

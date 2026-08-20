@@ -1,7 +1,7 @@
-use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+use crate::input_key::{KeyCode, KeyModifiers};
 
 use crate::app::App;
-use crate::key_handler::Key;
+use crate::input_key::Key;
 
 impl App<'_> {
     pub(crate) fn toggle_logs(&mut self) {
@@ -26,8 +26,8 @@ fn log_level_for_logs(show_logs: bool) -> tui_logger::LevelFilter {
 #[cfg(test)]
 mod tests {
     use super::{is_toggle_logs_key, log_level_for_logs};
+    use crate::input_key::{KeyCode, KeyModifiers};
     use crate::key_handler::Key;
-    use ratatui::crossterm::event::{KeyCode, KeyModifiers};
     use tui_logger::LevelFilter;
 
     #[test]

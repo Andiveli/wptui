@@ -22,6 +22,7 @@ use crate::app::events::{
     ViewerPreviewKey, ViewerPreviewState, ViewerStatus, viewer_preview_request,
 };
 use crate::app::runtime_diagnostics::Phase;
+use crate::keybindings::canonical_shortcuts;
 use contacts::render_contacts;
 use message_list::{get_quoted_text, render_messages};
 use navigation::{
@@ -99,6 +100,118 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     render_url_picker(frame, app);
     render_share_picker(frame, app);
     render_file_picker(frame, app);
+    render_keybind_overlays(frame, app);
+}
+
+fn render_keybind_overlays(frame: &mut Frame, app: &App) {
+    if app.shortcut_popup {
+        let entries = canonical_shortcuts();
+        let lines = entries
+            .iter()
+            .map(|(key, action)| Line::raw(format!("{key:<12} {action}")))
+            .collect::<Vec<_>>();
+        let width = 42.min(frame.area().width.saturating_sub(2));
+        let height = (lines.len() as u16 + 2).min(frame.area().height.saturating_sub(2));
+        let area = Rect::new(
+            frame.area().x + frame.area().width.saturating_sub(width) / 2,
+            frame.area().y + frame.area().height.saturating_sub(height) / 2,
+            width,
+            height,
+        );
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Paragraph::new(lines).block(
+                Block::bordered()
+                    .title("Keyboard shortcuts")
+                    .style(Style::default().bg(ratatui::style::Color::Black)),
+            ),
+            area,
+        );
+        return;
+    }
+    if let Some((rows, selected)) = &app.contextual_menu {
+        let lines = rows
+            .iter()
+            .enumerate()
+            .map(|(index, row)| {
+                let marker = if index == *selected { ">" } else { " " };
+                let style = if row.row_style == crate::app::contextual_actions::RowStyle::Enabled {
+                    Style::default().fg(ratatui::style::Color::White)
+                } else {
+                    Style::default().fg(ratatui::style::Color::DarkGray)
+                };
+                let reason = row
+                    .reason
+                    .map(|reason| format!(" ({reason})"))
+                    .unwrap_or_default();
+                Line::styled(
+                    format!(
+                        "{marker} {}  {}{}",
+                        row.display_shortcut, row.display_label, reason
+                    ),
+                    style,
+                )
+            })
+            .collect::<Vec<_>>();
+        let width = 46.min(frame.area().width.saturating_sub(2));
+        let height = (lines.len() as u16 + 2).min(frame.area().height.saturating_sub(2));
+        let area = Rect::new(
+            frame.area().x + frame.area().width.saturating_sub(width) / 2,
+            frame.area().y + frame.area().height.saturating_sub(height) / 2,
+            width,
+            height,
+        );
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Paragraph::new(lines).block(
+                Block::bordered()
+                    .title("Actions")
+                    .style(Style::default().bg(ratatui::style::Color::Black)),
+            ),
+            area,
+        );
+    } else if let Some((rows, selected)) = &app.leader_menu {
+        let lines = rows
+            .iter()
+            .enumerate()
+            .map(|(index, row)| {
+                let marker = if index == *selected { ">" } else { " " };
+                let style = if row.row_style == crate::app::contextual_actions::RowStyle::Enabled {
+                    Style::default().white()
+                } else {
+                    Style::default().dark_gray()
+                };
+                let reason = row
+                    .reason
+                    .map(|reason| format!(" ({reason})"))
+                    .unwrap_or_default();
+                Line::styled(
+                    format!(
+                        "{marker} {:<8} {}{}",
+                        row.display_shortcut, row.display_label, reason
+                    ),
+                    style,
+                )
+            })
+            .collect::<Vec<_>>();
+        let width = 42.min(frame.area().width.saturating_sub(2));
+        let height = (lines.len() as u16 + 2).min(frame.area().height.saturating_sub(2));
+        let area = Rect::new(
+            frame.area().x + frame.area().width.saturating_sub(width) / 2,
+            frame.area().y + frame.area().height.saturating_sub(height) / 2,
+            width,
+            height,
+        );
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Paragraph::new(lines).block(
+                Block::bordered()
+                    .title("Leader")
+                    .style(Style::default().bg(ratatui::style::Color::Black)),
+            ),
+            area,
+        );
+    }
 }
 
 const ANDIVELI_LOGO: [&str; 19] = [

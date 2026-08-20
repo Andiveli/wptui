@@ -1,5 +1,5 @@
 use super::*;
-use ratatui::crossterm::event::KeyCode;
+use crate::input_key::KeyCode;
 
 fn key(code: KeyCode) -> Key {
     Key::k(code)
