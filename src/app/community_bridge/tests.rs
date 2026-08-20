@@ -8,6 +8,10 @@ fn community(name: &str, jid: &str, is_parent: bool) -> wr::CommunityInfo {
         name: name.into(),
         parent_jid: None,
         is_parent,
+        is_joined: true,
+        is_default_subgroup: false,
+        is_announce: Some(false),
+        participant_count: None,
     }
 }
 
@@ -64,6 +68,10 @@ fn communities_refresh_preserves_explicit_node_across_reorder_and_target_change(
                 name: "Other".into(),
                 parent_jid: Some(selected.clone()),
                 is_parent: false,
+                is_joined: true,
+                is_default_subgroup: false,
+                is_announce: Some(false),
+                participant_count: None,
             },
         ])
     });
@@ -77,6 +85,10 @@ fn communities_refresh_preserves_explicit_node_across_reorder_and_target_change(
                 name: "Other".into(),
                 parent_jid: Some(selected),
                 is_parent: false,
+                is_joined: true,
+                is_default_subgroup: false,
+                is_announce: Some(false),
+                participant_count: None,
             },
         ])
     });

@@ -95,6 +95,11 @@ impl App<'_> {
                     }
                 }
             } else if self.handle_chat_search_input(key.clone()) {
+            } else if self.focus_pane == FocusPane::ChatList
+                && self.community_detail.is_some()
+                && key == Key::k(KeyCode::Esc)
+            {
+                self.close_community_detail();
             } else if self.focus_pane == FocusPane::ChatList && key == Key::k(KeyCode::Enter) {
                 self.dispatch_action(AppAction::OpenChat);
             } else if self.focus_pane == FocusPane::SectionRail
@@ -193,6 +198,28 @@ impl App<'_> {
                     if let Some(jid) = self.get_selected_community() {
                         self.open_chat_by_jid(jid);
                         self.focus_pane = FocusPane::Conversation;
+                    }
+                } else if let Some(root) = self.selected_community_contact() {
+                    let unread = self
+                        .communities
+                        .iter()
+                        .find(|node| node.jid == root)
+                        .map(|node| {
+                            node.linked_groups
+                                .iter()
+                                .filter(|jid| self.pending_new_messages(jid) > 0)
+                                .cloned()
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    if unread.len() == 1 {
+                        self.open_chat_by_jid(unread[0].clone());
+                        self.focus_pane = FocusPane::Conversation;
+                        if self.message_count() > 0 {
+                            self.message_list_state.select(Some(0));
+                        }
+                    } else {
+                        self.open_community_detail(root);
                     }
                 } else {
                     let opened = self.get_selected_chat().is_some();

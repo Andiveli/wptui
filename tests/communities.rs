@@ -41,6 +41,10 @@ fn opening_selected_community_renders_the_existing_chat_context() {
         name: "Announcements".into(),
         is_root: false,
         linked_groups: Vec::new(),
+        is_joined: true,
+        is_default_subgroup: false,
+        is_announce: None,
+        participant_count: None,
     }];
     test_app.selected_section = Section::Communities;
     test_app.focus_pane = FocusPane::ChatList;
@@ -111,6 +115,10 @@ fn community_row_collapses_linked_groups_and_preserves_latest_target() {
         name: "Project Team".into(),
         is_root: true,
         linked_groups: vec![first.clone(), second.clone()],
+        is_joined: true,
+        is_default_subgroup: false,
+        is_announce: None,
+        participant_count: None,
     }];
     app.add_message(message(&first, "one", 10, "old", 0));
     app.add_message(message(&second, "two", 20, "new", 0));
@@ -150,6 +158,10 @@ fn community_search_matches_community_and_member_names_without_hiding_normal_cha
         name: "Engineering".into(),
         is_root: true,
         linked_groups: vec![group],
+        is_joined: true,
+        is_default_subgroup: false,
+        is_announce: None,
+        participant_count: None,
     }];
 
     app.contact_search.input = "engineering".into();
@@ -161,8 +173,9 @@ fn community_search_matches_community_and_member_names_without_hiding_normal_cha
 }
 
 #[test]
-fn latest_message_changes_community_order_and_activation_target() {
+fn latest_message_changes_community_order_and_opens_detail_for_multiple_unread_groups() {
     let mut app = TestApp::new();
+    let root = jid("community@g.us");
     let first = jid("first@g.us");
     let second = jid("second@g.us");
     let other = jid("other@s.whatsapp.net");
@@ -177,10 +190,14 @@ fn latest_message_changes_community_order_and_activation_target() {
     }
     app.sorted_chats = vec![first.clone(), second.clone(), other];
     app.communities = vec![CommunityNode {
-        jid: jid("community@g.us"),
+        jid: root.clone(),
         name: "Community".into(),
         is_root: true,
         linked_groups: vec![first.clone(), second.clone()],
+        is_joined: true,
+        is_default_subgroup: false,
+        is_announce: None,
+        participant_count: None,
     }];
     app.add_message(message(&first, "first-message", 100, "first", 1));
     app.add_message(message(&second, "second-message", 200, "second", 1));
@@ -188,7 +205,8 @@ fn latest_message_changes_community_order_and_activation_target() {
     assert_eq!(row.target, second);
     app.chat_list_state.select(Some(0));
     app.dispatch_action(AppAction::OpenChat);
-    assert_eq!(app.open_chat(), Some(second));
+    assert_eq!(app.open_chat(), None);
+    assert_eq!(app.community_detail, Some(root));
 }
 
 #[test]
@@ -217,6 +235,10 @@ fn hierarchy_refresh_keeps_selection_on_a_linked_group_when_target_changes() {
         name: "Community".into(),
         is_root: true,
         linked_groups: vec![first.clone(), second.clone()],
+        is_joined: true,
+        is_default_subgroup: false,
+        is_announce: None,
+        participant_count: None,
     }];
     app.chat_list_state.select(Some(0));
     let selected = app.get_selected_chat();
@@ -227,18 +249,30 @@ fn hierarchy_refresh_keeps_selection_on_a_linked_group_when_target_changes() {
                 name: "Community".into(),
                 parent_jid: None,
                 is_parent: true,
+                is_joined: true,
+                is_default_subgroup: false,
+                is_announce: Some(false),
+                participant_count: None,
             },
             wr::CommunityInfo {
                 jid: first.clone(),
                 name: "First".into(),
                 parent_jid: Some(root.clone()),
                 is_parent: false,
+                is_joined: true,
+                is_default_subgroup: false,
+                is_announce: Some(false),
+                participant_count: None,
             },
             wr::CommunityInfo {
                 jid: second.clone(),
                 name: "Second".into(),
                 parent_jid: Some(root),
                 is_parent: false,
+                is_joined: true,
+                is_default_subgroup: false,
+                is_announce: Some(false),
+                participant_count: None,
             },
         ])
     });

@@ -183,6 +183,10 @@ fn chats_render_one_aggregated_community_row_and_one_normal_chat_row() {
             JID::from("first@g.us".to_owned()),
             JID::from("second@g.us".to_owned()),
         ],
+        is_joined: true,
+        is_default_subgroup: false,
+        is_announce: None,
+        participant_count: None,
     }];
 
     let mut terminal = Terminal::new(TestBackend::new(100, 10)).unwrap();

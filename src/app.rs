@@ -68,7 +68,7 @@ use crate::app::actions::{
     UnavailableClipboardWriter, UrlOpener, WhatsAppMessageEditor, WhatsAppMessageForwarder,
     WhatsAppMessageReactor, WhatsAppMessageRevoker,
 };
-pub use crate::app::chat_projection::ChatRow;
+pub use crate::app::chat_projection::{ChatRow, ContactRow};
 pub use crate::app::community_hierarchy::CommunityNode;
 use crate::app::composer::Composer;
 use crate::app::contact_avatars::ContactAvatars;
@@ -155,6 +155,7 @@ pub struct App<'a> {
     /// pane. Mirrors `open_chat` for the Chats section: set on Enter.
     pub open_status_contact: Option<wr::JID>,
     pub communities: Vec<CommunityNode>,
+    pub community_detail: Option<wr::JID>,
     pub communities_unavailable: bool,
     communities_loaded: bool,
 

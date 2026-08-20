@@ -62,6 +62,40 @@ impl ContactListItem {
             local_time: timestamp.and_then(local_time),
         }
     }
+
+    pub fn from_contact_row(app: &App<'_>, row: &crate::app::ContactRow) -> Self {
+        match row {
+            crate::app::ContactRow::Chat(row) => {
+                let mut item = Self::from_row(app, row);
+                let unread = row
+                    .members
+                    .iter()
+                    .map(|jid| app.pending_new_messages(jid))
+                    .sum::<usize>();
+                if unread > 0 {
+                    item.preview = format!("{unread} unread");
+                }
+                item
+            }
+            crate::app::ContactRow::Available {
+                name,
+                participant_count,
+            } => Self {
+                name: name.clone(),
+                initials: initials(name),
+                preview: participant_count
+                    .map(|count| format!("{count} members"))
+                    .unwrap_or_default(),
+                local_time: None,
+            },
+            crate::app::ContactRow::Header(name) | crate::app::ContactRow::Action(name) => Self {
+                name: name.clone(),
+                initials: String::new(),
+                preview: String::new(),
+                local_time: None,
+            },
+        }
+    }
 }
 
 pub fn initials(name: &str) -> String {

@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use super::App;
+use super::{App, CommunityNode, community_hierarchy::dedupe_nodes};
 use whatsrust as wr;
 
 /// Presentation-only Chats row. `target` and `members` are always real chat
@@ -12,13 +12,182 @@ pub struct ChatRow {
     pub target: wr::JID,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ContactRow {
+    Chat(ChatRow),
+    Available {
+        name: String,
+        participant_count: Option<u32>,
+    },
+    Header(String),
+    Action(String),
+}
+
+impl ContactRow {
+    pub fn target(&self) -> Option<&wr::JID> {
+        match self {
+            Self::Chat(row) => Some(&row.target),
+            Self::Available { .. } | Self::Header(_) | Self::Action(_) => None,
+        }
+    }
+}
+
+fn chat_row(label: String, jid: &wr::JID) -> ContactRow {
+    ContactRow::Chat(ChatRow {
+        label,
+        members: vec![jid.clone()],
+        target: jid.clone(),
+    })
+}
+
+fn first_chat_index(rows: &[ContactRow]) -> Option<usize> {
+    rows.iter().position(|row| row.target().is_some())
+}
+
 impl App<'_> {
+    fn linked_group_nodes(&self, root: &CommunityNode) -> Vec<CommunityNode> {
+        let mut groups = Vec::new();
+        for jid in &root.linked_groups {
+            if groups.iter().any(|group: &CommunityNode| group.jid == *jid) {
+                continue;
+            }
+            if let Some(node) = dedupe_nodes(
+                self.communities
+                    .iter()
+                    .filter(|node| node.jid == *jid && !node.is_root),
+            )
+            .into_iter()
+            .next()
+            {
+                groups.push(node.clone());
+            } else {
+                groups.push(CommunityNode {
+                    jid: jid.clone(),
+                    name: self.contact_name(jid).to_string(),
+                    is_root: false,
+                    linked_groups: Vec::new(),
+                    is_joined: true,
+                    is_default_subgroup: false,
+                    is_announce: None,
+                    participant_count: None,
+                });
+            }
+        }
+        groups
+    }
+
     pub fn get_selected_chat(&self) -> Option<wr::JID> {
-        let rows = self.visible_chat_rows();
+        self.selected_contact_row()?.target().cloned()
+    }
+
+    pub fn visible_contact_rows(&self) -> Vec<ContactRow> {
+        if self.community_detail.is_some() {
+            return self.community_detail_rows();
+        }
+        self.visible_chat_rows()
+            .into_iter()
+            .map(ContactRow::Chat)
+            .collect()
+    }
+
+    fn selected_contact_row(&self) -> Option<ContactRow> {
         self.chat_list_state
             .selected()
-            .and_then(|index| rows.get(index))
-            .map(|row| row.target.clone())
+            .and_then(|index| self.visible_contact_rows().into_iter().nth(index))
+    }
+
+    pub fn community_detail_rows(&self) -> Vec<ContactRow> {
+        let Some(root) = self.community_detail.as_ref().and_then(|jid| {
+            dedupe_nodes(self.communities.iter().filter(|node| node.jid == *jid))
+                .into_iter()
+                .next()
+        }) else {
+            return Vec::new();
+        };
+        let mut groups = self.linked_group_nodes(root);
+        groups.sort_by(|left, right| {
+            left.name
+                .cmp(&right.name)
+                .then_with(|| left.jid.0.cmp(&right.jid.0))
+        });
+
+        let announcement = groups
+            .iter()
+            .filter(|group| {
+                group.is_joined
+                    && (group.is_default_subgroup || group.is_announce == Some(true))
+                    && self.chats.contains_key(&group.jid)
+            })
+            .min_by_key(|group| {
+                (
+                    !group.is_default_subgroup,
+                    group.is_announce != Some(true),
+                    group.name.clone(),
+                    group.jid.0.to_string(),
+                )
+            });
+
+        let mut rows = Vec::new();
+        if let Some(announcement) = announcement {
+            rows.push(chat_row("Announcements".into(), &announcement.jid));
+        }
+        rows.push(ContactRow::Header("Groups you're in".into()));
+        rows.extend(
+            groups
+                .iter()
+                .filter(|group| {
+                    group.is_joined
+                        && self.chats.contains_key(&group.jid)
+                        && announcement.is_none_or(|selected| selected.jid != group.jid)
+                })
+                .map(|group| chat_row(group.name.clone(), &group.jid)),
+        );
+        rows.extend([
+            ContactRow::Action("Add group".into()),
+            ContactRow::Header("Groups you can join".into()),
+        ]);
+        rows.extend(groups.iter().filter_map(|group| {
+            (!group.is_joined && announcement.is_none_or(|selected| selected.jid != group.jid))
+                .then(|| ContactRow::Available {
+                    name: group.name.clone(),
+                    participant_count: group.participant_count,
+                })
+        }));
+        rows
+    }
+
+    pub fn selected_community_contact(&self) -> Option<wr::JID> {
+        if self.community_detail.is_some() {
+            return None;
+        }
+        let ContactRow::Chat(row) = self.selected_contact_row()? else {
+            return None;
+        };
+        dedupe_nodes(self.communities.iter().filter(|node| node.is_root))
+            .into_iter()
+            .find(|root| {
+                let members = self
+                    .linked_group_nodes(root)
+                    .into_iter()
+                    .filter(|group| self.chats.contains_key(&group.jid) && group.is_joined)
+                    .map(|group| group.jid);
+                row.label == root.name
+                    && members.clone().count() == row.members.len()
+                    && members.clone().all(|jid| row.members.contains(&jid))
+            })
+            .map(|node| node.jid.clone())
+    }
+
+    pub(crate) fn open_community_detail(&mut self, root: wr::JID) {
+        self.community_detail = Some(root);
+        self.chat_list_state
+            .select(first_chat_index(&self.community_detail_rows()));
+    }
+
+    pub(crate) fn close_community_detail(&mut self) {
+        self.community_detail = None;
+        self.chat_list_state
+            .select(first_chat_index(&self.visible_contact_rows()));
     }
 
     pub fn chat_rows(&self) -> Vec<ChatRow> {
@@ -29,12 +198,12 @@ impl App<'_> {
             .map(|node| node.jid.clone())
             .collect::<HashSet<_>>();
         let mut rows = Vec::new();
-        for community in self.communities.iter().filter(|node| node.is_root) {
-            let members = community
-                .linked_groups
-                .iter()
-                .filter(|jid| self.chats.contains_key(*jid))
-                .cloned()
+        for community in dedupe_nodes(self.communities.iter().filter(|node| node.is_root)) {
+            let members = self
+                .linked_group_nodes(community)
+                .into_iter()
+                .filter(|node| self.chats.contains_key(&node.jid) && node.is_joined)
+                .map(|node| node.jid)
                 .collect::<Vec<_>>();
             if members.is_empty() {
                 continue;

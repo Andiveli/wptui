@@ -98,6 +98,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         open_chat: None,
         open_status_contact: None,
         communities: Vec::new(),
+        community_detail: None,
         communities_unavailable: false,
         communities_loaded: false,
         status_contacts: Vec::new(),

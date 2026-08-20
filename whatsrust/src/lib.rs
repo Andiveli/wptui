@@ -70,6 +70,12 @@ struct CCommunityEntry {
     name: *const c_char,
     parent_jid: CJID,
     is_parent: bool,
+    is_joined: bool,
+    is_default_subgroup: bool,
+    // Stable C encoding: 0 unknown, 1 no, 2 yes.
+    announcement: u8,
+    // Stable C encoding: -1 unknown, otherwise a known signed count.
+    participant_count: i64,
 }
 
 #[repr(C)]
@@ -789,6 +795,12 @@ pub struct CommunityInfo {
     pub name: Arc<str>,
     pub parent_jid: Option<JID>,
     pub is_parent: bool,
+    pub is_joined: bool,
+    pub is_default_subgroup: bool,
+    /// `None` is unknown, `Some(false)` is no, and `Some(true)` is yes.
+    pub is_announce: Option<bool>,
+    /// Unknown or values outside `u32` are mapped to `None` without truncation.
+    pub participant_count: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1909,6 +1921,23 @@ pub fn get_contacts() -> Vec<(JID, Arc<str>)> {
         .collect()
 }
 
+const COMMUNITY_ANNOUNCEMENT_UNKNOWN: u8 = 0;
+const COMMUNITY_ANNOUNCEMENT_NO: u8 = 1;
+const COMMUNITY_ANNOUNCEMENT_YES: u8 = 2;
+
+fn community_announcement_from_code(code: u8) -> Option<bool> {
+    match code {
+        COMMUNITY_ANNOUNCEMENT_UNKNOWN => None,
+        COMMUNITY_ANNOUNCEMENT_NO => Some(false),
+        COMMUNITY_ANNOUNCEMENT_YES => Some(true),
+        _ => None,
+    }
+}
+
+fn community_participant_count_from_abi(value: i64) -> Option<u32> {
+    (value >= 0).then(|| u32::try_from(value).ok()).flatten()
+}
+
 /// Returns real community roots and linked groups reported by WhatsApp.
 pub fn get_communities() -> Result<Vec<CommunityInfo>, CommunitiesError> {
     let result = unsafe { C_GetCommunities() };
@@ -1936,6 +1965,10 @@ pub fn get_communities() -> Result<Vec<CommunityInfo>, CommunitiesError> {
                     .into(),
                 parent_jid: (!parent.is_empty()).then(|| parent.to_string().into()),
                 is_parent: entry.is_parent,
+                is_joined: entry.is_joined,
+                is_default_subgroup: entry.is_default_subgroup,
+                is_announce: community_announcement_from_code(entry.announcement),
+                participant_count: community_participant_count_from_abi(entry.participant_count),
             }
         })
         .collect::<Vec<_>>();
@@ -2018,7 +2051,10 @@ pub fn get_group_participants(jid: &JID) -> Vec<GroupParticipant> {
 
 #[cfg(test)]
 mod group_info_tests {
-    use super::{GroupInfoError, JID, group_info_from_parts};
+    use super::{
+        GroupInfoError, JID, community_announcement_from_code,
+        community_participant_count_from_abi, group_info_from_parts,
+    };
 
     #[test]
     fn maps_announce_and_admin_flags() {
@@ -2028,6 +2064,28 @@ mod group_info_tests {
         assert_eq!(info.jid, jid);
         assert!(info.is_announce);
         assert!(!info.is_admin);
+    }
+
+    #[test]
+    fn maps_community_announcement_tristate() {
+        assert_eq!(community_announcement_from_code(0), None);
+        assert_eq!(community_announcement_from_code(1), Some(false));
+        assert_eq!(community_announcement_from_code(2), Some(true));
+        assert_eq!(community_announcement_from_code(255), None);
+    }
+
+    #[test]
+    fn maps_community_participant_count_without_truncation() {
+        assert_eq!(community_participant_count_from_abi(-1), None);
+        assert_eq!(community_participant_count_from_abi(0), Some(0));
+        assert_eq!(
+            community_participant_count_from_abi(i64::from(u32::MAX)),
+            Some(u32::MAX)
+        );
+        assert_eq!(
+            community_participant_count_from_abi(i64::from(u32::MAX) + 1),
+            None
+        );
     }
 
     #[test]

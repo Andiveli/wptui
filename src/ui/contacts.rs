@@ -16,14 +16,14 @@ use ratatui::{
 use ratatui_image::StatefulImage;
 
 pub(super) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
-    let rows = app.visible_chat_rows();
+    let rows = app.visible_contact_rows();
     let targets = rows
         .iter()
-        .map(|row| row.target.clone())
+        .filter_map(|row| row.target().cloned())
         .collect::<Vec<_>>();
     let items = rows
         .iter()
-        .map(|row| ContactListItem::from_row(app, row))
+        .map(|row| ContactListItem::from_contact_row(app, row))
         .collect::<Vec<_>>();
 
     let mut list_area = area;
@@ -70,12 +70,7 @@ pub(super) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
         rows.len(),
     );
     app.contact_avatars.schedule(
-        prioritized_avatar_requests(
-            &targets,
-            app.chat_list_state.selected(),
-            visible.start,
-            visible.len(),
-        ),
+        prioritized_avatar_requests(&targets, None, 0, targets.len()),
         app.tx.clone(),
         Arc::clone(&app.picker),
     );
@@ -93,7 +88,8 @@ pub(super) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
         // Partial Kitty placements can leave terminal artifacts after a scroll.
         if avatar_area.width == AVATAR_WIDTH
             && avatar_area.height == AVATAR_HEIGHT
-            && let Some(protocol) = app.contact_avatars.protocol_mut(&targets[index])
+            && let Some(target) = rows[index].target()
+            && let Some(protocol) = app.contact_avatars.protocol_mut(target)
         {
             StatefulImage::default().render(avatar_area, frame.buffer_mut(), protocol);
         }

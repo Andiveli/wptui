@@ -1,5 +1,6 @@
 use crate::app::App;
 use crate::app::actions::FocusPane;
+use crate::ui::contact_list::initials;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -7,14 +8,20 @@ use ratatui::{
     widgets::{Block, Paragraph},
 };
 
-const BRANCH_WIDTH: u16 = 4;
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CommunityRowKind {
+    Root,
+    Separator,
+    Child,
+    ViewAll,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CommunityRow {
     node_index: usize,
     selectable_index: Option<usize>,
+    kind: CommunityRowKind,
     area: Rect,
-    branch: Rect,
     text: Rect,
 }
 
@@ -34,22 +41,25 @@ fn community_layout(
         .enumerate()
         .filter(|(_, node)| node.is_root)
     {
-        logical_rows.push((node_index, None));
+        logical_rows.push((node_index, None, CommunityRowKind::Root));
+        logical_rows.push((node_index, None, CommunityRowKind::Separator));
         for (node_index, _) in communities
             .iter()
             .enumerate()
             .filter(|(_, node)| !node.is_root && root.linked_groups.contains(&node.jid))
         {
-            logical_rows.push((node_index, Some(selectable_index)));
+            logical_rows.push((node_index, Some(selectable_index), CommunityRowKind::Child));
             selectable_index += 1;
         }
+        logical_rows.push((node_index, None, CommunityRowKind::ViewAll));
+        logical_rows.push((node_index, None, CommunityRowKind::Separator));
     }
 
     let capacity = usize::from(area.height);
     let selected_row = selected.and_then(|selection| {
         logical_rows
             .iter()
-            .position(|(_, selectable)| *selectable == Some(selection))
+            .position(|(_, selectable, _)| *selectable == Some(selection))
     });
     let start = selected_row
         .map(|row| row.saturating_sub(capacity.saturating_sub(1)))
@@ -61,28 +71,20 @@ fn community_layout(
         .skip(start)
         .take(capacity)
         .enumerate()
-        .map(|(visible_index, (node_index, selectable_index))| {
+        .map(|(visible_index, (node_index, selectable_index, kind))| {
             let y = area.y.saturating_add(visible_index as u16);
-            let row_area = Rect::new(area.x, y, area.width, 1);
-            let branch_x = area.x.min(area.right());
-            let branch = Rect::new(
-                branch_x,
-                y,
-                BRANCH_WIDTH.min(area.right().saturating_sub(branch_x)),
-                1,
-            );
-            let text_x = if selectable_index.is_some() {
-                branch_x.saturating_add(BRANCH_WIDTH).min(area.right())
-            } else {
-                area.x
+            let text_x = match kind {
+                CommunityRowKind::Root
+                | CommunityRowKind::Separator
+                | CommunityRowKind::ViewAll => area.x,
+                CommunityRowKind::Child => area.x.saturating_add(2).min(area.right()),
             };
-            let text = Rect::new(text_x, y, area.right().saturating_sub(text_x), 1);
             CommunityRow {
                 node_index,
                 selectable_index,
-                area: row_area,
-                branch,
-                text,
+                kind,
+                area: Rect::new(area.x, y, area.width, 1),
+                text: Rect::new(text_x, y, area.right().saturating_sub(text_x), 1),
             }
         })
         .collect()
@@ -104,14 +106,33 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
         frame.render_widget(Paragraph::new("Community data unavailable"), inner);
         return;
     }
-    if app.communities.is_empty() {
+    let mut communities = Vec::new();
+    for root in app.communities.iter().filter(|n| n.is_root) {
+        let mut root = root.clone();
+        root.linked_groups.retain(|jid| app.chats.contains_key(jid));
+        if root.linked_groups.is_empty() {
+            continue;
+        }
+        communities.push(root.clone());
+        communities.extend(
+            app.communities
+                .iter()
+                .filter(|n| {
+                    !n.is_root
+                        && root.linked_groups.contains(&n.jid)
+                        && app.chats.contains_key(&n.jid)
+                })
+                .cloned(),
+        );
+    }
+    if communities.is_empty() {
         frame.render_widget(Paragraph::new("No communities"), inner);
         return;
     }
 
     let selected = app.chat_list_state.selected();
-    for row in community_layout(&app.communities, selected, inner) {
-        let node = &app.communities[row.node_index];
+    for row in community_layout(&communities, selected, inner) {
+        let node = &communities[row.node_index];
         let selected = row.selectable_index == selected;
         let base = if selected {
             Style::default().fg(Color::Green).bg(Color::DarkGray)
@@ -120,16 +141,13 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
         };
         frame.buffer_mut().set_style(row.area, base);
 
-        if row.selectable_index.is_some() {
-            frame.buffer_mut().set_stringn(
-                row.branch.x,
-                row.branch.y,
-                "├─",
-                row.branch.width as usize,
-                base,
-            );
-        }
-        let text_style = if row.selectable_index.is_none() {
+        let text = match row.kind {
+            CommunityRowKind::Root => format!("{}  {}", initials(&node.name), node.name),
+            CommunityRowKind::Separator => "────────".into(),
+            CommunityRowKind::Child => node.name.clone(),
+            CommunityRowKind::ViewAll => "View all".into(),
+        };
+        let style = if row.kind == CommunityRowKind::Root {
             base.add_modifier(Modifier::BOLD)
         } else {
             base
@@ -137,16 +155,16 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
         frame.buffer_mut().set_stringn(
             row.text.x,
             row.text.y,
-            &node.name,
+            &text,
             row.text.width as usize,
-            text_style,
+            style,
         );
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::community_layout;
+    use super::{CommunityRowKind, community_layout};
     use crate::app::CommunityNode;
     use ratatui::layout::Rect;
     use whatsrust::JID;
@@ -160,6 +178,10 @@ mod tests {
             name: "Community".into(),
             is_root: true,
             linked_groups: groups.clone(),
+            is_joined: true,
+            is_default_subgroup: false,
+            is_announce: None,
+            participant_count: None,
         }];
         result.extend(
             groups
@@ -170,43 +192,34 @@ mod tests {
                     name: format!("Group {index}"),
                     is_root: false,
                     linked_groups: Vec::new(),
+                    is_joined: true,
+                    is_default_subgroup: false,
+                    is_announce: None,
+                    participant_count: None,
                 }),
         );
         result
     }
 
     #[test]
-    fn root_is_rendered_once_and_groups_are_compact_branch_rows() {
+    fn community_blocks_are_flat() {
         let layout = community_layout(&nodes(2), Some(0), Rect::new(0, 0, 40, 12));
-        assert_eq!(layout.len(), 3);
-        assert_eq!(layout[0].selectable_index, None);
-        assert_eq!(layout[0].text.y, 0);
-        assert_eq!(layout[1].selectable_index, Some(0));
-        assert_eq!(layout[1].text.y, 1);
-        assert_eq!(layout[2].selectable_index, Some(1));
-        assert_eq!(layout[2].text.y, 2);
-        assert_eq!(layout[1].text.x, layout[1].branch.right());
+        assert_eq!(layout.len(), 6);
+        assert_eq!(layout[0].kind, CommunityRowKind::Root);
+        assert_eq!(layout[1].kind, CommunityRowKind::Separator);
+        assert_eq!(layout[2].kind, CommunityRowKind::Child);
+        assert_eq!(layout[2].selectable_index, Some(0));
+        assert_eq!(layout[4].kind, CommunityRowKind::ViewAll);
     }
 
     #[test]
-    fn selected_group_is_visible_and_root_is_not_selectable() {
-        let layout = community_layout(&nodes(6), Some(5), Rect::new(0, 0, 40, 3));
+    fn selected_group_is_visible_and_rows_stay_bounded() {
+        let layout = community_layout(&nodes(6), Some(5), Rect::new(0, 0, 5, 3));
         assert!(layout.iter().any(|row| row.selectable_index == Some(5)));
-        assert!(layout.iter().all(|row| row.selectable_index.is_some()));
-    }
-
-    #[test]
-    fn narrow_and_short_areas_remain_bounded() {
-        let layout = community_layout(&nodes(2), Some(0), Rect::new(0, 0, 5, 1));
         assert!(
             layout
                 .iter()
-                .all(|row| row.area.right() <= 5 && row.area.bottom() <= 1)
-        );
-        assert!(
-            layout
-                .iter()
-                .all(|row| row.branch.right() <= 5 && row.text.right() <= 5)
+                .all(|row| row.area.right() <= 5 && row.text.right() <= 5)
         );
     }
 }
