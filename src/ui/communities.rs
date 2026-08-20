@@ -95,10 +95,18 @@ fn community_layout(
 fn community_avatar_targets(app: &App, rows: &[CommunityNavigationRow]) -> Vec<AvatarTarget> {
     rows.iter()
         .filter_map(|row| match row {
-            CommunityNavigationRow::Root(jid) | CommunityNavigationRow::ViewAll(jid) => {
+            CommunityNavigationRow::Root(jid) => {
                 Some(AvatarTarget::CommunityRoot { jid: jid.clone() })
             }
             CommunityNavigationRow::Group(jid) => {
+                if app
+                    .communities
+                    .iter()
+                    .find(|node| node.jid == *jid)
+                    .is_some_and(|node| community_group_label(node) == "Announcements")
+                {
+                    return None;
+                }
                 let parent_jid = app
                     .communities
                     .iter()
@@ -110,7 +118,7 @@ fn community_avatar_targets(app: &App, rows: &[CommunityNavigationRow]) -> Vec<A
                     is_joined: true,
                 })
             }
-            CommunityNavigationRow::Separator => None,
+            CommunityNavigationRow::ViewAll(_) | CommunityNavigationRow::Separator => None,
         })
         .collect()
 }
@@ -178,11 +186,7 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
                     false,
                 )
             }
-            CommunityNavigationRow::ViewAll(jid) => (
-                "View all".into(),
-                Some(AvatarTarget::CommunityRoot { jid: jid.clone() }),
-                false,
-            ),
+            CommunityNavigationRow::ViewAll(_) => ("View all".into(), None, false),
             CommunityNavigationRow::Separator => ("────────────────".into(), None, true),
         };
         let style = if is_root {
@@ -217,10 +221,15 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
                 protocol,
             );
         } else {
+            let fallback = match &row {
+                CommunityNavigationRow::ViewAll(_) => ">".to_owned(),
+                CommunityNavigationRow::Group(_) if name == "Announcements" => "📢".to_owned(),
+                _ => initials(&name),
+            };
             frame.buffer_mut().set_stringn(
                 row_area.x,
                 row_area.y,
-                &truncate(&initials(&name), AVATAR_WIDTH as usize),
+                &truncate(&fallback, AVATAR_WIDTH as usize),
                 AVATAR_WIDTH as usize,
                 style,
             );
@@ -276,7 +285,7 @@ mod tests {
     }
 
     #[test]
-    fn avatar_targets_include_roots_groups_and_view_all() {
+    fn avatar_targets_exclude_symbolic_view_all() {
         let mut app = TestApp::new();
         app.communities = vec![CommunityNode {
             jid: JID::from("root@g.us".to_owned()),
@@ -292,9 +301,8 @@ mod tests {
             participant_count: None,
         }];
         let targets = community_avatar_targets(&app, &rows(2));
-        assert_eq!(targets.len(), 4);
+        assert_eq!(targets.len(), 3);
         assert!(matches!(targets[0], AvatarTarget::CommunityRoot { .. }));
-        assert!(matches!(targets[3], AvatarTarget::CommunityRoot { .. }));
     }
 
     fn community_app(child_announce: Option<bool>) -> TestApp {
@@ -350,6 +358,8 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert!(rendered.contains("Announcements"), "{rendered}");
+        assert!(rendered.contains("📢"), "{rendered}");
+        assert!(rendered.contains(">"), "{rendered}");
         assert!(!rendered.contains("Group"), "{rendered}");
     }
 }
