@@ -16,6 +16,7 @@ fn file_message(id: &str, path: &str) -> Message {
             id: id.into(),
             chat: JID::from("chat@example.test".to_owned()),
             sender: JID::from("chat@example.test".to_owned()),
+            mentions_self: false,
             timestamp: 1,
             is_from_me: false,
             quote_id: None,

@@ -5,7 +5,7 @@ use wp_tui::app::actions::{AppAction, ConversationMode};
 use wp_tui::app::composer::Composer;
 use wp_tui::app::inputs::composer_action_for_editing_key;
 use wp_tui::key_handler::Key;
-use wp_tui::ui::render_chats;
+use wp_tui::ui::{composer_mention_picker_area, conversation_areas, render_chats};
 mod common;
 use common::TestApp;
 
@@ -165,6 +165,69 @@ fn attachment_only_drafts_are_sendable() {
 }
 
 #[test]
+fn escape_closes_only_the_active_mention_picker() {
+    let mut app = TestApp::new();
+    app.open_chat_by_jid(whatsrust::JID("123@g.us".into()));
+    app.composer
+        .set_group_participants(vec![whatsrust::GroupParticipant {
+            jid: whatsrust::JID("111@s.whatsapp.net".into()),
+            phone_number: whatsrust::JID("111@s.whatsapp.net".into()),
+            name: "Alice".into(),
+        }]);
+    app.focus_pane = wp_tui::app::actions::FocusPane::Conversation;
+    app.conversation_mode = ConversationMode::ComposerEditing;
+    app.composer.insert_text("hello @a");
+    let text_before_escape = app.composer.text();
+
+    assert!(app.composer.mention_picker_active());
+    app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+
+    assert!(!app.composer.mention_picker_active());
+    assert_eq!(app.composer.text(), text_before_escape);
+    assert_eq!(app.conversation_mode, ConversationMode::ComposerEditing);
+}
+
+#[test]
+fn mention_picker_renders_as_a_floating_overlay_above_the_composer() {
+    let mut app = TestApp::new();
+    app.open_chat_by_jid(whatsrust::JID("123@g.us".into()));
+    app.composer
+        .set_group_participants(vec![whatsrust::GroupParticipant {
+            jid: whatsrust::JID("111@s.whatsapp.net".into()),
+            phone_number: whatsrust::JID("111@s.whatsapp.net".into()),
+            name: "Alice".into(),
+        }]);
+    app.focus_pane = wp_tui::app::actions::FocusPane::Conversation;
+    app.conversation_mode = ConversationMode::ComposerEditing;
+    app.composer.insert_text("@a");
+
+    let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+    terminal
+        .draw(|frame| render_chats(frame, &mut app, Rect::new(0, 0, 80, 20)))
+        .unwrap();
+    let rows = terminal
+        .backend()
+        .buffer()
+        .content()
+        .chunks(80)
+        .collect::<Vec<_>>();
+    let picker_row = rows
+        .iter()
+        .position(|row| {
+            row.iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>()
+                .contains("@Alice")
+        })
+        .expect("mention candidate should be visible");
+    let inner = Rect::new(1, 1, 78, 18);
+    let (_, composer_area) = conversation_areas(inner, 1, 0, 0);
+    let picker = composer_mention_picker_area(inner, composer_area, 1, 6).unwrap();
+    assert!((picker_row as u16) < composer_area.y);
+    assert!(picker.bottom() <= composer_area.y);
+}
+
+#[test]
 fn blocked_composer_rejects_text_attachments_and_submission() {
     let mut composer = Composer::default();
     composer.set_blocked(true);
@@ -225,6 +288,7 @@ fn message(id: &str) -> whatsrust::Message {
             id: id.into(),
             chat: jid.clone(),
             sender: jid,
+            mentions_self: false,
             timestamp: 0,
             is_from_me: false,
             quote_id: None,

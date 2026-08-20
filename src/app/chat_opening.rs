@@ -31,6 +31,10 @@ impl App<'_> {
             if let Ok(info) = wr::get_group_info(chat) {
                 self.group_permissions.insert(chat.clone(), info);
             }
+            self.composer
+                .set_group_participants(wr::get_group_participants(chat));
+        } else {
+            self.composer.set_group_participants(Vec::new());
         }
         self.composer.set_blocked(self.composer_blocked());
     }

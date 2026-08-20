@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
 
 use chrono::{DateTime, Local};
 use ratatui::{
@@ -99,6 +99,7 @@ impl StatusLabel {
 
 pub(crate) fn inline_content_lines(
     body: &str,
+    mention_ranges: &[Range<usize>],
     status: Option<StatusLabel>,
     width: usize,
 ) -> Vec<Line<'static>> {
@@ -137,15 +138,35 @@ pub(crate) fn inline_content_lines(
             }
         }
     }
+    let line_starts = wrapped
+        .iter()
+        .scan(0, |cursor, line| {
+            let start = content[*cursor..]
+                .find(line)
+                .map_or(*cursor, |offset| *cursor + offset);
+            *cursor = start + line.len();
+            Some(start)
+        })
+        .collect::<Vec<_>>();
     wrapped
         .iter()
         .zip(status_starts)
-        .map(|(line, status_start)| {
+        .zip(line_starts)
+        .map(|((line, status_start), line_start)| {
+            let mut byte_offset = 0;
             let graphemes = line
                 .graphemes(true)
                 .enumerate()
                 .map(|(index, grapheme)| {
-                    (grapheme, status_start.is_some_and(|start| index >= start))
+                    let start = line_start + byte_offset;
+                    byte_offset += grapheme.len();
+                    (
+                        grapheme,
+                        status_start.is_some_and(|status_start| index >= status_start),
+                        mention_ranges
+                            .iter()
+                            .any(|range| start < range.end && start + grapheme.len() > range.start),
+                    )
                 })
                 .collect::<Vec<_>>();
             inline_line(&graphemes)
@@ -153,11 +174,13 @@ pub(crate) fn inline_content_lines(
         .collect()
 }
 
-fn inline_line(graphemes: &[(&str, bool)]) -> Line<'static> {
+fn inline_line(graphemes: &[(&str, bool, bool)]) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
-    for (grapheme, is_status) in graphemes {
+    for (grapheme, is_status, is_mention) in graphemes {
         let style = if *is_status {
             Style::default().dark_gray()
+        } else if *is_mention {
+            Style::default().fg(ratatui::style::Color::Blue).bold()
         } else {
             Style::default()
         };
@@ -189,6 +212,34 @@ fn reply_excerpt(text: &str) -> String {
         format!("{excerpt}…")
     } else {
         excerpt
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::{
+        style::{Color, Modifier},
+        text::Span,
+    };
+
+    use super::inline_content_lines;
+
+    #[test]
+    fn semantic_mentions_stay_blue_and_bold_when_wrapped_without_styling_other_tokens() {
+        let lines = inline_content_lines("@阿丽 and @999", &[0..7], None, 8);
+        assert_eq!(lines.len(), 2);
+        let spans = lines
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .collect::<Vec<&Span>>();
+        assert!(spans.iter().any(|span| span.content == "@阿丽"
+            && span.style.fg == Some(Color::Blue)
+            && span.style.add_modifier.contains(Modifier::BOLD)));
+        assert!(
+            spans
+                .iter()
+                .any(|span| span.content.contains("@999") && span.style.fg != Some(Color::Blue))
+        );
     }
 }
 

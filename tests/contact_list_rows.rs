@@ -333,6 +333,7 @@ fn message(chat: &JID, id: &str, timestamp: i64, text: &str) -> Message {
             id: id.into(),
             chat: chat.clone(),
             sender: chat.clone(),
+            mentions_self: false,
             timestamp,
             is_from_me: false,
             quote_id: None,

@@ -55,6 +55,7 @@ mod tests {
                 id: id.into(),
                 chat: "status@broadcast".to_owned().into(),
                 sender: "alice@s.whatsapp.net".to_owned().into(),
+                mentions_self: false,
                 timestamp: 100,
                 forwarding: Default::default(),
                 is_from_me: false,

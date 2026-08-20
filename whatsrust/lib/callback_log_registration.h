@@ -11,6 +11,8 @@ typedef struct {
 	char* id;
 	JID chat;
 	JID sender;
+	char* pushName;
+	bool mentionsSelf;
 	int64_t timestamp;
 	bool isFromMe;
 	char* quoteID;

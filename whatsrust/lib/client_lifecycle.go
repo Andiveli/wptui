@@ -34,6 +34,7 @@ var qrChan <-chan whatsmeow.QRChannelItem
 
 //export C_NewClient
 func C_NewClient(dbPath *C.char) {
+	clearAuthenticatedPushNameCache()
 	rawPresenceProbe.reset(os.Getenv("WPTUI_PRESENCE_DEBUG") == "1")
 	requestFullHistorySync()
 	goPath := C.GoString(dbPath)
@@ -99,6 +100,7 @@ func C_PairPhone(phone *C.char) *C.char {
 //export C_Disconnect
 func C_Disconnect() {
 	client.Disconnect()
+	clearAuthenticatedPushNameCache()
 }
 
 const (
@@ -145,6 +147,7 @@ func C_Logout() C.uint8_t {
 			}
 		}
 	}
+	clearAuthenticatedPushNameCache()
 	emitLogoutResult(status)
 	return C.uint8_t(status)
 }

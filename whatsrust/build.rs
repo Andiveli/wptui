@@ -50,6 +50,8 @@ fn main() {
     }
     println!("cargo:rerun-if-changed=lib/go.mod");
     println!("cargo:rerun-if-changed=lib/go.sum");
+    // Keep the Go archive and Rust FFI contract in lockstep when the shared ABI changes.
+    println!("cargo:rerun-if-changed=lib/callback_log_registration.h");
     println!(
         "cargo::rustc-link-search=native={}",
         lib_path.parent().unwrap().display()

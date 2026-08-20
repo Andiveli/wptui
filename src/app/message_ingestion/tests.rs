@@ -9,6 +9,7 @@ fn message(chat: &wr::JID, id: &str, timestamp: i64) -> wr::Message {
             id: id.into(),
             chat: chat.clone(),
             sender: chat.clone(),
+            mentions_self: false,
             timestamp,
             is_from_me: false,
             quote_id: None,
@@ -57,6 +58,22 @@ fn sync_messages_skip_notification_lookup_and_return_false() {
         ))
     );
     assert!(app.messages.contains_key("sync"));
+}
+
+#[test]
+fn self_mention_semantics_survive_live_and_sync_ingestion() {
+    let mut app = TestApp::new();
+    let chat = wr::JID::from("chat@g.us".to_owned());
+
+    let mut live = message(&chat, "live-self-mention", 5);
+    live.info.mentions_self = true;
+    app.process_message_with_lookup(live, false, |_| Default::default());
+    assert!(app.messages["live-self-mention"].info.mentions_self);
+
+    let mut sync = message(&chat, "sync-self-mention", 6);
+    sync.info.mentions_self = true;
+    app.process_message_with_lookup(sync, true, |_| panic!("sync must not notify"));
+    assert!(app.messages["sync-self-mention"].info.mentions_self);
 }
 
 #[test]

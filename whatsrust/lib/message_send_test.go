@@ -1,10 +1,73 @@
 package main
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
+
+	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/proto/waE2E"
 )
+
+func TestOutboundWirePayloadCarriesTextMentionMetadata(t *testing.T) {
+	message := contentToWaE2EMessage(
+		MessageTypeText,
+		"hello @123",
+		[]string{"123@lid"},
+		0,
+		"",
+		nil,
+		&waE2E.ContextInfo{},
+		nil,
+	)
+	contextInfo := message.GetExtendedTextMessage().GetContextInfo()
+	if got := contextInfo.GetMentionedJID(); len(got) != 1 || got[0] != "123@lid" {
+		t.Fatalf("text protobuf MentionedJID = %v, want [123@lid]", got)
+	}
+}
+
+func TestOutboundWirePayloadCarriesCaptionMentionMetadata(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "mention-image.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString("image"); err != nil {
+		t.Fatal(err)
+	}
+	file.Close()
+
+	caption := "hello @123"
+	message := contentToWaE2EMessage(
+		MessageTypeFile,
+		"",
+		[]string{"123@s.whatsapp.net"},
+		FileTypeImage,
+		file.Name(),
+		&caption,
+		&waE2E.ContextInfo{},
+		func(context.Context, []byte, whatsmeow.MediaType) (whatsmeow.UploadResponse, error) {
+			return whatsmeow.UploadResponse{URL: "https://example.test/image", DirectPath: "/image"}, nil
+		},
+	)
+	contextInfo := message.GetImageMessage().GetContextInfo()
+	if got := contextInfo.GetMentionedJID(); len(got) != 1 || got[0] != "123@s.whatsapp.net" {
+		t.Fatalf("caption protobuf MentionedJID = %v, want [123@s.whatsapp.net]", got)
+	}
+}
+
+func TestSetMentionedJIDsPreservesFileCaptionMetadata(t *testing.T) {
+	contextInfo := &waE2E.ContextInfo{}
+	setMentionedJIDsFromStrings(contextInfo, []string{"111@s.whatsapp.net"})
+
+	if got := contextInfo.GetMentionedJID(); len(got) != 1 || got[0] != "111@s.whatsapp.net" {
+		t.Fatalf("MentionedJID = %v, want [111@s.whatsapp.net]", got)
+	}
+}
+
+func TestSetMentionedJIDsAcceptsNullContext(t *testing.T) {
+	setMentionedJIDsFromStrings(nil, []string{"111@s.whatsapp.net"})
+}
 
 func TestQuotedMessageFromContentPreservesTextAndFileKindsWithoutUpload(t *testing.T) {
 	quotedText := quotedTextMessage("quoted text")

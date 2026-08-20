@@ -164,6 +164,7 @@ mod tests {
                 id: id.into(),
                 chat: "chat@g.us".to_owned().into(),
                 sender: "chat@g.us".to_owned().into(),
+                mentions_self: false,
                 timestamp: 1,
                 forwarding: Default::default(),
                 is_from_me: false,

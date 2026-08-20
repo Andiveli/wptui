@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     ffi::{CStr, CString, c_char, c_void},
+    ops::Range,
     path::Path,
     sync::{
         Arc, LazyLock, Mutex,
@@ -17,6 +18,10 @@ type CJID = *const c_char;
 
 static PRESENCE_CALLBACK_INGRESS: AtomicUsize = AtomicUsize::new(0);
 static FORWARD_SOURCES: LazyLock<Mutex<HashMap<(Arc<str>, Arc<str>, Arc<str>), Vec<u8>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+static MESSAGE_PUSH_NAMES: LazyLock<Mutex<HashMap<Arc<str>, Arc<str>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+static MESSAGE_MENTION_RANGES: LazyLock<Mutex<HashMap<MessageId, (Arc<str>, Vec<Range<usize>>)>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -105,10 +110,25 @@ struct CGroupInfoResult {
 }
 
 #[repr(C)]
+struct CGroupParticipantEntry {
+    jid: CJID,
+    phone_number: CJID,
+    name: *const c_char,
+}
+
+#[repr(C)]
+struct CGroupParticipantsResult {
+    entries: *const CGroupParticipantEntry,
+    size: u32,
+}
+
+#[repr(C)]
 struct CMessageInfo {
     id: *const c_char,
     chat: CJID,
     sender: CJID,
+    push_name: *const c_char,
+    mentions_self: bool,
     timestamp: i64,
     is_from_me: bool,
     quote_id: *const c_char,
@@ -118,8 +138,23 @@ struct CMessageInfo {
 }
 
 #[repr(C)]
+struct CMentionRange {
+    start: usize,
+    end: usize,
+}
+
+#[repr(C)]
+struct CIncomingTextMessage {
+    text: *const c_char,
+    mention_ranges: *const CMentionRange,
+    mention_range_count: usize,
+}
+
+#[repr(C)]
 struct CTextMessage {
     text: *const c_char,
+    mentioned_jids: *const CJID,
+    mentioned_count: usize,
 }
 
 #[repr(C)]
@@ -128,6 +163,10 @@ struct CFileMessage {
     path: *const c_char,
     file_id: *const c_char,
     caption: *const c_char,
+    mentioned_jids: *const CJID,
+    mentioned_count: usize,
+    mention_ranges: *const CMentionRange,
+    mention_range_count: usize,
 }
 
 #[repr(C)]
@@ -193,11 +232,37 @@ pub struct MessageInfo {
     pub id: MessageId,
     pub chat: JID,
     pub sender: JID,
+    pub mentions_self: bool,
     pub timestamp: i64,
     pub is_from_me: bool,
     pub quote_id: Option<Arc<str>>,
     pub read_by: u16,
     pub forwarding: ForwardingInfo,
+}
+
+#[cfg(test)]
+mod message_push_name_tests {
+    use super::{JID, MessageInfo, message_push_name, store_message_push_name};
+
+    #[test]
+    fn callback_message_push_name_is_available_to_sender_naming() {
+        let info = MessageInfo {
+            id: "push-name-message".into(),
+            chat: JID::from("chat@example.test".to_owned()),
+            sender: JID::from("sender@example.test".to_owned()),
+            mentions_self: false,
+            timestamp: 0,
+            is_from_me: false,
+            quote_id: None,
+            read_by: 0,
+            forwarding: Default::default(),
+        };
+        store_message_push_name(&info.id, "WhatsApp Profile");
+        assert_eq!(
+            message_push_name(&info.id).as_deref(),
+            Some("WhatsApp Profile")
+        );
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -550,6 +615,60 @@ pub struct Message {
     pub message: MessageContent,
 }
 
+fn validated_mention_ranges(text: &str, ranges: &[CMentionRange]) -> Vec<Range<usize>> {
+    let mut result = ranges
+        .iter()
+        .filter_map(|range| {
+            (range.start < range.end
+                && range.end <= text.len()
+                && text.is_char_boundary(range.start)
+                && text.is_char_boundary(range.end))
+            .then_some(range.start..range.end)
+        })
+        .collect::<Vec<_>>();
+    result.sort_by_key(|range| (range.start, range.end));
+    result.dedup();
+    result
+}
+
+pub fn store_message_mention_ranges(id: &MessageId, text: &str, ranges: Vec<Range<usize>>) {
+    let mut stored = MESSAGE_MENTION_RANGES.lock().unwrap();
+    if ranges.is_empty() {
+        stored.remove(id);
+    } else {
+        stored.insert(id.clone(), (text.into(), ranges));
+    }
+}
+
+pub fn message_mention_ranges(id: &MessageId, text: &str) -> Vec<Range<usize>> {
+    MESSAGE_MENTION_RANGES
+        .lock()
+        .unwrap()
+        .get(id)
+        .filter(|(stored_text, _)| stored_text.as_ref() == text)
+        .map(|(_, ranges)| ranges.clone())
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod mention_range_tests {
+    use super::{CMentionRange, validated_mention_ranges};
+
+    #[test]
+    fn ffi_ranges_are_utf8_validated_and_invalid_ranges_are_dropped() {
+        let text = "café @阿丽";
+        let ranges = validated_mention_ranges(
+            text,
+            &[
+                CMentionRange { start: 6, end: 13 },
+                CMentionRange { start: 8, end: 13 },
+                CMentionRange { start: 0, end: 99 },
+            ],
+        );
+        assert_eq!(ranges, vec![6..13]);
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ForwardReport {
     pub succeeded: usize,
@@ -576,6 +695,20 @@ impl ForwardReport {
             failure,
         }
     }
+}
+
+pub fn store_message_push_name(id: &MessageId, push_name: &str) {
+    if push_name.trim().is_empty() {
+        return;
+    }
+    MESSAGE_PUSH_NAMES
+        .lock()
+        .unwrap()
+        .insert(id.clone(), push_name.trim().into());
+}
+
+pub fn message_push_name(id: &MessageId) -> Option<Arc<str>> {
+    MESSAGE_PUSH_NAMES.lock().unwrap().get(id).cloned()
 }
 
 pub fn store_forward_source(info: &MessageInfo, source: Vec<u8>) {
@@ -627,6 +760,19 @@ pub struct GroupInfo {
     pub name: Arc<str>,
     pub is_announce: bool,
     pub is_admin: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GroupParticipant {
+    pub jid: JID,
+    pub phone_number: JID,
+    pub name: Arc<str>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Mention {
+    pub jid: JID,
+    pub numeric_user: Arc<str>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -726,6 +872,8 @@ unsafe extern "C" {
     fn C_FreeProfilePicture(result: CProfilePictureResult);
     fn C_GetChatSettings(jid: CJID) -> CChatSettings;
     fn C_GetGroupInfo(jid: CJID) -> CGroupInfoResult;
+    fn C_GetGroupParticipants(jid: CJID) -> CGroupParticipantsResult;
+    fn C_FreeGroupParticipants(result: CGroupParticipantsResult);
     fn C_ResolveDmChatId(jid: CJID) -> *mut c_char;
     fn C_FreeResolveDmChatId(value: *mut c_char);
     fn C_Disconnect();
@@ -1238,6 +1386,14 @@ impl CallbackTranslator<*const CMessage> for Message {
             .into();
         let chat: JID = (&msg.info.chat).into();
         let sender: JID = (&msg.info.sender).into();
+        let push_name = if msg.info.push_name.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(msg.info.push_name) }
+                .to_string_lossy()
+                .into_owned()
+        };
+        store_message_push_name(&id, &push_name);
 
         let c_quote_id = msg.info.quote_id;
         let quote_id = if c_quote_id.is_null() {
@@ -1253,16 +1409,49 @@ impl CallbackTranslator<*const CMessage> for Message {
 
         let message = match MessageType::from_repr(msg.message_type).unwrap() {
             MessageType::Text => {
-                let text_message = unsafe { &*(msg.message as *const CTextMessage) };
+                let text_message = unsafe { &*(msg.message as *const CIncomingTextMessage) };
 
                 let message = unsafe { CStr::from_ptr(text_message.text) }
                     .to_string_lossy()
-                    .into_owned()
-                    .into();
-                MessageContent::Text(message)
+                    .into_owned();
+                let ranges = if text_message.mention_ranges.is_null()
+                    || text_message.mention_range_count == 0
+                {
+                    Vec::new()
+                } else {
+                    validated_mention_ranges(&message, unsafe {
+                        std::slice::from_raw_parts(
+                            text_message.mention_ranges,
+                            text_message.mention_range_count,
+                        )
+                    })
+                };
+                store_message_mention_ranges(&id, &message, ranges);
+                MessageContent::Text(message.into())
             }
             MessageType::File => {
                 let image_message = unsafe { &*(msg.message as *const CFileMessage) };
+
+                let caption_text = if image_message.caption.is_null() {
+                    String::new()
+                } else {
+                    unsafe { CStr::from_ptr(image_message.caption) }
+                        .to_string_lossy()
+                        .into_owned()
+                };
+                let ranges = if image_message.mention_ranges.is_null()
+                    || image_message.mention_range_count == 0
+                {
+                    Vec::new()
+                } else {
+                    validated_mention_ranges(&caption_text, unsafe {
+                        std::slice::from_raw_parts(
+                            image_message.mention_ranges,
+                            image_message.mention_range_count,
+                        )
+                    })
+                };
+                store_message_mention_ranges(&id, &caption_text, ranges);
 
                 let path = unsafe { CStr::from_ptr(image_message.path) }
                     .to_string_lossy()
@@ -1277,12 +1466,7 @@ impl CallbackTranslator<*const CMessage> for Message {
                 let caption = if image_message.caption.is_null() {
                     None
                 } else {
-                    Some(
-                        unsafe { CStr::from_ptr(image_message.caption) }
-                            .to_string_lossy()
-                            .into_owned()
-                            .into(),
-                    )
+                    Some(caption_text.into())
                 };
                 MessageContent::File(FileContent {
                     kind: FileKind::from_repr(image_message.kind).unwrap(),
@@ -1297,6 +1481,7 @@ impl CallbackTranslator<*const CMessage> for Message {
             id,
             chat,
             sender,
+            mentions_self: msg.info.mentions_self,
             timestamp: msg.info.timestamp,
             is_from_me: msg.info.is_from_me,
             quote_id,
@@ -1444,22 +1629,42 @@ pub fn subscribe_presence(jid: &JID) -> SubscribePresenceResult {
 /// The inner C structs are boxed so their heap addresses remain stable.
 #[allow(dead_code)]
 enum ContentHolder {
-    Text(CString, Box<CTextMessage>),
-    File(CString, CString, Option<CString>, Box<CFileMessage>),
+    Text(CString, Vec<CString>, Vec<CJID>, Box<CTextMessage>),
+    File(
+        CString,
+        CString,
+        Option<CString>,
+        Vec<CString>,
+        Vec<CJID>,
+        Box<CFileMessage>,
+    ),
 }
 
-fn build_content_for_ffi(content: &MessageContent) -> (u8, *const c_void, ContentHolder) {
+fn build_content_for_ffi(
+    content: &MessageContent,
+    mentions: &[Mention],
+) -> (u8, *const c_void, ContentHolder) {
     match content {
         MessageContent::Text(text) => {
             let text_c = CString::new(text.as_ref()).unwrap();
+            let mention_strings = mentions
+                .iter()
+                .map(|mention| CString::new(mention.jid.0.as_ref()).unwrap())
+                .collect::<Vec<_>>();
+            let mention_pointers = mention_strings
+                .iter()
+                .map(|jid| jid.as_ptr())
+                .collect::<Vec<_>>();
             let c_text = Box::new(CTextMessage {
                 text: text_c.as_ptr(),
+                mentioned_jids: mention_pointers.as_ptr(),
+                mentioned_count: mention_pointers.len(),
             });
             let ptr = &*c_text as *const _ as *const c_void;
             (
                 MessageType::Text as u8,
                 ptr,
-                ContentHolder::Text(text_c, c_text),
+                ContentHolder::Text(text_c, mention_strings, mention_pointers, c_text),
             )
         }
         MessageContent::File(file) => {
@@ -1470,17 +1675,40 @@ fn build_content_for_ffi(content: &MessageContent) -> (u8, *const c_void, Conten
                 .as_ref()
                 .map(|c| CString::new(c.as_ref()).unwrap());
             let caption_ptr = caption_c.as_ref().map_or(std::ptr::null(), |c| c.as_ptr());
+            let mention_strings = if file.caption.is_some() {
+                mentions
+                    .iter()
+                    .map(|mention| CString::new(mention.jid.0.as_ref()).unwrap())
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            let mention_pointers = mention_strings
+                .iter()
+                .map(|jid| jid.as_ptr())
+                .collect::<Vec<_>>();
             let c_file = Box::new(CFileMessage {
                 kind: file_kind_discriminant(&file.kind),
                 path: path_c.as_ptr(),
                 file_id: file_id_c.as_ptr(),
                 caption: caption_ptr,
+                mentioned_jids: mention_pointers.as_ptr(),
+                mentioned_count: mention_pointers.len(),
+                mention_ranges: std::ptr::null(),
+                mention_range_count: 0,
             });
             let ptr = &*c_file as *const _ as *const c_void;
             (
                 MessageType::File as u8,
                 ptr,
-                ContentHolder::File(path_c, file_id_c, caption_c, c_file),
+                ContentHolder::File(
+                    path_c,
+                    file_id_c,
+                    caption_c,
+                    mention_strings,
+                    mention_pointers,
+                    c_file,
+                ),
             )
         }
     }
@@ -1506,7 +1734,10 @@ fn quote_to_ffi(quoted: Option<&Message>) -> (CString, *const c_char, CJID, CJID
 
 #[cfg(test)]
 mod quote_ffi_tests {
-    use super::{CStr, ForwardingInfo, JID, Message, MessageContent, MessageInfo, quote_to_ffi};
+    use super::{
+        CStr, ContentHolder, FileContent, FileKind, ForwardingInfo, JID, Mention, Message,
+        MessageContent, MessageInfo, build_content_for_ffi, quote_to_ffi,
+    };
 
     #[test]
     fn quote_transport_preserves_the_original_status_chat() {
@@ -1515,6 +1746,7 @@ mod quote_ffi_tests {
                 id: "status-id".into(),
                 chat: JID::from("status@broadcast".to_owned()),
                 sender: JID::from("alice@s.whatsapp.net".to_owned()),
+                mentions_self: false,
                 timestamp: 0,
                 is_from_me: false,
                 quote_id: None,
@@ -1534,6 +1766,46 @@ mod quote_ffi_tests {
             unsafe { CStr::from_ptr(chat) }.to_str(),
             Ok("status@broadcast")
         );
+    }
+
+    #[test]
+    fn outbound_mentions_preserve_the_participant_jid_server() {
+        let content = MessageContent::Text("@123".into());
+        let mention = Mention {
+            jid: JID::from("123@lid".to_owned()),
+            numeric_user: "123".into(),
+        };
+        let (_, _, holder) = build_content_for_ffi(&content, &[mention]);
+        let ContentHolder::Text(_, strings, pointers, _) = holder else {
+            panic!("expected text FFI payload");
+        };
+        assert_eq!(strings.len(), 1);
+        assert_eq!(pointers.len(), 1);
+        assert_eq!(
+            unsafe { CStr::from_ptr(pointers[0]) }.to_str(),
+            Ok("123@lid")
+        );
+    }
+
+    #[test]
+    fn caption_file_ffi_carries_mentions_without_changing_file_fields() {
+        let content = MessageContent::File(FileContent {
+            kind: FileKind::Image,
+            path: "image.png".into(),
+            file_id: "".into(),
+            caption: Some("@111".into()),
+        });
+        let mention = Mention {
+            jid: JID::from("111@s.whatsapp.net".to_owned()),
+            numeric_user: "111".into(),
+        };
+        let (message_type, _, holder) = build_content_for_ffi(&content, &[mention]);
+        assert_eq!(message_type, 1);
+        let ContentHolder::File(_, _, Some(_), _, pointers, file) = holder else {
+            panic!("expected file FFI payload");
+        };
+        assert_eq!(pointers.len(), 1);
+        assert_eq!(file.mentioned_count, 1);
     }
 }
 
@@ -1589,11 +1861,16 @@ pub fn forward_message(source: &Message, destinations: &[JID]) -> ForwardReport 
     }
 }
 
-pub fn send_message(jid: &JID, content: &MessageContent, quoted_message: Option<&Message>) {
+pub fn send_message(
+    jid: &JID,
+    content: &MessageContent,
+    quoted_message: Option<&Message>,
+    mentions: &[Mention],
+) {
     let jid_c = CJID::from(jid);
-    let (msg_type, content_ptr, _holder) = build_content_for_ffi(content);
+    let (msg_type, content_ptr, _holder) = build_content_for_ffi(content, mentions);
     let (_quote_id_owner, quote_id, quote_sender, quote_chat) = quote_to_ffi(quoted_message);
-    let quote_content = quoted_message.map(|message| build_content_for_ffi(&message.message));
+    let quote_content = quoted_message.map(|message| build_content_for_ffi(&message.message, &[]));
     let (quote_message_type, quote_message_content) = quote_content
         .as_ref()
         .map_or((0, std::ptr::null()), |(message_type, pointer, _)| {
@@ -1702,6 +1979,41 @@ pub fn get_group_info(jid: &JID) -> Result<GroupInfo, GroupInfoError> {
     let jid_c = CJID::from(jid);
     let result = unsafe { C_GetGroupInfo(jid_c) };
     group_info_from_parts(jid, result.status, result.is_announce, result.is_admin)
+}
+
+pub fn get_group_participants(jid: &JID) -> Vec<GroupParticipant> {
+    let jid_c = CJID::from(jid);
+    let result = unsafe { C_GetGroupParticipants(jid_c) };
+    if result.entries.is_null() || result.size == 0 {
+        return Vec::new();
+    }
+    let entries = unsafe { std::slice::from_raw_parts(result.entries, result.size as usize) };
+    let participants = entries
+        .iter()
+        .filter_map(|entry| {
+            let jid: JID = (!entry.jid.is_null()).then(|| (&entry.jid).into())?;
+            let phone_number = if entry.phone_number.is_null() {
+                jid.clone()
+            } else {
+                (&entry.phone_number).into()
+            };
+            let name = if entry.name.is_null() {
+                Arc::<str>::from("")
+            } else {
+                unsafe { CStr::from_ptr(entry.name) }
+                    .to_string_lossy()
+                    .into_owned()
+                    .into()
+            };
+            Some(GroupParticipant {
+                jid,
+                phone_number,
+                name,
+            })
+        })
+        .collect();
+    unsafe { C_FreeGroupParticipants(result) };
+    participants
 }
 
 #[cfg(test)]

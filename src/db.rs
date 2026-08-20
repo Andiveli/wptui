@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    ops::Range,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock, Mutex},
     time::Duration,
@@ -74,6 +75,65 @@ fn ensure_forwarding_columns(db: &Connection, table: &str) {
             .unwrap();
         }
     }
+}
+
+fn ensure_mention_columns(db: &Connection) {
+    for table in ["text_messages", "file_messages"] {
+        let columns = db
+            .prepare(&format!("PRAGMA table_info({table})"))
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        if !columns.is_empty() {
+            if !columns.iter().any(|column| column == "mention_ranges") {
+                db.execute(
+                    &format!("ALTER TABLE {table} ADD COLUMN mention_ranges TEXT"),
+                    [],
+                )
+                .unwrap();
+            }
+            if !columns.iter().any(|column| column == "mentions_self") {
+                db.execute(
+                    &format!(
+                        "ALTER TABLE {table} ADD COLUMN mentions_self INTEGER NOT NULL DEFAULT 0"
+                    ),
+                    [],
+                )
+                .unwrap();
+            }
+        }
+    }
+}
+
+fn encode_mention_ranges(ranges: &[Range<usize>]) -> Option<String> {
+    (!ranges.is_empty()).then(|| {
+        ranges
+            .iter()
+            .map(|range| format!("{}:{}", range.start, range.end))
+            .collect::<Vec<_>>()
+            .join(",")
+    })
+}
+
+fn decode_mention_ranges(encoded: Option<String>, text: &str) -> Vec<Range<usize>> {
+    encoded
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(|item| {
+            let (start, end) = item.split_once(':')?;
+            let range = Range {
+                start: start.parse().ok()?,
+                end: end.parse().ok()?,
+            };
+            (range.start < range.end
+                && range.end <= text.len()
+                && text.is_char_boundary(range.start)
+                && text.is_char_boundary(range.end))
+            .then_some(range)
+        })
+        .collect()
 }
 
 pub struct DatabaseHandler {
@@ -182,10 +242,10 @@ impl DatabaseHandler {
 
                     {
                         let mut text_stmt = tx
-                            .prepare("INSERT OR REPLACE INTO text_messages (id, chat_jid, sender_jid, timestamp, quote_id, is_from_me, read, message, is_forwarded, forwarding_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                            .prepare("INSERT OR REPLACE INTO text_messages (id, chat_jid, sender_jid, timestamp, quote_id, is_from_me, read, message, is_forwarded, forwarding_score, mention_ranges, mentions_self) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
                             .unwrap();
                         let mut file_stmt = tx
-                            .prepare("INSERT OR REPLACE INTO file_messages (id, chat_jid, sender_jid, timestamp, quote_id, is_from_me, read, kind, path, file_id, caption, is_forwarded, forwarding_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                            .prepare("INSERT OR REPLACE INTO file_messages (id, chat_jid, sender_jid, timestamp, quote_id, is_from_me, read, kind, path, file_id, caption, is_forwarded, forwarding_score, mention_ranges, mentions_self) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
                             .unwrap();
                         let mut source_stmt = tx.prepare("INSERT OR REPLACE INTO forward_sources (id, chat_jid, sender_jid, source) VALUES (?, ?, ?, ?)").unwrap();
                         for message in &messages {
@@ -218,6 +278,11 @@ impl DatabaseHandler {
                                             text,
                                             msg.info.forwarding.is_forwarded,
                                             msg.info.forwarding.score,
+                                            encode_mention_ranges(&wr::message_mention_ranges(
+                                                &msg.info.id,
+                                                text,
+                                            )),
+                                            msg.info.mentions_self,
                                         ])
                                         .unwrap();
                                 }
@@ -237,6 +302,13 @@ impl DatabaseHandler {
                                             file.caption,
                                             msg.info.forwarding.is_forwarded,
                                             msg.info.forwarding.score,
+                                            file.caption.as_ref().and_then(|caption| {
+                                                encode_mention_ranges(&wr::message_mention_ranges(
+                                                    &msg.info.id,
+                                                    caption,
+                                                ))
+                                            }),
+                                            msg.info.mentions_self,
                                         ])
                                         .unwrap();
                                 }
@@ -284,6 +356,7 @@ impl DatabaseHandler {
 
     pub fn add_message(&self, message: &wr::Message) {
         self.migrate_forwarding_columns();
+        ensure_mention_columns(&self.db);
         let mut queue = self.new_messages_queue.lock().unwrap();
         queue.push(message.clone());
     }
@@ -511,6 +584,7 @@ impl DatabaseHandler {
 
     pub fn get_messages(&self) -> Vec<wr::Message> {
         self.migrate_forwarding_columns();
+        ensure_mention_columns(&self.db);
         let mut messages = Vec::new();
         for kind in wr::MessageContent::iter() {
             let msgs = match kind {
@@ -529,12 +603,16 @@ impl DatabaseHandler {
                             let message: String = row.get(7).unwrap();
                             let is_forwarded: bool = row.get(8).unwrap();
                             let forwarding_score: u32 = row.get(9).unwrap();
+                            let mention_ranges: Option<String> = row.get(10).unwrap_or(None);
+                            let mentions_self: bool = row.get(11).unwrap_or(false);
+                            let mention_ranges = decode_mention_ranges(mention_ranges, &message);
 
-                            Ok(wr::Message {
+                            let result = wr::Message {
                                 info: wr::MessageInfo {
                                     id: id.into(),
                                     chat: chat_jid.into(),
                                     sender: sender_jid.into(),
+                                    mentions_self,
                                     timestamp,
                                     quote_id: quote_id.map(|q| q.into()),
                                     is_from_me,
@@ -544,8 +622,14 @@ impl DatabaseHandler {
                                         score: forwarding_score,
                                     },
                                 },
-                                message: wr::MessageContent::Text(message.into()),
-                            })
+                                message: wr::MessageContent::Text(message.clone().into()),
+                            };
+                            wr::store_message_mention_ranges(
+                                &result.info.id,
+                                &message,
+                                mention_ranges,
+                            );
+                            Ok(result)
                         })
                         .unwrap()
                         .collect::<Vec<Result<_, _>>>()
@@ -568,12 +652,19 @@ impl DatabaseHandler {
                             let caption: Option<String> = row.get(10).unwrap_or(None);
                             let is_forwarded: bool = row.get(11).unwrap();
                             let forwarding_score: u32 = row.get(12).unwrap();
+                            let mention_ranges: Option<String> = row.get(13).unwrap_or(None);
+                            let mentions_self: bool = row.get(14).unwrap_or(false);
+                            let mention_ranges = caption
+                                .as_deref()
+                                .map(|text| decode_mention_ranges(mention_ranges, text))
+                                .unwrap_or_default();
 
-                            Ok(wr::Message {
+                            let result = wr::Message {
                                 info: wr::MessageInfo {
                                     id: id.into(),
                                     chat: chat_jid.into(),
                                     sender: sender_jid.into(),
+                                    mentions_self,
                                     timestamp,
                                     quote_id: quote_id.map(|q| q.into()),
                                     is_from_me,
@@ -587,9 +678,17 @@ impl DatabaseHandler {
                                     kind: wr::FileKind::from_repr(kind).unwrap(),
                                     path: path.into(),
                                     file_id: file_id.into(),
-                                    caption: caption.map(|c| c.into()),
+                                    caption: caption.as_ref().map(|c| c.as_str().into()),
                                 }),
-                            })
+                            };
+                            if let Some(caption) = caption.as_deref() {
+                                wr::store_message_mention_ranges(
+                                    &result.info.id,
+                                    caption,
+                                    mention_ranges,
+                                );
+                            }
+                            Ok(result)
                         })
                         .unwrap()
                         .collect::<Vec<Result<_, _>>>()
@@ -708,6 +807,8 @@ impl DatabaseHandler {
                 }
             }
         }
+        self.migrate_forwarding_columns();
+        ensure_mention_columns(&self.db);
         self.migrate_message_action_columns();
     }
 

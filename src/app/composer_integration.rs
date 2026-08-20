@@ -22,7 +22,7 @@ impl App<'_> {
             return false;
         }
 
-        if key == Key::k(KeyCode::Esc) {
+        if key == Key::k(KeyCode::Esc) && !self.composer.mention_picker_active() {
             if self.conversation_mode == ConversationMode::EditingMessage {
                 self.cancel_message_edit();
             } else {
@@ -32,6 +32,14 @@ impl App<'_> {
             }
         } else if key == Key::ctrl('o') {
             self.dispatch_action(AppAction::AttachFile);
+        } else if self.composer.mention_picker_active() {
+            match key.code {
+                KeyCode::Esc => self.composer.cancel_mention_picker(),
+                KeyCode::Enter => self.composer.confirm_mention(),
+                KeyCode::Up => self.composer.move_mention_selection(-1),
+                KeyCode::Down => self.composer.move_mention_selection(1),
+                _ => self.dispatch_composer_action(composer_action_for_editing_key(&key)),
+            }
         } else if !self.composer_blocked() {
             self.dispatch_composer_action(composer_action_for_editing_key(&key));
         }
@@ -62,10 +70,14 @@ impl App<'_> {
             }
             action => match self.composer.apply(action) {
                 crate::app::composer::ComposerOutcome::Idle => {}
-                crate::app::composer::ComposerOutcome::Submit { messages, quote } => {
+                crate::app::composer::ComposerOutcome::Submit {
+                    messages,
+                    quote,
+                    mentions,
+                } => {
                     if let Some(chat) = self.open_chat() {
                         for message in messages {
-                            wr::send_message(&chat, &message, quote.as_ref());
+                            wr::send_message(&chat, &message, quote.as_ref(), &mentions);
                         }
                     }
                 }

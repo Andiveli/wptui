@@ -313,6 +313,42 @@ pub fn conversation_areas(
     (messages, composer)
 }
 
+/// Returns a bounded floating picker rectangle directly above the composer.
+/// The rectangle is deliberately outside `composer` so the input's viewport
+/// cannot clip or repaint the suggestions.
+pub fn composer_mention_picker_area(
+    conversation: Rect,
+    composer: Rect,
+    candidate_count: usize,
+    widest_candidate: usize,
+) -> Option<Rect> {
+    if candidate_count == 0 || conversation.width == 0 || composer.width == 0 {
+        return None;
+    }
+
+    let desired_height = candidate_count.min(6).saturating_add(2) as u16;
+    let available_above = composer.y.saturating_sub(conversation.y);
+    let height = desired_height.min(available_above);
+    if height < 3 {
+        return None;
+    }
+
+    let desired_width = widest_candidate.saturating_add(4).clamp(12, 48) as u16;
+    let width = desired_width.min(composer.width).min(conversation.width);
+    if width < 3 {
+        return None;
+    }
+    let right = conversation.x.saturating_add(conversation.width);
+    let max_x = right.saturating_sub(width);
+    let x = composer.x.clamp(conversation.x, max_x);
+    Some(Rect {
+        x,
+        y: composer.y.saturating_sub(height),
+        width,
+        height,
+    })
+}
+
 pub fn attachment_preview_lines(attachments: &[PendingAttachment]) -> Vec<String> {
     attachments
         .iter()
@@ -365,6 +401,27 @@ mod tests {
         assert_eq!(
             composer_cursor_position(Rect::new(2, 3, 10, 4), (1, 2)),
             Position::new(4, 4)
+        );
+    }
+
+    #[test]
+    fn mention_picker_is_outside_composer_and_bounded_above_it() {
+        let conversation = Rect::new(10, 2, 50, 18);
+        let composer = Rect::new(10, 15, 50, 5);
+        let picker = composer_mention_picker_area(conversation, composer, 20, 80).unwrap();
+
+        assert!(picker.bottom() <= composer.y);
+        assert!(picker.y >= conversation.y);
+        assert!(picker.right() <= conversation.right());
+        assert_eq!(picker.height, 8);
+        assert!(picker.width <= 48);
+    }
+
+    #[test]
+    fn mention_picker_is_omitted_when_a_short_terminal_has_no_room() {
+        assert_eq!(
+            composer_mention_picker_area(Rect::new(0, 0, 30, 2), Rect::new(0, 2, 30, 1), 3, 10,),
+            None
         );
     }
 }

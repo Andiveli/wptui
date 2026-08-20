@@ -541,6 +541,7 @@ fn message_info(id: &str, sender: &str, timestamp: i64, is_from_me: bool) -> Mes
         id: id.into(),
         chat: JID::from("chat@example.test".to_owned()),
         sender: JID::from(sender.to_owned()),
+        mentions_self: false,
         timestamp,
         is_from_me,
         quote_id: None,

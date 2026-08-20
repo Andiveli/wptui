@@ -8,6 +8,7 @@ fn status_message(sender: &wr::JID, id: &str, timestamp: i64) -> wr::Message {
             chat: wr::JID::from(STATUS_BROADCAST_CHAT.to_owned()),
             forwarding: Default::default(),
             sender: sender.clone(),
+            mentions_self: false,
             timestamp,
             is_from_me: false,
             quote_id: None,

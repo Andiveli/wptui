@@ -28,7 +28,7 @@ func TestHandleMessageOrchestrationOwnership(t *testing.T) {
 	}
 	for _, fragment := range []string{
 		"emitTextMessage(cinfo, msg.GetConversation(), isSync)",
-		"emitTextMessage(cinfo, textWithMentionNames(ext_msg.GetText(), context_info), isSync)",
+		"emitTextMessage(cinfo, text, isSync)",
 		"emitImageMessage(cinfo, info.ID, msg.GetImageMessage(), isSync)",
 		"emitVideoMessage(cinfo, info.ID, msg.GetVideoMessage(), isSync)",
 		"emitAudioMessage(cinfo, info.ID, msg.GetAudioMessage(), isSync)",

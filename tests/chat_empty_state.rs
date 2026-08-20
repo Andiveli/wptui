@@ -69,6 +69,7 @@ fn opened_chat_with_no_unread_messages_renders_without_panicking() {
             id: "message-1".into(),
             chat: chat.clone(),
             sender: chat.clone(),
+            mentions_self: false,
             timestamp: 1,
             is_from_me: false,
             quote_id: None,

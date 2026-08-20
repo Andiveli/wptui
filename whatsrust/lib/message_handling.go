@@ -6,6 +6,7 @@ package main
 import "C"
 
 import (
+	"context"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 )
@@ -38,7 +39,13 @@ func HandleMessage(info types.MessageInfo, msg *waE2E.Message, isSync bool) {
 			}
 		}
 
-		emitTextMessage(cinfo, textWithMentionNames(ext_msg.GetText(), context_info), isSync)
+		mentionedJIDs := context_info.GetMentionedJID()
+		text := replaceMentionedNames(
+			ext_msg.GetText(),
+			mentionedJIDs,
+			mentionEntriesForGroup(context.Background(), info.Chat, mentionedJIDs...),
+		)
+		emitTextMessage(cinfo, text, isSync)
 	}
 	if msg.ImageMessage != nil {
 		if !emitImageMessage(cinfo, info.ID, msg.GetImageMessage(), isSync) {

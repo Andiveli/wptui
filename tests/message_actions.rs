@@ -700,6 +700,7 @@ fn message(id: &str, quote_id: Option<&str>, text: &str) -> whatsrust::Message {
             id: id.into(),
             chat: jid.clone(),
             sender: jid,
+            mentions_self: false,
             timestamp: 0,
             is_from_me: false,
             quote_id: quote_id.map(Into::into),

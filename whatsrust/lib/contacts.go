@@ -18,9 +18,11 @@ import "C"
 
 import (
 	"context"
+	"strings"
 	"unsafe"
 
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/types"
 )
 
@@ -31,18 +33,22 @@ type contactEntry struct {
 
 // contactDisplayName follows the same fallback order as Rust get_contact_name.
 func contactDisplayName(c types.ContactInfo) string {
-	switch {
-	case c.FullName != "":
-		return c.FullName
-	case c.FirstName != "":
-		return c.FirstName
-	case c.PushName != "":
-		return "~ " + c.PushName
-	case c.BusinessName != "":
-		return "+ " + c.BusinessName
-	default:
-		return ""
+	for _, candidate := range []string{c.FullName, c.FirstName, c.PushName, c.BusinessName} {
+		if name := plainContactName(candidate); name != "" {
+			return name
+		}
 	}
+	return ""
+}
+
+func plainContactName(name string) string {
+	name = strings.TrimSpace(name)
+	for _, prefix := range []string{"~ ", "+ "} {
+		if strings.HasPrefix(name, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(name, prefix))
+		}
+	}
+	return name
 }
 
 func lookupContactEntries(ctx context.Context, bridgeClient *whatsmeow.Client) []contactEntry {
@@ -75,11 +81,8 @@ func loadContactEntries(ctx context.Context, bridgeClient *whatsmeow.Client) ([]
 		if name == "" {
 			continue
 		}
-		entries = append(entries, contactEntry{jid: jid, name: name})
-		if jid.Server != types.HiddenUserServer && bridgeClient.Store.LIDs != nil {
-			if lid, _ := bridgeClient.Store.LIDs.GetLIDForPN(ctx, jid); !lid.IsEmpty() {
-				entries = append(entries, contactEntry{jid: lid, name: name})
-			}
+		for _, alias := range contactJIDs(ctx, jid, bridgeClient.Store.LIDs) {
+			entries = append(entries, contactEntry{jid: alias, name: name})
 		}
 	}
 	return entries, nil
@@ -130,4 +133,38 @@ func freeContactResult(result C.GetContactsResult) {
 
 func contactEntryStrings(entry C.ContactEntry) (string, string) {
 	return C.GoString(entry.jid), C.GoString(entry.name)
+}
+
+func contactJIDs(ctx context.Context, jid types.JID, lids store.LIDStore) []types.JID {
+	jids := make([]types.JID, 0, 5)
+	appendUnique := func(candidate types.JID) {
+		if candidate.IsEmpty() {
+			return
+		}
+		for _, existing := range jids {
+			if existing == candidate {
+				return
+			}
+		}
+		jids = append(jids, candidate)
+	}
+	appendUnique(jid)
+	appendUnique(jid.ToNonAD())
+	if lids == nil {
+		return jids
+	}
+	canonical := jid.ToNonAD()
+	switch canonical.Server {
+	case types.HiddenUserServer:
+		if pn, err := lids.GetPNForLID(ctx, canonical); err == nil {
+			appendUnique(pn)
+			appendUnique(pn.ToNonAD())
+		}
+	case types.DefaultUserServer:
+		if lid, err := lids.GetLIDForPN(ctx, canonical); err == nil {
+			appendUnique(lid)
+			appendUnique(lid.ToNonAD())
+		}
+	}
+	return jids
 }

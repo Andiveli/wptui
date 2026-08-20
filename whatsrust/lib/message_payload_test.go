@@ -25,6 +25,34 @@ func TestHandleMessageDelegatesFilePayloadEmission(t *testing.T) {
 	}
 }
 
+func TestFileMessageMentionRangesAreEmptyWhenNoRangesExist(t *testing.T) {
+	cases := []struct {
+		name  string
+		input []mentionRange
+	}{
+		{name: "empty caption", input: nil},
+		{name: "caption without mention", input: nil},
+		{name: "audio", input: nil},
+		{name: "sticker", input: nil},
+		{name: "ordinary file", input: nil},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			memory, mentionRanges, mentionRangeCount := buildFileMessageMentionRanges(tt.input)
+			if memory != nil {
+				t.Fatal("empty ranges must not allocate mention range memory")
+			}
+			if mentionRanges != nil {
+				t.Fatalf("mentionRanges = %p, want nil", mentionRanges)
+			}
+			if mentionRangeCount != 0 {
+				t.Fatalf("mentionRangeCount = %d, want 0", mentionRangeCount)
+			}
+		})
+	}
+}
+
 func mustRead(t *testing.T, name string) []byte {
 	t.Helper()
 	source, err := os.ReadFile(name)

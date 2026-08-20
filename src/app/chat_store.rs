@@ -63,8 +63,18 @@ impl App<'_> {
     pub fn contact_name(&self, jid: &wr::JID) -> Arc<str> {
         self.contacts
             .get(jid)
-            .cloned()
+            .map(|name| canonical_contact_name(name))
             .unwrap_or_else(|| jid.0.clone())
+    }
+
+    pub fn message_sender_name(&self, message: &wr::Message) -> Arc<str> {
+        self.contacts
+            .get(&message.info.sender)
+            .map(|name| canonical_contact_name(name))
+            .or_else(|| {
+                wr::message_push_name(&message.info.id).map(|name| canonical_contact_name(&name))
+            })
+            .unwrap_or_else(|| self.contact_name(&message.info.sender))
     }
 
     pub fn add_message(&mut self, message: wr::Message) {
@@ -212,6 +222,71 @@ impl App<'_> {
             self.contacts.insert(jid.clone(), name.clone());
             self.db_handler.add_contact(&jid, name.as_ref());
         }
+    }
+}
+
+fn canonical_contact_name(name: &str) -> Arc<str> {
+    let name = name.trim();
+    ["~ ", "+ "]
+        .iter()
+        .find_map(|prefix| name.strip_prefix(prefix))
+        .unwrap_or(name)
+        .trim()
+        .into()
+}
+
+#[cfg(test)]
+mod sender_name_tests {
+    use super::*;
+    use crate::app::test_support::TestApp;
+
+    fn message(id: &str, sender: &str) -> wr::Message {
+        wr::Message {
+            info: wr::MessageInfo {
+                id: id.into(),
+                chat: sender.to_owned().into(),
+                sender: sender.to_owned().into(),
+                mentions_self: false,
+                timestamp: 0,
+                is_from_me: false,
+                quote_id: None,
+                read_by: 0,
+                forwarding: Default::default(),
+            },
+            message: wr::MessageContent::Text("body".into()),
+        }
+    }
+
+    #[test]
+    fn local_contact_name_wins_over_message_push_name() {
+        let mut app = TestApp::new();
+        let sender = wr::JID::from("123@s.whatsapp.net".to_owned());
+        app.contacts
+            .insert(sender.clone(), "Saved Full Name".into());
+        let message = message("local-name", sender.0.as_ref());
+        wr::store_message_push_name(&message.info.id, "WhatsApp Profile");
+
+        assert_eq!(
+            app.message_sender_name(&message).as_ref(),
+            "Saved Full Name"
+        );
+    }
+
+    #[test]
+    fn unsaved_message_push_name_is_plain_and_numeric_is_final_fallback() {
+        let app = TestApp::new();
+        let with_push = message("push-name", "123@s.whatsapp.net");
+        wr::store_message_push_name(&with_push.info.id, "WhatsApp Profile");
+        assert_eq!(
+            app.message_sender_name(&with_push).as_ref(),
+            "WhatsApp Profile"
+        );
+
+        let without_push = message("numeric-name", "456@s.whatsapp.net");
+        assert_eq!(
+            app.message_sender_name(&without_push).as_ref(),
+            "456@s.whatsapp.net"
+        );
     }
 }
 

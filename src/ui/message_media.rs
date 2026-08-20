@@ -157,6 +157,7 @@ pub fn render_file(
     if data.caption.is_some() || status.is_some() {
         let lines = inline_content_lines(
             data.caption.as_deref().unwrap_or_default(),
+            &[],
             status,
             content_area.width as usize,
         );

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"testing"
 	"unsafe"
 
@@ -15,8 +16,8 @@ func TestContactDisplayNameFallbackOrder(t *testing.T) {
 	}{
 		{name: "full name", info: types.ContactInfo{FullName: "Full", FirstName: "First"}, want: "Full"},
 		{name: "first name", info: types.ContactInfo{FirstName: "First"}, want: "First"},
-		{name: "push name", info: types.ContactInfo{PushName: "Push"}, want: "~ Push"},
-		{name: "business name", info: types.ContactInfo{BusinessName: "Business"}, want: "+ Business"},
+		{name: "push name", info: types.ContactInfo{PushName: "Push"}, want: "Push"},
+		{name: "business name", info: types.ContactInfo{BusinessName: "Business"}, want: "Business"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -24,6 +25,25 @@ func TestContactDisplayNameFallbackOrder(t *testing.T) {
 				t.Fatalf("contactDisplayName() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestContactJIDsIncludesVerifiedPNLIDAndADAliases(t *testing.T) {
+	pn := types.JID{User: "141270097854639", Server: types.DefaultUserServer}
+	lid := types.JID{User: "269595130773675", Server: types.HiddenUserServer}
+	adPN := pn
+	adPN.RawAgent = 1
+	adPN.Device = 2
+
+	got := contactJIDs(context.Background(), adPN, mentionLIDStore{pn: pn, lid: lid})
+	want := []types.JID{adPN, pn, lid}
+	if len(got) != len(want) {
+		t.Fatalf("contact aliases = %#v, want %#v", got, want)
+	}
+	for index, alias := range want {
+		if got[index] != alias {
+			t.Fatalf("contact alias %d = %v, want %v", index, got[index], alias)
+		}
 	}
 }
 

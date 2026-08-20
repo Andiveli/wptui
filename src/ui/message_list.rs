@@ -113,7 +113,7 @@ fn render_message(
     };
     let timestamp = timestamp_text.clone().italic();
 
-    let sender_name = app.contact_name(&message.info.sender);
+    let sender_name = app.message_sender_name(message);
     let sender_color = author_color(&message.info.sender);
 
     let mut header = vec![
@@ -136,7 +136,7 @@ fn render_message(
     let quoted_text = message.info.quote_id.as_ref().and_then(|quote_id| {
         app.messages
             .get(quote_id)
-            .map(|quote| reply_summary(quote, &app.contact_name(&quote.info.sender)))
+            .map(|quote| reply_summary(quote, &app.message_sender_name(quote)))
     });
 
     let quote_widget = message.info.quote_id.as_ref().map(|_quote_id| {
@@ -185,7 +185,9 @@ fn render_message(
     }
     match &message.message {
         wr::MessageContent::Text(text) => {
-            let lines = inline_content_lines(text, status, content_area.width as usize);
+            let mention_ranges = wr::message_mention_ranges(&message.info.id, text);
+            let lines =
+                inline_content_lines(text, &mention_ranges, status, content_area.width as usize);
             Paragraph::new(lines)
                 .alignment(alignment)
                 .render(content_area, buf);

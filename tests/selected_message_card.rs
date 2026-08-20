@@ -452,6 +452,7 @@ fn message_info(id: &str) -> MessageInfo {
         id: id.into(),
         chat: chat.clone(),
         sender: chat,
+        mentions_self: false,
         timestamp: 0,
         is_from_me: false,
         quote_id: None,

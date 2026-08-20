@@ -10,8 +10,9 @@ pub mod text_input;
 
 pub use layout::{
     NavigationAreas, ViewerPreviewLayout, attachment_preview_lines, centered_modal_layout,
-    composer_cursor_position, composer_height, composer_visual_cursor, composer_visual_rows,
-    conversation_areas, navigation_areas, viewer_preview_layout,
+    composer_cursor_position, composer_height, composer_mention_picker_area,
+    composer_visual_cursor, composer_visual_rows, conversation_areas, navigation_areas,
+    viewer_preview_layout,
 };
 pub(crate) use layout::{composer_visual_layout, truncate_with_ellipsis};
 
@@ -389,6 +390,83 @@ pub fn render_chats(frame: &mut Frame, app: &mut App, area: Rect) {
             }
         }
     }
+
+    // Render the picker last within the conversation pane. This keeps it
+    // outside the composer's clipped input rectangle and above the messages,
+    // while draw() still renders higher-priority full-pane modals afterwards.
+    if app.open_chat().is_some() && !app.composer_blocked() && app.composer.mention_picker_active()
+    {
+        render_mention_picker(frame, app, chat_area, composer_area);
+    }
+}
+
+fn render_mention_picker(frame: &mut Frame, app: &App, conversation: Rect, composer: Rect) {
+    let labels = app.composer.mention_picker_labels();
+    if labels.is_empty() {
+        return;
+    }
+    let widest = labels
+        .iter()
+        .map(|label| textwrap::core::display_width(format!("@{label}").as_str()))
+        .max()
+        .unwrap_or(0);
+    let Some(area) = composer_mention_picker_area(conversation, composer, labels.len(), widest)
+    else {
+        return;
+    };
+    let visible_count = usize::from(area.height.saturating_sub(2))
+        .min(labels.len())
+        .min(6);
+    let selected = app
+        .composer
+        .mention_picker_selected()
+        .min(labels.len().saturating_sub(1));
+    let window = mention_picker_window(selected, labels.len(), visible_count);
+    let lines = labels[window.clone()]
+        .iter()
+        .enumerate()
+        .map(|(offset, label)| {
+            let selected_row = window.start + offset == selected;
+            let prefix = if selected_row { "› " } else { "  " };
+            let line = format!("{prefix}@{label}");
+            if selected_row {
+                Line::from(Span::styled(
+                    line,
+                    Style::default()
+                        .fg(ratatui::style::Color::Black)
+                        .bg(ratatui::style::Color::Cyan)
+                        .bold(),
+                ))
+            } else {
+                Line::from(line)
+            }
+        })
+        .collect::<Vec<_>>();
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(lines).block(
+            Block::bordered()
+                .title(" Mentions ")
+                .border_style(Style::default().fg(ratatui::style::Color::Cyan)),
+        ),
+        area,
+    );
+}
+
+fn mention_picker_window(
+    selected: usize,
+    candidate_count: usize,
+    visible_count: usize,
+) -> std::ops::Range<usize> {
+    if candidate_count == 0 || visible_count == 0 {
+        return 0..0;
+    }
+    let visible_count = visible_count.min(candidate_count).min(6);
+    let selected = selected.min(candidate_count - 1);
+    let start = selected
+        .saturating_sub(visible_count.saturating_sub(1))
+        .min(candidate_count.saturating_sub(visible_count));
+    start..start + visible_count
 }
 
 fn render_attachment_viewer(frame: &mut Frame, app: &mut App) {
@@ -621,4 +699,18 @@ fn render_file_picker(frame: &mut Frame, app: &mut App) {
             .wrap(Wrap { trim: true }),
         hint_area,
     );
+}
+
+#[cfg(test)]
+mod mention_picker_tests {
+    use super::mention_picker_window;
+
+    #[test]
+    fn eight_candidates_use_six_rows_and_keep_each_selection_visible() {
+        for selected in 0..8 {
+            let window = mention_picker_window(selected, 8, 6);
+            assert_eq!(window.len(), 6);
+            assert!(window.contains(&selected));
+        }
+    }
 }

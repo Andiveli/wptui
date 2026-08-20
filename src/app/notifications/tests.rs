@@ -9,6 +9,7 @@ fn message(chat: &str, text: &str) -> wr::Message {
             id: "id".into(),
             chat: chat.to_owned().into(),
             sender: chat.to_owned().into(),
+            mentions_self: false,
             timestamp: 1,
             is_from_me: false,
             quote_id: None,
@@ -33,6 +34,14 @@ fn eligibility_skips_status_and_own_messages() {
         &message(STATUS_BROADCAST_CHAT, "status"),
         None
     ));
+}
+
+#[test]
+fn self_mention_semantics_do_not_turn_an_own_echo_into_a_notification() {
+    let mut own = message("chat@g.us", "@self");
+    own.info.is_from_me = true;
+    own.info.mentions_self = true;
+    assert!(!notification_eligibility(&own, None));
 }
 
 #[test]
