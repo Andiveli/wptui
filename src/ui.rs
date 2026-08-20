@@ -21,6 +21,7 @@ use crate::app::actions::{ConversationMode, FocusPane, Section};
 use crate::app::events::{
     ViewerPreviewKey, ViewerPreviewState, ViewerStatus, viewer_preview_request,
 };
+use crate::app::runtime_diagnostics::Phase;
 use contacts::render_contacts;
 use message_list::{get_quoted_text, render_messages};
 use navigation::{
@@ -61,7 +62,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         render_logout_placeholder(frame, app, areas.conversation);
     } else if app.selected_section == Section::Chats {
         if let Some(area) = areas.chat_list {
-            render_contacts(frame, app, area);
+            app.record_phase(Phase::ContactsChatProjectionRows, |app| {
+                render_contacts(frame, app, area)
+            });
         } else {
             app.contact_avatars.clear_window();
         }
@@ -75,9 +78,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     } else if app.selected_section == Section::Communities {
         if let Some(area) = areas.chat_list {
             if app.community_detail.is_some() {
-                contacts::render_contacts(frame, app, area);
+                app.record_phase(Phase::ContactsChatProjectionRows, |app| {
+                    contacts::render_contacts(frame, app, area)
+                });
             } else {
-                communities::render(frame, app, area);
+                app.record_phase(Phase::CommunityDetailList, |app| {
+                    communities::render(frame, app, area)
+                });
             }
         }
         render_chats(frame, app, areas.conversation);
@@ -307,7 +314,9 @@ pub fn render_chats(frame: &mut Frame, app: &mut App, area: Rect) {
     if app.open_chat().is_none() {
         render_chat_empty_state(frame, chat_area);
     } else {
-        render_messages(frame, app, chat_area);
+        app.record_phase(Phase::MessageListRenderLayout, |app| {
+            render_messages(frame, app, chat_area)
+        });
     }
 
     if let Some(chat_jid) = app.open_chat() {

@@ -162,12 +162,18 @@ pub enum AppEvent {
 
 #[derive(Debug)]
 pub enum AppInput {
-    Draw,
+    Draw(DrawSource),
     App(AppEvent),
     Message { message: wr::Message, is_sync: bool },
     Presence(wr::PresenceUpdate),
     WhatsApp(wr::Event),
     Terminal(Event),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DrawSource {
+    Ordinary,
+    GoLog,
 }
 
 impl fmt::Debug for AppEvent {

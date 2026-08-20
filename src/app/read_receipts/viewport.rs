@@ -4,6 +4,7 @@ use super::{
 };
 use crate::app::App;
 use crate::app::actions::Section;
+use crate::app::runtime_diagnostics::Phase;
 use whatsrust as wr;
 
 impl App<'_> {
@@ -18,6 +19,7 @@ impl App<'_> {
         self.initialize_read_receipts(enabled);
     }
     pub fn observe_visible_message(&mut self, message: &wr::Message, visible: bool) {
+        let started = self.runtime_diagnostics.phase_started();
         let is_status =
             message.info.chat.0.as_ref() == super::super::status_projection::STATUS_BROADCAST_CHAT;
         let active = active_view(
@@ -57,6 +59,10 @@ impl App<'_> {
             },
             self.now(),
         );
+        if let Some(started) = started {
+            self.runtime_diagnostics
+                .record_phase_finished(Phase::ReadReceiptObservationDispatch, started);
+        }
     }
     pub fn set_read_receipt_readiness(&mut self, readiness: Readiness) {
         self.read_receipts.set_readiness(readiness);
@@ -76,6 +82,7 @@ impl App<'_> {
         }
     }
     pub fn dispatch_read_receipts(&mut self) {
+        let started = self.runtime_diagnostics.phase_started();
         self.request_restore_load();
         while let Some(action) = self.read_receipts.take_action() {
             let retry = action.clone();
@@ -96,6 +103,10 @@ impl App<'_> {
         }
         self.read_receipts
             .dispatch(self.now(), &self.read_receipt_worker, None);
+        if let Some(started) = started {
+            self.runtime_diagnostics
+                .record_phase_finished(Phase::ReadReceiptObservationDispatch, started);
+        }
     }
     pub(crate) fn request_restore_load(&mut self) {
         let now = self.now();

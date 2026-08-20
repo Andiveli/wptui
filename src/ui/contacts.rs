@@ -8,6 +8,7 @@ use crate::app::App;
 use crate::app::actions::FocusPane;
 use crate::app::contact_avatars::AvatarTarget;
 use crate::app::contact_avatars::prioritized_avatar_requests;
+use crate::app::runtime_diagnostics::Phase;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Position, Rect},
@@ -71,11 +72,16 @@ pub(crate) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
         contacts_area.height,
         rows.len(),
     );
+    let avatar_started = app.runtime_diagnostics.phase_started();
     app.contact_avatars.schedule(
         prioritized_avatar_requests(&targets, None, 0, targets.len()),
         app.tx.clone(),
         Arc::clone(&app.picker),
     );
+    if let Some(started) = avatar_started {
+        app.runtime_diagnostics
+            .record_phase_finished(Phase::AvatarScheduling, started);
+    }
     for (index, relative_y) in visible {
         let y = contacts_area.y.saturating_add(relative_y);
         let avatar_area = Rect::new(

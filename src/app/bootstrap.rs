@@ -160,6 +160,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         tx,
         rx,
         input_reader: InputReader::new(),
+        runtime_diagnostics: RuntimeDiagnostics::from_environment(cache_dir),
     }
 }
 

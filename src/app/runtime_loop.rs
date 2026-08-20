@@ -4,7 +4,7 @@ use log::error;
 use whatsrust as wr;
 
 use crate::app::App;
-use crate::app::events::AppInput;
+use crate::app::events::{AppInput, DrawSource};
 use crate::app::terminal_session::TerminalSession;
 use crate::ui;
 
@@ -24,6 +24,7 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
                 .message_action_diagnostics
                 .write_report(std::io::stderr());
             app.shutdown_read_receipt_worker();
+            app.finalize_runtime_diagnostics();
             return;
         }
     };
@@ -31,6 +32,7 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
     terminal_session.start_input_reader(&mut app.input_reader, app.tx.clone());
 
     app.sync_selected_presence();
+    let initial_draw_started = app.runtime_diagnostics.draw_started();
     if let Err(error) = terminal_session
         .terminal_mut()
         .draw(|frame| ui::draw(frame, app))
@@ -43,7 +45,12 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
         let _ = app
             .message_action_diagnostics
             .write_report(std::io::stderr());
+        app.finalize_runtime_diagnostics();
         return;
+    }
+    app.runtime_diagnostics.record_should_draw();
+    if let Some(started) = initial_draw_started {
+        app.runtime_diagnostics.record_draw_finished(started);
     }
     app.dispatch_read_receipts();
 
@@ -52,12 +59,15 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
         let msg = match app.selected_presence.redraw_after(now) {
             Some(timeout) => match app.rx.recv_timeout(timeout) {
                 Ok(input) => Ok(input),
-                Err(mpsc::RecvTimeoutError::Timeout) => Ok(AppInput::Draw),
+                Err(mpsc::RecvTimeoutError::Timeout) => Ok(AppInput::Draw(DrawSource::Ordinary)),
                 Err(mpsc::RecvTimeoutError::Disconnected) => Err(mpsc::RecvError),
             },
             None => app.rx.recv(),
         };
         // info!("Received message: {:?}", &msg);
+        if let Ok(ref input) = msg {
+            app.runtime_diagnostics.record_input(input);
+        }
         let should_draw = match msg {
             Ok(AppInput::App(event)) => app.handle_media_event(event, &download_tx),
             Ok(AppInput::WhatsApp(event)) => app.handle_whatsapp_event(event),
@@ -67,7 +77,10 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
                 app.on_terminal_event(event);
                 true
             }
-            Ok(AppInput::Draw) => true,
+            Ok(AppInput::Draw(source)) => {
+                app.runtime_diagnostics.record_draw_source(source);
+                true
+            }
             Err(_) => {
                 error!("Failed to receive input from channel");
                 true
@@ -77,6 +90,8 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
         app.sync_selected_presence();
 
         if should_draw {
+            app.runtime_diagnostics.record_should_draw();
+            let started = app.runtime_diagnostics.draw_started();
             if let Err(error) = terminal_session
                 .terminal_mut()
                 .draw(|frame| ui::draw(frame, app))
@@ -84,6 +99,9 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
                 error!("Failed to draw terminal UI: {error}");
                 app.set_read_receipt_readiness(crate::app::read_receipts::Readiness::Disconnected);
                 break;
+            }
+            if let Some(started) = started {
+                app.runtime_diagnostics.record_draw_finished(started);
             }
         }
         app.dispatch_read_receipts();
@@ -105,4 +123,5 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
     let _ = app
         .message_action_diagnostics
         .write_report(std::io::stderr());
+    app.finalize_runtime_diagnostics();
 }

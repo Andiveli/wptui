@@ -46,6 +46,7 @@ pub mod private_reply;
 pub mod reaction_picker;
 pub mod read_receipts;
 pub mod runtime_callbacks;
+pub mod runtime_diagnostics;
 pub mod runtime_loop;
 pub mod runtime_media_events;
 pub mod runtime_startup;
@@ -84,6 +85,7 @@ pub use crate::app::notifications::{
 };
 use crate::app::presence::{PresenceDiagnostics, SelectedPresence};
 use crate::app::read_receipts::Coordinator as ReadReceiptCoordinator;
+use crate::app::runtime_diagnostics::{Phase, RuntimeDiagnostics};
 pub use crate::app::share_picker::SharePicker;
 pub use crate::app::status_projection::STATUS_BROADCAST_CHAT;
 use crate::db;
@@ -243,6 +245,7 @@ pub struct App<'a> {
     pub tx: mpsc::Sender<AppInput>,
     pub rx: mpsc::Receiver<AppInput>,
     input_reader: InputReader,
+    pub(crate) runtime_diagnostics: RuntimeDiagnostics,
 }
 
 impl Default for App<'_> {
@@ -286,6 +289,20 @@ impl App<'_> {
 
     pub fn run(&mut self, phone: Option<String>) {
         runtime_startup::run(self, phone);
+    }
+
+    pub(crate) fn record_phase<T>(&mut self, phase: Phase, work: impl FnOnce(&mut Self) -> T) -> T {
+        let started = self.runtime_diagnostics.phase_started();
+        let result = work(self);
+        if let Some(started) = started {
+            self.runtime_diagnostics
+                .record_phase_finished(phase, started);
+        }
+        result
+    }
+
+    pub(crate) fn finalize_runtime_diagnostics(&mut self) {
+        let _ = self.runtime_diagnostics.finalize();
     }
 
     pub(crate) fn now(&self) -> i64 {

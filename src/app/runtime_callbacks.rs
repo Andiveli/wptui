@@ -3,7 +3,7 @@ use std::sync::mpsc::Sender;
 use log::Level;
 use whatsrust as wr;
 
-use crate::app::events::AppInput;
+use crate::app::events::{AppInput, DrawSource};
 use crate::app::message_action_diagnostics::MessageActionDiagnostics;
 
 /// Register the process-lifetime callbacks that translate Go bridge activity into app inputs.
@@ -23,7 +23,7 @@ pub(crate) fn register(tx: Sender<AppInput>, diagnostics: MessageActionDiagnosti
             };
             diagnostics.record_go_log(&msg);
             log::log!(level, "{msg}");
-            tx.send(AppInput::Draw).unwrap();
+            tx.send(AppInput::Draw(DrawSource::GoLog)).unwrap();
         });
     }
     {

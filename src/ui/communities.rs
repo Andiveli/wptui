@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::app::actions::FocusPane;
 use crate::app::contact_avatars::{AvatarTarget, prioritized_avatar_requests};
+use crate::app::runtime_diagnostics::Phase;
 use crate::app::{App, CommunityNavigationRow, community_hierarchy::community_group_label};
 use crate::ui::contact_list::{
     AVATAR_HEIGHT, AVATAR_WIDTH, CONTACT_ITEM_HEIGHT, initials, truncate,
@@ -128,11 +129,16 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let selected = app.chat_list_state.selected();
     let targets = community_avatar_targets(app, &rows);
+    let avatar_started = app.runtime_diagnostics.phase_started();
     app.contact_avatars.schedule(
         prioritized_avatar_requests(&targets, None, 0, targets.len()),
         app.tx.clone(),
         Arc::clone(&app.picker),
     );
+    if let Some(started) = avatar_started {
+        app.runtime_diagnostics
+            .record_phase_finished(Phase::AvatarScheduling, started);
+    }
     for (row, row_area, selectable_index) in community_layout(&rows, selected, inner) {
         let selected = selectable_index == selected;
         let base = if selected {

@@ -182,6 +182,13 @@ attachment.
 
 ## Development
 
+### Runtime performance diagnostics
+
+The opt-in profiler is disabled unless `WPTUI_PERF=1`. Build and run the
+release binary with the exact command `WPTUI_PERF=1 target/release/wp-tui`,
+reproduce the CPU spike or interaction, and exit normally. It writes one
+bounded report to `~/.cache/wptui/perf-report.txt`.
+
 Run the Rust test suite:
 
 ```bash

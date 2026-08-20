@@ -4,6 +4,7 @@ use crate::app::App;
 use crate::app::actions::{AppAction, ComposerAction, ConversationMode, FocusPane, Section};
 use crate::app::composer_input_mapping::composer_action_for_editing_key;
 use crate::app::composer_input_paste::apply_clipboard_paste;
+use crate::app::runtime_diagnostics::Phase;
 use crate::key_handler::Key;
 use whatsrust as wr;
 
@@ -76,9 +77,13 @@ impl App<'_> {
                     mentions,
                 } => {
                     if let Some(chat) = self.open_chat() {
-                        for message in messages {
-                            wr::send_message(&chat, &message, quote.as_ref(), &mentions);
-                        }
+                        let count = messages.len();
+                        self.runtime_diagnostics.record_send_sequence(count);
+                        self.record_phase(Phase::ComposerSubmitSend, |_app| {
+                            for message in messages {
+                                wr::send_message(&chat, &message, quote.as_ref(), &mentions);
+                            }
+                        });
                     }
                 }
             },
