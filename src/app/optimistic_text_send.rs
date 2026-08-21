@@ -23,9 +23,12 @@ pub struct TextSendRequest {
     pub quote: Option<wr::Message>,
     pub mentions: Vec<wr::Mention>,
     pub mention_ranges: Vec<Range<usize>>,
+    pub display_content: wr::MessageContent,
+    pub display_mention_ranges: Vec<Range<usize>>,
 }
 
 impl super::App<'_> {
+    #[cfg(test)]
     pub(crate) fn stage_text_send(
         &mut self,
         chat: wr::JID,
@@ -33,6 +36,31 @@ impl super::App<'_> {
         quote: Option<wr::Message>,
         mentions: Vec<wr::Mention>,
         mention_ranges: Vec<Range<usize>>,
+    ) -> bool {
+        let display_text = match &content {
+            wr::MessageContent::Text(text) => text.clone(),
+            wr::MessageContent::File(file) => file.caption.clone().unwrap_or_default(),
+        };
+        self.stage_text_send_with_display(
+            chat,
+            content,
+            quote,
+            mentions,
+            mention_ranges.clone(),
+            display_text,
+            mention_ranges,
+        )
+    }
+
+    pub(crate) fn stage_text_send_with_display(
+        &mut self,
+        chat: wr::JID,
+        content: wr::MessageContent,
+        quote: Option<wr::Message>,
+        mentions: Vec<wr::Mention>,
+        mention_ranges: Vec<Range<usize>>,
+        display_text: impl Into<Arc<str>>,
+        display_mention_ranges: Vec<Range<usize>>,
     ) -> bool {
         let Some(local_send_id) = self.allocate_local_send_id() else {
             self.unavailable("Could not send message");
@@ -45,6 +73,8 @@ impl super::App<'_> {
             quote,
             mentions,
             mention_ranges,
+            display_content: wr::MessageContent::Text(display_text.into()),
+            display_mention_ranges,
         };
         self.pending_outgoing_text
             .insert(local_send_id, request.clone());
@@ -89,13 +119,10 @@ impl super::App<'_> {
         if self.completed_text_send_ids.contains(&local_send_id) {
             return false;
         }
-        let Some(request) = self.pending_outgoing_text.remove(&local_send_id) else {
+        let Some(_request) = self.pending_outgoing_text.remove(&local_send_id) else {
             return false;
         };
         self.remember_completed(local_send_id);
-        if let wr::MessageContent::Text(text) = &message.message {
-            wr::store_message_mention_ranges(&message.info.id, text, request.mention_ranges);
-        }
         if self.messages.contains_key(&message.info.id) {
             false
         } else {
@@ -127,8 +154,12 @@ impl super::App<'_> {
             .into_iter()
             .map(|request| {
                 let id: wr::MessageId = format!("local-send-{}", request.local_send_id).into();
-                if let wr::MessageContent::Text(text) = &request.content {
-                    wr::store_message_mention_ranges(&id, text, request.mention_ranges.clone());
+                if let wr::MessageContent::Text(text) = &request.display_content {
+                    wr::store_message_mention_ranges(
+                        &id,
+                        text,
+                        request.display_mention_ranges.clone(),
+                    );
                 }
                 wr::Message {
                     info: wr::MessageInfo {
@@ -142,7 +173,7 @@ impl super::App<'_> {
                         read_by: 0,
                         forwarding: Default::default(),
                     },
-                    message: request.content.clone(),
+                    message: request.display_content.clone(),
                 }
             })
             .collect()
@@ -314,6 +345,8 @@ mod tests {
             quote: None,
             mentions: Vec::new(),
             mention_ranges: Vec::new(),
+            display_content: wr::MessageContent::Text("text".into()),
+            display_mention_ranges: Vec::new(),
         }
     }
 
@@ -393,21 +426,24 @@ mod tests {
     fn pending_text_is_local_only_and_failure_removes_it() {
         let mut app = TestApp::new();
         let chat: wr::JID = "chat@g.us".to_owned().into();
-        app.stage_text_send(
+        app.stage_text_send_with_display(
             chat.clone(),
             wr::MessageContent::Text("@111".into()),
             None,
             vec![],
             vec![0..4],
+            "@Álvaro",
+            vec![0.."@Álvaro".len()],
         );
         assert_eq!(app.pending_messages_for_chat(&chat).len(), 1);
         let pending = app.pending_messages_for_chat(&chat).pop().unwrap();
         let wr::MessageContent::Text(text) = &pending.message else {
             panic!("expected pending text");
         };
+        assert_eq!(text.as_ref(), "@Álvaro");
         assert_eq!(
             wr::message_mention_ranges(&pending.info.id, text),
-            vec![0..4]
+            vec![0..8]
         );
         assert!(!app.chat_messages.contains_key(&chat));
         assert!(!app.messages.keys().any(|id| id.starts_with("local-send-")));
@@ -490,6 +526,41 @@ mod tests {
         assert!(!app.fail_text_send(local_send_id));
         assert!(!app.complete_text_send(local_send_id, canonical));
         assert_eq!(app.messages.len(), 1);
+    }
+
+    #[test]
+    fn canonical_callback_ranges_are_not_overwritten_by_composer_ranges() {
+        let mut app = TestApp::new();
+        let chat: wr::JID = "chat@g.us".to_owned().into();
+        app.stage_text_send(
+            chat.clone(),
+            wr::MessageContent::Text("@111".into()),
+            None,
+            vec![],
+            vec![0..4],
+        );
+        let local_send_id = *app.pending_outgoing_text.keys().next().unwrap();
+        let canonical = wr::Message {
+            info: wr::MessageInfo {
+                id: "server-mention".into(),
+                chat: chat.clone(),
+                sender: chat,
+                mentions_self: false,
+                timestamp: 1,
+                is_from_me: true,
+                quote_id: None,
+                read_by: 0,
+                forwarding: Default::default(),
+            },
+            message: wr::MessageContent::Text("@阿丽".into()),
+        };
+
+        wr::store_message_mention_ranges(&canonical.info.id, "@阿丽", vec![0.."@阿丽".len()]);
+        assert!(app.complete_text_send(local_send_id, canonical.clone()));
+        assert_eq!(
+            wr::message_mention_ranges(&canonical.info.id, "@阿丽"),
+            vec![0.."@阿丽".len()]
+        );
     }
 
     #[test]

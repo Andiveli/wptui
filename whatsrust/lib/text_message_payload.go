@@ -28,6 +28,30 @@ import "C"
 
 import "unsafe"
 
+type textCallbackOutput struct {
+	localSendID uint64
+	text        string
+	ranges      []mentionRange
+	mentionsSelf bool
+	quoteID     string
+}
+
+var observeTextCallback = func(textCallbackOutput) {}
+
+func notifyTextCallback(cinfo C.MessageInfo, text string, ranges []mentionRange, localSendID uint64) {
+	quoteID := ""
+	if cinfo.quoteID != nil {
+		quoteID = C.GoString(cinfo.quoteID)
+	}
+	observeTextCallback(textCallbackOutput{
+		localSendID:  localSendID,
+		text:         text,
+		ranges:       append([]mentionRange(nil), ranges...),
+		mentionsSelf: bool(cinfo.mentionsSelf),
+		quoteID:      quoteID,
+	})
+}
+
 func emitTextMessage(cinfo C.MessageInfo, text string, isSync bool) {
 	ctext := C.CString(text)
 	defer C.free(unsafe.Pointer(ctext))
@@ -52,23 +76,41 @@ func emitTextMessage(cinfo C.MessageInfo, text string, isSync bool) {
 	content.mentionRanges = cranges
 	content.mentionRangeCount = C.uintptr_t(len(ranges))
 	defer C.free(unsafe.Pointer(content))
+	notifyTextCallback(cinfo, text, ranges, 0)
 
 	message := C.Message{
 		info:        cinfo,
 		messageType: C.uint8_t(MessageTypeText),
 		message:     unsafe.Pointer(content),
 	}
-	C.callMessageHandler(messageHandler, C.bool(isSync), &message)
+	if messageHandler.callback != nil {
+		C.callMessageHandler(messageHandler, C.bool(isSync), &message)
+	}
 }
 
 func emitOptimisticTextMessage(cinfo C.MessageInfo, text string, localSendID uint64) {
 	ctext := C.CString(text)
 	defer C.free(unsafe.Pointer(ctext))
+	ranges := takePendingMentionRanges(text)
+	var cranges *C.MentionRange
+	if len(ranges) > 0 {
+		memory := C.malloc(C.size_t(len(ranges)) * C.sizeof_MentionRange)
+		cranges = (*C.MentionRange)(memory)
+		entries := unsafe.Slice(cranges, len(ranges))
+		for index, mention := range ranges {
+			entries[index].start = C.uintptr_t(mention.Start)
+			entries[index].end = C.uintptr_t(mention.End)
+		}
+		defer C.free(memory)
+	}
 	content := (*C.MentionedTextMessage)(C.malloc(C.sizeof_MentionedTextMessage))
 	content.text = ctext
-	content.mentionRanges = nil
-	content.mentionRangeCount = 0
+	content.mentionRanges = cranges
+	content.mentionRangeCount = C.uintptr_t(len(ranges))
 	defer C.free(unsafe.Pointer(content))
+	notifyTextCallback(cinfo, text, ranges, localSendID)
 	message := C.Message{info: cinfo, messageType: C.uint8_t(MessageTypeText), message: unsafe.Pointer(content)}
-	C.callOptimisticTextSentHandler(optimisticTextSentHandler, C.uint64_t(localSendID), &message)
+	if optimisticTextSentHandler.callback != nil {
+		C.callOptimisticTextSentHandler(optimisticTextSentHandler, C.uint64_t(localSendID), &message)
+	}
 }

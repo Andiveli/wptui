@@ -39,12 +39,7 @@ func HandleMessage(info types.MessageInfo, msg *waE2E.Message, isSync bool) {
 			}
 		}
 
-		mentionedJIDs := context_info.GetMentionedJID()
-		text := replaceMentionedNames(
-			ext_msg.GetText(),
-			mentionedJIDs,
-			mentionEntriesForGroup(context.Background(), info.Chat, mentionedJIDs...),
-		)
+		text := replaceMessageMentionNames(info.Chat, ext_msg.GetText(), context_info)
 		emitTextMessage(cinfo, text, isSync)
 	}
 	if msg.ImageMessage != nil {
@@ -87,10 +82,23 @@ func HandleOptimisticTextSent(localSendID uint64, info types.MessageInfo, msg *w
 		if id := contextInfo.GetStanzaID(); id != "" {
 			callback.info.quoteID = C.CString(id)
 		}
-		emitOptimisticTextMessage(callback.info, ext.GetText(), localSendID)
+		text := replaceMessageMentionNames(info.Chat, ext.GetText(), contextInfo)
+		emitOptimisticTextMessage(callback.info, text, localSendID)
 		return
 	}
 	if msg.Conversation != nil {
 		emitOptimisticTextMessage(callback.info, msg.GetConversation(), localSendID)
 	}
+}
+
+func replaceMessageMentionNames(chat types.JID, text string, contextInfo *waE2E.ContextInfo) string {
+	if contextInfo == nil {
+		return text
+	}
+	mentionedJIDs := contextInfo.GetMentionedJID()
+	return replaceMentionedNames(
+		text,
+		mentionedJIDs,
+		mentionEntriesForGroup(context.Background(), chat, mentionedJIDs...),
+	)
 }

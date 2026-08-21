@@ -116,7 +116,8 @@ func TestMessageSendKeepsExportedBridgeContractInDedicatedOrchestration(t *testi
 	for _, fragment := range []string{
 		"//export C_SendMessage",
 		"func C_SendMessage(cjid C.JID",
-		"HandleMessage(messageInfo, message, false)",
+		"sendNormalTextRequest(request)",
+		"normalMessageCallback(messageInfo, message, false)",
 	} {
 		if !strings.Contains(string(source), fragment) {
 			t.Fatalf("message send orchestration missing %q", fragment)
@@ -132,9 +133,10 @@ func TestOptimisticTextSendUsesRequestScopedCallbackInsteadOfGenericLocalState(t
 	text := string(source)
 	for _, fragment := range []string{
 		"//export C_SendTextMessage",
-		"HandleOptimisticTextSent(localSendID, messageInfo, message)",
-		"if localSendID != 0",
-		"context.WithTimeout",
+		"sendOptimisticTextRequest(request)",
+		"request.localSendID != 0",
+		"optimisticTextSentCallback(request.localSendID, messageInfo, message)",
+		"requestSendMessage(sendContext, request.chat, message)",
 	} {
 		if !strings.Contains(text, fragment) {
 			t.Fatalf("optimistic text send missing request-scoped fragment %q", fragment)

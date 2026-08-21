@@ -29,6 +29,8 @@ pub enum ComposerOutcome {
         quote: Option<wr::Message>,
         mentions: Vec<wr::Mention>,
         mention_ranges: Vec<Range<usize>>,
+        display_text: Arc<str>,
+        display_mention_ranges: Vec<Range<usize>>,
         draft: Option<ComposerDraft>,
     },
 }
@@ -268,7 +270,8 @@ impl Composer<'_> {
             quote: self.quote.clone(),
             mentions: self.mentions.clone(),
         };
-        let (expanded, mentions, mention_ranges) = self.expanded_text();
+        let (expanded, mentions, mention_ranges, display_mention_ranges) = self.expanded_text();
+        let display_text: Arc<str> = self.text().into();
         let text: Arc<str> = expanded.into();
         if text.trim().is_empty() && self.pending.is_empty() {
             return ComposerOutcome::Idle;
@@ -301,6 +304,8 @@ impl Composer<'_> {
             quote: self.quote.take(),
             mentions,
             mention_ranges,
+            display_text,
+            display_mention_ranges,
             draft: Some(draft),
         }
     }
@@ -410,7 +415,14 @@ impl Composer<'_> {
         self.mention_picker = None;
     }
 
-    fn expanded_text(&self) -> (String, Vec<wr::Mention>, Vec<Range<usize>>) {
+    fn expanded_text(
+        &self,
+    ) -> (
+        String,
+        Vec<wr::Mention>,
+        Vec<Range<usize>>,
+        Vec<Range<usize>>,
+    ) {
         let text = self.text();
         let mut marks = self.mentions.clone();
         marks.sort_by_key(|mark| mark.start);
@@ -418,6 +430,7 @@ impl Composer<'_> {
         let mut last = 0;
         let mut mentions = Vec::new();
         let mut mention_ranges = Vec::new();
+        let mut display_mention_ranges = Vec::new();
         for mark in marks {
             if mark.end > text.chars().count() {
                 continue;
@@ -436,9 +449,18 @@ impl Composer<'_> {
                 .unwrap_or("")
                 .to_owned();
             let mention_start = output.len();
+            let display_start = text
+                .char_indices()
+                .nth(mark.start)
+                .map_or(text.len(), |(offset, _)| offset);
+            let display_end = text
+                .char_indices()
+                .nth(mark.end)
+                .map_or(text.len(), |(offset, _)| offset);
             output.push('@');
             output.push_str(&wire_user);
             mention_ranges.push(mention_start..output.len());
+            display_mention_ranges.push(display_start..display_end);
             last = mark.end;
             mentions.push(wr::Mention {
                 jid: mark.participant.jid,
@@ -447,7 +469,7 @@ impl Composer<'_> {
         }
         let chars: Vec<char> = text.chars().collect();
         output.extend(chars[last..].iter());
-        (output, mentions, mention_ranges)
+        (output, mentions, mention_ranges, display_mention_ranges)
     }
 }
 
@@ -523,6 +545,15 @@ mod tests {
         assert_eq!(composer.text(), "hello @Alice ");
         let outcome = composer.apply(ComposerAction::Submit);
         assert_eq!(outcome.text_messages(), vec!["hello @111 "]);
+        assert!(matches!(
+            &outcome,
+            ComposerOutcome::Submit {
+                display_text,
+                display_mention_ranges,
+                ..
+            } if display_text.as_ref() == "hello @Alice "
+                && display_mention_ranges == &vec![6.."hello @Alice".len()]
+        ));
         assert!(composer.text().is_empty());
     }
 

@@ -76,6 +76,8 @@ impl App<'_> {
                     quote,
                     mentions,
                     mention_ranges,
+                    display_text,
+                    display_mention_ranges,
                     draft,
                 } => {
                     if let Some(chat) = self.open_chat() {
@@ -86,7 +88,15 @@ impl App<'_> {
                         {
                             let message = messages.into_iter().next().unwrap();
                             let accepted = self.record_phase(Phase::ComposerSubmitSend, |app| {
-                                app.stage_text_send(chat, message, quote, mentions, mention_ranges)
+                                app.stage_text_send_with_display(
+                                    chat,
+                                    message,
+                                    quote,
+                                    mentions,
+                                    mention_ranges,
+                                    display_text,
+                                    display_mention_ranges,
+                                )
                             });
                             if !accepted {
                                 if let Some(draft) = draft {
