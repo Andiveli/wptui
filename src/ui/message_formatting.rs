@@ -10,7 +10,7 @@ use ratatui::{
 };
 use whatsrust as wr;
 
-use super::message_helpers::AuthorGroupContext;
+use super::message_helpers::{AuthorGroupContext, directionally_ordered_spans};
 
 const AUTHOR_PALETTE: &[Color] = &[
     Color::Rgb(0xE7, 0x9F, 0x3C),
@@ -73,7 +73,7 @@ pub(super) fn message_content_area(area: Rect, is_selected: bool) -> Rect {
     }
 }
 
-pub fn reaction_chips(reactions: Option<&HashMap<wr::JID, Arc<str>>>) -> Vec<String> {
+fn reaction_counts(reactions: Option<&HashMap<wr::JID, Arc<str>>>) -> BTreeMap<&Arc<str>, usize> {
     let mut counts = BTreeMap::new();
     for reaction in reactions
         .into_iter()
@@ -82,9 +82,29 @@ pub fn reaction_chips(reactions: Option<&HashMap<wr::JID, Arc<str>>>) -> Vec<Str
         *counts.entry(reaction).or_insert(0) += 1;
     }
     counts
+}
+
+pub fn reaction_chips(reactions: Option<&HashMap<wr::JID, Arc<str>>>) -> Vec<String> {
+    reaction_counts(reactions)
         .into_iter()
         .map(|(emoji, count)| format!("[{emoji} {count}]"))
         .collect()
+}
+
+pub(crate) fn reaction_line(
+    reactions: Option<&HashMap<wr::JID, Arc<str>>>,
+    alignment: Alignment,
+) -> Line<'static> {
+    let mut spans = Vec::new();
+    for (index, (emoji, count)) in reaction_counts(reactions).into_iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw(" "));
+        }
+        spans.push(Span::raw("["));
+        spans.extend(directionally_ordered_spans(emoji, Style::default()));
+        spans.push(Span::raw(format!(" {count}]")));
+    }
+    Line::from(spans).alignment(alignment)
 }
 
 const AUDIO_WIDGET_BARS: usize = 16;
@@ -138,18 +158,108 @@ fn waveform_bars(seed: &str, len: usize) -> String {
     waveform
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MediaStatus {
+    Pending,
+    Downloaded,
+    Downloading,
+    DownloadFailed,
+    LoadFailed,
+    Loading,
+}
+
+fn media_status_line(path: &str, status: MediaStatus) -> Line<'static> {
+    let mut spans = vec![Span::raw("🔗 ")];
+    match status {
+        MediaStatus::Pending => {
+            spans.extend(directionally_ordered_spans(path, Style::default()));
+            spans.push(Span::raw(" +"));
+        }
+        MediaStatus::Downloaded => {
+            spans.extend(directionally_ordered_spans(path, Style::default()));
+            spans.push(Span::raw(" ✓"));
+        }
+        MediaStatus::Downloading => {
+            spans.extend(directionally_ordered_spans(path, Style::default()));
+            spans.push(Span::raw(" downloading"));
+        }
+        MediaStatus::DownloadFailed => {
+            spans.push(Span::raw("Failed to download "));
+            spans.extend(directionally_ordered_spans(path, Style::default()));
+        }
+        MediaStatus::LoadFailed => {
+            spans.push(Span::raw("Failed to load "));
+            spans.extend(directionally_ordered_spans(path, Style::default()));
+        }
+        MediaStatus::Loading => {
+            spans.extend(directionally_ordered_spans(path, Style::default()));
+            spans.push(Span::raw(" loading"));
+        }
+    }
+    Line::from(spans)
+}
+
 pub(crate) fn media_paragraph(
-    status: String,
+    path: &str,
+    status: MediaStatus,
     is_audio: bool,
     audio_seed: &str,
     audio_duration: Option<u64>,
     alignment: Alignment,
 ) -> Paragraph<'static> {
-    let mut lines = vec![Line::from(status)];
+    let mut lines = vec![media_status_line(path, status)];
     if is_audio {
         lines.push(audio_widget_line(audio_seed, audio_duration));
     }
     Paragraph::new(lines).alignment(alignment)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MediaStatus, media_status_line, reaction_line};
+    use ratatui::layout::Alignment;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use whatsrust as wr;
+
+    #[test]
+    fn media_status_keeps_icons_and_tokens_structured_around_visual_path() {
+        let line = media_status_line("abc אבג", MediaStatus::Downloaded);
+        let contents = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<Vec<_>>();
+
+        assert_eq!(contents, ["🔗 ", "abc גבא", " ✓"]);
+    }
+
+    #[test]
+    fn reaction_line_keeps_emoji_and_counts_atomic() {
+        let mut reactions = HashMap::new();
+        reactions.insert(
+            wr::JID::from("alice@example.test".to_owned()),
+            Arc::from("👍"),
+        );
+        reactions.insert(
+            wr::JID::from("bob@example.test".to_owned()),
+            Arc::from("👍"),
+        );
+        reactions.insert(
+            wr::JID::from("carol@example.test".to_owned()),
+            Arc::from("👩‍💻"),
+        );
+
+        let line = reaction_line(Some(&reactions), Alignment::Right);
+        let contents = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<Vec<_>>();
+
+        assert_eq!(contents, ["[", "👍", " 2]", " ", "[", "👩‍💻", " 1]"]);
+        assert_eq!(line.alignment, Some(Alignment::Right));
+    }
 }
 
 pub(super) fn unread_divider_line(width: usize) -> Line<'static> {
