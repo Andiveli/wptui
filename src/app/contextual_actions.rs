@@ -83,6 +83,13 @@ pub fn evaluate_availability(
     {
         return ActionAvailability::disabled("reference unavailable");
     }
+    if action == Some(ContextualAction::Attach)
+        && facts
+            .contextual
+            .is_some_and(|context| context.attach_blocked)
+    {
+        return ActionAvailability::disabled("attachment unavailable");
+    }
     if action.is_some_and(|action| {
         matches!(
             action,
@@ -293,7 +300,7 @@ pub const CONTEXTUAL_ACTION_METADATA: [ContextualActionMetadata; 22] = [
         "Attach",
         'a',
         ContextualScope::Conversation,
-        ImplementationStatus::Planned,
+        ImplementationStatus::Implemented,
     ),
     m(
         ContextualAction::Open,
@@ -341,6 +348,7 @@ pub struct ContextualContext {
     pub has_selected_message: bool,
     pub selected_text: bool,
     pub has_reference: bool,
+    pub attach_blocked: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -414,6 +422,7 @@ mod tests {
             has_selected_message: true,
             selected_text: true,
             has_reference: true,
+            attach_blocked: false,
         });
         assert_eq!(
             rows.iter()
@@ -434,10 +443,49 @@ mod tests {
             has_selected_message: false,
             selected_text: false,
             has_reference: false,
+            attach_blocked: false,
         });
         assert!(
             rows.iter()
                 .any(|row| row.display_label == "Starred" && row.row_style == RowStyle::Disabled)
+        );
+    }
+
+    #[test]
+    fn attach_is_enabled_in_normal_conversation_and_disabled_when_blocked() {
+        let normal = contextual_menu_rows(ContextualContext {
+            focus: FocusPane::Conversation,
+            section: Section::Chats,
+            has_selected_message: false,
+            selected_text: false,
+            has_reference: false,
+            attach_blocked: false,
+        });
+        assert_eq!(
+            normal
+                .iter()
+                .find(|row| row.action_token == ContextualAction::Attach)
+                .map(|row| row.row_style),
+            Some(RowStyle::Enabled)
+        );
+
+        let blocked = contextual_menu_rows(ContextualContext {
+            attach_blocked: true,
+            ..ContextualContext {
+                focus: FocusPane::Conversation,
+                section: Section::Chats,
+                has_selected_message: false,
+                selected_text: false,
+                has_reference: false,
+                attach_blocked: false,
+            }
+        });
+        assert_eq!(
+            blocked
+                .iter()
+                .find(|row| row.action_token == ContextualAction::Attach)
+                .map(|row| row.row_style),
+            Some(RowStyle::Disabled)
         );
     }
 }

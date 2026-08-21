@@ -30,7 +30,7 @@ pub fn leader_bindings() -> Vec<LeaderBinding> {
             implementation: BindingImplementation::Implemented,
         },
         LeaderBinding {
-            key: Key::c('A'),
+            key: Key::c('a'),
             action: AppAction::OpenContextualActions,
             label: "Contextual actions",
             implementation: BindingImplementation::Implemented,
@@ -60,18 +60,7 @@ pub enum SequenceResolution {
 pub fn default_bindings() -> Vec<(Vec<Key>, AppAction)> {
     let mut bindings = leader_bindings()
         .into_iter()
-        .flat_map(|binding| {
-            let upper = Key::c(binding.key.code_char().to_ascii_uppercase());
-            let primary = (
-                vec![Key::c(' '), binding.key.clone()],
-                binding.action.clone(),
-            );
-            if upper == binding.key {
-                vec![primary]
-            } else {
-                vec![primary, (vec![Key::c(' '), upper], binding.action)]
-            }
-        })
+        .map(|binding| (vec![Key::c(' '), binding.key], binding.action))
         .collect::<Vec<_>>();
     bindings.extend(vec![
         (vec![Key::ctrl('q')], AppAction::Quit),
@@ -151,10 +140,9 @@ pub fn resolve_sequence(keys: &[Key]) -> SequenceResolution {
     let mut partial = false;
     for (binding, action) in default_bindings() {
         if keys.len() > binding.len()
-            || !keys
-                .iter()
-                .zip(binding.iter())
-                .all(|(key, expected)| matches_binding(key, expected))
+            || !keys.iter().zip(binding.iter()).all(|(key, expected)| {
+                matches_sequence_binding(key, expected, binding[0].code == KeyCode::Char(' '))
+            })
         {
             continue;
         }
@@ -172,22 +160,54 @@ pub fn resolve_sequence(keys: &[Key]) -> SequenceResolution {
 
 pub fn matches_binding(actual: &Key, expected: &Key) -> bool {
     let code_matches = actual.code == expected.code
-        || matches!((actual.code, expected.code), (KeyCode::Char(actual), KeyCode::Char(expected)) if expected.is_ascii_uppercase() && actual == expected.to_ascii_lowercase());
+        || matches!((actual.code, expected.code), (KeyCode::Char(actual), KeyCode::Char(expected)) if expected.is_ascii_uppercase() && actual == expected.to_ascii_lowercase() && actual_key_has_shift(actual));
     let modifiers_match = actual
         .modifiers
         .intersection(KeyModifiers::CONTROL | KeyModifiers::ALT)
         == expected
             .modifiers
             .intersection(KeyModifiers::CONTROL | KeyModifiers::ALT);
-    let shift_match = if matches!(expected.code, KeyCode::Char(c) if c.is_ascii_uppercase()) {
-        true
-    } else if matches!(expected.code, KeyCode::Char('?')) {
+    let shift_match = if matches!(expected.code, KeyCode::Char('?')) {
         actual.modifiers.contains(KeyModifiers::SHIFT)
     } else {
         actual.modifiers.contains(KeyModifiers::SHIFT)
             == expected.modifiers.contains(KeyModifiers::SHIFT)
     };
     code_matches && modifiers_match && shift_match
+}
+
+fn matches_sequence_binding(actual: &Key, expected: &Key, is_leader: bool) -> bool {
+    if is_leader && expected.code == KeyCode::Char(' ') {
+        return matches_binding(actual, expected);
+    }
+    if is_leader && matches!(expected.code, KeyCode::Char(c) if c.is_ascii_lowercase()) {
+        return leader_alias_matches(actual, expected);
+    }
+    matches_binding(actual, expected)
+}
+
+pub fn matches_leader_binding(actual: &Key, expected: &Key) -> bool {
+    leader_alias_matches(actual, expected)
+}
+
+fn leader_alias_matches(actual: &Key, expected: &Key) -> bool {
+    if matches!(expected.code, KeyCode::Char(c) if c.is_ascii_lowercase())
+        && (actual.code == expected.code
+            || matches!(actual.code, KeyCode::Char(c) if c == expected.code_char().to_ascii_uppercase()))
+        && (actual.code != expected.code || actual.modifiers.contains(KeyModifiers::SHIFT))
+    {
+        return actual
+            .modifiers
+            .intersection(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            == expected
+                .modifiers
+                .intersection(KeyModifiers::CONTROL | KeyModifiers::ALT);
+    }
+    matches_binding(actual, expected)
+}
+
+fn actual_key_has_shift(key: char) -> bool {
+    key.is_ascii_lowercase()
 }
 
 #[cfg(test)]
@@ -209,5 +229,48 @@ mod tests {
         );
         assert_eq!(format_key(&Key::c('?')), "Shift+?");
         assert_eq!(format_key(&Key::c('A')), "A");
+    }
+
+    #[test]
+    fn direct_lowercase_attach_binding_remains_canonical() {
+        assert!(
+            default_bindings()
+                .iter()
+                .any(|(keys, action)| keys == &[Key::c('a')] && *action == AppAction::AttachFile)
+        );
+    }
+
+    #[test]
+    fn leader_a_accepts_both_terminal_uppercase_representations() {
+        let expected = Key::c('a');
+        for actual in [
+            Key {
+                code: KeyCode::Char('A'),
+                modifiers: KeyModifiers::SHIFT,
+            },
+            Key {
+                code: KeyCode::Char('a'),
+                modifiers: KeyModifiers::SHIFT,
+            },
+        ] {
+            assert!(matches_leader_binding(&actual, &expected));
+            assert_eq!(
+                resolve_sequence(&[Key::c(' '), actual]),
+                SequenceResolution::Complete(AppAction::OpenContextualActions)
+            );
+        }
+    }
+
+    #[test]
+    fn lowercase_g_does_not_match_jump_bottom() {
+        assert!(!matches_binding(&Key::c('g'), &Key::c('G')));
+        assert_eq!(
+            resolve_sequence(&[Key::c('g')]),
+            SequenceResolution::Partial
+        );
+        assert_eq!(
+            resolve_sequence(&[Key::c('G')]),
+            SequenceResolution::Complete(AppAction::JumpBottom)
+        );
     }
 }

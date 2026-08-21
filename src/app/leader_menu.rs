@@ -6,9 +6,7 @@ use crate::input_key::Key;
 use crate::keybindings::{BindingImplementation, format_key, leader_bindings};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct LeaderMenuContext {
-    pub contextual_activatable: bool,
-}
+pub struct LeaderMenuContext {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LeaderMenuRow {
@@ -20,7 +18,7 @@ pub struct LeaderMenuRow {
     pub reason: Option<&'static str>,
 }
 
-pub fn build_leader_menu(context: LeaderMenuContext) -> Vec<LeaderMenuRow> {
+pub fn build_leader_menu(_context: LeaderMenuContext) -> Vec<LeaderMenuRow> {
     let mut rows = Vec::new();
     for binding in leader_bindings() {
         let key = binding.key;
@@ -43,7 +41,7 @@ pub fn build_leader_menu(context: LeaderMenuContext) -> Vec<LeaderMenuRow> {
             },
             AvailabilityFacts {
                 contextual: None,
-                contextual_activatable: context.contextual_activatable,
+                contextual_activatable: matches!(binding.action, AppAction::OpenContextualActions),
             },
         );
         rows.push(LeaderMenuRow {
@@ -62,13 +60,11 @@ pub fn build_leader_menu(context: LeaderMenuContext) -> Vec<LeaderMenuRow> {
 mod tests {
     use super::*;
     #[test]
-    fn contextually_empty_leader_route_is_disabled() {
-        let rows = build_leader_menu(LeaderMenuContext {
-            contextual_activatable: false,
-        });
+    fn contextual_route_stays_enabled_when_children_are_unavailable() {
+        let rows = build_leader_menu(LeaderMenuContext {});
         assert!(
             rows.iter()
-                .any(|row| row.display_shortcut == "Space+A" && row.row_style == RowStyle::Disabled)
+                .any(|row| row.display_shortcut == "Space+a" && row.row_style == RowStyle::Enabled)
         );
     }
 }

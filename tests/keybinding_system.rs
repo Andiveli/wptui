@@ -68,6 +68,28 @@ fn keymap_resolves_section_visibility_sequences() {
 }
 
 #[test]
+fn canonical_leader_display_and_uppercase_alias_are_preserved() {
+    assert!(
+        wp_tui::keybindings::canonical_shortcuts()
+            .iter()
+            .any(|(shortcut, action)| shortcut == "Space+a"
+                && action.contains("OpenContextualActions"))
+    );
+    for character in ['A', 'a'] {
+        assert_eq!(
+            resolve_sequence(&[
+                Key::c(' '),
+                Key {
+                    code: KeyCode::Char(character),
+                    modifiers: KeyModifiers::SHIFT,
+                },
+            ]),
+            SequenceResolution::Complete(AppAction::OpenContextualActions)
+        );
+    }
+}
+
+#[test]
 fn shift_h_no_longer_binds_to_message_history() {
     // The message-history panel is removed; Shift+H must not resolve to a
     // history action (or any action at all).

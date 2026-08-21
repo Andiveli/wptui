@@ -6,7 +6,6 @@ use crate::app::actions::{
 };
 pub use crate::app::composer_input_mapping::composer_action_for_editing_key;
 pub use crate::app::composer_input_paste::apply_clipboard_paste;
-use crate::app::contextual_actions::contextual_menu_rows;
 use crate::app::contextual_routing::route_contextual_key;
 use crate::app::input_mapping::{
     attachment_viewer_action, file_picker_navigation_action, file_picker_search_action,
@@ -17,19 +16,11 @@ use crate::app::log_toggle::is_toggle_logs_key;
 use crate::app::status_input::status_view_allows;
 use crate::input_key::{Key, KeyCode};
 use crate::keybindings::SequenceResolution;
-use crate::keybindings::matches_binding;
+use crate::keybindings::matches_leader_binding;
 
 impl App<'_> {
     pub(crate) fn open_leader_menu(&mut self) {
-        let contextual_activatable = contextual_menu_rows(self.contextual_context())
-            .iter()
-            .any(|row| row.row_style == crate::app::contextual_actions::RowStyle::Enabled);
-        self.leader_menu = Some((
-            build_leader_menu(LeaderMenuContext {
-                contextual_activatable,
-            }),
-            0,
-        ));
+        self.leader_menu = Some((build_leader_menu(LeaderMenuContext {}), 0));
     }
 
     pub(crate) fn move_leader_menu(&mut self, delta: isize) {
@@ -46,7 +37,7 @@ impl App<'_> {
         };
         let Some(row) = rows
             .iter()
-            .find(|row| matches_binding(&key, &row.key))
+            .find(|row| matches_leader_binding(&key, &row.key))
             .cloned()
         else {
             return;
@@ -509,5 +500,57 @@ mod tests {
         )));
 
         assert!(app.contextual_menu.is_none());
+    }
+
+    #[test]
+    fn space_a_opens_contextual_menu_in_section_rail_with_only_disabled_children() {
+        for character in ['A', 'a'] {
+            let mut app = TestApp::new();
+            app.focus_pane = FocusPane::SectionRail;
+            app.on_terminal_event(Event::Key(KeyEvent::new(
+                TerminalKeyCode::Char(' '),
+                KeyModifiers::NONE,
+            )));
+            app.on_terminal_event(Event::Key(KeyEvent::new(
+                TerminalKeyCode::Char(character),
+                KeyModifiers::SHIFT,
+            )));
+            assert!(app.contextual_menu.is_some(), "character: {character:?}");
+            assert!(
+                app.contextual_menu
+                    .as_ref()
+                    .unwrap()
+                    .0
+                    .iter()
+                    .all(|row| row.row_style == crate::app::contextual_actions::RowStyle::Disabled),
+                "character: {character:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn space_a_opens_contextual_menu_in_chat_list_with_only_disabled_children() {
+        for character in ['A', 'a'] {
+            let mut app = TestApp::new();
+            app.focus_pane = FocusPane::ChatList;
+            app.on_terminal_event(Event::Key(KeyEvent::new(
+                TerminalKeyCode::Char(' '),
+                KeyModifiers::NONE,
+            )));
+            app.on_terminal_event(Event::Key(KeyEvent::new(
+                TerminalKeyCode::Char(character),
+                KeyModifiers::SHIFT,
+            )));
+            assert!(app.contextual_menu.is_some(), "character: {character:?}");
+            assert!(
+                app.contextual_menu
+                    .as_ref()
+                    .unwrap()
+                    .0
+                    .iter()
+                    .all(|row| row.row_style == crate::app::contextual_actions::RowStyle::Disabled),
+                "character: {character:?}"
+            );
+        }
     }
 }

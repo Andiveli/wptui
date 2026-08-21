@@ -1,5 +1,5 @@
 use super::App;
-use crate::app::actions::AppAction;
+use crate::app::actions::{AppAction, Section};
 use crate::app::contextual_actions::{
     AvailabilityFacts, ContextualAction, ContextualContext, ImplementationStatus,
     contextual_menu_rows, evaluate_availability,
@@ -16,6 +16,7 @@ impl App<'_> {
                 matches!(message.message, whatsrust::MessageContent::Text(_))
             }),
             has_reference: selected.is_some_and(|message| message.info.quote_id.is_some()),
+            attach_blocked: self.composer_blocked() || self.selected_section == Section::Status,
         }
     }
 
@@ -71,11 +72,78 @@ fn contextual_action_to_app_action(action: ContextualAction) -> AppAction {
         ContextualAction::ViewAttachment => AppAction::ViewMessage,
         ContextualAction::GoToReference => AppAction::GoToReference,
         ContextualAction::DeleteForEveryone => AppAction::DeleteMessage,
+        ContextualAction::Attach => AppAction::AttachFile,
         _ => AppAction::PlannedLeaderAction(
             crate::app::contextual_actions::CONTEXTUAL_ACTION_METADATA
                 .iter()
                 .find(|meta| meta.action == action)
                 .map_or("Contextual action", |meta| meta.label),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::actions::{FocusPane, Section};
+    use crate::app::contextual_actions::RowStyle;
+    use crate::app::test_support::TestApp;
+
+    #[test]
+    fn contextual_attach_dispatches_the_existing_attach_action() {
+        let mut app = TestApp::new();
+        app.focus_pane = FocusPane::Conversation;
+        app.selected_section = Section::Chats;
+        app.open_contextual_actions();
+        let attach = app
+            .contextual_menu
+            .as_ref()
+            .unwrap()
+            .0
+            .iter()
+            .position(|row| row.action_token == ContextualAction::Attach)
+            .unwrap();
+        assert_eq!(
+            app.contextual_menu.as_ref().unwrap().0[attach].row_style,
+            RowStyle::Enabled
+        );
+        app.contextual_menu.as_mut().unwrap().1 = attach;
+        app.activate_contextual_action();
+        assert!(app.file_picker.is_some());
+    }
+
+    #[test]
+    fn contextual_attach_does_not_activate_when_composer_is_blocked() {
+        let mut app = TestApp::new();
+        app.focus_pane = FocusPane::Conversation;
+        app.selected_section = Section::Chats;
+        let group = whatsrust::JID("123@g.us".into());
+        app.open_chat_by_jid(group.clone());
+        app.group_permissions.insert(
+            group.clone(),
+            whatsrust::GroupInfo {
+                jid: group,
+                name: "Admins only".into(),
+                is_announce: true,
+                is_admin: false,
+            },
+        );
+        app.open_contextual_actions();
+        let attach = app
+            .contextual_menu
+            .as_ref()
+            .unwrap()
+            .0
+            .iter()
+            .position(|row| row.action_token == ContextualAction::Attach)
+            .unwrap();
+        assert_eq!(
+            app.contextual_menu.as_ref().unwrap().0[attach].row_style,
+            RowStyle::Disabled
+        );
+        app.contextual_menu.as_mut().unwrap().1 = attach;
+        app.activate_contextual_action();
+        assert!(app.file_picker.is_none());
+        assert!(app.contextual_menu.is_some());
     }
 }
