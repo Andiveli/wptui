@@ -11,7 +11,8 @@ use crate::app::events::{AppEvent, AppInput};
 use crate::app::{App, FileMeta, Metadata};
 
 use super::MessageTextMode;
-use super::message_helpers::{StatusLabel, inline_content_lines, inline_content_lines_logical};
+use super::message_formatting::MediaStatus;
+use super::message_helpers::{StatusLabel, inline_content_lines};
 
 pub fn preview_height(kind: &FileKind) -> usize {
     match kind {
@@ -30,14 +31,15 @@ fn content_height(file: &wr::FileContent) -> usize {
 
 fn caption_lines(
     caption: Option<&str>,
+    mention_ranges: &[std::ops::Range<usize>],
     status: Option<StatusLabel>,
     width: usize,
     text_mode: MessageTextMode,
 ) -> Vec<Line<'static>> {
     let caption = caption.unwrap_or_default();
     match text_mode {
-        MessageTextMode::Chat => inline_content_lines(caption, &[], status, width),
-        MessageTextMode::Status => inline_content_lines_logical(caption, status, width),
+        MessageTextMode::Chat => inline_content_lines(caption, mention_ranges, status, width),
+        MessageTextMode::Status => inline_content_lines(caption, mention_ranges, status, width),
     }
 }
 
@@ -65,7 +67,8 @@ pub fn render_file(
     match app.metadata.get(message_id) {
         None => {
             super::media_paragraph(
-                format!("🔗 {} +", data.path),
+                data.path.as_ref(),
+                MediaStatus::Pending,
                 is_audio,
                 data.path.as_ref(),
                 audio_duration,
@@ -82,7 +85,8 @@ pub fn render_file(
         Some(Metadata::File(meta)) => match meta {
             FileMeta::Downloaded => {
                 super::media_paragraph(
-                    format!("🔗 {} ✓", data.path),
+                    data.path.as_ref(),
+                    MediaStatus::Downloaded,
                     is_audio,
                     data.path.as_ref(),
                     audio_duration,
@@ -102,7 +106,8 @@ pub fn render_file(
                 }
             }
             FileMeta::Downloading => super::media_paragraph(
-                format!("🔗 {} downloading", data.path),
+                data.path.as_ref(),
+                MediaStatus::Downloading,
                 is_audio,
                 data.path.as_ref(),
                 audio_duration,
@@ -110,7 +115,8 @@ pub fn render_file(
             )
             .render(media_area, buf),
             FileMeta::DownloadFailed => super::media_paragraph(
-                format!("🔗 Failed to download {}", data.path),
+                data.path.as_ref(),
+                MediaStatus::DownloadFailed,
                 is_audio,
                 data.path.as_ref(),
                 audio_duration,
@@ -118,7 +124,8 @@ pub fn render_file(
             )
             .render(media_area, buf),
             FileMeta::LoadFailed => super::media_paragraph(
-                format!("🔗 Failed to load {}", data.path),
+                data.path.as_ref(),
+                MediaStatus::LoadFailed,
                 is_audio,
                 data.path.as_ref(),
                 audio_duration,
@@ -128,7 +135,8 @@ pub fn render_file(
             FileMeta::Loading => {
                 log::trace!("Rendering loading for {}", message_id);
                 super::media_paragraph(
-                    format!("🔗 {} loading", data.path),
+                    data.path.as_ref(),
+                    MediaStatus::Loading,
                     is_audio,
                     data.path.as_ref(),
                     audio_duration,
@@ -159,7 +167,8 @@ pub fn render_file(
                     }
                 }
                 FileKind::Audio | FileKind::Document => super::media_paragraph(
-                    format!("🔗 {} ✓", data.path),
+                    data.path.as_ref(),
+                    MediaStatus::Downloaded,
                     is_audio,
                     data.path.as_ref(),
                     audio_duration,
@@ -171,13 +180,18 @@ pub fn render_file(
     }
 
     if data.caption.is_some() || status.is_some() {
+        let mention_ranges = data
+            .caption
+            .as_deref()
+            .map(|caption| wr::message_mention_ranges(message_id, caption))
+            .unwrap_or_default();
         Paragraph::new(caption_lines(
             data.caption.as_deref(),
+            &mention_ranges,
             status,
             content_area.width as usize,
             text_mode,
         ))
-        .alignment(alignment)
         .render(caption_area, buf);
     }
 }
@@ -199,6 +213,7 @@ mod tests {
             .draw(|frame| {
                 Paragraph::new(caption_lines(
                     Some("abc אבג 123"),
+                    &[],
                     None,
                     4,
                     MessageTextMode::Chat,

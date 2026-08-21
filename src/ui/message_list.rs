@@ -6,8 +6,8 @@ use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Layout, Rect},
     style::{Color, Style, Stylize},
-    text::{Line, Span},
-    widgets::{Paragraph, Widget, Wrap},
+    text::Line,
+    widgets::{Paragraph, Widget},
 };
 use whatsrust as wr;
 
@@ -33,13 +33,15 @@ mod message_media;
 mod message_viewport;
 
 pub use message_formatting::reaction_chips;
-use message_formatting::{author_color, media_paragraph, message_block, message_content_area};
+use message_formatting::{
+    author_color, media_paragraph, message_block, message_content_area, reaction_line,
+};
 pub use message_helpers::{
     AUTHOR_GROUP_MAX_GAP, AuthorGroupContext, get_quoted_text, reply_summary, starts_author_group,
 };
 use message_helpers::{
-    StatusLabel, forwarding_indicator_lines, forwarding_label, inline_content_lines,
-    inline_content_lines_logical,
+    StatusLabel, directionally_ordered_spans, fit_text_to_width, forwarding_indicator_lines,
+    forwarding_label, inline_content_lines, reply_summary_for_width,
 };
 pub use message_layout::{
     IMAGE_HEIGHT, IMAGE_WIDTH, MESSAGE_HEIGHT_CACHE_CAPACITY, MessageHeightCache, VIDEO_HEIGHT,
@@ -49,7 +51,7 @@ pub use message_list_state::MessageListState;
 pub use message_media::preview_height;
 use message_media::render_file;
 
-#[derive(Default)
+#[derive(Default)]
 pub struct MessageSequenceCache {
     pub ids: Option<Arc<[wr::MessageId]>>,
     pub author_groups: Option<Arc<[AuthorGroupContext]>>,
@@ -199,7 +201,6 @@ mod sequence_cache_tests {
         assert_eq!(after.source_id_iterations, 5_000);
         assert_eq!(after.group_builds, 5_000);
     }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -221,6 +222,7 @@ mod layout_contract_tests {
     use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Modifier};
     use whatsrust as wr;
 
+    use super::MessageTextMode;
     use super::message_list_state::ViewportAnchor;
 
     #[test]
@@ -232,7 +234,7 @@ mod layout_contract_tests {
         };
 
         let mut buffer = Buffer::empty(Rect::new(0, 0, 20, 1));
-        Paragraph::new(super::inline_content_lines("abc אבג 123", None, 20))
+        Paragraph::new(super::inline_content_lines("abc אבג 123", &[], None, 20))
             .render(Rect::new(0, 0, 20, 1), &mut buffer);
         let rendered = (0..12).map(|x| buffer[(x, 0)].symbol()).collect::<String>();
 
@@ -240,12 +242,27 @@ mod layout_contract_tests {
     }
 
     #[test]
+    fn ratatui_cells_right_align_rtl_and_left_align_ltr_lines() {
+        use ratatui::{
+            buffer::Buffer,
+            layout::Rect,
+            widgets::{Paragraph, Widget},
+        };
+
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 10, 2));
+        Paragraph::new(super::inline_content_lines("אבג\nabc", &[], None, 10))
+            .render(Rect::new(0, 0, 10, 2), &mut buffer);
+
+        let rtl = (0..10).map(|x| buffer[(x, 0)].symbol()).collect::<String>();
+        let ltr = (0..10).map(|x| buffer[(x, 1)].symbol()).collect::<String>();
+        assert_eq!(rtl, "       גבא");
+        assert_eq!(ltr, "abc       ");
+    }
+
+    #[test]
     fn status_content_keeps_logical_order() {
-        let lines = super::inline_content_lines_logical(
-            "abc אבג 123",
-            Some(super::StatusLabel::Edited),
-            20,
-        );
+        let lines =
+            super::inline_content_lines("abc אבג 123", &[], Some(super::StatusLabel::Edited), 20);
         let rendered = lines
             .iter()
             .map(|line| {
@@ -256,7 +273,7 @@ mod layout_contract_tests {
             })
             .collect::<Vec<_>>();
 
-        assert_eq!(rendered, ["abc אבג 123 (edited)"]);
+        assert_eq!(rendered, ["abc 123 גבא (edited)"]);
         assert!(lines[0].spans.iter().any(|span| {
             span.content.as_ref() == "(edited)"
                 && span.style == ratatui::style::Style::default().dark_gray()
@@ -265,7 +282,7 @@ mod layout_contract_tests {
 
     #[test]
     fn rtl_status_label_stays_styled_after_reordering() {
-        let lines = super::inline_content_lines("אבג", Some(super::StatusLabel::Edited), 20);
+        let lines = super::inline_content_lines("אבג", &[], Some(super::StatusLabel::Edited), 20);
         let line = &lines[0];
 
         assert_eq!(
@@ -290,7 +307,7 @@ mod layout_contract_tests {
         };
 
         let mut buffer = Buffer::empty(Rect::new(0, 0, 4, 3));
-        Paragraph::new(super::inline_content_lines("abc אבג 123", None, 4))
+        Paragraph::new(super::inline_content_lines("abc אבג 123", &[], None, 4))
             .render(Rect::new(0, 0, 4, 3), &mut buffer);
         let rendered = (0..3)
             .map(|y| (0..4).map(|x| buffer[(x, y)].symbol()).collect::<String>())
@@ -454,8 +471,11 @@ mod layout_contract_tests {
             })
             .unwrap();
         assert_eq!(test_app.message_list_state, state_before);
+    }
+
+    #[test]
     fn logical_wrap_precedes_per_line_visual_reordering() {
-        let lines = super::inline_content_lines("abc אבג 123", None, 4);
+        let lines = super::inline_content_lines("abc אבג 123", &[], None, 4);
         let rendered = lines
             .iter()
             .map(|line| {
@@ -475,7 +495,7 @@ mod layout_contract_tests {
 
         let body = "abc אבג 123";
         let width = 4;
-        let lines = super::inline_content_lines(body, None, width);
+        let lines = super::inline_content_lines(body, &[], None, width);
         let input = super::message_layout::LayoutInput {
             width,
             is_selected: false,
@@ -537,7 +557,13 @@ fn render_message(
     text_mode: MessageTextMode,
 ) {
     let is_pending = App::is_pending_message_id(&message.info.id);
-    let alignment = ratatui::layout::Alignment::Left;
+    let alignment = match &message.message {
+        wr::MessageContent::Text(text) => bidi::Direction::from_text(text).alignment(),
+        wr::MessageContent::File(file) => {
+            bidi::Direction::from_text(file.caption.as_deref().unwrap_or(file.path.as_ref()))
+                .alignment()
+        }
+    };
     // let alignment = if message.info.is_from_me {
     //     ratatui::layout::Alignment::Right
     // } else {
@@ -566,15 +592,11 @@ fn render_message(
     let sender_name = app.message_sender_name(message);
     let sender_color = author_color(&message.info.sender);
 
-    let mut header = vec![
-        Span::styled(
-            sender_name.to_string(),
-            Style::default().fg(sender_color).bold(),
-        ),
-        " (".into(),
-        timestamp.clone(),
-        ")".into(),
-    ];
+    let mut header = directionally_ordered_spans(
+        sender_name.as_ref(),
+        Style::default().fg(sender_color).bold(),
+    );
+    header.extend([" (".into(), timestamp.clone(), ")".into()]);
     if message.info.read_by >= 1 {
         header.push(" ✓".into());
     }
@@ -586,24 +608,26 @@ fn render_message(
 
     // let sender_widget = Line::from_iter(header).alignment(alignment).bold();
 
-    let quoted_text = message.info.quote_id.as_ref().and_then(|quote_id| {
-        app.messages
-            .get(quote_id)
-            .map(|quote| reply_summary(quote, &app.message_sender_name(quote)))
-    });
-
-    let quote_widget = message.info.quote_id.as_ref().map(|_quote_id| {
-        let quoted_text = quoted_text.unwrap_or_else(|| "not found".into());
-
-        Line::from(quoted_text)
-            .alignment(alignment)
-            .dark_gray()
-            .dim()
-    });
     let status = status_label(app, &message.info.id);
     let forwarding = forwarding_label(message);
 
     let msg_area = message_content_area(msg_block.inner(area), is_selected);
+    let quote_lines = message.info.quote_id.as_ref().map(|quote_id| {
+        let summary = app
+            .messages
+            .get(quote_id)
+            .map(|quote| {
+                reply_summary_for_width(
+                    quote,
+                    &app.message_sender_name(quote),
+                    msg_area.width as usize,
+                )
+            })
+            .unwrap_or_else(|| fit_text_to_width("not found", msg_area.width as usize));
+        inline_content_lines(&summary, &[], None, msg_area.width as usize)
+            .into_iter()
+            .collect::<Vec<_>>()
+    });
     // let msg_area = area;
     // let msg_area = if message.info.is_from_me {
     //     let [_, b] = Layout::horizontal([Constraint::Percentage(30), Constraint::Percentage(70)])
@@ -621,7 +645,7 @@ fn render_message(
     //     Constraint::Min(1),
     // ])
     let [quoted_area, forwarding_area, content_area, reactions_area] = Layout::vertical([
-        Constraint::Length(if quote_widget.is_some() { 1 } else { 0 }),
+        Constraint::Length(quote_lines.as_ref().map_or(0, Vec::len) as u16),
         Constraint::Length(forwarding_indicator_lines(forwarding, msg_area.width as usize) as u16),
         Constraint::Min(0),
         Constraint::Length(u16::from(app.reactions.contains_key(&message.info.id))),
@@ -630,33 +654,30 @@ fn render_message(
 
     msg_block.render(area, buf);
     // sender_widget.render(sender_area, buf);
-    if let Some(quoted_widget) = quote_widget {
-        quoted_widget.render(quoted_area, buf);
+    if let Some(quote_lines) = quote_lines {
+        Paragraph::new(quote_lines)
+            .style(Style::default().dark_gray().dim())
+            .render(quoted_area, buf);
     }
     if let Some(forwarding) = forwarding {
-        Paragraph::new(forwarding.text())
-            .style(if is_pending {
-                Style::default().dark_gray().dim()
-            } else {
-                Style::default().dark_gray()
-            })
-            .wrap(Wrap { trim: true })
-            .render(forwarding_area, buf);
+        Paragraph::new(inline_content_lines(
+            forwarding.text(),
+            &[],
+            None,
+            forwarding_area.width as usize,
+        ))
+        .style(if is_pending {
+            Style::default().dark_gray().dim()
+        } else {
+            Style::default().dark_gray()
+        })
+        .render(forwarding_area, buf);
     }
     match &message.message {
         wr::MessageContent::Text(text) => {
             let mention_ranges = wr::message_mention_ranges(&message.info.id, text);
-            let lines = match text_mode {
-                MessageTextMode::Chat => inline_content_lines(
-                    text,
-                    &mention_ranges,
-                    status,
-                    content_area.width as usize,
-                ),
-                MessageTextMode::Status => {
-                    inline_content_lines_logical(text, status, content_area.width as usize)
-                }
-            };
+            let lines =
+                inline_content_lines(text, &mention_ranges, status, content_area.width as usize);
             Paragraph::new(lines)
                 .style(if is_pending {
                     Style::default().dim()
@@ -681,9 +702,11 @@ fn render_message(
         }
     };
     if !reactions_area.is_empty() {
-        Paragraph::new(reaction_chips(app.reactions.get(&message.info.id)).join(" "))
-            .alignment(alignment)
-            .render(reactions_area, buf);
+        Paragraph::new(reaction_line(
+            app.reactions.get(&message.info.id),
+            alignment,
+        ))
+        .render(reactions_area, buf);
     }
 }
 

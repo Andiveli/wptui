@@ -28,105 +28,86 @@ impl Direction {
             Self::Rtl => Level::rtl(),
         }
     }
+
+    pub(crate) fn alignment(self) -> ratatui::layout::Alignment {
+        match self {
+            Self::Ltr => ratatui::layout::Alignment::Left,
+            Self::Rtl => ratatui::layout::Alignment::Right,
+        }
+    }
 }
 
-/// Convert logical message text to the visual order expected by positioned
-/// terminal cells. Paragraphs are handled independently, while the source
-/// string remains untouched by this presentation-only transformation.
+/// Convert one logical line to visual grapheme order using the bidi levels of
+/// its complete logical paragraph. The line range is a byte range in
+/// `paragraph`, and marks are byte ranges in that same paragraph.
 ///
-/// This applies Unicode bidirectional run ordering, but not Arabic shaping or
-/// glyph mirroring. Those are font/terminal rendering concerns and are not
-/// provided by UAX #9 or by this app-level cell-order transformation.
-#[cfg(test)]
-pub(crate) fn visual_text(text: &str) -> String {
-    visual_graphemes_with_range(text, None)
-        .into_iter()
-        .map(|(grapheme, _)| grapheme)
-        .collect()
-}
-
-pub(crate) fn visual_graphemes_with_range(
-    text: &str,
-    marked_range: Option<Range<usize>>,
-) -> Vec<(String, bool)> {
-    visual_graphemes_with_marks(text, marked_range, &[])
-        .into_iter()
-        .map(|(grapheme, marked, _)| (grapheme, marked))
-        .collect()
-}
-
-pub(crate) fn visual_graphemes_with_marks(
-    text: &str,
+/// Arabic joining forms, ligatures, glyph selection, and UAX #9 rule L4
+/// mirroring are deliberately not performed here. Those require the terminal
+/// renderer and its font shaping support; this app controls only logical
+/// paragraph analysis and cell/run order.
+pub(crate) fn visual_graphemes_in_paragraph(
+    paragraph: &str,
+    line_range: Range<usize>,
     marked_range: Option<Range<usize>>,
     marked_ranges: &[Range<usize>],
 ) -> Vec<(String, bool, bool)> {
-    if text.is_empty() {
+    if line_range.is_empty() {
         return Vec::new();
     }
 
-    let paragraphs = BidiInfo::new(text, Some(Level::ltr())).paragraphs;
-    let graphemes = text
+    let bidi_info = BidiInfo::new(paragraph, Some(Direction::from_text(paragraph).level()));
+    let paragraph_info = &bidi_info.paragraphs[0];
+    let (levels, runs) = bidi_info.visual_runs(paragraph_info, line_range.clone());
+    let graphemes = paragraph[line_range.clone()]
         .grapheme_indices(true)
-        .enumerate()
-        .map(|(index, (start, grapheme))| (start, index, grapheme.to_owned()))
+        .map(|(offset, grapheme)| {
+            (
+                line_range.start + offset,
+                line_range.start + offset + grapheme.len(),
+                grapheme.to_owned(),
+            )
+        })
         .collect::<Vec<_>>();
     let mut visual = Vec::new();
 
-    for paragraph in &paragraphs {
-        let separator_start = text[..paragraph.range.end]
-            .char_indices()
-            .next_back()
-            .and_then(|(start, character)| {
-                matches!(unicode_bidi::bidi_class(character), BidiClass::B).then_some(start)
-            })
-            .unwrap_or(paragraph.range.end);
-        if paragraph.range.start < separator_start {
-            let paragraph_text = &text[paragraph.range.start..separator_start];
-            let paragraph_info = BidiInfo::new(
-                paragraph_text,
-                Some(Direction::from_text(paragraph_text).level()),
-            );
-            let paragraph_info_data = &paragraph_info.paragraphs[0];
-            let line = paragraph_info_data.range.clone();
-            let (levels, runs) = paragraph_info.visual_runs(paragraph_info_data, line);
-            for run in runs {
-                let rtl = levels[run.start].is_rtl();
-                let run_start = paragraph.range.start + run.start;
-                let run_end = paragraph.range.start + run.end;
-                let mut run_graphemes = graphemes
-                    .iter()
-                    .filter(|(start, _, _)| *start >= run_start && *start < run_end)
-                    .map(|(_, index, grapheme)| {
-                        let marked = marked_range
-                            .as_ref()
-                            .is_some_and(|range| range.contains(index));
-                        let additionally_marked = marked_ranges
-                            .iter()
-                            .any(|range| range.contains(index));
-                        (grapheme.clone(), marked, additionally_marked)
-                    })
-                    .collect::<Vec<_>>();
-                if rtl {
-                    run_graphemes.reverse();
-                }
-                visual.extend(run_graphemes);
-            }
-        }
-
-        for (_, index, grapheme) in graphemes
+    for run in runs {
+        let rtl = levels[run.start].is_rtl();
+        let mut run_graphemes = graphemes
             .iter()
-            .filter(|(start, _, _)| *start >= separator_start && *start < paragraph.range.end)
-        {
-            let marked = marked_range
-                .as_ref()
-                .is_some_and(|range| range.contains(index));
-            let additionally_marked = marked_ranges
-                .iter()
-                .any(|range| range.contains(index));
-            visual.push((grapheme.clone(), marked, additionally_marked));
+            .filter(|(start, _, _)| *start >= run.start && *start < run.end)
+            .map(|(start, end, grapheme)| {
+                let marked = marked_range
+                    .as_ref()
+                    .is_some_and(|range| *start < range.end && *end > range.start);
+                let additionally_marked = marked_ranges
+                    .iter()
+                    .any(|range| *start < range.end && *end > range.start);
+                (grapheme.clone(), marked, additionally_marked)
+            })
+            .collect::<Vec<_>>();
+        if rtl {
+            run_graphemes.reverse();
         }
+        visual.extend(run_graphemes);
     }
 
+    visual
+}
+
+/// Convert logical message text to visual order for tests and small callers.
+#[cfg(test)]
+pub(crate) fn visual_text(text: &str) -> String {
+    let mut visual = String::new();
+    for paragraph in text.split('\n') {
+        visual.push_str(
+            &visual_graphemes_in_paragraph(paragraph, 0..paragraph.len(), None, &[])
+                .into_iter()
+                .map(|(grapheme, _, _)| grapheme)
+                .collect::<String>(),
+        );
+        visual.push('\n');
+    }
+    visual.pop();
     visual
 }
 
@@ -138,6 +119,17 @@ mod tests {
     fn mixed_rtl_latin_and_numbers_have_stable_visual_order() {
         assert_eq!(visual_text("abc אבג 123"), "abc 123 גבא");
         assert_eq!(visual_text("abc אבג 123"), visual_text("abc אבג 123"));
+    }
+
+    #[test]
+    fn pure_arabic_and_hebrew_keep_grapheme_order_deterministically() {
+        assert_eq!(visual_text("مرحبا"), "ابحرم");
+        assert_eq!(visual_text("שלום"), "םולש");
+    }
+
+    #[test]
+    fn mixed_arabic_latin_numbers_and_punctuation_use_paragraph_context() {
+        assert_eq!(visual_text("مرحبا abc 123!"), "!abc 123 ابحرم");
     }
 
     #[test]
