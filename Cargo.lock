@@ -3552,6 +3552,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "unicode-bidi"
+version = "0.3.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c1cb5db39152898a79168971543b1cb5020dff7fe43c8dc468b0885f5e29df5"
+
+[[package]]
 name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4391,6 +4397,7 @@ dependencies = [
  "tempfile",
  "textwrap",
  "tui-logger",
+ "unicode-bidi",
  "unicode-segmentation",
  "whatsrust",
 ]
