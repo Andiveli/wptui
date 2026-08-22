@@ -85,7 +85,7 @@ fn contextual_action_to_app_action(action: ContextualAction) -> AppAction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::actions::{FocusPane, Section};
+    use crate::app::actions::{ComposerAction, FocusPane, Section};
     use crate::app::contextual_actions::RowStyle;
     use crate::app::test_support::TestApp;
 
@@ -110,6 +110,118 @@ mod tests {
         app.contextual_menu.as_mut().unwrap().1 = attach;
         app.activate_contextual_action();
         assert!(app.file_picker.is_some());
+    }
+
+    #[test]
+    fn composer_direction_toggle_dispatches_through_app_action() {
+        let mut app = TestApp::new();
+        assert_eq!(
+            app.composer_direction,
+            crate::app::preferences::ComposerDirection::Auto
+        );
+        app.dispatch_action(AppAction::ToggleComposerDirection);
+        assert_eq!(
+            app.composer_direction,
+            crate::app::preferences::ComposerDirection::Rtl
+        );
+        app.dispatch_action(AppAction::ToggleComposerDirection);
+        assert_eq!(
+            app.composer_direction,
+            crate::app::preferences::ComposerDirection::Auto
+        );
+    }
+
+    #[test]
+    fn toggling_direction_preserves_the_existing_draft_and_cursor() {
+        let mut app = TestApp::new();
+        app.composer.insert_text("abc אבג");
+        let text = app.composer.text();
+        let cursor = app.composer.input.cursor();
+
+        app.dispatch_action(AppAction::ToggleComposerDirection);
+
+        assert_eq!(app.composer.text(), text);
+        assert_eq!(app.composer.input.cursor(), cursor);
+    }
+
+    #[test]
+    fn toggling_direction_preserves_mentions_quote_and_pending_attachments() {
+        let mut app = TestApp::new();
+        app.composer
+            .set_group_participants(vec![whatsrust::GroupParticipant {
+                jid: "111@s.whatsapp.net".to_owned().into(),
+                phone_number: "111@s.whatsapp.net".to_owned().into(),
+                name: "Alice".into(),
+            }]);
+        app.composer.insert_text("@al");
+        app.composer.confirm_mention();
+        app.composer.quote = Some(whatsrust::Message {
+            info: whatsrust::MessageInfo {
+                id: "quoted".into(),
+                chat: "123@g.us".to_owned().into(),
+                sender: "222@s.whatsapp.net".to_owned().into(),
+                mentions_self: false,
+                timestamp: 0,
+                is_from_me: false,
+                quote_id: None,
+                read_by: 0,
+                forwarding: Default::default(),
+            },
+            message: whatsrust::MessageContent::Text("quoted text".into()),
+        });
+        app.composer
+            .queue_attachment("photo.jpg".into(), whatsrust::FileKind::Image);
+
+        app.dispatch_action(AppAction::ToggleComposerDirection);
+
+        assert_eq!(app.composer.text(), "@Alice ");
+        assert!(
+            app.composer
+                .quote
+                .as_ref()
+                .is_some_and(|quote| quote.info.id.as_ref() == "quoted")
+        );
+        assert_eq!(app.composer.pending.len(), 1);
+        assert_eq!(app.composer.pending[0].path.as_ref(), "photo.jpg");
+        let outcome = app.composer.apply(ComposerAction::Submit);
+        assert!(matches!(
+            outcome,
+            crate::app::composer::ComposerOutcome::Submit {
+                quote: Some(quote),
+                mentions,
+                messages,
+                ..
+            } if quote.info.id.as_ref() == "quoted"
+                && mentions == vec![whatsrust::Mention {
+                    jid: "111@s.whatsapp.net".to_owned().into(),
+                    numeric_user: "111".into(),
+                }]
+                && messages.iter().any(|message| matches!(
+                    message,
+                    whatsrust::MessageContent::File(file)
+                        if file.path.as_ref() == "photo.jpg"
+                            && file.caption.as_deref() == Some("@111 ")
+                ))
+        ));
+    }
+
+    #[test]
+    fn direction_toggle_surfaces_persistence_failure_without_changing_state() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = TestApp::new();
+        app.preferences_path = directory.path().to_path_buf();
+
+        app.dispatch_action(AppAction::ToggleComposerDirection);
+
+        assert_eq!(
+            app.composer_direction,
+            crate::app::preferences::ComposerDirection::Auto
+        );
+        assert!(matches!(
+            &app.action_notice,
+            Some(crate::app::actions::ActionNotice::Unavailable(message))
+                if message.starts_with("Could not persist composer direction:")
+        ));
     }
 
     #[test]

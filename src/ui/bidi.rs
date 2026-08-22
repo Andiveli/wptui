@@ -45,53 +45,87 @@ impl Direction {
 /// mirroring are deliberately not performed here. Those require the terminal
 /// renderer and its font shaping support; this app controls only logical
 /// paragraph analysis and cell/run order.
-pub(crate) fn visual_graphemes_in_paragraph(
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct VisualGrapheme {
+    pub(crate) text: String,
+    pub(crate) source_range: Range<usize>,
+    pub(crate) direction: Direction,
+}
+
+pub(crate) fn visual_graphemes_with_ranges(
     paragraph: &str,
     line_range: Range<usize>,
-    marked_range: Option<Range<usize>>,
-    marked_ranges: &[Range<usize>],
-) -> Vec<(String, bool, bool)> {
+) -> Vec<VisualGrapheme> {
+    visual_graphemes_with_base_direction(paragraph, line_range, Direction::from_text(paragraph))
+}
+
+pub(crate) fn visual_graphemes_with_base_direction(
+    paragraph: &str,
+    line_range: Range<usize>,
+    base_direction: Direction,
+) -> Vec<VisualGrapheme> {
     if line_range.is_empty() {
         return Vec::new();
     }
 
-    let bidi_info = BidiInfo::new(paragraph, Some(Direction::from_text(paragraph).level()));
+    let bidi_info = BidiInfo::new(paragraph, Some(base_direction.level()));
     let paragraph_info = &bidi_info.paragraphs[0];
     let (levels, runs) = bidi_info.visual_runs(paragraph_info, line_range.clone());
     let graphemes = paragraph[line_range.clone()]
         .grapheme_indices(true)
-        .map(|(offset, grapheme)| {
-            (
-                line_range.start + offset,
-                line_range.start + offset + grapheme.len(),
-                grapheme.to_owned(),
-            )
+        .map(|(offset, grapheme)| VisualGrapheme {
+            text: grapheme.to_owned(),
+            source_range: line_range.start + offset..line_range.start + offset + grapheme.len(),
+            direction: Direction::Ltr,
         })
         .collect::<Vec<_>>();
     let mut visual = Vec::new();
 
     for run in runs {
-        let rtl = levels[run.start].is_rtl();
+        let direction = if levels[run.start].is_rtl() {
+            Direction::Rtl
+        } else {
+            Direction::Ltr
+        };
         let mut run_graphemes = graphemes
             .iter()
-            .filter(|(start, _, _)| *start >= run.start && *start < run.end)
-            .map(|(start, end, grapheme)| {
-                let marked = marked_range
-                    .as_ref()
-                    .is_some_and(|range| *start < range.end && *end > range.start);
-                let additionally_marked = marked_ranges
-                    .iter()
-                    .any(|range| *start < range.end && *end > range.start);
-                (grapheme.clone(), marked, additionally_marked)
+            .filter(|grapheme| {
+                grapheme.source_range.start >= run.start && grapheme.source_range.start < run.end
+            })
+            .cloned()
+            .map(|mut grapheme| {
+                grapheme.direction = direction;
+                grapheme
             })
             .collect::<Vec<_>>();
-        if rtl {
+        if direction == Direction::Rtl {
             run_graphemes.reverse();
         }
         visual.extend(run_graphemes);
     }
 
     visual
+}
+
+/// Compatibility wrapper used by committed-message rendering.
+pub(crate) fn visual_graphemes_in_paragraph(
+    paragraph: &str,
+    line_range: Range<usize>,
+    marked_range: Option<Range<usize>>,
+    marked_ranges: &[Range<usize>],
+) -> Vec<(String, bool, bool)> {
+    visual_graphemes_with_ranges(paragraph, line_range)
+        .into_iter()
+        .map(|grapheme| {
+            let marked = marked_range.as_ref().is_some_and(|range| {
+                grapheme.source_range.start < range.end && grapheme.source_range.end > range.start
+            });
+            let additionally_marked = marked_ranges.iter().any(|range| {
+                grapheme.source_range.start < range.end && grapheme.source_range.end > range.start
+            });
+            (grapheme.text, marked, additionally_marked)
+        })
+        .collect()
 }
 
 /// Convert logical message text to visual order for tests and small callers.
@@ -147,6 +181,27 @@ mod tests {
     #[test]
     fn rtl_grapheme_clusters_remain_intact() {
         assert_eq!(visual_text("אְב"), "באְ");
+    }
+
+    #[test]
+    fn visual_graphemes_expose_stable_logical_source_ranges() {
+        let source = "a אב";
+        let visual = super::visual_graphemes_with_ranges(source, 0..source.len());
+        let rebuilt = visual
+            .iter()
+            .map(|item| item.text.as_str())
+            .collect::<String>();
+        assert_eq!(rebuilt, "a בא");
+        assert!(
+            visual
+                .iter()
+                .all(|item| source.is_char_boundary(item.source_range.start))
+        );
+        assert!(
+            visual
+                .iter()
+                .all(|item| source.is_char_boundary(item.source_range.end))
+        );
     }
 
     #[test]

@@ -9,7 +9,7 @@ use ratatui::{
 use unicode_segmentation::UnicodeSegmentation;
 use whatsrust as wr;
 
-use super::bidi::{Direction, visual_graphemes_in_paragraph};
+use crate::ui::bidi::{Direction, visual_graphemes_in_paragraph};
 
 pub const AUTHOR_GROUP_MAX_GAP: i64 = 5 * 60;
 const REPLY_EXCERPT_MAX_CHARS: usize = 40;

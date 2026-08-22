@@ -11,6 +11,7 @@ pub(crate) fn status_view_allows(action: &AppAction) -> bool {
             | AppAction::ToggleLogs
             | AppAction::ToggleSectionRail
             | AppAction::ToggleChatList
+            | AppAction::ToggleComposerDirection
             | AppAction::FocusNext
             | AppAction::FocusPrevious
             | AppAction::SelectNext
@@ -47,6 +48,7 @@ mod tests {
             AppAction::ToggleLogs,
             AppAction::ToggleSectionRail,
             AppAction::ToggleChatList,
+            AppAction::ToggleComposerDirection,
             AppAction::FocusNext,
             AppAction::FocusPrevious,
             AppAction::SelectNext,

@@ -17,6 +17,19 @@ fn should_draw_for_source(app: &App<'_>, source: DrawSource) -> bool {
     }
 }
 
+fn refresh_composer_viewport_width(app: &mut App<'_>, terminal_session: &mut TerminalSession) {
+    let Ok(area) = terminal_session.terminal_mut().size() else {
+        return;
+    };
+    let width = crate::ui::composer_viewport_width(
+        area.width,
+        area.height,
+        app.pane_visibility,
+        app.show_logs,
+    );
+    app.set_composer_viewport_width(width);
+}
+
 /// Owns the terminal runtime: input pumping, event dispatch, redraws, and shutdown.
 ///
 /// Bootstrap stays in `App::run`; this phase consumes the already-created download
@@ -39,6 +52,7 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
     terminal_session.start_input_reader(&mut app.input_reader, app.tx.clone());
 
     app.sync_selected_presence();
+    refresh_composer_viewport_width(app, &mut terminal_session);
     let initial_draw_started = app.runtime_diagnostics.draw_started();
     if let Err(error) = terminal_session
         .terminal_mut()
@@ -72,6 +86,7 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
             None => app.rx.recv(),
         };
         // info!("Received message: {:?}", &msg);
+        refresh_composer_viewport_width(app, &mut terminal_session);
         if let Ok(ref input) = msg {
             app.runtime_diagnostics.record_input(input);
         }

@@ -43,9 +43,9 @@ pub fn leader_bindings() -> Vec<LeaderBinding> {
         },
         LeaderBinding {
             key: Key::c('s'),
-            action: AppAction::PlannedLeaderAction("TUI settings"),
-            label: "TUI settings",
-            implementation: BindingImplementation::Planned,
+            action: AppAction::ToggleComposerDirection,
+            label: "Composer direction",
+            implementation: BindingImplementation::Implemented,
         },
     ]
 }
@@ -226,6 +226,10 @@ mod tests {
         assert_eq!(
             resolve_sequence(&[Key::c(' '), Key::c('o')]),
             SequenceResolution::Complete(AppAction::PlannedLeaderAction("WhatsApp options"))
+        );
+        assert_eq!(
+            resolve_sequence(&[Key::c(' '), Key::c('s')]),
+            SequenceResolution::Complete(AppAction::ToggleComposerDirection)
         );
         assert_eq!(format_key(&Key::c('?')), "Shift+?");
         assert_eq!(format_key(&Key::c('A')), "A");

@@ -20,7 +20,12 @@ use crate::keybindings::matches_leader_binding;
 
 impl App<'_> {
     pub(crate) fn open_leader_menu(&mut self) {
-        self.leader_menu = Some((build_leader_menu(LeaderMenuContext {}), 0));
+        self.leader_menu = Some((
+            build_leader_menu(LeaderMenuContext {
+                composer_direction: self.composer_direction,
+            }),
+            0,
+        ));
     }
 
     pub(crate) fn move_leader_menu(&mut self, delta: isize) {
@@ -305,6 +310,7 @@ impl App<'_> {
             }
             AppAction::OpenContextualActions => self.open_contextual_actions(),
             AppAction::ToggleShortcutPopup => self.shortcut_popup = !self.shortcut_popup,
+            AppAction::ToggleComposerDirection => self.toggle_composer_direction(),
             AppAction::PlannedLeaderAction(label) => {
                 self.unavailable(&format!("{label}: not implemented"))
             }
@@ -500,6 +506,30 @@ mod tests {
         )));
 
         assert!(app.contextual_menu.is_none());
+    }
+
+    #[test]
+    fn status_view_reaches_composer_direction_toggle_through_leader_settings() {
+        let mut app = TestApp::new();
+        app.focus_pane = FocusPane::Conversation;
+        app.selected_section = Section::Status;
+
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            TerminalKeyCode::Char(' '),
+            KeyModifiers::NONE,
+        )));
+        assert!(app.leader_menu.is_some());
+
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            TerminalKeyCode::Char('s'),
+            KeyModifiers::NONE,
+        )));
+
+        assert_eq!(
+            app.composer_direction,
+            crate::app::preferences::ComposerDirection::Rtl
+        );
+        assert!(app.leader_menu.is_none());
     }
 
     #[test]

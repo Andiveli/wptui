@@ -9,6 +9,10 @@ use crate::input_key::Key;
 use whatsrust as wr;
 
 impl App<'_> {
+    pub(crate) fn set_composer_viewport_width(&mut self, width: u16) {
+        self.composer_viewport_width = width.max(1);
+    }
+
     /// Handles the composer-owned part of terminal input.
     ///
     /// Returns `true` when the composer owns the current input context.
@@ -57,6 +61,7 @@ impl App<'_> {
         {
             return self.submit_message_edit();
         }
+        let composer_direction = self.composer_direction;
         match action {
             ComposerAction::StartEdit => {
                 // InsertMode is now the canonical way; StartEdit is unused.
@@ -69,7 +74,11 @@ impl App<'_> {
                     self.unavailable(&format!("Could not paste clipboard content: {error:?}"));
                 }
             }
-            action => match self.composer.apply(action) {
+            action => match self.composer.apply_with_direction(
+                action,
+                composer_direction,
+                self.composer_viewport_width,
+            ) {
                 crate::app::composer::ComposerOutcome::Idle => {}
                 crate::app::composer::ComposerOutcome::Submit {
                     messages,

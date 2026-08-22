@@ -13,8 +13,6 @@ use whatsrust as wr;
 
 use crate::app::App;
 
-#[path = "bidi.rs"]
-mod bidi;
 #[path = "message_formatting.rs"]
 mod message_formatting;
 #[path = "message_helpers.rs"]
@@ -558,11 +556,11 @@ fn render_message(
 ) {
     let is_pending = App::is_pending_message_id(&message.info.id);
     let alignment = match &message.message {
-        wr::MessageContent::Text(text) => bidi::Direction::from_text(text).alignment(),
-        wr::MessageContent::File(file) => {
-            bidi::Direction::from_text(file.caption.as_deref().unwrap_or(file.path.as_ref()))
-                .alignment()
-        }
+        wr::MessageContent::Text(text) => crate::ui::bidi::Direction::from_text(text).alignment(),
+        wr::MessageContent::File(file) => crate::ui::bidi::Direction::from_text(
+            file.caption.as_deref().unwrap_or(file.path.as_ref()),
+        )
+        .alignment(),
     };
     // let alignment = if message.info.is_from_me {
     //     ratatui::layout::Alignment::Right

@@ -8,6 +8,7 @@ use ratatui::widgets::ListState;
 use ratatui_image::picker::{Picker, ProtocolType};
 
 use super::*;
+use crate::app::preferences;
 
 pub(crate) fn default_app() -> App<'static> {
     let picker = picker_from_terminal();
@@ -75,6 +76,8 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
     fs::create_dir_all(data_dir).unwrap();
     let (tx, rx) = mpsc::channel::<AppInput>();
     let (clipboard_reader, clipboard_writer) = open_clipboard_pair();
+    let preferences_path = preferences::settings_path(data_dir);
+    let composer_direction = preferences::load_composer_direction(&preferences_path);
 
     App {
         db_handler: DatabaseHandler::new(&data_dir.join("whatsapp.db")),
@@ -118,6 +121,9 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         message_sequence_revisions: HashMap::new(),
         default_protocol_type,
         composer: Composer::default(),
+        composer_direction,
+        composer_viewport_width: 80,
+        preferences_path,
         picker: Arc::new(Mutex::new(picker)),
         contact_avatars: ContactAvatars::new(cache_dir.join("contact-avatars")),
         focus_pane: FocusPane::ChatList,

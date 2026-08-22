@@ -15,6 +15,7 @@ pub enum AppAction {
     FocusPane(FocusPane),
     OpenContextualActions,
     ToggleShortcutPopup,
+    ToggleComposerDirection,
     PlannedLeaderAction(&'static str),
     FocusNext,
     FocusPrevious,

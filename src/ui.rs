@@ -1,7 +1,8 @@
+pub(crate) mod bidi;
 pub mod communities;
 pub mod contact_list;
 mod contacts;
-mod layout;
+pub(crate) mod layout;
 pub mod message_list;
 mod navigation;
 mod status;
@@ -14,7 +15,9 @@ pub use layout::{
     composer_visual_cursor, composer_visual_rows, conversation_areas, navigation_areas,
     viewer_preview_layout,
 };
-pub(crate) use layout::{composer_visual_layout, truncate_with_ellipsis};
+pub(crate) use layout::{
+    composer_viewport_width, composer_visual_layout_with_direction, truncate_with_ellipsis,
+};
 
 use crate::app::App;
 use crate::app::actions::{ConversationMode, FocusPane, Section};
@@ -398,16 +401,18 @@ pub fn render_chats(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let composer_width = inner.width.saturating_sub(2);
     let composer_blocked = app.composer_blocked();
-    let composer_layout = composer_visual_layout(
+    let composer_layout = composer_visual_layout_with_direction(
         if composer_blocked {
             &[]
         } else {
             app.composer.input.lines()
         },
         composer_width,
+        app.composer_direction,
     );
-    let input_cursor = app.composer.input.cursor();
-    let composer_cursor = composer_layout.cursor((input_cursor.0, input_cursor.1));
+    let composer_cursor = app
+        .composer
+        .visual_cursor(composer_width, app.composer_direction);
     let composer_rows = composer_layout.row_count().max(composer_cursor.0 + 1);
     let (chat_area, composer_area) = conversation_areas(
         inner,
@@ -499,13 +504,21 @@ pub fn render_chats(frame: &mut Frame, app: &mut App, area: Rect) {
             let scroll_top = cursor_row
                 .saturating_add(1)
                 .saturating_sub(input_area.height as usize);
-            let text = if app.composer.input.lines().iter().all(String::is_empty) {
-                app.composer.input.placeholder_text().to_owned()
+            let lines = if app.composer.input.lines().iter().all(String::is_empty) {
+                let alignment = composer_layout
+                    .lines()
+                    .first()
+                    .and_then(|line| line.alignment)
+                    .unwrap_or(Alignment::Left);
+                vec![
+                    Line::from(app.composer.input.placeholder_text().to_owned())
+                        .alignment(alignment),
+                ]
             } else {
-                composer_layout.text()
+                composer_layout.lines()
             };
             frame.render_widget(
-                Paragraph::new(text).scroll((scroll_top.min(u16::MAX as usize) as u16, 0)),
+                Paragraph::new(lines).scroll((scroll_top.min(u16::MAX as usize) as u16, 0)),
                 input_area,
             );
             if app.focus_pane == FocusPane::Conversation && !input_area.is_empty() {

@@ -45,6 +45,7 @@ pub mod message_navigation;
 pub mod message_opening;
 pub mod notifications;
 pub mod optimistic_text_send;
+pub mod preferences;
 pub mod presence;
 pub mod presence_bridge;
 pub mod private_reply;
@@ -88,6 +89,7 @@ pub use crate::app::message_actions::{
 pub use crate::app::notifications::{
     Clock, NotificationProjection, Notifier, NotifyRustNotifier, SystemClock, now_or, unix_now,
 };
+use crate::app::preferences::ComposerDirection;
 use crate::app::presence::{PresenceDiagnostics, SelectedPresence};
 use crate::app::read_receipts::Coordinator as ReadReceiptCoordinator;
 use crate::app::runtime_diagnostics::{MessageListCounts, Phase, RuntimeDiagnostics};
@@ -179,6 +181,9 @@ pub struct App<'a> {
     presence_diagnostics: PresenceDiagnostics,
 
     pub composer: Composer<'a>,
+    pub(crate) composer_direction: ComposerDirection,
+    pub(crate) composer_viewport_width: u16,
+    pub(crate) preferences_path: PathBuf,
     pub message_list_state: MessageListState,
     pub timeline: unread_messages::Timeline,
     pub metadata: HashMap<wr::MessageId, Metadata>,
@@ -291,6 +296,17 @@ impl App<'_> {
         notifier: Box<dyn Notifier>,
     ) -> Self {
         bootstrap::with_data_dir_and_ports(data_dir, cache_dir, clock, notifier)
+    }
+
+    pub(crate) fn toggle_composer_direction(&mut self) {
+        let next = self.composer_direction.toggle();
+        if let Err(error) =
+            crate::app::preferences::save_composer_direction(&self.preferences_path, next)
+        {
+            self.unavailable(&format!("Could not persist composer direction: {error}"));
+            return;
+        }
+        self.composer_direction = next;
     }
 }
 
