@@ -227,6 +227,16 @@ struct CChatEvent {
 }
 
 #[repr(C)]
+struct CMarkChatAsReadEvent {
+    chat: CJID,
+    message_id: *const c_char,
+    read: bool,
+    timestamp: i64,
+    from_me: bool,
+    participant: CJID,
+}
+
+#[repr(C)]
 struct CLogoutResultEvent {
     status: u8,
 }
@@ -534,6 +544,14 @@ enum EventType {
     MessageAction = 6,
     Chat = 7,
     LogoutResult = 8,
+    MarkChatAsRead = 9,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, FromRepr)]
+#[repr(u8)]
+pub enum ReceiptKind {
+    Read = 0,
+    ReadSelf = 1,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, FromRepr)]
@@ -558,7 +576,7 @@ pub enum Event {
     SyncProgress(u8),
     AppStateSyncComplete,
     Receipt {
-        kind: u8,
+        kind: ReceiptKind,
         chat: JID,
         message_ids: Vec<MessageId>,
     },
@@ -590,6 +608,14 @@ pub enum Event {
     /// remove-companion-device IQ off the event loop so `logout()` no longer
     /// blocks the UI; this event drives the local cleanup on completion.
     LogoutResult(LogoutStatus),
+    MarkChatAsRead {
+        chat: JID,
+        message_id: MessageId,
+        read: bool,
+        timestamp: i64,
+        from_me: bool,
+        participant: Option<JID>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -918,6 +944,13 @@ unsafe extern "C" {
     fn C_RevokeMessage(chat_jid: CJID, sender_jid: CJID, message_id: *const c_char) -> u8;
 
     fn C_MarkAsRead(msg_id: *const c_char, chat_jid: CJID, sender_jid: CJID) -> i32;
+    fn C_MarkChatReadSync(
+        chat_jid: CJID,
+        msg_id: *const c_char,
+        timestamp: i64,
+        from_me: bool,
+        participant_jid: CJID,
+    ) -> i32;
 
     fn C_SetMessageHandler(message_cb: CMessageCallback, data: *mut c_void);
     fn C_SetOptimisticTextSentHandler(callback: COptimisticTextSentCallback, data: *mut c_void);
@@ -1243,6 +1276,50 @@ pub fn mark_as_read(
     }
 }
 
+pub fn sync_chat_read(
+    chat_jid: &JID,
+    message_id: &MessageId,
+    timestamp: i64,
+    from_me: bool,
+    participant_jid: Option<&JID>,
+) {
+    let chat = chat_jid.0.to_string();
+    let message = message_id.to_string();
+    let participant = participant_jid.map(|jid| jid.0.to_string());
+    std::thread::spawn(move || {
+        let chat_c = match CString::new(chat) {
+            Ok(value) => value,
+            Err(_) => {
+                log::warn!("chat read sync skipped: invalid chat JID");
+                return;
+            }
+        };
+        let message_c = match CString::new(message) {
+            Ok(value) => value,
+            Err(_) => {
+                log::warn!("chat read sync skipped: invalid message ID");
+                return;
+            }
+        };
+        let participant_c = participant.and_then(|value| CString::new(value).ok());
+        let participant_ptr = participant_c
+            .as_ref()
+            .map_or(std::ptr::null(), |value| value.as_ptr());
+        let result = unsafe {
+            C_MarkChatReadSync(
+                chat_c.as_ptr(),
+                message_c.as_ptr(),
+                timestamp,
+                from_me,
+                participant_ptr,
+            )
+        };
+        if result != 0 {
+            log::warn!("chat read sync failed with bridge status {result}");
+        }
+    });
+}
+
 #[cfg(test)]
 mod read_receipt_ffi_tests {
     use super::*;
@@ -1299,7 +1376,7 @@ impl CallbackTranslator<*const CEvent> for Event {
                 .collect();
 
                 Event::Receipt {
-                    kind: receipt.kind,
+                    kind: ReceiptKind::from_repr(receipt.kind).unwrap_or(ReceiptKind::Read),
                     chat,
                     message_ids,
                 }
@@ -1317,6 +1394,21 @@ impl CallbackTranslator<*const CEvent> for Event {
                 Event::LogoutResult(
                     LogoutStatus::from_repr(result.status).unwrap_or(LogoutStatus::Failed),
                 )
+            },
+            EventType::MarkChatAsRead => unsafe {
+                let event = &*(event.data as *const CMarkChatAsReadEvent);
+                Event::MarkChatAsRead {
+                    chat: (&event.chat).into(),
+                    message_id: CStr::from_ptr(event.message_id)
+                        .to_string_lossy()
+                        .into_owned()
+                        .into(),
+                    read: event.read,
+                    timestamp: event.timestamp,
+                    from_me: event.from_me,
+                    participant: (!event.participant.is_null())
+                        .then(|| (&event.participant).into()),
+                }
             },
         }
     }

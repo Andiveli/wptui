@@ -15,6 +15,7 @@ pub struct MessageActionDiagnostics {
 struct DiagnosticState {
     action_entries: VecDeque<String>,
     census_entries: VecDeque<String>,
+    read_sync_entries: VecDeque<String>,
     reported: bool,
 }
 
@@ -48,6 +49,14 @@ impl MessageActionDiagnostics {
         }
     }
 
+    pub fn record_read_sync(&self, entry: impl FnOnce() -> String) {
+        if !self.enabled {
+            return;
+        }
+        let mut state = self.state.lock().unwrap();
+        push_bounded(&mut state.read_sync_entries, entry());
+    }
+
     pub fn write_report(&self, mut output: impl Write) -> io::Result<()> {
         if !self.enabled {
             return Ok(());
@@ -70,6 +79,14 @@ impl MessageActionDiagnostics {
             writeln!(output, "No whatsmeow events captured.")?;
         } else {
             for (index, entry) in state.census_entries.iter().enumerate() {
+                writeln!(output, "{}. {entry}", index + 1)?;
+            }
+        }
+        writeln!(output, "Chat read/status diagnostics:")?;
+        if state.read_sync_entries.is_empty() {
+            writeln!(output, "No chat read/status events captured.")?;
+        } else {
+            for (index, entry) in state.read_sync_entries.iter().enumerate() {
                 writeln!(output, "{}. {entry}", index + 1)?;
             }
         }
@@ -339,7 +356,7 @@ mod tests {
         assert!(!output.contains("sequence=0"));
         assert!(output.contains("1. source=rust sequence=1 target=<id:"));
         assert!(output.contains("100. source=rust sequence=100 target=<id:"));
-        assert_eq!(output.lines().count(), MAX_DIAGNOSTIC_ENTRIES + 3);
+        assert_eq!(output.lines().count(), MAX_DIAGNOSTIC_ENTRIES + 5);
     }
 
     #[test]
@@ -412,7 +429,7 @@ mod tests {
 
         assert_eq!(
             String::from_utf8(output).unwrap(),
-            "Message action diagnostics:\nNo message-action events captured.\nEvent census:\nNo whatsmeow events captured.\n"
+            "Message action diagnostics:\nNo message-action events captured.\nEvent census:\nNo whatsmeow events captured.\nChat read/status diagnostics:\nNo chat read/status events captured.\n"
         );
     }
 }

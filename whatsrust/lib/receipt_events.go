@@ -11,7 +11,7 @@ typedef struct {
 	uint8_t kind;
 	JID id;
 	char* const* messageIDs;
-	size_t size;
+	uint32_t size;
 } ReceiptEvent;
 
 typedef struct {
@@ -34,6 +34,7 @@ import "C"
 import (
 	"unsafe"
 
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 )
@@ -41,16 +42,64 @@ import (
 type receiptEvent struct {
 	chat       types.JID
 	messageIDs []string
+	kind       uint8
 }
 
-func receiptEventFromEvent(event *events.Receipt) (receiptEvent, bool) {
+type receiptChatCanonicalization string
+
+const (
+	receiptChatUnchanged       receiptChatCanonicalization = "unchanged"
+	receiptChatLIDToPNResolved receiptChatCanonicalization = "lid_to_pn_resolved"
+	receiptChatMappingMissing  receiptChatCanonicalization = "mapping_unavailable"
+	receiptChatInvalid         receiptChatCanonicalization = "invalid"
+)
+
+func canonicalizeReceiptChat(c *whatsmeow.Client, chat, sender types.JID) (types.JID, receiptChatCanonicalization) {
+	if chat.IsEmpty() {
+		return types.JID{}, receiptChatInvalid
+	}
+	normalized := GetChatId(c, &chat, &sender)
+	if normalized == "" {
+		return types.JID{}, receiptChatInvalid
+	}
+	canonical, err := types.ParseJID(normalized)
+	if err != nil || canonical.IsEmpty() {
+		return types.JID{}, receiptChatInvalid
+	}
+	if chat.Server == types.HiddenUserServer && canonical.Server == types.HiddenUserServer {
+		return canonical, receiptChatMappingMissing
+	}
+	if normalized != StrFromJid(chat) {
+		return canonical, receiptChatLIDToPNResolved
+	}
+	return canonical, receiptChatUnchanged
+}
+
+func receiptEventFromEventWithClient(c *whatsmeow.Client, event *events.Receipt) (receiptEvent, bool) {
 	if event == nil || (event.Type != types.ReceiptTypeRead && event.Type != types.ReceiptTypeReadSelf) {
 		return receiptEvent{}, false
 	}
+	chat, outcome := canonicalizeReceiptChat(c, event.MessageSource.Chat, event.MessageSource.Sender)
+	messageActionDiagnostic("classifier=receipt_canonicalization result=%s kind=receipt", outcome)
+	if outcome == receiptChatInvalid {
+		return receiptEvent{}, false
+	}
 	return receiptEvent{
-		chat:       event.MessageSource.Chat,
+		chat:       chat,
 		messageIDs: event.MessageIDs,
+		kind:       receiptKind(event.Type),
 	}, true
+}
+
+func receiptEventFromEvent(event *events.Receipt) (receiptEvent, bool) {
+	return receiptEventFromEventWithClient(client, event)
+}
+
+func receiptKind(kind types.ReceiptType) uint8 {
+	if kind == types.ReceiptTypeReadSelf {
+		return 1
+	}
+	return 0
 }
 
 func dispatchReceiptEvent(receipt receiptEvent) {
@@ -62,13 +111,26 @@ func dispatchReceiptEvent(receipt receiptEvent) {
 	}
 
 	creceipt := (*C.ReceiptEvent)(C.malloc(C.sizeof_ReceiptEvent))
-	creceipt.kind = C.uint8_t(EventTypeReceipt)
+	if creceipt == nil {
+		for _, id := range messageIDs {
+			C.free(unsafe.Pointer(id))
+		}
+		C.free(unsafe.Pointer(cmessageIDs))
+		return
+	}
+	creceipt.kind = C.uint8_t(receipt.kind)
 	creceipt.id = jidToC(receipt.chat)
 	creceipt.messageIDs = cmessageIDs
-	creceipt.size = C.size_t(n)
+	creceipt.size = C.uint32_t(n)
 
 	C.callReceiptEventCallback(eventHandler, &C.Event{
 		kind: C.uint8_t(EventTypeReceipt),
 		data: unsafe.Pointer(creceipt),
 	})
+	for _, id := range messageIDs {
+		C.free(unsafe.Pointer(id))
+	}
+	C.free(unsafe.Pointer(cmessageIDs))
+	C.free(unsafe.Pointer(creceipt.id))
+	C.free(unsafe.Pointer(creceipt))
 }

@@ -168,6 +168,14 @@ impl DatabaseHandler {
         )
         .unwrap();
         db.execute(
+            "CREATE TABLE IF NOT EXISTS status_read_cursors (
+                contact_jid TEXT PRIMARY KEY,
+                timestamp INTEGER NOT NULL
+            )",
+            [],
+        )
+        .unwrap();
+        db.execute(
             "CREATE TABLE IF NOT EXISTS message_reactions (
                 message_id TEXT NOT NULL,
                 participant_jid TEXT NOT NULL,
@@ -763,6 +771,15 @@ impl DatabaseHandler {
                 [],
             )
             .unwrap();
+        self.db
+            .execute(
+                "CREATE TABLE IF NOT EXISTS status_read_cursors (
+                    contact_jid TEXT PRIMARY KEY,
+                    timestamp INTEGER NOT NULL
+                )",
+                [],
+            )
+            .unwrap();
 
         for kind in wr::MessageContent::iter() {
             match kind {
@@ -842,6 +859,29 @@ impl DatabaseHandler {
             })
             .unwrap()
             .map(Result::unwrap)
+            .collect()
+    }
+
+    pub fn set_status_last_seen(
+        &self,
+        contact: &wr::JID,
+        timestamp: i64,
+    ) -> Result<usize, rusqlite::Error> {
+        let _write_lock = DATABASE_WRITE_LOCK.lock().unwrap();
+        self.db
+            .execute(
+                "INSERT INTO status_read_cursors (contact_jid, timestamp) VALUES (?1, ?2)
+                 ON CONFLICT(contact_jid) DO UPDATE SET timestamp = MAX(timestamp, excluded.timestamp)",
+                rusqlite::params![contact.0, timestamp],
+            )
+    }
+
+    pub fn status_last_seen(&self) -> Result<Vec<(wr::JID, i64)>, rusqlite::Error> {
+        let mut query = self
+            .db
+            .prepare("SELECT contact_jid, timestamp FROM status_read_cursors")?;
+        query
+            .query_map([], |row| Ok((row.get::<_, String>(0)?.into(), row.get(1)?)))?
             .collect()
     }
 

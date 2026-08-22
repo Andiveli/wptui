@@ -3929,7 +3929,7 @@ dependencies = [
 
 [[package]]
 name = "whatsrust"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "log",
  "strum 0.27.2",

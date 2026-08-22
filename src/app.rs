@@ -170,9 +170,8 @@ pub struct App<'a> {
     /// first). Derived from the `status@broadcast` chat.
     pub status_contacts: Vec<wr::JID>,
     pub status_selection: ListState,
-    /// Latest status timestamp the user has viewed per contact. In-memory
-    /// only: a restart resets it, so previously-read statuses reappear as
-    /// unseen once.
+    /// Latest status timestamp the user has viewed per contact, restored from
+    /// the status_read_cursors table at startup.
     pub status_last_seen: HashMap<wr::JID, i64>,
 
     pub history_sync_percent: Option<u8>,

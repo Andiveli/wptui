@@ -261,6 +261,7 @@ impl RuntimeDiagnostics {
                 whatsrust::Event::Chat { .. }
                 | whatsrust::Event::Reaction { .. }
                 | whatsrust::Event::MessageAction { .. }
+                | whatsrust::Event::MarkChatAsRead { .. }
                 | whatsrust::Event::LogoutResult(_) => 7,
             },
         };
