@@ -100,4 +100,15 @@ mod tests {
         assert_eq!(settings.row_style, RowStyle::Enabled);
         assert!(settings.display_label.contains("Composer direction: RTL"));
     }
+
+    #[test]
+    fn quit_entry_displays_the_leader_shortcut_and_action() {
+        let quit = build_leader_menu(LeaderMenuContext::default())
+            .into_iter()
+            .find(|row| row.display_shortcut == "Space+q")
+            .expect("quit entry");
+        assert_eq!(quit.display_label, "Quit");
+        assert_eq!(quit.action_token, AppAction::Quit);
+        assert_eq!(quit.row_style, RowStyle::Enabled);
+    }
 }

@@ -79,6 +79,7 @@ fn contextual_action_to_app_action(action: ContextualAction) -> AppAction {
         ContextualAction::GoToReference => AppAction::GoToReference,
         ContextualAction::DeleteForEveryone => AppAction::DeleteMessage,
         ContextualAction::Attach => AppAction::AttachFile,
+        ContextualAction::Quit => AppAction::Quit,
         _ => AppAction::PlannedLeaderAction(
             crate::app::contextual_actions::CONTEXTUAL_ACTION_METADATA
                 .iter()
@@ -116,6 +117,26 @@ mod tests {
         app.contextual_menu.as_mut().unwrap().1 = attach;
         app.activate_contextual_action();
         assert!(app.file_picker.is_some());
+    }
+
+    #[test]
+    fn contextual_quit_dispatches_through_the_existing_quit_path() {
+        let mut app = TestApp::new();
+        app.focus_pane = FocusPane::Conversation;
+        app.selected_section = Section::Chats;
+        app.open_contextual_actions();
+        let quit = app
+            .contextual_menu
+            .as_ref()
+            .unwrap()
+            .0
+            .iter()
+            .position(|row| row.action_token == ContextualAction::Quit)
+            .unwrap();
+        app.contextual_menu.as_mut().unwrap().1 = quit;
+        app.activate_contextual_action();
+        assert!(app.should_quit);
+        assert!(app.contextual_menu.is_none());
     }
 
     #[test]

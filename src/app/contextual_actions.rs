@@ -69,6 +69,9 @@ pub fn evaluate_availability(
     if implementation == ImplementationStatus::Planned {
         return ActionAvailability::planned();
     }
+    if action == Some(ContextualAction::Quit) {
+        return ActionAvailability::enabled();
+    }
     if action.is_some()
         && facts
             .contextual
@@ -155,6 +158,7 @@ pub enum ContextualAction {
     Open,
     ViewAttachment,
     GoToReference,
+    Quit,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -173,9 +177,10 @@ pub enum ContextualScope {
     Conversation,
     StatusChatList,
     AnyConversation,
+    Global,
 }
 
-pub const CONTEXTUAL_ACTION_METADATA: [ContextualActionMetadata; 22] = [
+pub const CONTEXTUAL_ACTION_METADATA: [ContextualActionMetadata; 23] = [
     m(
         ContextualAction::Starred,
         "Starred",
@@ -330,6 +335,13 @@ pub const CONTEXTUAL_ACTION_METADATA: [ContextualActionMetadata; 22] = [
         ContextualScope::Conversation,
         ImplementationStatus::Implemented,
     ),
+    m(
+        ContextualAction::Quit,
+        "Quit",
+        'q',
+        ContextualScope::Global,
+        ImplementationStatus::Implemented,
+    ),
 ];
 
 const fn m(
@@ -396,6 +408,7 @@ pub fn contextual_menu_rows(context: ContextualContext) -> Vec<ContextualMenuRow
 
 fn applies(scope: ContextualScope, context: ContextualContext) -> bool {
     match scope {
+        ContextualScope::Global => true,
         ContextualScope::SectionRail => context.focus == FocusPane::SectionRail,
         ContextualScope::ChatList => {
             context.focus == FocusPane::ChatList && context.section != Section::Status
@@ -521,5 +534,45 @@ mod tests {
                 .map(|row| row.row_style),
             Some(RowStyle::Disabled)
         );
+    }
+
+    #[test]
+    fn quit_is_enabled_and_unique_in_every_contextual_menu_scope() {
+        for focus in [
+            FocusPane::SectionRail,
+            FocusPane::ChatList,
+            FocusPane::Conversation,
+        ] {
+            for section in [Section::Chats, Section::Status] {
+                let rows = contextual_menu_rows(ContextualContext {
+                    focus,
+                    section,
+                    has_selected_message: true,
+                    selected_text: true,
+                    selected_message_is_informational: true,
+                    has_reference: true,
+                    attach_blocked: false,
+                });
+                let quit_rows = rows
+                    .iter()
+                    .filter(|row| row.action_token == ContextualAction::Quit)
+                    .collect::<Vec<_>>();
+                assert_eq!(quit_rows.len(), 1, "{focus:?} / {section:?}");
+                assert_eq!(quit_rows[0].display_label, "Quit");
+                assert_eq!(quit_rows[0].display_shortcut, 'q');
+                assert_eq!(quit_rows[0].row_style, RowStyle::Enabled);
+                assert_eq!(
+                    rows.iter()
+                        .filter(|row| row.display_shortcut == 'q')
+                        .count(),
+                    1,
+                    "{focus:?} / {section:?}"
+                );
+                assert_eq!(
+                    contextual_key_action(&rows, 'q'),
+                    Some(ContextualAction::Quit)
+                );
+            }
+        }
     }
 }

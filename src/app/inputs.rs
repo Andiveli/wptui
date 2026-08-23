@@ -511,6 +511,7 @@ impl App<'_> {
 mod tests {
     use super::*;
     use crate::app::actions::Section;
+    use crate::app::contextual_actions::ContextualAction;
     use crate::app::test_support::TestApp;
     use ratatui::crossterm::event::{Event, KeyCode as TerminalKeyCode, KeyEvent, KeyModifiers};
 
@@ -572,6 +573,9 @@ mod tests {
                     .unwrap()
                     .0
                     .iter()
+                    .filter(|row| {
+                        row.action_token != crate::app::contextual_actions::ContextualAction::Quit
+                    })
                     .all(|row| row.row_style == crate::app::contextual_actions::RowStyle::Disabled),
                 "character: {character:?}"
             );
@@ -598,9 +602,114 @@ mod tests {
                     .unwrap()
                     .0
                     .iter()
+                    .filter(|row| {
+                        row.action_token != crate::app::contextual_actions::ContextualAction::Quit
+                    })
                     .all(|row| row.row_style == crate::app::contextual_actions::RowStyle::Disabled),
                 "character: {character:?}"
             );
         }
+    }
+
+    #[test]
+    fn space_then_q_quits_through_terminal_input_routing() {
+        let mut app = TestApp::new();
+
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            TerminalKeyCode::Char(' '),
+            KeyModifiers::NONE,
+        )));
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            TerminalKeyCode::Char('q'),
+            KeyModifiers::NONE,
+        )));
+
+        assert!(app.should_quit);
+        assert!(app.leader_menu.is_none());
+    }
+
+    #[test]
+    fn contextual_q_quits_through_terminal_input_routing() {
+        let mut app = TestApp::new();
+        app.focus_pane = FocusPane::Conversation;
+        app.selected_section = Section::Chats;
+
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            TerminalKeyCode::Enter,
+            KeyModifiers::NONE,
+        )));
+        assert!(app.contextual_menu.is_some());
+
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            TerminalKeyCode::Char('q'),
+            KeyModifiers::NONE,
+        )));
+
+        assert!(app.should_quit);
+        assert!(app.contextual_menu.is_none());
+    }
+
+    #[test]
+    fn enter_activates_selected_quit_row_in_leader_menu() {
+        let mut app = TestApp::new();
+
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            TerminalKeyCode::Char(' '),
+            KeyModifiers::NONE,
+        )));
+        let quit_index = app
+            .leader_menu
+            .as_ref()
+            .unwrap()
+            .0
+            .iter()
+            .position(|row| row.action_token == AppAction::Quit)
+            .unwrap();
+        for _ in 0..quit_index {
+            app.on_terminal_event(Event::Key(KeyEvent::new(
+                TerminalKeyCode::Down,
+                KeyModifiers::NONE,
+            )));
+        }
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            TerminalKeyCode::Enter,
+            KeyModifiers::NONE,
+        )));
+
+        assert!(app.should_quit);
+        assert!(app.leader_menu.is_none());
+    }
+
+    #[test]
+    fn enter_activates_selected_quit_row_in_contextual_menu() {
+        let mut app = TestApp::new();
+        app.focus_pane = FocusPane::Conversation;
+        app.selected_section = Section::Chats;
+
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            TerminalKeyCode::Enter,
+            KeyModifiers::NONE,
+        )));
+        let quit_index = app
+            .contextual_menu
+            .as_ref()
+            .unwrap()
+            .0
+            .iter()
+            .position(|row| row.action_token == ContextualAction::Quit)
+            .unwrap();
+        for _ in 0..quit_index {
+            app.on_terminal_event(Event::Key(KeyEvent::new(
+                TerminalKeyCode::Down,
+                KeyModifiers::NONE,
+            )));
+        }
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            TerminalKeyCode::Enter,
+            KeyModifiers::NONE,
+        )));
+
+        assert!(app.should_quit);
+        assert!(app.contextual_menu.is_none());
     }
 }
