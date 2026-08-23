@@ -285,7 +285,7 @@ fn avatar_requests_are_selected_first_then_visible_then_overscan() {
 fn contacts_module_owns_orchestration_and_preserves_draw_guards() {
     for symbol in [
         "render_contacts",
-        "contact_visible_range",
+        "visible_contact_rows",
         "prioritized_avatar_requests",
         "app.contact_avatars.schedule",
         "AVATAR_WIDTH",
