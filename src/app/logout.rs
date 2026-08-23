@@ -1,8 +1,8 @@
-use ratatui::crossterm::event::KeyCode;
+use crate::input_key::KeyCode;
 
 use crate::app::App;
 use crate::app::actions::{ActionNotice, Section};
-use crate::key_handler::Key;
+use crate::input_key::Key;
 use whatsrust as wr;
 
 impl App<'_> {

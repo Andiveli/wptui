@@ -24,6 +24,11 @@ impl App<'_> {
         download_tx: &DownloadSender,
     ) -> bool {
         match event {
+            AppEvent::OptimisticTextSent {
+                local_send_id,
+                message,
+            } => self.complete_text_send(local_send_id, message),
+            AppEvent::TextSendFailed { local_send_id } => self.fail_text_send(local_send_id),
             AppEvent::ReadReceiptResult(key, status) => {
                 self.complete_read_receipt(&key, status);
                 false
@@ -223,8 +228,8 @@ impl App<'_> {
                 true
             }
             AppEvent::ContactAvatar(result) => self.contact_avatars.apply(result),
-            AppEvent::ContactAvatarRefreshed { generation, jid } => {
-                self.contact_avatars.mark_refreshed(generation, jid)
+            AppEvent::ContactAvatarRefreshed { generation, target } => {
+                self.contact_avatars.mark_refreshed(generation, target)
             }
             AppEvent::DownloadFile(message_id, file_id) => {
                 if matches!(

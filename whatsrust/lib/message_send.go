@@ -26,11 +26,47 @@ import "C"
 import (
 	"context"
 	"fmt"
+	"time"
 	"unsafe"
 
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 )
+
+type sendMessageRequest func(context.Context, types.JID, *waE2E.Message) (whatsmeow.SendResponse, error)
+
+var requestSendMessage sendMessageRequest = func(ctx context.Context, jid types.JID, message *waE2E.Message) (whatsmeow.SendResponse, error) {
+	return client.SendMessage(ctx, jid, message)
+}
+
+var normalMessageCallback = HandleMessage
+var optimisticTextSentCallback = HandleOptimisticTextSent
+
+type textSendQuote struct {
+	stanzaID    string
+	participant string
+	remoteJID   string
+	content     *waE2E.Message
+}
+
+type textSendRequest struct {
+	messageType   uint8
+	chat         types.JID
+	text         string
+	mentionedJIDs []string
+	fileKind     uint8
+	filePath     string
+	caption      *string
+	quote        *textSendQuote
+	localSendID  uint64
+}
+
+const optimisticTextSendTimeout = 5 * time.Second
+
+func optimisticTextSendContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(parent, timeout)
+}
 
 // ContentToWaE2EMessage converts the public FFI payload into a WhatsApp
 // message. File construction remains delegated to the injectable builder.
@@ -121,6 +157,17 @@ func mentionedJIDs(ptr *C.JID, count C.uintptr_t) []string {
 		}
 		parsed, err := types.ParseJID(C.GoString(jid))
 		if err == nil && !parsed.IsEmpty() {
+			result = append(result, parsed.String())
+		}
+	}
+	return normalizeMentionedJIDs(result)
+}
+
+func normalizeMentionedJIDs(mentioned []string) []string {
+	result := make([]string, 0, len(mentioned))
+	for _, value := range mentioned {
+		parsed, err := types.ParseJID(value)
+		if err == nil && !parsed.IsEmpty() {
 			result = append(result, parsed.ToNonAD().String())
 		}
 	}
@@ -177,31 +224,104 @@ func quotedMessageFromContent(messageType C.uint8_t, messageContent unsafe.Point
 
 //export C_SendMessage
 func C_SendMessage(cjid C.JID, messageType C.uint8_t, messageContent unsafe.Pointer, quoteId *C.char, quoteSender C.JID, quoteChat C.JID, quoteMessageType C.uint8_t, quoteMessageContent unsafe.Pointer) {
-	if cjid == nil || messageContent == nil || client == nil || client.Store == nil || client.Store.ID == nil {
+	request, ok := textSendRequestFromC(cjid, messageType, messageContent, quoteId, quoteSender, quoteChat, quoteMessageType, quoteMessageContent, 0)
+	if ok {
+		_ = sendNormalTextRequest(request)
+	}
+}
+
+//export C_SendTextMessage
+func C_SendTextMessage(cjid C.JID, messageContent unsafe.Pointer, quoteId *C.char, quoteSender C.JID, quoteChat C.JID, quoteMessageType C.uint8_t, quoteMessageContent unsafe.Pointer, localSendID C.uint64_t) C.uint8_t {
+	request, ok := textSendRequestFromC(cjid, C.uint8_t(MessageTypeText), messageContent, quoteId, quoteSender, quoteChat, quoteMessageType, quoteMessageContent, uint64(localSendID))
+	if !ok {
+		return 1
+	}
+	return C.uint8_t(sendOptimisticTextRequest(request))
+}
+
+func textSendRequestFromC(cjid C.JID, messageType C.uint8_t, messageContent unsafe.Pointer, quoteID *C.char, quoteSender C.JID, quoteChat C.JID, quoteMessageType C.uint8_t, quoteMessageContent unsafe.Pointer, localSendID uint64) (textSendRequest, bool) {
+	if cjid == nil || messageContent == nil {
+		return textSendRequest{}, false
+	}
+	request := textSendRequest{
+		messageType:   uint8(messageType),
+		chat:          cToJid(cjid),
+		localSendID:   localSendID,
+	}
+	switch messageType {
+	case C.uint8_t(MessageTypeText):
+		textMessage := (*C.SendTextMessage)(messageContent)
+		request.text = C.GoString(textMessage.text)
+		request.mentionedJIDs = mentionedJIDs(textMessage.mentionedJIDs, textMessage.mentionedCount)
+	case C.uint8_t(MessageTypeFile):
+		fileMessage := (*C.SendFileMessage)(messageContent)
+		request.fileKind = uint8(fileMessage.kind)
+		request.filePath = C.GoString(fileMessage.path)
+		request.mentionedJIDs = mentionedJIDs(fileMessage.mentionedJIDs, fileMessage.mentionedCount)
+		if fileMessage.caption != nil {
+			caption := C.GoString(fileMessage.caption)
+			request.caption = &caption
+		}
+	default:
+		return textSendRequest{}, false
+	}
+	if quoteID != nil {
+		request.quote = &textSendQuote{
+			stanzaID:    C.GoString(quoteID),
+			participant: C.GoString(quoteSender),
+			remoteJID:   C.GoString(quoteChat),
+			content:     quotedMessageFromContent(quoteMessageType, quoteMessageContent),
+		}
+	}
+	return request, true
+}
+
+func sendNormalTextRequest(request textSendRequest) uint8 {
+	request.localSendID = 0
+	return sendTextRequest(request)
+}
+
+func sendOptimisticTextRequest(request textSendRequest) uint8 {
+	if request.localSendID == 0 {
+		return sendNormalTextRequest(request)
+	}
+	return sendTextRequest(request)
+}
+
+func sendTextRequest(request textSendRequest) uint8 {
+	if client == nil || client.Store == nil || client.Store.ID == nil {
 		LOG_WARN("message send rejected: client or message is unavailable")
-		return
+		return 1
 	}
-	jid := cToJid(cjid)
-
 	contextInfo := &waE2E.ContextInfo{}
-	if quoteId != nil {
-		contextInfo = quotedContextInfo(C.GoString(quoteId), C.GoString(quoteSender), C.GoString(quoteChat))
-		contextInfo.QuotedMessage = quotedMessageFromContent(quoteMessageType, quoteMessageContent)
+	if request.quote != nil {
+		contextInfo = quotedContextInfo(request.quote.stanzaID, request.quote.participant, request.quote.remoteJID)
+		contextInfo.QuotedMessage = request.quote.content
 	}
+	message := contentToWaE2EMessage(request.messageType, request.text, normalizeMentionedJIDs(request.mentionedJIDs), request.fileKind, request.filePath, request.caption, contextInfo, client.Upload)
 
-	message := ContentToWaE2EMessage(messageType, messageContent, contextInfo)
-
-	sendResponse, err := client.SendMessage(context.Background(), jid, message)
+	sendContext := context.Background()
+	if request.localSendID != 0 {
+		var cancel context.CancelFunc
+		sendContext, cancel = optimisticTextSendContext(sendContext, optimisticTextSendTimeout)
+		defer cancel()
+	}
+	sendResponse, err := requestSendMessage(sendContext, request.chat, message)
 	if err != nil {
 		LOG_WARN("message send failed: %v", err)
-		return
+		return 1
 	}
 
 	messageInfo := types.MessageInfo{
-		MessageSource: types.MessageSource{Chat: jid, Sender: *client.Store.ID, IsFromMe: true},
+		MessageSource: types.MessageSource{Chat: request.chat, Sender: *client.Store.ID, IsFromMe: true},
 		ID:            sendResponse.ID,
 		Timestamp:     sendResponse.Timestamp,
 	}
 	LOG_INFO("Message sent: %s %s", messageInfo.ID, messageInfo.Chat)
-	HandleMessage(messageInfo, message, false)
+	if request.localSendID != 0 {
+		optimisticTextSentCallback(request.localSendID, messageInfo, message)
+	} else {
+		normalMessageCallback(messageInfo, message, false)
+	}
+	return 0
 }

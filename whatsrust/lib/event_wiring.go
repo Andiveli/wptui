@@ -33,13 +33,13 @@ func AddEventHandlers() {
 		case *events.Presence:
 			dispatchPresenceEvent(evt, client.Store.LIDs.GetPNForLID, rawPresenceProbe.record, rawPresenceProbe.update, dispatchPresenceCallback)
 		case *events.MarkChatAsRead:
-			LOG_DEBUG("MarkChatAsRead %v", evt.JID)
+			dispatchMarkChatAsReadEvent(evt)
 		case *events.AppStateSyncComplete:
 			dispatchAppStateSyncComplete(evt)
 		case *events.Message:
 			dispatchIncomingMessage(evt, dispatchMessageActionEvent, HandleMessage)
 		case *events.Receipt:
-			if receipt, ok := receiptEventFromEvent(evt); ok {
+			if receipt, ok := receiptEventFromEventWithClient(client, evt); ok {
 				LOG_DEBUG("%#v was read by %s at %s", evt.MessageIDs, evt.SourceString(), evt.Timestamp)
 				dispatchReceiptEvent(receipt)
 			}

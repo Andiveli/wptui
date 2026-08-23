@@ -39,12 +39,7 @@ func HandleMessage(info types.MessageInfo, msg *waE2E.Message, isSync bool) {
 			}
 		}
 
-		mentionedJIDs := context_info.GetMentionedJID()
-		text := replaceMentionedNames(
-			ext_msg.GetText(),
-			mentionedJIDs,
-			mentionEntriesForGroup(context.Background(), info.Chat, mentionedJIDs...),
-		)
+		text := replaceMessageMentionNames(info.Chat, ext_msg.GetText(), context_info)
 		emitTextMessage(cinfo, text, isSync)
 	}
 	if msg.ImageMessage != nil {
@@ -72,4 +67,38 @@ func HandleMessage(info types.MessageInfo, msg *waE2E.Message, isSync bool) {
 			return
 		}
 	}
+}
+
+// HandleOptimisticTextSent delivers the immediate canonical result through a
+// request-scoped callback. It deliberately bypasses HandleMessage so the later
+// server echo remains a normal generic callback deduped by its server ID.
+func HandleOptimisticTextSent(localSendID uint64, info types.MessageInfo, msg *waE2E.Message) {
+	info = normalizeMessageInfo(info)
+	callback := beginMessageCallback(info, msg, nil)
+	defer callback.close()
+	if msg.ExtendedTextMessage != nil {
+		ext := msg.GetExtendedTextMessage()
+		contextInfo := ext.GetContextInfo()
+		if id := contextInfo.GetStanzaID(); id != "" {
+			callback.info.quoteID = C.CString(id)
+		}
+		text := replaceMessageMentionNames(info.Chat, ext.GetText(), contextInfo)
+		emitOptimisticTextMessage(callback.info, text, localSendID)
+		return
+	}
+	if msg.Conversation != nil {
+		emitOptimisticTextMessage(callback.info, msg.GetConversation(), localSendID)
+	}
+}
+
+func replaceMessageMentionNames(chat types.JID, text string, contextInfo *waE2E.ContextInfo) string {
+	if contextInfo == nil {
+		return text
+	}
+	mentionedJIDs := contextInfo.GetMentionedJID()
+	return replaceMentionedNames(
+		text,
+		mentionedJIDs,
+		mentionEntriesForGroup(context.Background(), chat, mentionedJIDs...),
+	)
 }

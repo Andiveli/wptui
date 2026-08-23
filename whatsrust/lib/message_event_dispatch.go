@@ -6,6 +6,12 @@ import (
 )
 
 func normalizeMessageInfo(info types.MessageInfo) types.MessageInfo {
+	// Some history and DeviceSent events carry the sender identity while leaving
+	// IsFromMe unset. Resolve that source identity before canonicalization so the
+	// Rust side receives verified ownership for PN, LID, and device aliases.
+	if !info.IsFromMe && participantMatchesSelf(client, types.GroupParticipant{JID: info.Sender}) {
+		info.IsFromMe = true
+	}
 	// Normalize chat and sender ids (LID→PN, broadcast→per-sender) so Rust sees canonical ids.
 	if normalizedChat := GetChatId(client, &info.Chat, &info.Sender); normalizedChat != "" {
 		if jid, err := types.ParseJID(normalizedChat); err == nil {

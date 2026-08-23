@@ -22,12 +22,16 @@ pub mod composer_input_mapping;
 pub mod composer_input_paste;
 pub mod composer_integration;
 pub mod contact_avatars;
+pub mod contextual_actions;
+pub mod contextual_activation;
+pub mod contextual_routing;
 pub mod download_worker;
 pub mod events;
 pub mod file_picker_input;
 pub mod input_mapping;
 pub mod input_reader;
 pub mod inputs;
+pub mod leader_menu;
 pub mod log_toggle;
 pub mod logout;
 pub mod media_cache;
@@ -40,12 +44,15 @@ pub mod message_menu;
 pub mod message_navigation;
 pub mod message_opening;
 pub mod notifications;
+pub mod optimistic_text_send;
+pub mod preferences;
 pub mod presence;
 pub mod presence_bridge;
 pub mod private_reply;
 pub mod reaction_picker;
 pub mod read_receipts;
 pub mod runtime_callbacks;
+pub mod runtime_diagnostics;
 pub mod runtime_loop;
 pub mod runtime_media_events;
 pub mod runtime_startup;
@@ -68,8 +75,8 @@ use crate::app::actions::{
     UnavailableClipboardWriter, UrlOpener, WhatsAppMessageEditor, WhatsAppMessageForwarder,
     WhatsAppMessageReactor, WhatsAppMessageRevoker,
 };
-pub use crate::app::chat_projection::ChatRow;
-pub use crate::app::community_hierarchy::CommunityNode;
+pub use crate::app::chat_projection::{ChatRow, ContactRow};
+pub use crate::app::community_hierarchy::{CommunityNavigationRow, CommunityNode};
 use crate::app::composer::Composer;
 use crate::app::contact_avatars::ContactAvatars;
 use crate::app::events::{AppEvent, AppInput, AttachmentViewerState, ViewerPreviewState};
@@ -82,8 +89,10 @@ pub use crate::app::message_actions::{
 pub use crate::app::notifications::{
     Clock, NotificationProjection, Notifier, NotifyRustNotifier, SystemClock, now_or, unix_now,
 };
+use crate::app::preferences::ComposerDirection;
 use crate::app::presence::{PresenceDiagnostics, SelectedPresence};
 use crate::app::read_receipts::Coordinator as ReadReceiptCoordinator;
+use crate::app::runtime_diagnostics::{MessageListCounts, Phase, RuntimeDiagnostics};
 pub use crate::app::share_picker::SharePicker;
 pub use crate::app::status_projection::STATUS_BROADCAST_CHAT;
 use crate::db;
@@ -91,7 +100,7 @@ use crate::file_picker::FilePickerState;
 use crate::key_handler::KeybindHandler;
 // use crate::key_handler;
 
-use crate::ui::message_list::{MessageHeightCache, MessageListState};
+use crate::ui::message_list::{MessageHeightCache, MessageListState, MessageSequenceCache};
 use db::DatabaseHandler;
 use ratatui::widgets::ListState;
 use ratatui_image::picker::{Picker, ProtocolType};
@@ -155,6 +164,7 @@ pub struct App<'a> {
     /// pane. Mirrors `open_chat` for the Chats section: set on Enter.
     pub open_status_contact: Option<wr::JID>,
     pub communities: Vec<CommunityNode>,
+    pub community_detail: Option<wr::JID>,
     pub communities_unavailable: bool,
     communities_loaded: bool,
 
@@ -162,9 +172,8 @@ pub struct App<'a> {
     /// first). Derived from the `status@broadcast` chat.
     pub status_contacts: Vec<wr::JID>,
     pub status_selection: ListState,
-    /// Latest status timestamp the user has viewed per contact. In-memory
-    /// only: a restart resets it, so previously-read statuses reappear as
-    /// unseen once.
+    /// Latest status timestamp the user has viewed per contact, restored from
+    /// the status_read_cursors table at startup.
     pub status_last_seen: HashMap<wr::JID, i64>,
 
     pub history_sync_percent: Option<u8>,
@@ -172,6 +181,9 @@ pub struct App<'a> {
     presence_diagnostics: PresenceDiagnostics,
 
     pub composer: Composer<'a>,
+    pub(crate) composer_direction: ComposerDirection,
+    pub(crate) composer_viewport_width: u16,
+    pub(crate) preferences_path: PathBuf,
     pub message_list_state: MessageListState,
     pub timeline: unread_messages::Timeline,
     pub metadata: HashMap<wr::MessageId, Metadata>,
@@ -181,6 +193,8 @@ pub struct App<'a> {
     /// by a background thread once the file is on disk.
     pub audio_durations: HashMap<Arc<str>, u64>,
     pub message_height_cache: MessageHeightCache,
+    pub(crate) message_sequence_cache: HashMap<wr::JID, MessageSequenceCache>,
+    pub(crate) message_sequence_revisions: HashMap<wr::JID, u64>,
     pub default_protocol_type: ProtocolType,
     pub picker: Arc<Mutex<Picker>>,
     pub contact_avatars: ContactAvatars,
@@ -196,6 +210,12 @@ pub struct App<'a> {
     pub message_revoker: Box<dyn MessageRevoker>,
     pub action_notice: Option<ActionNotice>,
     pub message_menu: Option<(Vec<MessageMenuAction>, usize)>,
+    pub contextual_menu: Option<(
+        Vec<crate::app::contextual_actions::ContextualMenuRow>,
+        usize,
+    )>,
+    pub leader_menu: Option<(Vec<crate::app::leader_menu::LeaderMenuRow>, usize)>,
+    pub shortcut_popup: bool,
     pub reaction_picker: Option<(Vec<String>, usize)>,
     pub share_picker: Option<SharePicker>,
     pub url_picker: Option<(Vec<String>, usize)>,
@@ -206,6 +226,10 @@ pub struct App<'a> {
     pub viewer_zoom: u16,
     pub read_receipts: ReadReceiptCoordinator,
     pub read_receipt_worker: read_receipts::worker::Worker,
+    pub optimistic_text_send_worker: optimistic_text_send::Worker,
+    pub pending_outgoing_text: HashMap<u64, optimistic_text_send::TextSendRequest>,
+    pub completed_text_send_ids: VecDeque<u64>,
+    pub next_local_send_id: u64,
 
     pub kh: KeybindHandler,
 
@@ -242,6 +266,11 @@ pub struct App<'a> {
     pub tx: mpsc::Sender<AppInput>,
     pub rx: mpsc::Receiver<AppInput>,
     input_reader: InputReader,
+    pub(crate) runtime_diagnostics: RuntimeDiagnostics,
+    pub(crate) chat_list_view: Option<chat_projection::ChatListViewModel>,
+    pub(crate) chat_list_revision: u64,
+    pub(crate) chat_list_mutation_depth: usize,
+    pub(crate) chat_list_mutation_pending: bool,
 }
 
 impl Default for App<'_> {
@@ -268,11 +297,30 @@ impl App<'_> {
     ) -> Self {
         bootstrap::with_data_dir_and_ports(data_dir, cache_dir, clock, notifier)
     }
+
+    pub(crate) fn toggle_composer_direction(&mut self) {
+        let next = self.composer_direction.toggle();
+        if let Err(error) =
+            crate::app::preferences::save_composer_direction(&self.preferences_path, next)
+        {
+            self.unavailable(&format!("Could not persist composer direction: {error}"));
+            return;
+        }
+        self.composer_direction = next;
+    }
 }
 
 impl App<'_> {
     pub fn enable_message_action_diagnostics(&mut self, enabled: bool) {
         self.message_action_diagnostics = MessageActionDiagnostics::new(enabled);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn write_message_action_diagnostics(
+        &self,
+        output: impl std::io::Write,
+    ) -> std::io::Result<()> {
+        self.message_action_diagnostics.write_report(output)
     }
 
     pub fn enable_presence_diagnostics(&mut self, enabled: bool) {
@@ -285,6 +333,79 @@ impl App<'_> {
 
     pub fn run(&mut self, phone: Option<String>) {
         runtime_startup::run(self, phone);
+    }
+
+    pub(crate) fn record_phase<T>(&mut self, phase: Phase, work: impl FnOnce(&mut Self) -> T) -> T {
+        let started = self.runtime_diagnostics.phase_started();
+        let result = work(self);
+        if let Some(started) = started {
+            self.runtime_diagnostics
+                .record_phase_finished(phase, started);
+        }
+        result
+    }
+
+    pub(crate) fn message_list_phase_started(&mut self) -> Option<u64> {
+        self.runtime_diagnostics.phase_started()
+    }
+
+    pub(crate) fn finish_message_list_phase(&mut self, phase: Phase, started: Option<u64>) {
+        if let Some(started) = started {
+            self.runtime_diagnostics
+                .record_phase_finished(phase, started);
+        }
+    }
+
+    pub(crate) fn record_message_list_counts(&mut self, counts: MessageListCounts) {
+        self.runtime_diagnostics.record_message_list_counts(counts);
+    }
+
+    pub(crate) fn invalidate_message_sequence(&mut self, chat: &wr::JID) {
+        *self
+            .message_sequence_revisions
+            .entry(chat.clone())
+            .or_default() += 1;
+        self.message_sequence_cache
+            .entry(chat.clone())
+            .or_default()
+            .invalidate();
+    }
+
+    pub(crate) fn invalidate_message_sequences_containing(&mut self, id: &wr::MessageId) {
+        let chats = self
+            .message_sequence_cache
+            .iter()
+            .filter(|(_, cache)| {
+                cache
+                    .ids
+                    .as_ref()
+                    .is_some_and(|ids| ids.iter().any(|cached| cached == id))
+            })
+            .map(|(chat, _)| chat.clone())
+            .collect::<Vec<_>>();
+        for chat in chats {
+            self.invalidate_message_sequence(&chat);
+        }
+    }
+
+    /// Explicit invalidation hook for fixture code that mutates public stores directly.
+    pub fn invalidate_message_sequence_for_test(&mut self, chat: &wr::JID) {
+        self.invalidate_message_sequence(chat);
+    }
+
+    pub(crate) fn message_sequence_started(&mut self) -> Option<u64> {
+        self.runtime_diagnostics.phase_started()
+    }
+
+    pub(crate) fn record_message_sequence_finished(&mut self, started: Option<u64>) {
+        if let Some(started) = started {
+            self.runtime_diagnostics
+                .record_message_sequence_rebuild_finished(started);
+        }
+    }
+
+    pub(crate) fn finalize_runtime_diagnostics(&mut self) {
+        let _ = self.runtime_diagnostics.finalize();
     }
 
     pub(crate) fn now(&self) -> i64 {

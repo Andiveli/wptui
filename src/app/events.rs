@@ -7,7 +7,7 @@ use ratatui_image::protocol::StatefulProtocol;
 
 use whatsrust as wr;
 
-use crate::app::contact_avatars::AvatarResult;
+use crate::app::contact_avatars::{AvatarResult, AvatarTarget};
 use crate::app::read_receipts::{
     PersistResult, ReceiptCandidate, ReceiptKey, ReceiptSendStatus, RepositoryError,
 };
@@ -140,6 +140,13 @@ impl AttachmentViewerState {
 }
 
 pub enum AppEvent {
+    OptimisticTextSent {
+        local_send_id: u64,
+        message: wr::Message,
+    },
+    TextSendFailed {
+        local_send_id: u64,
+    },
     ReadReceiptResult(ReceiptKey, ReceiptSendStatus),
     ReadReceiptRestored(Result<Vec<ReceiptCandidate>, RepositoryError>),
     ReadReceiptPersisted(ReceiptCandidate, PersistResult),
@@ -154,12 +161,15 @@ pub enum AppEvent {
     SetFileState(wr::MessageId, FileMeta),
     SetAudioDuration(wr::MessageId, Arc<str>, Option<u64>),
     ContactAvatar(AvatarResult),
-    ContactAvatarRefreshed { generation: u64, jid: wr::JID },
+    ContactAvatarRefreshed {
+        generation: u64,
+        target: AvatarTarget,
+    },
 }
 
 #[derive(Debug)]
 pub enum AppInput {
-    Draw,
+    Draw(DrawSource),
     App(AppEvent),
     Message { message: wr::Message, is_sync: bool },
     Presence(wr::PresenceUpdate),
@@ -167,9 +177,27 @@ pub enum AppInput {
     Terminal(Event),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DrawSource {
+    Ordinary,
+    GoLog,
+}
+
 impl fmt::Debug for AppEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            AppEvent::OptimisticTextSent {
+                local_send_id,
+                message,
+            } => f
+                .debug_struct("OptimisticTextSent")
+                .field("local_send_id", local_send_id)
+                .field("server_message_id", &message.info.id)
+                .finish(),
+            AppEvent::TextSendFailed { local_send_id } => f
+                .debug_struct("TextSendFailed")
+                .field("local_send_id", local_send_id)
+                .finish(),
             AppEvent::ReadReceiptResult(key, status) => f
                 .debug_tuple("ReadReceiptResult")
                 .field(key)
@@ -234,12 +262,12 @@ impl fmt::Debug for AppEvent {
             AppEvent::ContactAvatar(result) => f
                 .debug_tuple("ContactAvatar")
                 .field(&result.generation())
-                .field(result.jid())
+                .field(result.target())
                 .finish(),
-            AppEvent::ContactAvatarRefreshed { generation, jid } => f
+            AppEvent::ContactAvatarRefreshed { generation, target } => f
                 .debug_struct("ContactAvatarRefreshed")
                 .field("generation", generation)
-                .field("jid", jid)
+                .field("target", target)
                 .finish(),
         }
     }

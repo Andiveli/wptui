@@ -70,6 +70,12 @@ struct CCommunityEntry {
     name: *const c_char,
     parent_jid: CJID,
     is_parent: bool,
+    is_joined: bool,
+    is_default_subgroup: bool,
+    // Stable C encoding: 0 unknown, 1 no, 2 yes.
+    announcement: u8,
+    // Stable C encoding: -1 unknown, otherwise a known signed count.
+    participant_count: i64,
 }
 
 #[repr(C)]
@@ -218,6 +224,16 @@ struct CMessageActionEvent {
 struct CChatEvent {
     chat: CJID,
     last_message_time: i64,
+}
+
+#[repr(C)]
+struct CMarkChatAsReadEvent {
+    chat: CJID,
+    message_id: *const c_char,
+    read: bool,
+    timestamp: i64,
+    from_me: bool,
+    participant: CJID,
 }
 
 #[repr(C)]
@@ -528,6 +544,14 @@ enum EventType {
     MessageAction = 6,
     Chat = 7,
     LogoutResult = 8,
+    MarkChatAsRead = 9,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, FromRepr)]
+#[repr(u8)]
+pub enum ReceiptKind {
+    Read = 0,
+    ReadSelf = 1,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, FromRepr)]
@@ -552,7 +576,7 @@ pub enum Event {
     SyncProgress(u8),
     AppStateSyncComplete,
     Receipt {
-        kind: u8,
+        kind: ReceiptKind,
         chat: JID,
         message_ids: Vec<MessageId>,
     },
@@ -584,6 +608,14 @@ pub enum Event {
     /// remove-companion-device IQ off the event loop so `logout()` no longer
     /// blocks the UI; this event drives the local cleanup on completion.
     LogoutResult(LogoutStatus),
+    MarkChatAsRead {
+        chat: JID,
+        message_id: MessageId,
+        read: bool,
+        timestamp: i64,
+        from_me: bool,
+        participant: Option<JID>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -789,6 +821,12 @@ pub struct CommunityInfo {
     pub name: Arc<str>,
     pub parent_jid: Option<JID>,
     pub is_parent: bool,
+    pub is_joined: bool,
+    pub is_default_subgroup: bool,
+    /// `None` is unknown, `Some(false)` is no, and `Some(true)` is yes.
+    pub is_announce: Option<bool>,
+    /// Unknown or values outside `u32` are mapped to `None` without truncation.
+    pub participant_count: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -828,6 +866,7 @@ impl From<&CContact> for Contact {
 type CLogCallback = extern "C" fn(*const c_char, u8, *mut c_void);
 type CQrCallback = extern "C" fn(*const c_char, *mut c_void);
 type CMessageCallback = extern "C" fn(*const CMessage, bool, *mut c_void);
+type COptimisticTextSentCallback = extern "C" fn(u64, *const CMessage, *mut c_void);
 type CEventCallback = extern "C" fn(*const CEvent, *mut c_void);
 type CPresenceCallback = extern "C" fn(CJID, bool, i64, *mut c_void);
 
@@ -855,6 +894,16 @@ unsafe extern "C" {
         quote_message_type: u8,
         quote_message_content: *const c_void,
     );
+    fn C_SendTextMessage(
+        jid: CJID,
+        message_content: *const c_void,
+        quote_id: *const c_char,
+        quote_sender: CJID,
+        quote_chat: CJID,
+        quote_message_type: u8,
+        quote_message_content: *const c_void,
+        local_send_id: u64,
+    ) -> u8;
     fn C_ForwardMessage(
         source_id: *const c_char,
         source_chat: CJID,
@@ -869,6 +918,7 @@ unsafe extern "C" {
     fn C_GetCommunities() -> CGetCommunitiesResult;
     fn C_FreeCommunities(result: CGetCommunitiesResult);
     fn C_GetProfilePicture(jid: CJID) -> CProfilePictureResult;
+    fn C_GetCommunityProfilePicture(jid: CJID) -> CProfilePictureResult;
     fn C_FreeProfilePicture(result: CProfilePictureResult);
     fn C_GetChatSettings(jid: CJID) -> CChatSettings;
     fn C_GetGroupInfo(jid: CJID) -> CGroupInfoResult;
@@ -894,8 +944,16 @@ unsafe extern "C" {
     fn C_RevokeMessage(chat_jid: CJID, sender_jid: CJID, message_id: *const c_char) -> u8;
 
     fn C_MarkAsRead(msg_id: *const c_char, chat_jid: CJID, sender_jid: CJID) -> i32;
+    fn C_MarkChatReadSync(
+        chat_jid: CJID,
+        msg_id: *const c_char,
+        timestamp: i64,
+        from_me: bool,
+        participant_jid: CJID,
+    ) -> i32;
 
     fn C_SetMessageHandler(message_cb: CMessageCallback, data: *mut c_void);
+    fn C_SetOptimisticTextSentHandler(callback: COptimisticTextSentCallback, data: *mut c_void);
     fn C_SetEventHandler(event_cb: CEventCallback, data: *mut c_void);
     fn C_SetPresenceHandler(presence_cb: CPresenceCallback, data: *mut c_void);
     fn C_SetLogHandler(log_fn: CLogCallback, data: *mut c_void);
@@ -965,9 +1023,12 @@ fn profile_picture_from_parts(
     }
 }
 
-pub fn get_profile_picture(jid: &JID) -> Result<ProfilePictureAvailability, ProfilePictureError> {
+fn get_profile_picture_from_bridge(
+    jid: &JID,
+    lookup: unsafe extern "C" fn(CJID) -> CProfilePictureResult,
+) -> Result<ProfilePictureAvailability, ProfilePictureError> {
     let jid = CString::new(jid.0.as_ref()).map_err(|_| ProfilePictureError::InvalidJid)?;
-    let result = unsafe { C_GetProfilePicture(jid.as_ptr()) };
+    let result = unsafe { lookup(jid.as_ptr()) };
     let picture_id = if result.picture_id.is_null() {
         String::new()
     } else {
@@ -990,6 +1051,16 @@ pub fn get_profile_picture(jid: &JID) -> Result<ProfilePictureAvailability, Prof
     let converted = profile_picture_from_parts(result.status, &picture_id, &picture_type, bytes);
     unsafe { C_FreeProfilePicture(result) };
     converted
+}
+
+pub fn get_profile_picture(jid: &JID) -> Result<ProfilePictureAvailability, ProfilePictureError> {
+    get_profile_picture_from_bridge(jid, C_GetProfilePicture)
+}
+
+pub fn get_community_profile_picture(
+    jid: &JID,
+) -> Result<ProfilePictureAvailability, ProfilePictureError> {
+    get_profile_picture_from_bridge(jid, C_GetCommunityProfilePicture)
 }
 
 #[cfg(test)]
@@ -1205,6 +1276,50 @@ pub fn mark_as_read(
     }
 }
 
+pub fn sync_chat_read(
+    chat_jid: &JID,
+    message_id: &MessageId,
+    timestamp: i64,
+    from_me: bool,
+    participant_jid: Option<&JID>,
+) {
+    let chat = chat_jid.0.to_string();
+    let message = message_id.to_string();
+    let participant = participant_jid.map(|jid| jid.0.to_string());
+    std::thread::spawn(move || {
+        let chat_c = match CString::new(chat) {
+            Ok(value) => value,
+            Err(_) => {
+                log::warn!("chat read sync skipped: invalid chat JID");
+                return;
+            }
+        };
+        let message_c = match CString::new(message) {
+            Ok(value) => value,
+            Err(_) => {
+                log::warn!("chat read sync skipped: invalid message ID");
+                return;
+            }
+        };
+        let participant_c = participant.and_then(|value| CString::new(value).ok());
+        let participant_ptr = participant_c
+            .as_ref()
+            .map_or(std::ptr::null(), |value| value.as_ptr());
+        let result = unsafe {
+            C_MarkChatReadSync(
+                chat_c.as_ptr(),
+                message_c.as_ptr(),
+                timestamp,
+                from_me,
+                participant_ptr,
+            )
+        };
+        if result != 0 {
+            log::warn!("chat read sync failed with bridge status {result}");
+        }
+    });
+}
+
 #[cfg(test)]
 mod read_receipt_ffi_tests {
     use super::*;
@@ -1261,7 +1376,7 @@ impl CallbackTranslator<*const CEvent> for Event {
                 .collect();
 
                 Event::Receipt {
-                    kind: receipt.kind,
+                    kind: ReceiptKind::from_repr(receipt.kind).unwrap_or(ReceiptKind::Read),
                     chat,
                     message_ids,
                 }
@@ -1279,6 +1394,21 @@ impl CallbackTranslator<*const CEvent> for Event {
                 Event::LogoutResult(
                     LogoutStatus::from_repr(result.status).unwrap_or(LogoutStatus::Failed),
                 )
+            },
+            EventType::MarkChatAsRead => unsafe {
+                let event = &*(event.data as *const CMarkChatAsReadEvent);
+                Event::MarkChatAsRead {
+                    chat: (&event.chat).into(),
+                    message_id: CStr::from_ptr(event.message_id)
+                        .to_string_lossy()
+                        .into_owned()
+                        .into(),
+                    read: event.read,
+                    timestamp: event.timestamp,
+                    from_me: event.from_me,
+                    participant: (!event.participant.is_null())
+                        .then(|| (&event.participant).into()),
+                }
             },
         }
     }
@@ -1506,11 +1636,24 @@ impl CallbackTranslator<bool> for bool {
     }
 }
 
+impl CallbackTranslator<u64> for u64 {
+    unsafe fn to_rust(value: u64) -> Self {
+        value
+    }
+}
+
 setup_handler!(
     set_message_handler,
     C_SetMessageHandler,
     msg: *const CMessage => Message,
     is_sync: bool => bool
+);
+
+setup_handler!(
+    set_optimistic_text_sent_handler,
+    C_SetOptimisticTextSentHandler,
+    local_send_id: u64 => u64,
+    msg: *const CMessage => Message
 );
 
 impl CallbackTranslator<*const c_char> for String {
@@ -1891,6 +2034,50 @@ pub fn send_message(
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TextSendResult {
+    Sent,
+    Failed,
+}
+
+pub fn send_text_message(
+    jid: &JID,
+    content: &MessageContent,
+    quoted_message: Option<&Message>,
+    mentions: &[Mention],
+    local_send_id: u64,
+) -> TextSendResult {
+    let MessageContent::Text(_) = content else {
+        return TextSendResult::Failed;
+    };
+    let jid_c = CJID::from(jid);
+    let (_message_type, content_ptr, _holder) = build_content_for_ffi(content, mentions);
+    let (_quote_id_owner, quote_id, quote_sender, quote_chat) = quote_to_ffi(quoted_message);
+    let quote_content = quoted_message.map(|message| build_content_for_ffi(&message.message, &[]));
+    let (quote_message_type, quote_message_content) = quote_content
+        .as_ref()
+        .map_or((0, std::ptr::null()), |(message_type, pointer, _)| {
+            (*message_type, *pointer)
+        });
+    let status = unsafe {
+        C_SendTextMessage(
+            jid_c,
+            content_ptr,
+            quote_id,
+            quote_sender,
+            quote_chat,
+            quote_message_type,
+            quote_message_content,
+            local_send_id,
+        )
+    };
+    if status == 0 {
+        TextSendResult::Sent
+    } else {
+        TextSendResult::Failed
+    }
+}
+
 /// Returns all contacts and groups as (JID, display name). Includes LID aliases for contacts.
 pub fn get_contacts() -> Vec<(JID, Arc<str>)> {
     let result = unsafe { C_GetContacts() };
@@ -1907,6 +2094,23 @@ pub fn get_contacts() -> Vec<(JID, Arc<str>)> {
             (jid, name)
         })
         .collect()
+}
+
+const COMMUNITY_ANNOUNCEMENT_UNKNOWN: u8 = 0;
+const COMMUNITY_ANNOUNCEMENT_NO: u8 = 1;
+const COMMUNITY_ANNOUNCEMENT_YES: u8 = 2;
+
+fn community_announcement_from_code(code: u8) -> Option<bool> {
+    match code {
+        COMMUNITY_ANNOUNCEMENT_UNKNOWN => None,
+        COMMUNITY_ANNOUNCEMENT_NO => Some(false),
+        COMMUNITY_ANNOUNCEMENT_YES => Some(true),
+        _ => None,
+    }
+}
+
+fn community_participant_count_from_abi(value: i64) -> Option<u32> {
+    (value >= 0).then(|| u32::try_from(value).ok()).flatten()
 }
 
 /// Returns real community roots and linked groups reported by WhatsApp.
@@ -1936,6 +2140,10 @@ pub fn get_communities() -> Result<Vec<CommunityInfo>, CommunitiesError> {
                     .into(),
                 parent_jid: (!parent.is_empty()).then(|| parent.to_string().into()),
                 is_parent: entry.is_parent,
+                is_joined: entry.is_joined,
+                is_default_subgroup: entry.is_default_subgroup,
+                is_announce: community_announcement_from_code(entry.announcement),
+                participant_count: community_participant_count_from_abi(entry.participant_count),
             }
         })
         .collect::<Vec<_>>();
@@ -2018,7 +2226,10 @@ pub fn get_group_participants(jid: &JID) -> Vec<GroupParticipant> {
 
 #[cfg(test)]
 mod group_info_tests {
-    use super::{GroupInfoError, JID, group_info_from_parts};
+    use super::{
+        GroupInfoError, JID, community_announcement_from_code,
+        community_participant_count_from_abi, group_info_from_parts,
+    };
 
     #[test]
     fn maps_announce_and_admin_flags() {
@@ -2028,6 +2239,28 @@ mod group_info_tests {
         assert_eq!(info.jid, jid);
         assert!(info.is_announce);
         assert!(!info.is_admin);
+    }
+
+    #[test]
+    fn maps_community_announcement_tristate() {
+        assert_eq!(community_announcement_from_code(0), None);
+        assert_eq!(community_announcement_from_code(1), Some(false));
+        assert_eq!(community_announcement_from_code(2), Some(true));
+        assert_eq!(community_announcement_from_code(255), None);
+    }
+
+    #[test]
+    fn maps_community_participant_count_without_truncation() {
+        assert_eq!(community_participant_count_from_abi(-1), None);
+        assert_eq!(community_participant_count_from_abi(0), Some(0));
+        assert_eq!(
+            community_participant_count_from_abi(i64::from(u32::MAX)),
+            Some(u32::MAX)
+        );
+        assert_eq!(
+            community_participant_count_from_abi(i64::from(u32::MAX) + 1),
+            None
+        );
     }
 
     #[test]

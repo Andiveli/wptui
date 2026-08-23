@@ -8,6 +8,7 @@ use ratatui::widgets::ListState;
 use ratatui_image::picker::{Picker, ProtocolType};
 
 use super::*;
+use crate::app::preferences;
 
 pub(crate) fn default_app() -> App<'static> {
     let picker = picker_from_terminal();
@@ -75,6 +76,8 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
     fs::create_dir_all(data_dir).unwrap();
     let (tx, rx) = mpsc::channel::<AppInput>();
     let (clipboard_reader, clipboard_writer) = open_clipboard_pair();
+    let preferences_path = preferences::settings_path(data_dir);
+    let composer_direction = preferences::load_composer_direction(&preferences_path);
 
     App {
         db_handler: DatabaseHandler::new(&data_dir.join("whatsapp.db")),
@@ -98,6 +101,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         open_chat: None,
         open_status_contact: None,
         communities: Vec::new(),
+        community_detail: None,
         communities_unavailable: false,
         communities_loaded: false,
         status_contacts: Vec::new(),
@@ -113,8 +117,13 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         image_cache_order: VecDeque::new(),
         audio_durations: HashMap::new(),
         message_height_cache: MessageHeightCache::default(),
+        message_sequence_cache: HashMap::new(),
+        message_sequence_revisions: HashMap::new(),
         default_protocol_type,
         composer: Composer::default(),
+        composer_direction,
+        composer_viewport_width: 80,
+        preferences_path,
         picker: Arc::new(Mutex::new(picker)),
         contact_avatars: ContactAvatars::new(cache_dir.join("contact-avatars")),
         focus_pane: FocusPane::ChatList,
@@ -128,6 +137,9 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         message_revoker: Box::new(WhatsAppMessageRevoker),
         action_notice: None,
         message_menu: None,
+        contextual_menu: None,
+        leader_menu: None,
+        shortcut_popup: false,
         reaction_picker: None,
         share_picker: None,
         url_picker: None,
@@ -146,6 +158,13 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
                 ),
             ),
         ),
+        optimistic_text_send_worker: crate::app::optimistic_text_send::Worker::new(
+            tx.clone(),
+            Box::new(crate::app::optimistic_text_send::WhatsAppTextSendPort),
+        ),
+        pending_outgoing_text: HashMap::new(),
+        completed_text_send_ids: VecDeque::new(),
+        next_local_send_id: 1,
         kh: KeybindHandler::default(),
         contact_search_active: false,
         contact_search: TextInput::new(),
@@ -159,6 +178,11 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         tx,
         rx,
         input_reader: InputReader::new(),
+        runtime_diagnostics: RuntimeDiagnostics::from_environment(cache_dir),
+        chat_list_view: None,
+        chat_list_revision: 0,
+        chat_list_mutation_depth: 0,
+        chat_list_mutation_pending: false,
     }
 }
 

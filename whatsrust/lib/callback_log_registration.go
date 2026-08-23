@@ -13,6 +13,7 @@ import (
 
 var logHandler C.LogHandler
 var messageHandler C.MessageHandler
+var optimisticTextSentHandler C.OptimisticTextSentHandler
 var eventHandler C.EventHandler
 var presenceHandler C.PresenceHandler
 
@@ -70,6 +71,11 @@ func C_SetMessageHandler(callback C.MessageHandlerCallback, data unsafe.Pointer)
 		callback:  callback,
 		user_data: data,
 	}
+}
+
+//export C_SetOptimisticTextSentHandler
+func C_SetOptimisticTextSentHandler(callback C.OptimisticTextSentCallback, data unsafe.Pointer) {
+	optimisticTextSentHandler = C.OptimisticTextSentHandler{callback: callback, user_data: data}
 }
 
 //export C_SetPresenceHandler

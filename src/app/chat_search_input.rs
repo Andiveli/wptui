@@ -1,8 +1,8 @@
-use ratatui::crossterm::event::KeyCode;
+use crate::input_key::KeyCode;
 
 use super::App;
 use super::actions::{FocusPane, Section};
-use crate::key_handler::Key;
+use crate::input_key::Key;
 
 impl App<'_> {
     pub(crate) fn handle_chat_search_input(&mut self, key: Key) -> bool {
@@ -50,5 +50,16 @@ mod tests {
 
         assert!(app.handle_chat_search_input(Key::c('a')));
         assert_eq!(app.contact_search.input.to_string(), "a");
+    }
+
+    #[test]
+    fn active_chat_search_owns_enter_before_pane_navigation() {
+        let mut app = TestApp::new();
+        app.focus_pane = FocusPane::ChatList;
+        app.contact_search_active = true;
+
+        assert!(app.handle_chat_search_input(Key::k(KeyCode::Enter)));
+        assert!(!app.contact_search_active);
+        assert_eq!(app.focus_pane, FocusPane::ChatList);
     }
 }

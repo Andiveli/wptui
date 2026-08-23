@@ -1,7 +1,8 @@
+pub(crate) mod bidi;
 pub mod communities;
 pub mod contact_list;
 mod contacts;
-mod layout;
+pub(crate) mod layout;
 pub mod message_list;
 mod navigation;
 mod status;
@@ -14,13 +15,17 @@ pub use layout::{
     composer_visual_cursor, composer_visual_rows, conversation_areas, navigation_areas,
     viewer_preview_layout,
 };
-pub(crate) use layout::{composer_visual_layout, truncate_with_ellipsis};
+pub(crate) use layout::{
+    composer_viewport_width, composer_visual_layout_with_direction, truncate_with_ellipsis,
+};
 
 use crate::app::App;
 use crate::app::actions::{ConversationMode, FocusPane, Section};
 use crate::app::events::{
     ViewerPreviewKey, ViewerPreviewState, ViewerStatus, viewer_preview_request,
 };
+use crate::app::runtime_diagnostics::Phase;
+use crate::keybindings::canonical_shortcuts;
 use contacts::render_contacts;
 use message_list::{get_quoted_text, render_messages};
 use navigation::{
@@ -61,7 +66,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         render_logout_placeholder(frame, app, areas.conversation);
     } else if app.selected_section == Section::Chats {
         if let Some(area) = areas.chat_list {
-            render_contacts(frame, app, area);
+            app.record_phase(Phase::ContactsChatProjectionRows, |app| {
+                render_contacts(frame, app, area)
+            });
         } else {
             app.contact_avatars.clear_window();
         }
@@ -74,7 +81,15 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         render_statuses(frame, app, areas.conversation);
     } else if app.selected_section == Section::Communities {
         if let Some(area) = areas.chat_list {
-            communities::render(frame, app, area);
+            if app.community_detail.is_some() {
+                app.record_phase(Phase::ContactsChatProjectionRows, |app| {
+                    contacts::render_contacts(frame, app, area)
+                });
+            } else {
+                app.record_phase(Phase::CommunityDetailList, |app| {
+                    communities::render(frame, app, area)
+                });
+            }
         }
         render_chats(frame, app, areas.conversation);
     } else {
@@ -88,6 +103,118 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     render_url_picker(frame, app);
     render_share_picker(frame, app);
     render_file_picker(frame, app);
+    render_keybind_overlays(frame, app);
+}
+
+fn render_keybind_overlays(frame: &mut Frame, app: &App) {
+    if app.shortcut_popup {
+        let entries = canonical_shortcuts();
+        let lines = entries
+            .iter()
+            .map(|(key, action)| Line::raw(format!("{key:<12} {action}")))
+            .collect::<Vec<_>>();
+        let width = 42.min(frame.area().width.saturating_sub(2));
+        let height = (lines.len() as u16 + 2).min(frame.area().height.saturating_sub(2));
+        let area = Rect::new(
+            frame.area().x + frame.area().width.saturating_sub(width) / 2,
+            frame.area().y + frame.area().height.saturating_sub(height) / 2,
+            width,
+            height,
+        );
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Paragraph::new(lines).block(
+                Block::bordered()
+                    .title("Keyboard shortcuts")
+                    .style(Style::default().bg(ratatui::style::Color::Black)),
+            ),
+            area,
+        );
+        return;
+    }
+    if let Some((rows, selected)) = &app.contextual_menu {
+        let lines = rows
+            .iter()
+            .enumerate()
+            .map(|(index, row)| {
+                let marker = if index == *selected { ">" } else { " " };
+                let style = if row.row_style == crate::app::contextual_actions::RowStyle::Enabled {
+                    Style::default().fg(ratatui::style::Color::White)
+                } else {
+                    Style::default().fg(ratatui::style::Color::DarkGray)
+                };
+                let reason = row
+                    .reason
+                    .map(|reason| format!(" ({reason})"))
+                    .unwrap_or_default();
+                Line::styled(
+                    format!(
+                        "{marker} {}  {}{}",
+                        row.display_shortcut, row.display_label, reason
+                    ),
+                    style,
+                )
+            })
+            .collect::<Vec<_>>();
+        let width = 46.min(frame.area().width.saturating_sub(2));
+        let height = (lines.len() as u16 + 2).min(frame.area().height.saturating_sub(2));
+        let area = Rect::new(
+            frame.area().x + frame.area().width.saturating_sub(width) / 2,
+            frame.area().y + frame.area().height.saturating_sub(height) / 2,
+            width,
+            height,
+        );
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Paragraph::new(lines).block(
+                Block::bordered()
+                    .title("Actions")
+                    .style(Style::default().bg(ratatui::style::Color::Black)),
+            ),
+            area,
+        );
+    } else if let Some((rows, selected)) = &app.leader_menu {
+        let lines = rows
+            .iter()
+            .enumerate()
+            .map(|(index, row)| {
+                let marker = if index == *selected { ">" } else { " " };
+                let style = if row.row_style == crate::app::contextual_actions::RowStyle::Enabled {
+                    Style::default().white()
+                } else {
+                    Style::default().dark_gray()
+                };
+                let reason = row
+                    .reason
+                    .map(|reason| format!(" ({reason})"))
+                    .unwrap_or_default();
+                Line::styled(
+                    format!(
+                        "{marker} {:<8} {}{}",
+                        row.display_shortcut, row.display_label, reason
+                    ),
+                    style,
+                )
+            })
+            .collect::<Vec<_>>();
+        let width = 42.min(frame.area().width.saturating_sub(2));
+        let height = (lines.len() as u16 + 2).min(frame.area().height.saturating_sub(2));
+        let area = Rect::new(
+            frame.area().x + frame.area().width.saturating_sub(width) / 2,
+            frame.area().y + frame.area().height.saturating_sub(height) / 2,
+            width,
+            height,
+        );
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Paragraph::new(lines).block(
+                Block::bordered()
+                    .title("Leader")
+                    .style(Style::default().bg(ratatui::style::Color::Black)),
+            ),
+            area,
+        );
+    }
 }
 
 const ANDIVELI_LOGO: [&str; 19] = [
@@ -274,16 +401,18 @@ pub fn render_chats(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let composer_width = inner.width.saturating_sub(2);
     let composer_blocked = app.composer_blocked();
-    let composer_layout = composer_visual_layout(
+    let composer_layout = composer_visual_layout_with_direction(
         if composer_blocked {
             &[]
         } else {
             app.composer.input.lines()
         },
         composer_width,
+        app.composer_direction,
     );
-    let input_cursor = app.composer.input.cursor();
-    let composer_cursor = composer_layout.cursor((input_cursor.0, input_cursor.1));
+    let composer_cursor = app
+        .composer
+        .visual_cursor(composer_width, app.composer_direction);
     let composer_rows = composer_layout.row_count().max(composer_cursor.0 + 1);
     let (chat_area, composer_area) = conversation_areas(
         inner,
@@ -303,7 +432,9 @@ pub fn render_chats(frame: &mut Frame, app: &mut App, area: Rect) {
     if app.open_chat().is_none() {
         render_chat_empty_state(frame, chat_area);
     } else {
-        render_messages(frame, app, chat_area);
+        app.record_phase(Phase::MessageListRenderLayout, |app| {
+            render_messages(frame, app, chat_area)
+        });
     }
 
     if let Some(chat_jid) = app.open_chat() {
@@ -373,13 +504,21 @@ pub fn render_chats(frame: &mut Frame, app: &mut App, area: Rect) {
             let scroll_top = cursor_row
                 .saturating_add(1)
                 .saturating_sub(input_area.height as usize);
-            let text = if app.composer.input.lines().iter().all(String::is_empty) {
-                app.composer.input.placeholder_text().to_owned()
+            let lines = if app.composer.input.lines().iter().all(String::is_empty) {
+                let alignment = composer_layout
+                    .lines()
+                    .first()
+                    .and_then(|line| line.alignment)
+                    .unwrap_or(Alignment::Left);
+                vec![
+                    Line::from(app.composer.input.placeholder_text().to_owned())
+                        .alignment(alignment),
+                ]
             } else {
-                composer_layout.text()
+                composer_layout.lines()
             };
             frame.render_widget(
-                Paragraph::new(text).scroll((scroll_top.min(u16::MAX as usize) as u16, 0)),
+                Paragraph::new(lines).scroll((scroll_top.min(u16::MAX as usize) as u16, 0)),
                 input_area,
             );
             if app.focus_pane == FocusPane::Conversation && !input_area.is_empty() {

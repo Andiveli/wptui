@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use super::super::{STATUS_BROADCAST_CHAT, test_support::TestApp};
+use super::super::{Chat, STATUS_BROADCAST_CHAT, test_support::TestApp};
 use whatsrust as wr;
 
 fn message(chat: &wr::JID, id: &str, timestamp: i64) -> wr::Message {
@@ -91,6 +91,50 @@ fn live_incoming_messages_update_persistent_timeline_state() {
     own.info.is_from_me = true;
     app.process_message_with_lookup(own, false, |_| Default::default());
     assert_eq!(app.pending_new_messages(&chat), 0);
+}
+
+#[test]
+fn sync_message_refreshes_a_primed_chat_view_once_even_when_chat_timestamp_is_zero() {
+    let mut app = TestApp::new();
+    let chat = wr::JID::from("history@g.us".to_owned());
+    app.chats.insert(
+        chat.clone(),
+        Chat {
+            jid: chat.clone(),
+            last_message_time: Some(0),
+        },
+    );
+    app.sorted_chats = vec![chat.clone()];
+    app.timeline
+        .entry(chat.clone())
+        .or_default()
+        .pending_new_messages = 2;
+    let _ = app.visible_chat_rows();
+    let before_time = app.chat_list_view.as_ref().unwrap().items[0]
+        .local_time
+        .clone();
+    let before = app.chat_list_revision;
+
+    assert!(
+        !app.process_message_with_lookup(message(&chat, "history", 3600), true, |_| {
+            panic!("sync must not notify")
+        })
+    );
+
+    let view = app.chat_list_view.as_ref().unwrap();
+    assert_eq!(app.chat_list_revision, before + 1);
+    assert_eq!(view.items[0].preview, "2 unread");
+    assert!(view.items[0].local_time.is_some());
+    assert_ne!(view.items[0].local_time, before_time);
+    assert_eq!(view.rows[0].target, chat);
+
+    let after = app.chat_list_revision;
+    assert!(
+        !app.process_message_with_lookup(message(&chat, "history", 3600), true, |_| {
+            panic!("sync must not notify")
+        })
+    );
+    assert_eq!(app.chat_list_revision, after);
 }
 
 #[test]

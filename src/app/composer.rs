@@ -1,9 +1,16 @@
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashSet, ops::Range, sync::Arc};
 
 use ratatui_textarea::{CursorMove, TextArea};
+use unicode_segmentation::UnicodeSegmentation;
 use whatsrust as wr;
 
 use crate::app::actions::ComposerAction;
+use crate::app::preferences::ComposerDirection;
+use crate::input_key::{Key, KeyCode};
+use crate::ui::layout::{
+    BoundaryAffinity, ComposerVisualLayout, HorizontalDirection,
+    composer_visual_layout_with_direction,
+};
 #[derive(Clone, Debug)]
 pub struct PendingAttachment {
     pub path: Arc<str>,
@@ -27,7 +34,18 @@ pub enum ComposerOutcome {
         messages: Vec<wr::MessageContent>,
         quote: Option<wr::Message>,
         mentions: Vec<wr::Mention>,
+        mention_ranges: Vec<Range<usize>>,
+        display_text: Arc<str>,
+        display_mention_ranges: Vec<Range<usize>>,
+        draft: Option<ComposerDraft>,
     },
+}
+
+#[derive(Clone, Debug)]
+pub struct ComposerDraft {
+    text: String,
+    quote: Option<wr::Message>,
+    mentions: Vec<MentionMark>,
 }
 
 impl ComposerOutcome {
@@ -70,6 +88,12 @@ pub struct Composer<'a> {
     participants: Vec<wr::GroupParticipant>,
     mention_picker: Option<MentionPicker>,
     mentions: Vec<MentionMark>,
+    caret_affinity: Option<BoundaryAffinity>,
+    preferred_visual_column: Option<usize>,
+}
+
+fn logical_cursor_position(cursor: ratatui_textarea::DataCursor) -> (usize, usize) {
+    (cursor.0, cursor.1)
 }
 
 #[derive(Clone, Debug)]
@@ -98,12 +122,23 @@ impl Default for Composer<'_> {
             participants: Vec::new(),
             mention_picker: None,
             mentions: Vec::new(),
+            caret_affinity: None,
+            preferred_visual_column: None,
         }
     }
 }
 
 impl Composer<'_> {
     pub fn apply(&mut self, action: ComposerAction) -> ComposerOutcome {
+        self.apply_with_direction(action, ComposerDirection::Auto, 80)
+    }
+
+    pub(crate) fn apply_with_direction(
+        &mut self,
+        action: ComposerAction,
+        direction: ComposerDirection,
+        width: u16,
+    ) -> ComposerOutcome {
         if self.blocked {
             return ComposerOutcome::Idle;
         }
@@ -111,11 +146,13 @@ impl Composer<'_> {
             ComposerAction::Submit => self.submit(),
             ComposerAction::InsertNewline => {
                 self.input.insert_newline();
+                self.caret_affinity = None;
+                self.preferred_visual_column = None;
                 ComposerOutcome::Idle
             }
             ComposerAction::Edit(key) => {
                 let before = self.text();
-                self.input.input(key);
+                self.apply_edit_key(&key, direction, width);
                 let after = self.text();
                 self.reconcile_mentions(&before, &after);
                 self.refresh_mention_picker();
@@ -133,7 +170,119 @@ impl Composer<'_> {
         }
     }
 
+    fn apply_edit_key(&mut self, key: &Key, direction: ComposerDirection, width: u16) {
+        match key.code {
+            KeyCode::Left | KeyCode::Right => {
+                let layout = self.visual_layout(direction, width);
+                let movement = if key.code == KeyCode::Left {
+                    HorizontalDirection::Left
+                } else {
+                    HorizontalDirection::Right
+                };
+                let target = layout.move_horizontal(
+                    logical_cursor_position(self.input.cursor()),
+                    self.caret_affinity,
+                    movement,
+                );
+                self.move_to_visual_caret(target);
+                self.preferred_visual_column = None;
+            }
+            KeyCode::Up | KeyCode::Down => {
+                let layout = self.visual_layout(direction, width);
+                let movement = if key.code == KeyCode::Up {
+                    HorizontalDirection::Left
+                } else {
+                    HorizontalDirection::Right
+                };
+                let current = layout.visual_caret(
+                    logical_cursor_position(self.input.cursor()),
+                    self.caret_affinity,
+                );
+                let preferred = self.preferred_visual_column.or(Some(current.visual_column));
+                let target = layout.move_vertical(
+                    logical_cursor_position(self.input.cursor()),
+                    self.caret_affinity,
+                    movement,
+                    preferred,
+                );
+                self.preferred_visual_column = preferred;
+                self.move_to_visual_caret(target);
+            }
+            KeyCode::Backspace => self.delete_previous_grapheme(),
+            _ => {
+                self.input
+                    .input(crate::app::composer_input_mapping::textarea_input(key));
+                self.caret_affinity = None;
+                self.preferred_visual_column = None;
+            }
+        }
+    }
+
+    fn visual_layout(&self, direction: ComposerDirection, width: u16) -> ComposerVisualLayout {
+        composer_visual_layout_with_direction(self.input.lines(), width, direction)
+    }
+
+    pub(crate) fn visual_cursor(&self, width: u16, direction: ComposerDirection) -> (usize, usize) {
+        self.visual_layout(direction, width).cursor_with_affinity(
+            logical_cursor_position(self.input.cursor()),
+            self.caret_affinity,
+        )
+    }
+
+    fn move_to_visual_caret(&mut self, caret: crate::ui::layout::ComposerCaret) {
+        self.input.move_cursor(CursorMove::Jump(
+            caret.logical_row.min(u16::MAX as usize) as u16,
+            caret.logical_column.min(u16::MAX as usize) as u16,
+        ));
+        self.caret_affinity = Some(caret.affinity);
+    }
+
+    fn delete_previous_grapheme(&mut self) {
+        let offset = self.cursor_offset();
+        if offset == 0 {
+            return;
+        }
+        let mut text = self.text();
+        let (row, column) = logical_cursor_position(self.input.cursor());
+        let removed = if column > 0 {
+            let line = &self.input.lines()[row];
+            let byte_end = line
+                .char_indices()
+                .nth(column)
+                .map_or(line.len(), |(index, _)| index);
+            let (start, _) = line[..byte_end]
+                .grapheme_indices(true)
+                .next_back()
+                .unwrap_or((0, ""));
+            line[..byte_end][start..].chars().count()
+        } else {
+            1
+        };
+        let start_char = offset.saturating_sub(removed);
+        let start_byte = text
+            .char_indices()
+            .nth(start_char)
+            .map_or(text.len(), |(index, _)| index);
+        let end_byte = text
+            .char_indices()
+            .nth(offset)
+            .map_or(text.len(), |(index, _)| index);
+        text.replace_range(start_byte..end_byte, "");
+        self.replace_input_contents(&text, start_char);
+        self.caret_affinity = None;
+        self.preferred_visual_column = None;
+    }
+
+    fn replace_input_contents(&mut self, text: &str, cursor_offset: usize) {
+        self.input.select_all();
+        self.input.delete_next_char();
+        self.input.insert_str(text);
+        self.set_cursor_offset(cursor_offset);
+    }
+
     pub fn insert_text(&mut self, text: &str) {
+        self.caret_affinity = None;
+        self.preferred_visual_column = None;
         if self.blocked {
             return;
         }
@@ -145,6 +294,8 @@ impl Composer<'_> {
     }
 
     pub fn replace_text(&mut self, text: &str) {
+        self.caret_affinity = None;
+        self.preferred_visual_column = None;
         let before = self.text();
         self.clear_text();
         self.input.insert_str(text);
@@ -153,6 +304,8 @@ impl Composer<'_> {
     }
 
     pub fn clear_text(&mut self) {
+        self.caret_affinity = None;
+        self.preferred_visual_column = None;
         self.input.select_all();
         self.input.delete_next_char();
     }
@@ -253,7 +406,13 @@ impl Composer<'_> {
     }
 
     fn submit(&mut self) -> ComposerOutcome {
-        let (expanded, mentions) = self.expanded_text();
+        let draft = ComposerDraft {
+            text: self.text(),
+            quote: self.quote.clone(),
+            mentions: self.mentions.clone(),
+        };
+        let (expanded, mentions, mention_ranges, display_mention_ranges) = self.expanded_text();
+        let display_text: Arc<str> = self.text().into();
         let text: Arc<str> = expanded.into();
         if text.trim().is_empty() && self.pending.is_empty() {
             return ComposerOutcome::Idle;
@@ -285,7 +444,18 @@ impl Composer<'_> {
             messages,
             quote: self.quote.take(),
             mentions,
+            mention_ranges,
+            display_text,
+            display_mention_ranges,
+            draft: Some(draft),
         }
+    }
+
+    pub(crate) fn restore_text_draft(&mut self, draft: ComposerDraft) {
+        self.replace_text(&draft.text);
+        self.quote = draft.quote;
+        self.mentions = draft.mentions;
+        self.refresh_mention_picker();
     }
 
     fn cursor_offset(&self) -> usize {
@@ -386,13 +556,22 @@ impl Composer<'_> {
         self.mention_picker = None;
     }
 
-    fn expanded_text(&self) -> (String, Vec<wr::Mention>) {
+    fn expanded_text(
+        &self,
+    ) -> (
+        String,
+        Vec<wr::Mention>,
+        Vec<Range<usize>>,
+        Vec<Range<usize>>,
+    ) {
         let text = self.text();
         let mut marks = self.mentions.clone();
         marks.sort_by_key(|mark| mark.start);
         let mut output = String::new();
         let mut last = 0;
         let mut mentions = Vec::new();
+        let mut mention_ranges = Vec::new();
+        let mut display_mention_ranges = Vec::new();
         for mark in marks {
             if mark.end > text.chars().count() {
                 continue;
@@ -410,8 +589,19 @@ impl Composer<'_> {
                 .next()
                 .unwrap_or("")
                 .to_owned();
+            let mention_start = output.len();
+            let display_start = text
+                .char_indices()
+                .nth(mark.start)
+                .map_or(text.len(), |(offset, _)| offset);
+            let display_end = text
+                .char_indices()
+                .nth(mark.end)
+                .map_or(text.len(), |(offset, _)| offset);
             output.push('@');
             output.push_str(&wire_user);
+            mention_ranges.push(mention_start..output.len());
+            display_mention_ranges.push(display_start..display_end);
             last = mark.end;
             mentions.push(wr::Mention {
                 jid: mark.participant.jid,
@@ -420,7 +610,7 @@ impl Composer<'_> {
         }
         let chars: Vec<char> = text.chars().collect();
         output.extend(chars[last..].iter());
-        (output, mentions)
+        (output, mentions, mention_ranges, display_mention_ranges)
     }
 }
 
@@ -464,10 +654,10 @@ fn participant_identity_ids(participant: &wr::GroupParticipant) -> HashSet<Strin
 
 #[cfg(test)]
 mod tests {
-    use ratatui::crossterm::event::KeyCode;
+    use crate::input_key::KeyCode;
 
     use super::*;
-    use crate::key_handler::Key;
+    use crate::input_key::Key;
 
     fn participant(name: &str, phone: &str) -> wr::GroupParticipant {
         wr::GroupParticipant {
@@ -486,6 +676,14 @@ mod tests {
     }
 
     #[test]
+    fn textarea_cursor_conversion_preserves_logical_units() {
+        assert_eq!(
+            logical_cursor_position(ratatui_textarea::DataCursor(2, 5)),
+            (2, 5)
+        );
+    }
+
+    #[test]
     fn group_mentions_activate_filter_and_expand_on_submit() {
         let mut composer = Composer::default();
         composer
@@ -496,6 +694,15 @@ mod tests {
         assert_eq!(composer.text(), "hello @Alice ");
         let outcome = composer.apply(ComposerAction::Submit);
         assert_eq!(outcome.text_messages(), vec!["hello @111 "]);
+        assert!(matches!(
+            &outcome,
+            ComposerOutcome::Submit {
+                display_text,
+                display_mention_ranges,
+                ..
+            } if display_text.as_ref() == "hello @Alice "
+                && display_mention_ranges == &vec![6.."hello @Alice".len()]
+        ));
         assert!(composer.text().is_empty());
     }
 
@@ -632,6 +839,98 @@ mod tests {
             composer.move_mention_selection(1);
             assert_eq!(composer.mention_picker_selected(), expected);
         }
+    }
+
+    #[test]
+    fn backspace_removes_complete_graphemes() {
+        for source in ["e\u{301}", "👩‍💻"] {
+            let mut composer = Composer::default();
+            composer.insert_text(source);
+            composer.apply(ComposerAction::Edit(Key::k(KeyCode::Backspace)));
+            assert_eq!(composer.text(), "");
+        }
+    }
+
+    #[test]
+    fn forced_rtl_movement_changes_logical_insertion_point_without_rewriting_source() {
+        let mut composer = Composer::default();
+        composer.insert_text("אבג");
+        composer.apply_with_direction(
+            ComposerAction::Edit(Key::k(KeyCode::Right)),
+            ComposerDirection::Rtl,
+            80,
+        );
+        composer.apply_with_direction(
+            ComposerAction::Edit(Key::c('x')),
+            ComposerDirection::Rtl,
+            80,
+        );
+        assert_eq!(composer.text(), "אבxג");
+    }
+
+    #[test]
+    fn wrapped_up_down_preserves_preferred_visual_column() {
+        let mut composer = Composer::default();
+        composer.insert_text("abcdef");
+        composer.apply_with_direction(
+            ComposerAction::Edit(Key::k(KeyCode::Up)),
+            ComposerDirection::Auto,
+            3,
+        );
+        assert_eq!(logical_cursor_position(composer.input.cursor()), (0, 3));
+        composer.apply_with_direction(
+            ComposerAction::Edit(Key::k(KeyCode::Down)),
+            ComposerDirection::Auto,
+            3,
+        );
+        assert_eq!(logical_cursor_position(composer.input.cursor()), (0, 6));
+    }
+
+    #[test]
+    fn horizontal_movement_crosses_hard_line_boundaries() {
+        let mut composer = Composer::default();
+        composer.insert_text("ab\ncd");
+        composer.set_cursor_offset(3);
+        composer.apply(ComposerAction::Edit(Key::k(KeyCode::Left)));
+        assert_eq!(logical_cursor_position(composer.input.cursor()), (0, 2));
+    }
+
+    #[test]
+    fn backspace_deletes_the_logical_preceding_grapheme() {
+        let mut composer = Composer::default();
+        composer.insert_text("אבג");
+        composer.set_cursor_offset(2);
+        composer.apply_with_direction(
+            ComposerAction::Edit(Key::k(KeyCode::Backspace)),
+            ComposerDirection::Rtl,
+            20,
+        );
+        assert_eq!(composer.text(), "אג");
+        assert_eq!(composer.cursor_offset(), 1);
+    }
+
+    #[test]
+    fn rendered_cursor_uses_the_stored_affinity() {
+        let mut composer = Composer::default();
+        composer.insert_text("אבג abc");
+        composer.set_cursor_offset(3);
+        composer.apply_with_direction(
+            ComposerAction::Edit(Key::k(KeyCode::Right)),
+            ComposerDirection::Auto,
+            20,
+        );
+        let layout = composer_visual_layout_with_direction(
+            composer.input.lines(),
+            20,
+            ComposerDirection::Auto,
+        );
+        assert_eq!(
+            composer.visual_cursor(20, ComposerDirection::Auto),
+            layout.cursor_with_affinity(
+                logical_cursor_position(composer.input.cursor()),
+                composer.caret_affinity,
+            )
+        );
     }
 
     #[test]

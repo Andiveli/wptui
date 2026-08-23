@@ -26,7 +26,7 @@ func GetChatId(client *whatsmeow.Client, chatJid *types.JID, senderJid *types.JI
 			return userID
 		}
 	}
-	if chatJid.Server == types.HiddenUserServer {
+	if chatJid.Server == types.HiddenUserServer && client != nil && client.Store != nil {
 		ctx := context.Background()
 		if pChatJid, _ := client.Store.LIDs.GetPNForLID(ctx, *chatJid); !pChatJid.IsEmpty() {
 			return StrFromJid(pChatJid)

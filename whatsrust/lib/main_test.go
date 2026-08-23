@@ -62,7 +62,7 @@ func TestFetchProfilePictureAvailablePreview(t *testing.T) {
 	downloadCalled := false
 	outcome := fetchProfilePicture(context.Background(), "12345@g.us", func(_ context.Context, jid types.JID, params *whatsmeow.GetProfilePictureParams) (*types.ProfilePictureInfo, error) {
 		lookupCalled = true
-		if jid.Server != types.GroupServer || params == nil || !params.Preview {
+		if jid.Server != types.GroupServer || params == nil || !params.Preview || params.IsCommunity || params.CommonGID != (types.JID{}) {
 			t.Fatalf("unexpected lookup request: jid=%s params=%#v", jid, params)
 		}
 		return &types.ProfilePictureInfo{URL: "https://temporary.invalid/avatar", ID: "picture-42", Type: "preview"}, nil
@@ -75,6 +75,23 @@ func TestFetchProfilePictureAvailablePreview(t *testing.T) {
 	})
 
 	if !lookupCalled || !downloadCalled || outcome.status != profilePictureStatusAvailable || outcome.pictureID != "picture-42" || outcome.pictureType != "preview" || !bytes.Equal(outcome.data, want) {
+		t.Fatalf("unexpected outcome: %#v", outcome)
+	}
+}
+
+func TestFetchProfilePictureCommunityUsesDedicatedParams(t *testing.T) {
+	called := false
+	outcome := fetchProfilePictureWithParams(context.Background(), "12345@g.us", true, func(_ context.Context, _ types.JID, params *whatsmeow.GetProfilePictureParams) (*types.ProfilePictureInfo, error) {
+		called = true
+		if params == nil || !params.Preview || !params.IsCommunity || params.CommonGID != (types.JID{}) {
+			t.Fatalf("unexpected community lookup params: %#v", params)
+		}
+		return nil, whatsmeow.ErrProfilePictureNotSet
+	}, func(_ context.Context, _ string, _ int64) ([]byte, error) {
+		t.Fatal("community unavailable must not download")
+		return nil, nil
+	})
+	if !called || outcome.status != profilePictureStatusUnavailable {
 		t.Fatalf("unexpected outcome: %#v", outcome)
 	}
 }

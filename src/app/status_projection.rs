@@ -111,7 +111,29 @@ impl App<'_> {
         };
         self.open_status_contact = Some(contact.clone());
         if let Some(latest) = self.status_latest_time(&contact) {
-            self.status_last_seen.insert(contact, latest);
+            let current = self
+                .status_last_seen
+                .get(&contact)
+                .copied()
+                .unwrap_or_default();
+            if latest > current {
+                match self.db_handler.set_status_last_seen(&contact, latest) {
+                    Ok(rows) => {
+                        let contact_id =
+                            crate::app::message_action_diagnostics::identifier_for_log(&contact.0);
+                        self.message_action_diagnostics.record_read_sync(|| {
+                            format!(
+                                "source=rust event=status_cursor_write rows={rows} contact={contact_id} timestamp={latest}"
+                            )
+                        });
+                    }
+                    Err(error) => log::error!(
+                        "status cursor write failed contact={} timestamp={latest}: {error}",
+                        crate::app::message_action_diagnostics::identifier_for_log(&contact.0)
+                    ),
+                }
+                self.status_last_seen.insert(contact, latest);
+            }
         }
         self.message_list_state.reset();
     }

@@ -3,16 +3,14 @@ use whatsrust as wr;
 
 use crate::app::App;
 
-use super::{
-    AuthorGroupContext, message_height, message_layout_integration, spacing_after_message,
-};
+use super::{AuthorGroupContext, message_layout_integration, spacing_after_message};
 
 const SELECTION_PADDING: usize = 4;
 
 pub(super) fn reconcile(
     app: &mut App,
     list_area: Rect,
-    items: &[wr::Message],
+    items: &[wr::MessageId],
     author_groups: &[AuthorGroupContext],
     unread_count: usize,
 ) -> (usize, isize) {
@@ -21,7 +19,7 @@ pub(super) fn reconcile(
         app.message_list_state
             .selected_message
             .as_ref()
-            .and_then(|message_id| items.iter().position(|item| item.info.id == *message_id)),
+            .and_then(|message_id| items.iter().position(|item| item == message_id)),
         items.len(),
     );
     if app.message_list_state.selected.is_none()
@@ -49,7 +47,7 @@ pub(super) fn reconcile(
                     .is_none_or(|selected| selected >= anchor.index)
                 && items
                     .get(anchor.index)
-                    .is_some_and(|item| item.info.id == anchor.message_id)
+                    .is_some_and(|item| item == &anchor.message_id)
         });
     if let Some(anchor) = previous_anchor.as_mut() {
         let bottom_delta = list_area.bottom() as isize - anchor.bottom as isize;
@@ -60,7 +58,7 @@ pub(super) fn reconcile(
     app.message_list_state.selected_message = app
         .message_list_state
         .selected
-        .map(|selected| items[selected].info.id.clone());
+        .map(|selected| items[selected].clone());
 
     if let Some(selected) = app
         .message_list_state
@@ -75,7 +73,7 @@ pub(super) fn reconcile(
             .map(|anchor| {
                 let mut cursor = anchor.y;
                 for index in anchor.index..selected {
-                    cursor -= message_height(
+                    cursor -= message_layout_integration::message_height_for_id(
                         &items[index],
                         width as usize,
                         app.message_list_state.selected == Some(index),
@@ -101,7 +99,7 @@ pub(super) fn reconcile(
                     .enumerate()
                     .map(|(index, item)| {
                         usize::from(divider_after == Some(index))
-                            + message_height(
+                            + message_layout_integration::message_height_for_id(
                                 item,
                                 width as usize,
                                 app.message_list_state.selected == Some(index),
@@ -117,7 +115,7 @@ pub(super) fn reconcile(
                     .sum::<usize>()
             });
 
-        let selected_height = message_height(
+        let selected_height = message_layout_integration::message_height_for_id(
             &items[selected],
             width as usize,
             true,

@@ -1,19 +1,24 @@
-use ratatui::crossterm::event::KeyCode;
+use crate::input_key::KeyCode;
 
 use crate::app::App;
 use crate::app::actions::{AppAction, ComposerAction, ConversationMode, FocusPane, Section};
 use crate::app::composer_input_mapping::composer_action_for_editing_key;
 use crate::app::composer_input_paste::apply_clipboard_paste;
-use crate::key_handler::Key;
+use crate::app::runtime_diagnostics::Phase;
+use crate::input_key::Key;
 use whatsrust as wr;
 
 impl App<'_> {
+    pub(crate) fn set_composer_viewport_width(&mut self, width: u16) {
+        self.composer_viewport_width = width.max(1);
+    }
+
     /// Handles the composer-owned part of terminal input.
     ///
     /// Returns `true` when the composer owns the current input context.
     pub(crate) fn handle_composer_input(&mut self, key: Key) -> bool {
         if self.focus_pane != FocusPane::Conversation
-            || self.selected_section != Section::Chats
+            || !matches!(self.selected_section, Section::Chats | Section::Communities)
             || !matches!(
                 self.conversation_mode,
                 ConversationMode::ComposerEditing | ConversationMode::EditingMessage
@@ -56,6 +61,7 @@ impl App<'_> {
         {
             return self.submit_message_edit();
         }
+        let composer_direction = self.composer_direction;
         match action {
             ComposerAction::StartEdit => {
                 // InsertMode is now the canonical way; StartEdit is unused.
@@ -68,16 +74,50 @@ impl App<'_> {
                     self.unavailable(&format!("Could not paste clipboard content: {error:?}"));
                 }
             }
-            action => match self.composer.apply(action) {
+            action => match self.composer.apply_with_direction(
+                action,
+                composer_direction,
+                self.composer_viewport_width,
+            ) {
                 crate::app::composer::ComposerOutcome::Idle => {}
                 crate::app::composer::ComposerOutcome::Submit {
                     messages,
                     quote,
                     mentions,
+                    mention_ranges,
+                    display_text,
+                    display_mention_ranges,
+                    draft,
                 } => {
                     if let Some(chat) = self.open_chat() {
-                        for message in messages {
-                            wr::send_message(&chat, &message, quote.as_ref(), &mentions);
+                        let count = messages.len();
+                        self.runtime_diagnostics.record_send_sequence(count);
+                        if count == 1
+                            && matches!(messages.first(), Some(wr::MessageContent::Text(_)))
+                        {
+                            let message = messages.into_iter().next().unwrap();
+                            let accepted = self.record_phase(Phase::ComposerSubmitSend, |app| {
+                                app.stage_text_send_with_display(
+                                    chat,
+                                    message,
+                                    quote,
+                                    mentions,
+                                    mention_ranges,
+                                    display_text,
+                                    display_mention_ranges,
+                                )
+                            });
+                            if !accepted {
+                                if let Some(draft) = draft {
+                                    self.composer.restore_text_draft(draft);
+                                }
+                            }
+                        } else {
+                            self.record_phase(Phase::ComposerSubmitSend, |_app| {
+                                for message in messages {
+                                    wr::send_message(&chat, &message, quote.as_ref(), &mentions);
+                                }
+                            });
                         }
                     }
                 }
@@ -110,5 +150,18 @@ mod tests {
 
         assert!(app.handle_composer_input(Key::c('x')));
         assert!(app.composer.text().is_empty());
+    }
+
+    #[test]
+    fn communities_conversation_accepts_composer_input_without_auto_activation() {
+        let mut app = TestApp::new();
+        app.open_chat_by_jid(wr::JID::from("group@g.us".to_owned()));
+        app.selected_section = Section::Communities;
+        app.focus_pane = FocusPane::Conversation;
+        assert_eq!(app.conversation_mode, ConversationMode::MessageNavigation);
+
+        app.conversation_mode = ConversationMode::ComposerEditing;
+        assert!(app.handle_composer_input(Key::c('x')));
+        assert_eq!(app.composer.text(), "x");
     }
 }

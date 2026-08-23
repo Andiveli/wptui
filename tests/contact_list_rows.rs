@@ -3,7 +3,7 @@ use ratatui::{
     backend::TestBackend,
     buffer::Buffer,
     layout::Rect,
-    style::Color,
+    style::{Color, Modifier},
     widgets::{ListState, StatefulWidget},
 };
 use whatsrust::{JID, Message, MessageContent, MessageInfo};
@@ -83,6 +83,32 @@ fn selection_highlights_both_rows_as_one_item() {
     // Bob's initials at row 3, preview "g" at row 4
     assert_eq!(buffer[(5, 3)].symbol(), "B");
     assert_eq!(buffer[(5, 4)].symbol(), "g");
+}
+
+#[test]
+fn unread_rows_keep_green_text_and_independent_yellow_attention_marker() {
+    let mut unread = item("Group", "3 unread");
+    unread.unread = true;
+    unread.attention = true;
+    let items = vec![unread];
+    let area = Rect::new(0, 0, 30, 3);
+    let mut buffer = Buffer::empty(area);
+
+    ContactList::new(&items).render(
+        area,
+        &mut buffer,
+        &mut ListState::default().with_selected(Some(0)),
+    );
+
+    assert_eq!(buffer[(5, 0)].symbol(), "@");
+    assert_eq!(buffer[(7, 0)].symbol(), "G");
+    assert_eq!(buffer[(7, 1)].symbol(), "3");
+    assert_eq!(buffer[(5, 0)].fg, Color::Yellow);
+    assert_eq!(buffer[(7, 0)].fg, Color::Green);
+    assert_eq!(buffer[(7, 1)].fg, Color::Green);
+    assert!(buffer[(5, 0)].modifier.contains(Modifier::BOLD));
+    assert!(buffer[(7, 0)].modifier.contains(Modifier::BOLD));
+    assert_eq!(buffer[(7, 0)].bg, Color::DarkGray);
 }
 
 #[test]
@@ -183,6 +209,10 @@ fn chats_render_one_aggregated_community_row_and_one_normal_chat_row() {
             JID::from("first@g.us".to_owned()),
             JID::from("second@g.us".to_owned()),
         ],
+        is_joined: true,
+        is_default_subgroup: false,
+        is_announce: None,
+        participant_count: None,
     }];
 
     let mut terminal = Terminal::new(TestBackend::new(100, 10)).unwrap();
@@ -324,6 +354,8 @@ fn item(name: &str, preview: &str) -> ContactListItem {
         initials: initials(name),
         preview: preview.to_owned(),
         local_time: None,
+        unread: false,
+        attention: false,
     }
 }
 

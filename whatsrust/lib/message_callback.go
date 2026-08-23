@@ -20,6 +20,11 @@ void callMessageHandler(MessageHandler hdl, bool isSync, const Message* data) {
 	copy.forwardSourceLen = activeForwardSourceLen;
 	hdl.callback(&copy, isSync, hdl.user_data);
 }
+
+void callOptimisticTextSentHandler(OptimisticTextSentHandler hdl, uint64_t localSendID, const Message* data) {
+	Message copy = *data;
+	hdl.callback(localSendID, &copy, hdl.user_data);
+}
 */
 import "C"
 

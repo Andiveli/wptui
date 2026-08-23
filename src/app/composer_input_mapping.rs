@@ -1,7 +1,8 @@
-use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+use crate::input_key::{KeyCode, KeyModifiers};
+use ratatui_textarea::Input;
 
 use crate::app::actions::ComposerAction;
-use crate::key_handler::Key;
+use crate::input_key::Key;
 
 /// Maps a key pressed while editing the composer to its semantic action.
 pub fn composer_action_for_editing_key(key: &Key) -> ComposerAction {
@@ -12,9 +13,29 @@ pub fn composer_action_for_editing_key(key: &Key) -> ComposerAction {
     }
 }
 
+/// Converts the neutral terminal key at the composer adapter boundary.
+pub fn textarea_input(key: &Key) -> Input {
+    Input {
+        key: match key.code {
+            KeyCode::Backspace => ratatui_textarea::Key::Backspace,
+            KeyCode::Enter => ratatui_textarea::Key::Enter,
+            KeyCode::Esc => ratatui_textarea::Key::Esc,
+            KeyCode::Left => ratatui_textarea::Key::Left,
+            KeyCode::Right => ratatui_textarea::Key::Right,
+            KeyCode::Up => ratatui_textarea::Key::Up,
+            KeyCode::Down => ratatui_textarea::Key::Down,
+            KeyCode::Tab => ratatui_textarea::Key::Tab,
+            KeyCode::Char(c) => ratatui_textarea::Key::Char(c),
+        },
+        ctrl: key.modifiers.contains(KeyModifiers::CONTROL),
+        alt: key.modifiers.contains(KeyModifiers::ALT),
+        shift: key.modifiers.contains(KeyModifiers::SHIFT),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+    use crate::input_key::{KeyCode, KeyModifiers};
 
     use super::*;
 

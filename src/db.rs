@@ -168,6 +168,14 @@ impl DatabaseHandler {
         )
         .unwrap();
         db.execute(
+            "CREATE TABLE IF NOT EXISTS status_read_cursors (
+                contact_jid TEXT PRIMARY KEY,
+                timestamp INTEGER NOT NULL
+            )",
+            [],
+        )
+        .unwrap();
+        db.execute(
             "CREATE TABLE IF NOT EXISTS message_reactions (
                 message_id TEXT NOT NULL,
                 participant_jid TEXT NOT NULL,
@@ -242,10 +250,10 @@ impl DatabaseHandler {
 
                     {
                         let mut text_stmt = tx
-                            .prepare("INSERT OR REPLACE INTO text_messages (id, chat_jid, sender_jid, timestamp, quote_id, is_from_me, read, message, is_forwarded, forwarding_score, mention_ranges, mentions_self) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                            .prepare("INSERT INTO text_messages (id, chat_jid, sender_jid, timestamp, quote_id, is_from_me, read, message, is_forwarded, forwarding_score, mention_ranges, mentions_self) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET chat_jid=excluded.chat_jid, sender_jid=excluded.sender_jid, timestamp=excluded.timestamp, quote_id=excluded.quote_id, is_from_me=(text_messages.is_from_me OR excluded.is_from_me), read=excluded.read, message=excluded.message, is_forwarded=excluded.is_forwarded, forwarding_score=excluded.forwarding_score, mention_ranges=excluded.mention_ranges, mentions_self=excluded.mentions_self")
                             .unwrap();
                         let mut file_stmt = tx
-                            .prepare("INSERT OR REPLACE INTO file_messages (id, chat_jid, sender_jid, timestamp, quote_id, is_from_me, read, kind, path, file_id, caption, is_forwarded, forwarding_score, mention_ranges, mentions_self) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                            .prepare("INSERT INTO file_messages (id, chat_jid, sender_jid, timestamp, quote_id, is_from_me, read, kind, path, file_id, caption, is_forwarded, forwarding_score, mention_ranges, mentions_self) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET chat_jid=excluded.chat_jid, sender_jid=excluded.sender_jid, timestamp=excluded.timestamp, quote_id=excluded.quote_id, is_from_me=(file_messages.is_from_me OR excluded.is_from_me), read=excluded.read, kind=excluded.kind, path=excluded.path, file_id=excluded.file_id, caption=excluded.caption, is_forwarded=excluded.is_forwarded, forwarding_score=excluded.forwarding_score, mention_ranges=excluded.mention_ranges, mentions_self=excluded.mentions_self")
                             .unwrap();
                         let mut source_stmt = tx.prepare("INSERT OR REPLACE INTO forward_sources (id, chat_jid, sender_jid, source) VALUES (?, ?, ?, ?)").unwrap();
                         for message in &messages {
@@ -763,6 +771,15 @@ impl DatabaseHandler {
                 [],
             )
             .unwrap();
+        self.db
+            .execute(
+                "CREATE TABLE IF NOT EXISTS status_read_cursors (
+                    contact_jid TEXT PRIMARY KEY,
+                    timestamp INTEGER NOT NULL
+                )",
+                [],
+            )
+            .unwrap();
 
         for kind in wr::MessageContent::iter() {
             match kind {
@@ -842,6 +859,29 @@ impl DatabaseHandler {
             })
             .unwrap()
             .map(Result::unwrap)
+            .collect()
+    }
+
+    pub fn set_status_last_seen(
+        &self,
+        contact: &wr::JID,
+        timestamp: i64,
+    ) -> Result<usize, rusqlite::Error> {
+        let _write_lock = DATABASE_WRITE_LOCK.lock().unwrap();
+        self.db
+            .execute(
+                "INSERT INTO status_read_cursors (contact_jid, timestamp) VALUES (?1, ?2)
+                 ON CONFLICT(contact_jid) DO UPDATE SET timestamp = MAX(timestamp, excluded.timestamp)",
+                rusqlite::params![contact.0, timestamp],
+            )
+    }
+
+    pub fn status_last_seen(&self) -> Result<Vec<(wr::JID, i64)>, rusqlite::Error> {
+        let mut query = self
+            .db
+            .prepare("SELECT contact_jid, timestamp FROM status_read_cursors")?;
+        query
+            .query_map([], |row| Ok((row.get::<_, String>(0)?.into(), row.get(1)?)))?
             .collect()
     }
 

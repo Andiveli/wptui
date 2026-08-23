@@ -4,6 +4,7 @@ use super::App;
 use crate::app::notifications::{
     notification_eligibility, notification_is_muted, notification_projection,
 };
+use crate::app::runtime_diagnostics::Phase;
 use log::{error, info};
 use whatsrust as wr;
 
@@ -37,23 +38,30 @@ impl App<'_> {
         is_sync: bool,
         lookup: impl FnMut(&wr::JID) -> wr::ChatSettings,
     ) -> bool {
-        if !is_sync {
-            self.handle_notification_with_lookup(&message, lookup);
-        }
+        self.record_phase(Phase::MessageIngestionDb, |app| {
+            if !is_sync {
+                app.handle_notification_with_lookup(&message, lookup);
+            }
 
-        self.db_handler.add_message(&message);
-        if is_sync {
-            let chat = message.info.chat.clone();
-            self.add_message_without_sort(message);
-            self.sort_chat_messages(chat);
-        } else {
-            self.add_message(message);
-        }
+            app.db_handler.add_message(&message);
+            if is_sync {
+                let chat = message.info.chat.clone();
+                app.with_chat_list_mutation(|app| {
+                    let changed = app.add_message_without_sort(message);
+                    app.sort_chat_messages(chat);
+                    if changed {
+                        app.invalidate_chat_list();
+                    }
+                });
+            } else {
+                app.add_message(message);
+            }
 
-        let chat_jid = self.get_selected_chat();
-        self.sort_chats();
-        self.select_chat(chat_jid);
-        !is_sync
+            let chat_jid = app.get_selected_chat();
+            app.sort_chats();
+            app.select_chat(chat_jid);
+            !is_sync
+        })
     }
 
     fn handle_notification_with_lookup(

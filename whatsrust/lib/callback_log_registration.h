@@ -46,6 +46,12 @@ typedef struct {
 	void* user_data;
 } MessageHandler;
 
+typedef void (*OptimisticTextSentCallback)(uint64_t, const Message*, void*);
+typedef struct {
+	OptimisticTextSentCallback callback;
+	void* user_data;
+} OptimisticTextSentHandler;
+
 typedef void (*PresenceHandlerCallback)(JID, bool, int64_t, void*);
 typedef struct {
 	PresenceHandlerCallback callback;

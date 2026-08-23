@@ -4,6 +4,7 @@ use super::{
 };
 use crate::app::App;
 use crate::app::actions::Section;
+use crate::app::runtime_diagnostics::Phase;
 use whatsrust as wr;
 
 impl App<'_> {
@@ -76,6 +77,7 @@ impl App<'_> {
         }
     }
     pub fn dispatch_read_receipts(&mut self) {
+        let started = self.runtime_diagnostics.phase_started();
         self.request_restore_load();
         while let Some(action) = self.read_receipts.take_action() {
             let retry = action.clone();
@@ -96,6 +98,10 @@ impl App<'_> {
         }
         self.read_receipts
             .dispatch(self.now(), &self.read_receipt_worker, None);
+        if let Some(started) = started {
+            self.runtime_diagnostics
+                .record_phase_finished(Phase::ReadReceiptObservationDispatch, started);
+        }
     }
     pub(crate) fn request_restore_load(&mut self) {
         let now = self.now();
@@ -111,6 +117,7 @@ impl App<'_> {
         self.read_receipts.set_enabled(false);
         self.read_receipt_worker.set_enabled(false);
         self.read_receipt_worker.shutdown();
+        self.optimistic_text_send_worker.shutdown();
     }
 }
 

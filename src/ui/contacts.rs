@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
 use super::contact_list::{
-    AVATAR_HEIGHT, AVATAR_WIDTH, CONTACT_ITEM_HEIGHT, ContactList, ContactListItem,
-    contact_visible_range,
+    AVATAR_HEIGHT, AVATAR_WIDTH, ContactList, contact_visible_range, visible_contact_rows,
 };
 use crate::app::App;
 use crate::app::actions::FocusPane;
+use crate::app::contact_avatars::AvatarTarget;
 use crate::app::contact_avatars::prioritized_avatar_requests;
+use crate::app::runtime_diagnostics::Phase;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Position, Rect},
@@ -15,17 +16,12 @@ use ratatui::{
 };
 use ratatui_image::StatefulImage;
 
-pub(super) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
-    let rows = app.visible_chat_rows();
+pub(crate) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
+    let (rows, items) = app.cached_contact_view();
     let targets = rows
         .iter()
-        .map(|row| row.target.clone())
+        .filter_map(|row| row.avatar_target().cloned().map(AvatarTarget::Contact))
         .collect::<Vec<_>>();
-    let items = rows
-        .iter()
-        .map(|row| ContactListItem::from_row(app, row))
-        .collect::<Vec<_>>();
-
     let mut list_area = area;
     if !app.contact_search.input.is_empty() || app.contact_search_active {
         let [search_area, new_list_area] =
@@ -64,26 +60,24 @@ pub(super) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
         &mut app.chat_list_state,
     );
 
-    let visible = contact_visible_range(
+    let visible = visible_contact_rows(&items, app.chat_list_state.offset(), contacts_area.height);
+    let _legacy_visible_range = contact_visible_range(
         app.chat_list_state.offset(),
         contacts_area.height,
         rows.len(),
     );
+    let avatar_started = app.runtime_diagnostics.phase_started();
     app.contact_avatars.schedule(
-        prioritized_avatar_requests(
-            &targets,
-            app.chat_list_state.selected(),
-            visible.start,
-            visible.len(),
-        ),
+        prioritized_avatar_requests(&targets, None, 0, targets.len()),
         app.tx.clone(),
         Arc::clone(&app.picker),
     );
-    for index in visible {
-        let row = index.saturating_sub(app.chat_list_state.offset());
-        let y = contacts_area
-            .y
-            .saturating_add((row * CONTACT_ITEM_HEIGHT) as u16);
+    if let Some(started) = avatar_started {
+        app.runtime_diagnostics
+            .record_phase_finished(Phase::AvatarScheduling, started);
+    }
+    for (index, relative_y) in visible {
+        let y = contacts_area.y.saturating_add(relative_y);
         let avatar_area = Rect::new(
             contacts_area.x,
             y,
@@ -93,9 +87,75 @@ pub(super) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
         // Partial Kitty placements can leave terminal artifacts after a scroll.
         if avatar_area.width == AVATAR_WIDTH
             && avatar_area.height == AVATAR_HEIGHT
-            && let Some(protocol) = app.contact_avatars.protocol_mut(&targets[index])
+            && let Some(target) = rows[index]
+                .avatar_target()
+                .map(|jid| AvatarTarget::Contact(jid.clone()))
+            && let Some(protocol) = app.contact_avatars.protocol_mut(&target)
         {
             StatefulImage::default().render(avatar_area, frame.buffer_mut(), protocol);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::Chat;
+    use crate::app::runtime_diagnostics::{PerfClock, PerfEnvironment, RuntimeDiagnostics};
+    use crate::app::test_support::TestApp;
+    use ratatui::{Terminal, backend::TestBackend};
+    use whatsrust as wr;
+
+    struct EnabledEnvironment;
+
+    impl PerfEnvironment for EnabledEnvironment {
+        fn value(&self, name: &str) -> Option<String> {
+            (name == "WPTUI_PERF").then(|| "1".into())
+        }
+    }
+
+    struct FixedPerfClock;
+
+    impl PerfClock for FixedPerfClock {
+        fn now_us(&self) -> u64 {
+            1
+        }
+    }
+
+    #[test]
+    fn stable_double_render_reuses_the_chat_view_cache() {
+        let mut test_app = TestApp::new();
+        let chat: wr::JID = "render@example.test".to_owned().into();
+        test_app.chats.insert(
+            chat.clone(),
+            Chat {
+                jid: chat.clone(),
+                last_message_time: Some(1),
+            },
+        );
+        test_app.sorted_chats = vec![chat];
+        let cache_dir = tempfile::tempdir().unwrap();
+        test_app.app.runtime_diagnostics = RuntimeDiagnostics::from_environment_with(
+            &EnabledEnvironment,
+            cache_dir.path(),
+            || Box::new(FixedPerfClock),
+        );
+        let mut terminal = Terminal::new(TestBackend::new(80, 10)).unwrap();
+
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                render_contacts(frame, &mut test_app.app, area)
+            })
+            .unwrap();
+        assert_eq!(test_app.app.runtime_diagnostics.chat_view_counts(), (1, 0));
+
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                render_contacts(frame, &mut test_app.app, area)
+            })
+            .unwrap();
+        assert_eq!(test_app.app.runtime_diagnostics.chat_view_counts(), (1, 1));
     }
 }

@@ -1,60 +1,6 @@
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui_textarea::{self, Input};
-
-use crate::app::actions::{SequenceResolution, resolve_sequence};
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Key {
-    pub code: KeyCode,
-    pub modifiers: KeyModifiers,
-}
-impl Key {
-    pub fn c(c: char) -> Self {
-        if c.is_ascii_uppercase() {
-            Self {
-                code: KeyCode::Char(c),
-                modifiers: KeyModifiers::SHIFT,
-            }
-        } else {
-            Self {
-                code: KeyCode::Char(c),
-                modifiers: KeyModifiers::NONE,
-            }
-        }
-    }
-
-    pub fn k(c: KeyCode) -> Self {
-        Self {
-            code: c,
-            modifiers: KeyModifiers::NONE,
-        }
-    }
-
-    pub fn ctrl(c: char) -> Self {
-        Self {
-            code: KeyCode::Char(c),
-            modifiers: KeyModifiers::CONTROL,
-        }
-    }
-
-    pub fn ctrl_shift(c: char) -> Self {
-        Self {
-            code: KeyCode::Char(c),
-            modifiers: KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        }
-    }
-}
-
-impl From<Key> for Input {
-    fn from(value: Key) -> Self {
-        Input {
-            key: value.code.into(),
-            ctrl: value.modifiers.contains(KeyModifiers::CONTROL),
-            alt: value.modifiers.contains(KeyModifiers::ALT),
-            shift: value.modifiers.contains(KeyModifiers::SHIFT),
-        }
-    }
-}
+pub use crate::input_key::{Key, KeyCode, KeyModifiers};
+use crate::keybindings::{SequenceResolution, resolve_sequence};
+use ratatui::crossterm::event::KeyEvent;
 
 #[derive(Debug, Clone, Default)]
 pub struct KeybindHandler {
@@ -87,8 +33,19 @@ impl KeybindHandler {
     pub fn pressed_start(&mut self, event: &KeyEvent) -> Key {
         self.key_sequence_active = false;
         let key = Key {
-            code: event.code,
-            modifiers: event.modifiers,
+            code: match event.code {
+                ratatui::crossterm::event::KeyCode::Backspace => KeyCode::Backspace,
+                ratatui::crossterm::event::KeyCode::Enter => KeyCode::Enter,
+                ratatui::crossterm::event::KeyCode::Esc => KeyCode::Esc,
+                ratatui::crossterm::event::KeyCode::Left => KeyCode::Left,
+                ratatui::crossterm::event::KeyCode::Right => KeyCode::Right,
+                ratatui::crossterm::event::KeyCode::Up => KeyCode::Up,
+                ratatui::crossterm::event::KeyCode::Down => KeyCode::Down,
+                ratatui::crossterm::event::KeyCode::Tab => KeyCode::Tab,
+                ratatui::crossterm::event::KeyCode::Char(c) => KeyCode::Char(c),
+                _ => return Key::k(KeyCode::Esc),
+            },
+            modifiers: KeyModifiers::NONE,
         };
         if key == Key::k(KeyCode::Esc) && !self.key_buffer.is_empty() {
             self.key_buffer.clear();

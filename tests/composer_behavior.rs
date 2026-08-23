@@ -1,10 +1,12 @@
-use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use ratatui::crossterm::event::{
+    Event, KeyCode as TerminalKeyCode, KeyEvent, KeyModifiers as TerminalKeyModifiers,
+};
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use wp_tui::app::actions::ComposerAction;
 use wp_tui::app::actions::{AppAction, ConversationMode};
 use wp_tui::app::composer::Composer;
 use wp_tui::app::inputs::composer_action_for_editing_key;
-use wp_tui::key_handler::Key;
+use wp_tui::input_key::{Key, KeyCode, KeyModifiers};
 use wp_tui::ui::{composer_mention_picker_area, conversation_areas, render_chats};
 mod common;
 use common::TestApp;
@@ -125,7 +127,7 @@ fn escape_cancels_reply_and_attachment_modes_without_leaking_to_the_next_draft()
         .queue_attachment("image.png".into(), whatsrust::FileKind::Image);
 
     app.on_terminal_event(ratatui::crossterm::event::Event::Key(
-        ratatui::crossterm::event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+        ratatui::crossterm::event::KeyEvent::new(TerminalKeyCode::Esc, TerminalKeyModifiers::NONE),
     ));
 
     assert!(app.composer.quote.is_none());
@@ -143,8 +145,8 @@ fn ctrl_shift_l_toggles_logs_without_mutating_the_active_composer() {
         app.kh.resolve(Key::c('g'));
 
         app.on_terminal_event(Event::Key(KeyEvent::new(
-            KeyCode::Char(character),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            TerminalKeyCode::Char(character),
+            TerminalKeyModifiers::CONTROL | TerminalKeyModifiers::SHIFT,
         )));
 
         assert!(app.show_logs, "character: {character:?}");
@@ -180,7 +182,10 @@ fn escape_closes_only_the_active_mention_picker() {
     let text_before_escape = app.composer.text();
 
     assert!(app.composer.mention_picker_active());
-    app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+    app.on_terminal_event(Event::Key(KeyEvent::new(
+        TerminalKeyCode::Esc,
+        TerminalKeyModifiers::NONE,
+    )));
 
     assert!(!app.composer.mention_picker_active());
     assert_eq!(app.composer.text(), text_before_escape);
