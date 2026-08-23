@@ -1,4 +1,4 @@
-use std::{env, path::PathBuf, process::Command};
+use std::{env, fs, path::PathBuf, process::Command};
 
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
@@ -32,10 +32,26 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=lib");
     // Directory-level rerun-if-changed is unreliable for edits inside files,
-    // so also track the Go sources that feed the archive explicitly.
-    println!("cargo:rerun-if-changed=lib/main.go");
+    // so track every production Go source that feeds the archive explicitly.
+    let mut go_sources = fs::read_dir("lib")
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension().is_some_and(|extension| extension == "go")
+                && !path
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().ends_with("_test.go"))
+        })
+        .collect::<Vec<_>>();
+    go_sources.sort();
+    for source in go_sources {
+        println!("cargo:rerun-if-changed={}", source.display());
+    }
     println!("cargo:rerun-if-changed=lib/go.mod");
     println!("cargo:rerun-if-changed=lib/go.sum");
+    // Keep the Go archive and Rust FFI contract in lockstep when the shared ABI changes.
+    println!("cargo:rerun-if-changed=lib/callback_log_registration.h");
     println!(
         "cargo::rustc-link-search=native={}",
         lib_path.parent().unwrap().display()

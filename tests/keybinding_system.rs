@@ -1,10 +1,10 @@
-use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use whatsrust::JID;
 use wp_tui::app::actions::{
-    AppAction, FocusPane, PaneVisibility, Section, SequenceResolution, focus_after,
-    focus_after_visibility_change, resolve_sequence,
+    AppAction, FocusPane, PaneVisibility, Section, focus_after, focus_after_visibility_change,
 };
-use wp_tui::key_handler::{Key, KeybindHandler};
+use wp_tui::input_key::{Key, KeyCode, KeyModifiers};
+use wp_tui::key_handler::KeybindHandler;
+use wp_tui::keybindings::{SequenceResolution, resolve_sequence};
 use wp_tui::ui::message_list::MessageListState;
 mod common;
 use common::TestApp;
@@ -29,7 +29,6 @@ fn keymap_resolves_navigation_and_focus_bindings() {
         (vec![Key::c('o')], AppAction::OpenMessage),
         (vec![Key::c('x')], AppAction::DownloadMessage),
         (vec![Key::c('v')], AppAction::ViewMessage),
-        (vec![Key::k(KeyCode::Enter)], AppAction::OpenMessageMenu),
     ];
 
     for (keys, action) in cases {
@@ -66,6 +65,28 @@ fn keymap_resolves_section_visibility_sequences() {
         resolve_sequence(&[Key::c(' '), Key::c('2')]),
         SequenceResolution::Complete(AppAction::ToggleChatList)
     );
+}
+
+#[test]
+fn canonical_leader_display_and_uppercase_alias_are_preserved() {
+    assert!(
+        wp_tui::keybindings::canonical_shortcuts()
+            .iter()
+            .any(|(shortcut, action)| shortcut == "Space+a"
+                && action.contains("OpenContextualActions"))
+    );
+    for character in ['A', 'a'] {
+        assert_eq!(
+            resolve_sequence(&[
+                Key::c(' '),
+                Key {
+                    code: KeyCode::Char(character),
+                    modifiers: KeyModifiers::SHIFT,
+                },
+            ]),
+            SequenceResolution::Complete(AppAction::OpenContextualActions)
+        );
+    }
 }
 
 #[test]

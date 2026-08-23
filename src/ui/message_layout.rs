@@ -236,7 +236,7 @@ impl MessageHeightCache {
 
 #[cfg(test)]
 pub(crate) fn text_height(body: &str, width: usize) -> usize {
-    inline_content_lines(body, None, width).len()
+    inline_content_lines(body, &[], None, width).len()
 }
 
 pub(crate) fn height(
@@ -262,7 +262,7 @@ pub(crate) fn height(
             status,
             forwarding,
         } => {
-            inline_content_lines(body, *status, content_width).len()
+            inline_content_lines(body, &[], *status, content_width).len()
                 + forwarding_indicator_lines(*forwarding, content_width)
         }
         HeightContent::File {
@@ -273,8 +273,8 @@ pub(crate) fn height(
             status,
         } => {
             let caption_height = caption.as_ref().map_or_else(
-                || inline_content_lines("", *status, content_width).len(),
-                |caption| inline_content_lines(caption, *status, content_width).len(),
+                || inline_content_lines("", &[], *status, content_width).len(),
+                |caption| inline_content_lines(caption, &[], *status, content_width).len(),
             );
             let file_height = match kind {
                 // Reserve media geometry independently of the asynchronous

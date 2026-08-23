@@ -11,6 +11,7 @@ fn file_message(id: &str, path: &str) -> wr::Message {
             id: id.into(),
             chat: wr::JID::from("chat@example.test".to_owned()),
             sender: wr::JID::from("sender@example.test".to_owned()),
+            mentions_self: false,
             timestamp: 1,
             forwarding: Default::default(),
             is_from_me: false,

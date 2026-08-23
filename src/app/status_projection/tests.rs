@@ -8,6 +8,7 @@ fn status_message(sender: &wr::JID, id: &str, timestamp: i64) -> wr::Message {
             chat: wr::JID::from(STATUS_BROADCAST_CHAT.to_owned()),
             forwarding: Default::default(),
             sender: sender.clone(),
+            mentions_self: false,
             timestamp,
             is_from_me: false,
             quote_id: None,
@@ -80,4 +81,22 @@ fn opening_a_status_marks_the_latest_status_as_seen() {
     assert!(app.has_unseen_statuses(&alice));
     app.open_selected_status();
     assert!(!app.has_unseen_statuses(&alice));
+}
+
+#[test]
+fn status_view_cursor_survives_reload() {
+    let directory = tempfile::tempdir().unwrap();
+    let alice = wr::JID::from("alice@s.whatsapp.net".to_owned());
+    {
+        let mut app = TestApp::with_database(directory.path());
+        app.add_message(status_message(&alice, "a-status", 200));
+        app.open_selected_status();
+        assert_eq!(app.status_last_seen.get(&alice), Some(&200));
+    }
+    {
+        let mut app = TestApp::with_database(directory.path());
+        app.load_data_from_db();
+        assert_eq!(app.status_last_seen.get(&alice), Some(&200));
+        assert!(!app.has_unseen_statuses(&alice));
+    }
 }

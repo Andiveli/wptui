@@ -4,11 +4,31 @@ use log::error;
 use whatsrust as wr;
 
 use crate::app::App;
-use crate::app::events::AppInput;
+use crate::app::events::{AppInput, DrawSource};
 use crate::app::terminal_session::TerminalSession;
 use crate::ui;
 
 type DownloadSender = Sender<(wr::MessageId, wr::FileId)>;
+
+fn should_draw_for_source(app: &App<'_>, source: DrawSource) -> bool {
+    match source {
+        DrawSource::Ordinary => true,
+        DrawSource::GoLog => app.show_logs,
+    }
+}
+
+fn refresh_composer_viewport_width(app: &mut App<'_>, terminal_session: &mut TerminalSession) {
+    let Ok(area) = terminal_session.terminal_mut().size() else {
+        return;
+    };
+    let width = crate::ui::composer_viewport_width(
+        area.width,
+        area.height,
+        app.pane_visibility,
+        app.show_logs,
+    );
+    app.set_composer_viewport_width(width);
+}
 
 /// Owns the terminal runtime: input pumping, event dispatch, redraws, and shutdown.
 ///
@@ -23,6 +43,8 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
             let _ = app
                 .message_action_diagnostics
                 .write_report(std::io::stderr());
+            app.shutdown_read_receipt_worker();
+            app.finalize_runtime_diagnostics();
             return;
         }
     };
@@ -30,31 +52,44 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
     terminal_session.start_input_reader(&mut app.input_reader, app.tx.clone());
 
     app.sync_selected_presence();
+    refresh_composer_viewport_width(app, &mut terminal_session);
+    let initial_draw_started = app.runtime_diagnostics.draw_started();
     if let Err(error) = terminal_session
         .terminal_mut()
         .draw(|frame| ui::draw(frame, app))
     {
         error!("Failed to draw terminal UI: {error}");
+        app.shutdown_read_receipt_worker();
         terminal_session.stop_input_reader(&mut app.input_reader);
         terminal_session.restore();
         wr::disconnect();
         let _ = app
             .message_action_diagnostics
             .write_report(std::io::stderr());
+        app.finalize_runtime_diagnostics();
         return;
     }
+    app.runtime_diagnostics.record_should_draw();
+    if let Some(started) = initial_draw_started {
+        app.runtime_diagnostics.record_draw_finished(started);
+    }
+    app.dispatch_read_receipts();
 
     loop {
         let now = app.now();
         let msg = match app.selected_presence.redraw_after(now) {
             Some(timeout) => match app.rx.recv_timeout(timeout) {
                 Ok(input) => Ok(input),
-                Err(mpsc::RecvTimeoutError::Timeout) => Ok(AppInput::Draw),
+                Err(mpsc::RecvTimeoutError::Timeout) => Ok(AppInput::Draw(DrawSource::Ordinary)),
                 Err(mpsc::RecvTimeoutError::Disconnected) => Err(mpsc::RecvError),
             },
             None => app.rx.recv(),
         };
         // info!("Received message: {:?}", &msg);
+        refresh_composer_viewport_width(app, &mut terminal_session);
+        if let Ok(ref input) = msg {
+            app.runtime_diagnostics.record_input(input);
+        }
         let should_draw = match msg {
             Ok(AppInput::App(event)) => app.handle_media_event(event, &download_tx),
             Ok(AppInput::WhatsApp(event)) => app.handle_whatsapp_event(event),
@@ -64,7 +99,14 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
                 app.on_terminal_event(event);
                 true
             }
-            Ok(AppInput::Draw) => true,
+            Ok(AppInput::Draw(source)) => {
+                app.runtime_diagnostics.record_draw_source(source);
+                let should_draw = should_draw_for_source(app, source);
+                if !should_draw && matches!(source, DrawSource::GoLog) {
+                    app.runtime_diagnostics.record_go_log_draw_suppressed();
+                }
+                should_draw
+            }
             Err(_) => {
                 error!("Failed to receive input from channel");
                 true
@@ -74,22 +116,31 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
         app.sync_selected_presence();
 
         if should_draw {
+            app.runtime_diagnostics.record_should_draw();
+            let started = app.runtime_diagnostics.draw_started();
             if let Err(error) = terminal_session
                 .terminal_mut()
                 .draw(|frame| ui::draw(frame, app))
             {
                 error!("Failed to draw terminal UI: {error}");
+                app.set_read_receipt_readiness(crate::app::read_receipts::Readiness::Disconnected);
                 break;
             }
+            if let Some(started) = started {
+                app.runtime_diagnostics.record_draw_finished(started);
+            }
         }
+        app.dispatch_read_receipts();
 
         if app.should_quit {
             break;
         }
     }
 
+    app.shutdown_read_receipt_worker();
     terminal_session.stop_input_reader(&mut app.input_reader);
     terminal_session.restore();
+    app.set_read_receipt_readiness(crate::app::read_receipts::Readiness::Disconnected);
     wr::disconnect();
     let stderr = std::io::stderr();
     let mut stderr = stderr.lock();
@@ -98,4 +149,40 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
     let _ = app
         .message_action_diagnostics
         .write_report(std::io::stderr());
+    app.finalize_runtime_diagnostics();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::test_support::TestApp;
+
+    #[test]
+    fn hidden_log_panel_suppresses_only_go_log_draws() {
+        let mut app = TestApp::new();
+        app.show_logs = false;
+
+        assert!(!should_draw_for_source(&app, DrawSource::GoLog));
+        assert!(should_draw_for_source(&app, DrawSource::Ordinary));
+    }
+
+    #[test]
+    fn visible_log_panel_requests_go_log_draws() {
+        let mut app = TestApp::new();
+        app.show_logs = true;
+
+        assert!(should_draw_for_source(&app, DrawSource::GoLog));
+        assert!(should_draw_for_source(&app, DrawSource::Ordinary));
+    }
+
+    #[test]
+    fn draw_event_order_is_preserved_while_only_hidden_go_logs_are_suppressed() {
+        let mut app = TestApp::new();
+        app.show_logs = false;
+
+        let results = [DrawSource::GoLog, DrawSource::Ordinary, DrawSource::GoLog]
+            .map(|source| should_draw_for_source(&app, source));
+
+        assert_eq!(results, [false, true, false]);
+    }
 }

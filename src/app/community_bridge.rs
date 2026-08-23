@@ -23,11 +23,16 @@ impl App<'_> {
                 let selected = (self.selected_section == Section::Communities)
                     .then(|| self.selected_community_node_jid())
                     .flatten();
-                self.communities = Self::build_community_nodes(&records);
+                let next = Self::build_community_nodes(&records);
+                let changed = self.communities != next;
+                self.communities = next;
                 self.communities_unavailable = false;
                 self.communities_loaded = true;
                 if self.selected_section == Section::Communities {
                     self.select_community_node(selected);
+                }
+                if changed {
+                    self.invalidate_chat_list();
                 }
             }
             Err(error) => {

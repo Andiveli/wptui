@@ -1,7 +1,8 @@
+pub(crate) mod bidi;
 pub mod communities;
 pub mod contact_list;
 mod contacts;
-mod layout;
+pub(crate) mod layout;
 pub mod message_list;
 mod navigation;
 mod status;
@@ -10,16 +11,21 @@ pub mod text_input;
 
 pub use layout::{
     NavigationAreas, ViewerPreviewLayout, attachment_preview_lines, centered_modal_layout,
-    composer_cursor_position, composer_height, composer_visual_cursor, composer_visual_rows,
-    conversation_areas, navigation_areas, viewer_preview_layout,
+    composer_cursor_position, composer_height, composer_mention_picker_area,
+    composer_visual_cursor, composer_visual_rows, conversation_areas, navigation_areas,
+    viewer_preview_layout,
 };
-pub(crate) use layout::{composer_visual_layout, truncate_with_ellipsis};
+pub(crate) use layout::{
+    composer_viewport_width, composer_visual_layout_with_direction, truncate_with_ellipsis,
+};
 
 use crate::app::App;
 use crate::app::actions::{ConversationMode, FocusPane, Section};
 use crate::app::events::{
     ViewerPreviewKey, ViewerPreviewState, ViewerStatus, viewer_preview_request,
 };
+use crate::app::runtime_diagnostics::Phase;
+use crate::keybindings::canonical_shortcuts;
 use contacts::render_contacts;
 use message_list::{get_quoted_text, render_messages};
 use navigation::{
@@ -60,7 +66,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         render_logout_placeholder(frame, app, areas.conversation);
     } else if app.selected_section == Section::Chats {
         if let Some(area) = areas.chat_list {
-            render_contacts(frame, app, area);
+            app.record_phase(Phase::ContactsChatProjectionRows, |app| {
+                render_contacts(frame, app, area)
+            });
         } else {
             app.contact_avatars.clear_window();
         }
@@ -73,7 +81,15 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         render_statuses(frame, app, areas.conversation);
     } else if app.selected_section == Section::Communities {
         if let Some(area) = areas.chat_list {
-            communities::render(frame, app, area);
+            if app.community_detail.is_some() {
+                app.record_phase(Phase::ContactsChatProjectionRows, |app| {
+                    contacts::render_contacts(frame, app, area)
+                });
+            } else {
+                app.record_phase(Phase::CommunityDetailList, |app| {
+                    communities::render(frame, app, area)
+                });
+            }
         }
         render_chats(frame, app, areas.conversation);
     } else {
@@ -87,6 +103,118 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     render_url_picker(frame, app);
     render_share_picker(frame, app);
     render_file_picker(frame, app);
+    render_keybind_overlays(frame, app);
+}
+
+fn render_keybind_overlays(frame: &mut Frame, app: &App) {
+    if app.shortcut_popup {
+        let entries = canonical_shortcuts();
+        let lines = entries
+            .iter()
+            .map(|(key, action)| Line::raw(format!("{key:<12} {action}")))
+            .collect::<Vec<_>>();
+        let width = 42.min(frame.area().width.saturating_sub(2));
+        let height = (lines.len() as u16 + 2).min(frame.area().height.saturating_sub(2));
+        let area = Rect::new(
+            frame.area().x + frame.area().width.saturating_sub(width) / 2,
+            frame.area().y + frame.area().height.saturating_sub(height) / 2,
+            width,
+            height,
+        );
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Paragraph::new(lines).block(
+                Block::bordered()
+                    .title("Keyboard shortcuts")
+                    .style(Style::default().bg(ratatui::style::Color::Black)),
+            ),
+            area,
+        );
+        return;
+    }
+    if let Some((rows, selected)) = &app.contextual_menu {
+        let lines = rows
+            .iter()
+            .enumerate()
+            .map(|(index, row)| {
+                let marker = if index == *selected { ">" } else { " " };
+                let style = if row.row_style == crate::app::contextual_actions::RowStyle::Enabled {
+                    Style::default().fg(ratatui::style::Color::White)
+                } else {
+                    Style::default().fg(ratatui::style::Color::DarkGray)
+                };
+                let reason = row
+                    .reason
+                    .map(|reason| format!(" ({reason})"))
+                    .unwrap_or_default();
+                Line::styled(
+                    format!(
+                        "{marker} {}  {}{}",
+                        row.display_shortcut, row.display_label, reason
+                    ),
+                    style,
+                )
+            })
+            .collect::<Vec<_>>();
+        let width = 46.min(frame.area().width.saturating_sub(2));
+        let height = (lines.len() as u16 + 2).min(frame.area().height.saturating_sub(2));
+        let area = Rect::new(
+            frame.area().x + frame.area().width.saturating_sub(width) / 2,
+            frame.area().y + frame.area().height.saturating_sub(height) / 2,
+            width,
+            height,
+        );
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Paragraph::new(lines).block(
+                Block::bordered()
+                    .title("Actions")
+                    .style(Style::default().bg(ratatui::style::Color::Black)),
+            ),
+            area,
+        );
+    } else if let Some((rows, selected)) = &app.leader_menu {
+        let lines = rows
+            .iter()
+            .enumerate()
+            .map(|(index, row)| {
+                let marker = if index == *selected { ">" } else { " " };
+                let style = if row.row_style == crate::app::contextual_actions::RowStyle::Enabled {
+                    Style::default().white()
+                } else {
+                    Style::default().dark_gray()
+                };
+                let reason = row
+                    .reason
+                    .map(|reason| format!(" ({reason})"))
+                    .unwrap_or_default();
+                Line::styled(
+                    format!(
+                        "{marker} {:<8} {}{}",
+                        row.display_shortcut, row.display_label, reason
+                    ),
+                    style,
+                )
+            })
+            .collect::<Vec<_>>();
+        let width = 42.min(frame.area().width.saturating_sub(2));
+        let height = (lines.len() as u16 + 2).min(frame.area().height.saturating_sub(2));
+        let area = Rect::new(
+            frame.area().x + frame.area().width.saturating_sub(width) / 2,
+            frame.area().y + frame.area().height.saturating_sub(height) / 2,
+            width,
+            height,
+        );
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Paragraph::new(lines).block(
+                Block::bordered()
+                    .title("Leader")
+                    .style(Style::default().bg(ratatui::style::Color::Black)),
+            ),
+            area,
+        );
+    }
 }
 
 const ANDIVELI_LOGO: [&str; 19] = [
@@ -273,16 +401,18 @@ pub fn render_chats(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let composer_width = inner.width.saturating_sub(2);
     let composer_blocked = app.composer_blocked();
-    let composer_layout = composer_visual_layout(
+    let composer_layout = composer_visual_layout_with_direction(
         if composer_blocked {
             &[]
         } else {
             app.composer.input.lines()
         },
         composer_width,
+        app.composer_direction,
     );
-    let input_cursor = app.composer.input.cursor();
-    let composer_cursor = composer_layout.cursor((input_cursor.0, input_cursor.1));
+    let composer_cursor = app
+        .composer
+        .visual_cursor(composer_width, app.composer_direction);
     let composer_rows = composer_layout.row_count().max(composer_cursor.0 + 1);
     let (chat_area, composer_area) = conversation_areas(
         inner,
@@ -302,7 +432,9 @@ pub fn render_chats(frame: &mut Frame, app: &mut App, area: Rect) {
     if app.open_chat().is_none() {
         render_chat_empty_state(frame, chat_area);
     } else {
-        render_messages(frame, app, chat_area);
+        app.record_phase(Phase::MessageListRenderLayout, |app| {
+            render_messages(frame, app, chat_area)
+        });
     }
 
     if let Some(chat_jid) = app.open_chat() {
@@ -372,13 +504,21 @@ pub fn render_chats(frame: &mut Frame, app: &mut App, area: Rect) {
             let scroll_top = cursor_row
                 .saturating_add(1)
                 .saturating_sub(input_area.height as usize);
-            let text = if app.composer.input.lines().iter().all(String::is_empty) {
-                app.composer.input.placeholder_text().to_owned()
+            let lines = if app.composer.input.lines().iter().all(String::is_empty) {
+                let alignment = composer_layout
+                    .lines()
+                    .first()
+                    .and_then(|line| line.alignment)
+                    .unwrap_or(Alignment::Left);
+                vec![
+                    Line::from(app.composer.input.placeholder_text().to_owned())
+                        .alignment(alignment),
+                ]
             } else {
-                composer_layout.text()
+                composer_layout.lines()
             };
             frame.render_widget(
-                Paragraph::new(text).scroll((scroll_top.min(u16::MAX as usize) as u16, 0)),
+                Paragraph::new(lines).scroll((scroll_top.min(u16::MAX as usize) as u16, 0)),
                 input_area,
             );
             if app.focus_pane == FocusPane::Conversation && !input_area.is_empty() {
@@ -389,6 +529,83 @@ pub fn render_chats(frame: &mut Frame, app: &mut App, area: Rect) {
             }
         }
     }
+
+    // Render the picker last within the conversation pane. This keeps it
+    // outside the composer's clipped input rectangle and above the messages,
+    // while draw() still renders higher-priority full-pane modals afterwards.
+    if app.open_chat().is_some() && !app.composer_blocked() && app.composer.mention_picker_active()
+    {
+        render_mention_picker(frame, app, chat_area, composer_area);
+    }
+}
+
+fn render_mention_picker(frame: &mut Frame, app: &App, conversation: Rect, composer: Rect) {
+    let labels = app.composer.mention_picker_labels();
+    if labels.is_empty() {
+        return;
+    }
+    let widest = labels
+        .iter()
+        .map(|label| textwrap::core::display_width(format!("@{label}").as_str()))
+        .max()
+        .unwrap_or(0);
+    let Some(area) = composer_mention_picker_area(conversation, composer, labels.len(), widest)
+    else {
+        return;
+    };
+    let visible_count = usize::from(area.height.saturating_sub(2))
+        .min(labels.len())
+        .min(6);
+    let selected = app
+        .composer
+        .mention_picker_selected()
+        .min(labels.len().saturating_sub(1));
+    let window = mention_picker_window(selected, labels.len(), visible_count);
+    let lines = labels[window.clone()]
+        .iter()
+        .enumerate()
+        .map(|(offset, label)| {
+            let selected_row = window.start + offset == selected;
+            let prefix = if selected_row { "› " } else { "  " };
+            let line = format!("{prefix}@{label}");
+            if selected_row {
+                Line::from(Span::styled(
+                    line,
+                    Style::default()
+                        .fg(ratatui::style::Color::Black)
+                        .bg(ratatui::style::Color::Cyan)
+                        .bold(),
+                ))
+            } else {
+                Line::from(line)
+            }
+        })
+        .collect::<Vec<_>>();
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(lines).block(
+            Block::bordered()
+                .title(" Mentions ")
+                .border_style(Style::default().fg(ratatui::style::Color::Cyan)),
+        ),
+        area,
+    );
+}
+
+fn mention_picker_window(
+    selected: usize,
+    candidate_count: usize,
+    visible_count: usize,
+) -> std::ops::Range<usize> {
+    if candidate_count == 0 || visible_count == 0 {
+        return 0..0;
+    }
+    let visible_count = visible_count.min(candidate_count).min(6);
+    let selected = selected.min(candidate_count - 1);
+    let start = selected
+        .saturating_sub(visible_count.saturating_sub(1))
+        .min(candidate_count.saturating_sub(visible_count));
+    start..start + visible_count
 }
 
 fn render_attachment_viewer(frame: &mut Frame, app: &mut App) {
@@ -621,4 +838,18 @@ fn render_file_picker(frame: &mut Frame, app: &mut App) {
             .wrap(Wrap { trim: true }),
         hint_area,
     );
+}
+
+#[cfg(test)]
+mod mention_picker_tests {
+    use super::mention_picker_window;
+
+    #[test]
+    fn eight_candidates_use_six_rows_and_keep_each_selection_visible() {
+        for selected in 0..8 {
+            let window = mention_picker_window(selected, 8, 6);
+            assert_eq!(window.len(), 6);
+            assert!(window.contains(&selected));
+        }
+    }
 }

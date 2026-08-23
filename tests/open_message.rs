@@ -32,6 +32,7 @@ fn message(id: &str, text: &str) -> whatsrust::Message {
             id: id.into(),
             chat: "chat@example.test".to_owned().into(),
             sender: "sender@example.test".to_owned().into(),
+            mentions_self: false,
             timestamp: 0,
             is_from_me: false,
             quote_id: None,

@@ -98,6 +98,9 @@ impl App<'_> {
             .then(|| self.refresh_message_projection(&target))
             .flatten()
             .unwrap_or("unchanged");
+        if !matches!(persistence, MessageActionPersistence::DuplicateActionID) {
+            self.invalidate_chat_list();
+        }
         let action_count = self.message_actions.get(&target).map_or(0, Vec::len);
         let kind = match &action.kind {
             MessageActionKind::Edit { .. } => "edit",

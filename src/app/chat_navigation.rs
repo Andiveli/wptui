@@ -1,18 +1,18 @@
-use ratatui::crossterm::event::KeyCode;
+use crate::input_key::KeyCode;
 
 use super::App;
 use super::actions::{AppAction, FocusPane, Section};
-use crate::key_handler::Key;
+use crate::input_key::Key;
 use whatsrust as wr;
 
 impl App<'_> {
     pub fn select_chat(&mut self, jid: Option<wr::JID>) {
-        let rows = self.visible_chat_rows();
-        if let Some(jid) = jid
-            && let Some(index) = rows
-                .iter()
-                .position(|row| row.target == jid || row.members.contains(&jid))
-        {
+        let rows = self.visible_contact_rows();
+        crate::crash_diagnostics::breadcrumb("chat-selection", &format!("rows={}", rows.len()));
+        if let Some(jid) = jid && let Some(index) = rows.iter().position(|row| {
+            row.target().is_some_and(|target| target == &jid)
+                || matches!(row, crate::app::ContactRow::Chat(row) if row.members.contains(&jid))
+        }) {
             self.chat_list_state.select(Some(index));
         } else if rows.is_empty() {
             self.chat_list_state.select(None);
@@ -21,14 +21,13 @@ impl App<'_> {
         }
     }
 
-    pub(crate) fn update_filtered_chats(&mut self) {
+    pub(crate) fn update_filtered_chats(&mut self, selected: Option<wr::JID>) {
         self.filtered_chats = self
-            .visible_chat_rows()
+            .visible_contact_rows()
             .into_iter()
-            .map(|row| row.target)
+            .filter_map(|row| row.target().cloned())
             .collect();
-        self.chat_list_state
-            .select((!self.filtered_chats.is_empty()).then_some(0));
+        self.select_chat(selected);
     }
 
     pub(crate) fn handle_chat_search_key(&mut self, key: Key) {
@@ -44,12 +43,14 @@ impl App<'_> {
                 self.dispatch_action(AppAction::OpenChat);
             }
             KeyCode::Char(character) => {
+                let selected = self.get_selected_chat();
                 self.contact_search.enter_char(character);
-                self.update_filtered_chats();
+                self.update_filtered_chats(selected);
             }
             KeyCode::Backspace => {
+                let selected = self.get_selected_chat();
                 self.contact_search.delete_char();
-                self.update_filtered_chats();
+                self.update_filtered_chats(selected);
             }
             KeyCode::Left => self.contact_search.move_cursor_left(),
             KeyCode::Right => self.contact_search.move_cursor_right(),
@@ -126,16 +127,16 @@ impl App<'_> {
     }
 
     fn clamp_chat_selection(&mut self) {
-        let count = if self.contact_search.input.is_empty() {
-            self.visible_chat_rows().len()
-        } else {
-            self.filtered_chats.len()
-        };
+        let count = self.visible_contact_rows().len();
         clamp_list_state(&mut self.chat_list_state, count);
     }
 
     fn clamp_community_selection(&mut self) {
-        let count = self.selectable_community_nodes().len();
+        let count = self
+            .community_navigation_rows()
+            .into_iter()
+            .filter(|row| !matches!(row, crate::app::CommunityNavigationRow::Separator))
+            .count();
         clamp_list_state(&mut self.chat_list_state, count);
     }
 }

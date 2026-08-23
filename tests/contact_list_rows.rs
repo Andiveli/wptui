@@ -3,12 +3,15 @@ use ratatui::{
     backend::TestBackend,
     buffer::Buffer,
     layout::Rect,
-    style::Color,
+    style::{Color, Modifier},
     widgets::{ListState, StatefulWidget},
 };
 use whatsrust::{JID, Message, MessageContent, MessageInfo};
-use wp_tui::app::actions::{PaneVisibility, Section};
 use wp_tui::app::contact_avatars::prioritized_avatar_requests;
+use wp_tui::app::{
+    Chat, CommunityNode,
+    actions::{PaneVisibility, Section},
+};
 use wp_tui::ui::{
     self,
     contact_list::{
@@ -83,6 +86,32 @@ fn selection_highlights_both_rows_as_one_item() {
 }
 
 #[test]
+fn unread_rows_keep_green_text_and_independent_yellow_attention_marker() {
+    let mut unread = item("Group", "3 unread");
+    unread.unread = true;
+    unread.attention = true;
+    let items = vec![unread];
+    let area = Rect::new(0, 0, 30, 3);
+    let mut buffer = Buffer::empty(area);
+
+    ContactList::new(&items).render(
+        area,
+        &mut buffer,
+        &mut ListState::default().with_selected(Some(0)),
+    );
+
+    assert_eq!(buffer[(5, 0)].symbol(), "@");
+    assert_eq!(buffer[(7, 0)].symbol(), "G");
+    assert_eq!(buffer[(7, 1)].symbol(), "3");
+    assert_eq!(buffer[(5, 0)].fg, Color::Yellow);
+    assert_eq!(buffer[(7, 0)].fg, Color::Green);
+    assert_eq!(buffer[(7, 1)].fg, Color::Green);
+    assert!(buffer[(5, 0)].modifier.contains(Modifier::BOLD));
+    assert!(buffer[(7, 0)].modifier.contains(Modifier::BOLD));
+    assert_eq!(buffer[(7, 0)].bg, Color::DarkGray);
+}
+
+#[test]
 fn zero_narrow_and_one_row_areas_do_not_panic_or_move_by_terminal_row() {
     let items = vec![item("Alice", "hello"), item("Bob", "goodbye")];
     for area in [
@@ -152,6 +181,55 @@ fn search_list_renders_the_same_two_row_item_and_preserves_its_selection() {
     assert!(rows.iter().any(|row| row.contains("Visible Contact")));
     assert!(rows.iter().any(|row| row.contains("preview")));
     assert!(!rows.iter().any(|row| row.contains("Hidden Contact")));
+}
+
+#[test]
+fn chats_render_one_aggregated_community_row_and_one_normal_chat_row() {
+    let mut app = TestApp::new();
+    app.selected_section = Section::Chats;
+    let first = JID::from("first@g.us".to_owned());
+    let second = JID::from("second@g.us".to_owned());
+    let normal = JID::from("normal@s.whatsapp.net".to_owned());
+    app.contacts.insert(normal.clone(), "Normal Contact".into());
+    for chat in [&first, &second, &normal] {
+        app.chats.insert(
+            chat.clone(),
+            Chat {
+                jid: chat.clone(),
+                last_message_time: Some(if *chat == second { 20 } else { 10 }),
+            },
+        );
+    }
+    app.sorted_chats = vec![first, second, normal];
+    app.communities = vec![CommunityNode {
+        jid: JID::from("community@g.us".to_owned()),
+        name: "Project Team".into(),
+        is_root: true,
+        linked_groups: vec![
+            JID::from("first@g.us".to_owned()),
+            JID::from("second@g.us".to_owned()),
+        ],
+        is_joined: true,
+        is_default_subgroup: false,
+        is_announce: None,
+        participant_count: None,
+    }];
+
+    let mut terminal = Terminal::new(TestBackend::new(100, 10)).unwrap();
+    terminal.draw(|frame| ui::draw(frame, &mut app)).unwrap();
+    let rendered = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol().to_owned())
+        .collect::<String>();
+
+    assert_eq!(app.visible_chat_rows().len(), 2);
+    assert_eq!(rendered.matches("Project Team").count(), 1);
+    assert!(!rendered.contains("first@g.us"));
+    assert!(!rendered.contains("second@g.us"));
+    assert!(rendered.contains("Normal Contact"));
 }
 
 #[test]
@@ -276,6 +354,8 @@ fn item(name: &str, preview: &str) -> ContactListItem {
         initials: initials(name),
         preview: preview.to_owned(),
         local_time: None,
+        unread: false,
+        attention: false,
     }
 }
 
@@ -285,6 +365,7 @@ fn message(chat: &JID, id: &str, timestamp: i64, text: &str) -> Message {
             id: id.into(),
             chat: chat.clone(),
             sender: chat.clone(),
+            mentions_self: false,
             timestamp,
             is_from_me: false,
             quote_id: None,

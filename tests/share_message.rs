@@ -31,6 +31,7 @@ fn message(id: &str, content: MessageContent) -> Message {
             id: id.into(),
             chat: JID::from("source@s.whatsapp.net".to_owned()),
             sender: JID::from("source@s.whatsapp.net".to_owned()),
+            mentions_self: false,
             timestamp: 1,
             is_from_me: false,
             quote_id: None,

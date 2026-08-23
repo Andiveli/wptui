@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use super::App;
 use whatsrust as wr;
 
@@ -7,6 +9,113 @@ pub struct CommunityNode {
     pub name: String,
     pub is_root: bool,
     pub linked_groups: Vec<wr::JID>,
+    pub is_joined: bool,
+    pub is_default_subgroup: bool,
+    pub is_announce: Option<bool>,
+    pub participant_count: Option<u32>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CommunityNavigationRow {
+    Root(wr::JID),
+    Group(wr::JID),
+    Announcement(wr::JID),
+    ViewAll(wr::JID),
+    Separator,
+}
+
+pub(crate) fn is_announcement_group(node: &CommunityNode) -> bool {
+    node.is_joined && (node.is_default_subgroup || node.is_announce == Some(true))
+}
+
+pub(crate) fn community_group_label(node: &CommunityNode) -> String {
+    if is_announcement_group(node) {
+        "Announcements".into()
+    } else {
+        node.name.clone()
+    }
+}
+
+fn record_key(
+    record: &wr::CommunityInfo,
+) -> (bool, String, String, bool, bool, Option<bool>, Option<u32>) {
+    (
+        !record.is_joined,
+        record.name.to_string(),
+        record
+            .parent_jid
+            .as_ref()
+            .map(|jid| jid.0.to_string())
+            .unwrap_or_default(),
+        !record.is_parent,
+        !record.is_default_subgroup,
+        record.is_announce,
+        record.participant_count,
+    )
+}
+
+fn node_key(node: &CommunityNode) -> (bool, String, bool, bool, Option<bool>, Option<u32>, String) {
+    (
+        !node.is_joined,
+        node.name.clone(),
+        !node.is_root,
+        !node.is_default_subgroup,
+        node.is_announce,
+        node.participant_count,
+        node.linked_groups
+            .iter()
+            .map(|jid| jid.0.as_ref())
+            .collect::<Vec<_>>()
+            .join("\0"),
+    )
+}
+
+pub(crate) fn dedupe_nodes<'a, I>(nodes: I) -> Vec<&'a CommunityNode>
+where
+    I: IntoIterator<Item = &'a CommunityNode>,
+{
+    let mut unique: Vec<&CommunityNode> = Vec::new();
+    for node in nodes {
+        if let Some(existing) = unique.iter_mut().find(|existing| existing.jid == node.jid) {
+            if node_key(node) < node_key(existing) {
+                *existing = node;
+            }
+        } else {
+            unique.push(node);
+        }
+    }
+    unique
+}
+
+fn merged_records(records: &[wr::CommunityInfo]) -> Vec<wr::CommunityInfo> {
+    let mut by_jid = HashMap::new();
+    for record in records {
+        match by_jid.get_mut(&record.jid) {
+            Some(current) if record_key(record) < record_key(current) => {
+                *current = record.clone();
+            }
+            None => {
+                by_jid.insert(record.jid.clone(), record.clone());
+            }
+            _ => {}
+        }
+    }
+    let mut merged = by_jid.into_values().collect::<Vec<_>>();
+    merged.sort_by_key(record_key);
+    merged
+}
+
+fn node(record: &wr::CommunityInfo, linked_groups: Vec<wr::JID>) -> CommunityNode {
+    CommunityNode {
+        jid: record.jid.clone(),
+        name: record.name.to_string(),
+        is_root: record.is_parent,
+        linked_groups,
+        is_joined: record.is_joined,
+        is_default_subgroup: record.is_default_subgroup,
+        is_announce: record.is_announce,
+        participant_count: record.participant_count,
+    }
 }
 
 impl App<'_> {
@@ -18,69 +127,82 @@ impl App<'_> {
     }
 
     pub(crate) fn selected_community_node_jid(&self) -> Option<wr::JID> {
-        self.chat_list_state
-            .selected()
-            .and_then(|index| {
-                self.selectable_community_nodes()
-                    .into_iter()
-                    .nth(index)
-                    .or_else(|| {
-                        self.communities
-                            .iter()
-                            .filter(|node| node.is_root)
-                            .nth(index)
-                    })
-            })
-            .map(|node| node.jid.clone())
+        self.get_selected_community()
     }
 
     pub(crate) fn select_community_node(&mut self, jid: Option<wr::JID>) {
+        let selectable = self.selectable_community_nodes();
         let selected = jid
-            .and_then(|jid| {
-                self.selectable_community_nodes()
-                    .iter()
-                    .position(|node| node.jid == jid)
-            })
-            .or_else(|| (!self.selectable_community_nodes().is_empty()).then_some(0));
+            .and_then(|jid| selectable.iter().position(|node| node.jid == jid))
+            .or_else(|| (!selectable.is_empty()).then_some(0));
         self.chat_list_state.select(selected);
     }
 
     pub(crate) fn selectable_community_nodes(&self) -> Vec<&CommunityNode> {
-        self.communities
-            .iter()
-            .filter(|node| !node.is_root)
-            .collect()
+        dedupe_nodes(
+            self.communities
+                .iter()
+                .filter(|node| !node.is_root && node.is_joined),
+        )
+    }
+
+    pub(crate) fn community_navigation_rows(&self) -> Vec<CommunityNavigationRow> {
+        let mut rows = Vec::new();
+        for root in dedupe_nodes(self.communities.iter().filter(|node| node.is_root)) {
+            let groups = root
+                .linked_groups
+                .iter()
+                .filter(|jid| self.chats.contains_key(*jid))
+                .filter_map(|jid| {
+                    dedupe_nodes(self.communities.iter().filter(|node| node.jid == *jid))
+                        .into_iter()
+                        .next()
+                })
+                .collect::<Vec<_>>();
+            if groups.is_empty() {
+                continue;
+            }
+            rows.push(CommunityNavigationRow::Root(root.jid.clone()));
+            rows.extend(groups.into_iter().map(|group| {
+                if is_announcement_group(group) {
+                    CommunityNavigationRow::Announcement(group.jid.clone())
+                } else {
+                    CommunityNavigationRow::Group(group.jid.clone())
+                }
+            }));
+            rows.push(CommunityNavigationRow::ViewAll(root.jid.clone()));
+            rows.push(CommunityNavigationRow::Separator);
+        }
+        rows
     }
 
     pub(crate) fn build_community_nodes(records: &[wr::CommunityInfo]) -> Vec<CommunityNode> {
+        let records = merged_records(records);
         let mut roots = records
             .iter()
             .filter(|record| record.is_parent)
             .collect::<Vec<_>>();
-        roots.sort_by(|a, b| a.name.cmp(&b.name));
+        roots.sort_by(|left, right| {
+            left.name
+                .cmp(&right.name)
+                .then_with(|| left.jid.0.cmp(&right.jid.0))
+        });
         let mut nodes = Vec::new();
         for root in roots {
-            nodes.push(CommunityNode {
-                jid: root.jid.clone(),
-                name: root.name.to_string(),
-                is_root: true,
-                linked_groups: records
-                    .iter()
-                    .filter(|record| record.parent_jid.as_ref() == Some(&root.jid))
-                    .map(|record| record.jid.clone())
-                    .collect(),
-            });
             let mut children = records
                 .iter()
                 .filter(|record| record.parent_jid.as_ref() == Some(&root.jid))
                 .collect::<Vec<_>>();
-            children.sort_by(|a, b| a.name.cmp(&b.name));
-            nodes.extend(children.into_iter().map(|child| CommunityNode {
-                jid: child.jid.clone(),
-                name: child.name.to_string(),
-                is_root: false,
-                linked_groups: Vec::new(),
-            }));
+            children.sort_by(|left, right| {
+                left.name
+                    .cmp(&right.name)
+                    .then_with(|| left.jid.0.cmp(&right.jid.0))
+            });
+            nodes.push(node(
+                root,
+                children.iter().map(|child| child.jid.clone()).collect(),
+            ));
+            nodes.extend(children.into_iter().map(|child| node(child, Vec::new())));
         }
         nodes
     }

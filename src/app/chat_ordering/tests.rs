@@ -11,6 +11,7 @@ fn message(chat: &wr::JID, id: &str, timestamp: i64) -> wr::Message {
             id: id.into(),
             chat: chat.clone(),
             sender: chat.clone(),
+            mentions_self: false,
             timestamp,
             forwarding: Default::default(),
             is_from_me: false,

@@ -16,7 +16,7 @@ pub(crate) fn handle(app: &mut App<'_>, event: wr::Event) -> bool {
             // History sync reports chats that may carry no messages. Keep
             // them so the chat list reflects the full account, not only
             // conversations that shipped a message in the sync batch.
-            app.add_or_update_chat(
+            let changed = app.add_or_update_chat(
                 Chat {
                     jid,
                     last_message_time: (last_message_time > 0).then_some(last_message_time),
@@ -27,10 +27,24 @@ pub(crate) fn handle(app: &mut App<'_>, event: wr::Event) -> bool {
                     }
                 },
             );
+            if changed {
+                app.invalidate_chat_list();
+            }
             app.sort_chats();
             true
         }
         wr::Event::LogoutResult(status) => app.handle_logout_result(status),
+        wr::Event::MarkChatAsRead {
+            chat,
+            message_id,
+            read,
+            timestamp,
+            from_me,
+            participant,
+        } => {
+            app.apply_remote_chat_read(chat, message_id, read, timestamp, from_me, participant);
+            true
+        }
         wr::Event::SyncProgress(percent) => {
             app.history_sync_percent = Some(percent);
             true
@@ -46,12 +60,7 @@ pub(crate) fn handle(app: &mut App<'_>, event: wr::Event) -> bool {
                 chat,
                 message_ids
             );
-            for msg_id in message_ids {
-                if let Some(message) = app.messages.get_mut(&msg_id) {
-                    message.info.read_by += 1;
-                    app.db_handler.add_message(message);
-                }
-            }
+            app.apply_receipt(kind, chat, message_ids);
             true
         }
         wr::Event::Reaction {
@@ -64,6 +73,7 @@ pub(crate) fn handle(app: &mut App<'_>, event: wr::Event) -> bool {
             true
         }
         wr::Event::Connected => {
+            app.set_read_receipt_readiness(crate::app::read_receipts::Readiness::Connected);
             // Connected is emitted again after reconnects. The first
             // probe may race group metadata hydration, so AppStateSyncComplete
             // below remains the authoritative follow-up refresh.

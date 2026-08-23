@@ -45,8 +45,10 @@ impl Notifier for NotifyRustNotifier {
     }
 }
 
-pub(crate) fn notification_eligibility(message: &wr::Message) -> bool {
-    !message.info.is_from_me && message.info.chat.0.as_ref() != STATUS_BROADCAST_CHAT
+pub(crate) fn notification_eligibility(message: &wr::Message, open_chat: Option<&wr::JID>) -> bool {
+    !message.info.is_from_me
+        && message.info.chat.0.as_ref() != STATUS_BROADCAST_CHAT
+        && open_chat != Some(&message.info.chat)
 }
 
 pub(crate) fn notification_is_muted(found: bool, muted_until: i64, now: i64) -> bool {

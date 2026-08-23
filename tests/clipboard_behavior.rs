@@ -1,6 +1,8 @@
 use std::fs;
 
-use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use ratatui::crossterm::event::{
+    Event, KeyCode as TerminalKeyCode, KeyEvent, KeyModifiers as TerminalKeyModifiers,
+};
 use tempfile::tempdir;
 use wp_tui::app::actions::{ActionNotice, ConversationMode};
 use wp_tui::app::composer::Composer;
@@ -9,11 +11,36 @@ use wp_tui::app::{
     inputs::{apply_clipboard_paste, composer_action_for_editing_key},
 };
 use wp_tui::clipboard::{ClipboardError, ClipboardPaste, classify_text, encode_rgba_png};
-use wp_tui::key_handler::Key;
+use wp_tui::input_key::{Key, KeyCode, KeyModifiers};
 mod common;
 use common::TestApp;
 
 struct FailingClipboardReader;
+
+fn terminal_event(key: Key) -> Event {
+    let code = match key.code {
+        KeyCode::Backspace => TerminalKeyCode::Backspace,
+        KeyCode::Enter => TerminalKeyCode::Enter,
+        KeyCode::Esc => TerminalKeyCode::Esc,
+        KeyCode::Left => TerminalKeyCode::Left,
+        KeyCode::Right => TerminalKeyCode::Right,
+        KeyCode::Up => TerminalKeyCode::Up,
+        KeyCode::Down => TerminalKeyCode::Down,
+        KeyCode::Tab => TerminalKeyCode::Tab,
+        KeyCode::Char(character) => TerminalKeyCode::Char(character),
+    };
+    let mut modifiers = TerminalKeyModifiers::NONE;
+    if key.modifiers.contains(KeyModifiers::SHIFT) {
+        modifiers |= TerminalKeyModifiers::SHIFT;
+    }
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        modifiers |= TerminalKeyModifiers::CONTROL;
+    }
+    if key.modifiers.contains(KeyModifiers::ALT) {
+        modifiers |= TerminalKeyModifiers::ALT;
+    }
+    Event::Key(KeyEvent::new(code, modifiers))
+}
 
 impl wp_tui::app::actions::ClipboardReader for FailingClipboardReader {
     fn read_paste(&mut self) -> Result<ClipboardPaste, ClipboardError> {
@@ -116,10 +143,7 @@ fn control_v_clipboard_read_failure_shows_notice_and_preserves_composer_state() 
         .queue_attachment("existing.pdf".into(), whatsrust::FileKind::Document);
     app.clipboard_reader = Box::new(FailingClipboardReader);
 
-    app.on_terminal_event(Event::Key(KeyEvent::new(
-        KeyCode::Char('v'),
-        KeyModifiers::CONTROL,
-    )));
+    app.on_terminal_event(terminal_event(Key::ctrl('v')));
 
     assert_eq!(
         app.action_notice,

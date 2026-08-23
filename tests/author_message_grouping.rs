@@ -452,6 +452,7 @@ fn edited_and_reordered_neighbors_recompute_grouping_after_cache_population() {
     );
 
     app.messages.get_mut("middle").unwrap().info.sender = JID::from("bob@example.test".to_owned());
+    app.invalidate_message_sequence_for_test(&JID::from("chat@example.test".to_owned()));
     let edited = render_rows(&mut app, 48, 16);
     assert_eq!(edited.iter().filter(|row| row.contains("Alice")).count(), 2);
     assert_eq!(edited.iter().filter(|row| row.contains("Bob")).count(), 1);
@@ -461,6 +462,7 @@ fn edited_and_reordered_neighbors_recompute_grouping_after_cache_population() {
         chat,
         vec!["middle".into(), "oldest".into(), "newest".into()],
     );
+    app.invalidate_message_sequence_for_test(&JID::from("chat@example.test".to_owned()));
     let reordered = render_rows(&mut app, 48, 16);
     assert_eq!(
         reordered.iter().filter(|row| row.contains("Alice")).count(),
@@ -541,6 +543,7 @@ fn message_info(id: &str, sender: &str, timestamp: i64, is_from_me: bool) -> Mes
         id: id.into(),
         chat: JID::from("chat@example.test".to_owned()),
         sender: JID::from(sender.to_owned()),
+        mentions_self: false,
         timestamp,
         is_from_me,
         quote_id: None,

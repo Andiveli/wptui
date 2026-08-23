@@ -13,11 +13,15 @@ impl App<'_> {
     /// Opens the currently highlighted chat: it becomes the rendered
     /// conversation, composer target, and presence subscription.
     pub fn open_selected_chat(&mut self) {
+        crate::crash_diagnostics::breadcrumb("chat-open", "start");
         if let Some(chat) = self.get_selected_chat() {
             self.open_chat = Some(chat.clone());
             self.refresh_group_permission(&chat);
             self.sort_chat_messages(chat);
+            crate::crash_diagnostics::breadcrumb("chat-open", "messages-sorted");
             self.message_list_state.reset();
+            self.restore_read_cursor_anchor();
+            crate::crash_diagnostics::breadcrumb("chat-open", "ready");
         }
     }
 
@@ -27,6 +31,10 @@ impl App<'_> {
             if let Ok(info) = wr::get_group_info(chat) {
                 self.group_permissions.insert(chat.clone(), info);
             }
+            self.composer
+                .set_group_participants(wr::get_group_participants(chat));
+        } else {
+            self.composer.set_group_participants(Vec::new());
         }
         self.composer.set_blocked(self.composer_blocked());
     }
@@ -53,14 +61,36 @@ impl App<'_> {
     /// recipient shows up as a row; the database row is created on the first
     /// real message, so an empty conversation is never persisted.
     pub fn open_chat_by_jid(&mut self, jid: wr::JID) {
+        let missing = !self.chats.contains_key(&jid);
         self.chats.entry(jid.clone()).or_insert_with(|| Chat {
             jid: jid.clone(),
             last_message_time: None,
         });
+        if missing {
+            self.invalidate_chat_list();
+        }
         self.sort_chats();
         self.open_chat = Some(jid.clone());
-        self.composer.set_blocked(self.composer_blocked());
+        self.refresh_group_permission(&jid);
         self.sort_chat_messages(jid);
         self.message_list_state.reset();
+        self.restore_read_cursor_anchor();
+    }
+
+    fn restore_read_cursor_anchor(&mut self) {
+        crate::crash_diagnostics::breadcrumb("unread-cursor", "load-start");
+        let Some(chat) = self.open_chat.as_ref() else {
+            return;
+        };
+        if let Some(message_id) = self
+            .timeline
+            .get(chat)
+            .and_then(|state| state.last_read_message.clone())
+        {
+            self.message_list_state.set_selected_message(message_id);
+            crate::crash_diagnostics::breadcrumb("unread-cursor", "restored");
+        } else {
+            crate::crash_diagnostics::breadcrumb("unread-cursor", "none");
+        }
     }
 }

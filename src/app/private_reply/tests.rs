@@ -9,6 +9,7 @@ fn message(chat: &wr::JID, sender: &wr::JID, id: &str, is_from_me: bool) -> wr::
             id: id.into(),
             chat: chat.clone(),
             sender: sender.clone(),
+            mentions_self: false,
             timestamp: 100,
             forwarding: Default::default(),
             is_from_me,
