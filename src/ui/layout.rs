@@ -188,6 +188,7 @@ impl ComposerVisualLayout {
         self.rows.len()
     }
 
+    #[cfg(test)]
     pub(crate) fn text(&self) -> String {
         self.rows
             .iter()
@@ -213,57 +214,6 @@ impl ComposerVisualLayout {
                 ratatui::text::Line::from(text).alignment(row.alignment)
             })
             .collect()
-    }
-
-    fn legacy_cursor(&self, cursor: (usize, usize)) -> (usize, usize) {
-        let logical_row = cursor.0.min(self.logical_rows.len().saturating_sub(1));
-        let (first_row, row_count) = self.logical_rows[logical_row];
-        let row_end = first_row + row_count;
-        let line_direction = self.rows[first_row].direction;
-        let logical_boundary = self.logical_boundary(logical_row, cursor.1);
-        let mut candidates = Vec::new();
-
-        for row_index in first_row..row_end {
-            let row = &self.rows[row_index];
-            for cell in &row.cells {
-                let leading = if cell.direction == Direction::Rtl {
-                    cell.visual_column + cell.width
-                } else {
-                    cell.visual_column
-                };
-                let trailing = if cell.direction == Direction::Rtl {
-                    cell.visual_column
-                } else {
-                    cell.visual_column + cell.width
-                };
-                if cell.source_range.start == logical_boundary {
-                    candidates.push((cell.visual_row, leading, BoundaryAffinity::Before));
-                }
-                if cell.source_range.end == logical_boundary {
-                    candidates.push((cell.visual_row, trailing, BoundaryAffinity::After));
-                }
-            }
-        }
-
-        let preferred = if line_direction == Direction::Rtl {
-            BoundaryAffinity::Before
-        } else {
-            BoundaryAffinity::After
-        };
-        let (row, column, _) = candidates
-            .iter()
-            .find(|candidate| candidate.2 == preferred)
-            .copied()
-            .or_else(|| candidates.first().copied())
-            .unwrap_or_else(|| {
-                let last_row = row_end.saturating_sub(1);
-                (last_row, self.row_offset(&self.rows[last_row]), preferred)
-            });
-        if column >= self.width && line_direction == Direction::Ltr {
-            (row + 1, 0)
-        } else {
-            (row, column.min(self.width.saturating_sub(1)))
-        }
     }
 
     pub(crate) fn cursor(&self, cursor: (usize, usize)) -> (usize, usize) {
@@ -508,37 +458,6 @@ impl ComposerVisualLayout {
                 (column > cell.logical_column && column < end).then_some(end)
             })
             .unwrap_or(column)
-    }
-
-    fn logical_boundary(&self, logical_row: usize, logical_column: usize) -> usize {
-        let (first_row, row_count) = self.logical_rows[logical_row];
-        let mut cells = self.rows[first_row..first_row + row_count]
-            .iter()
-            .flat_map(|row| row.cells.iter())
-            .collect::<Vec<_>>();
-        cells.sort_by_key(|cell| cell.logical_column);
-        let max_column = cells
-            .iter()
-            .map(|cell| cell.logical_column + cell.text.chars().count())
-            .max()
-            .unwrap_or(0);
-        let column = logical_column.min(max_column);
-        let mut boundary = cells
-            .first()
-            .map(|cell| cell.source_range.start)
-            .unwrap_or(0);
-        for cell in cells {
-            let start = cell.logical_column;
-            let end = start + cell.text.chars().count();
-            if column <= start {
-                return cell.source_range.start;
-            }
-            if column < end {
-                return cell.source_range.end;
-            }
-            boundary = cell.source_range.end;
-        }
-        boundary
     }
 
     fn row_offset(&self, row: &ComposerRow) -> usize {
