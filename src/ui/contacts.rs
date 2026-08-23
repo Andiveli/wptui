@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use super::contact_list::{
-    AVATAR_HEIGHT, AVATAR_WIDTH, ContactList, contact_visible_range, visible_contact_rows,
-};
+use super::contact_list::{AVATAR_HEIGHT, AVATAR_WIDTH, ContactList, visible_contact_rows};
 use crate::app::App;
 use crate::app::actions::FocusPane;
 use crate::app::contact_avatars::AvatarTarget;
@@ -18,10 +16,6 @@ use ratatui_image::StatefulImage;
 
 pub(crate) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
     let (rows, items) = app.cached_contact_view();
-    let targets = rows
-        .iter()
-        .filter_map(|row| row.avatar_target().cloned().map(AvatarTarget::Contact))
-        .collect::<Vec<_>>();
     let mut list_area = area;
     if !app.contact_search.input.is_empty() || app.contact_search_active {
         let [search_area, new_list_area] =
@@ -61,14 +55,45 @@ pub(crate) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
     );
 
     let visible = visible_contact_rows(&items, app.chat_list_state.offset(), contacts_area.height);
-    let _legacy_visible_range = contact_visible_range(
-        app.chat_list_state.offset(),
-        contacts_area.height,
-        rows.len(),
-    );
+    let row_targets = rows
+        .iter()
+        .map(|row| row.avatar_target().cloned().map(AvatarTarget::Contact))
+        .collect::<Vec<_>>();
+    let target_positions = row_targets
+        .iter()
+        .scan(0usize, |position, target| {
+            let current = target.as_ref().map(|_| {
+                let current = *position;
+                *position += 1;
+                current
+            });
+            Some(current)
+        })
+        .collect::<Vec<_>>();
+    let visible_target_positions = visible
+        .iter()
+        .filter_map(|(index, _)| target_positions[*index])
+        .collect::<Vec<_>>();
+    let selected_target = app
+        .chat_list_state
+        .selected()
+        .and_then(|index| target_positions.get(index).copied().flatten());
+    let target_offset = visible_target_positions
+        .first()
+        .copied()
+        .unwrap_or_default();
+    let target_visible_count = visible_target_positions.last().map_or(0, |last| {
+        (*last).saturating_sub(target_offset).saturating_add(1)
+    });
+    let targets = row_targets.into_iter().flatten().collect::<Vec<_>>();
     let avatar_started = app.runtime_diagnostics.phase_started();
     app.contact_avatars.schedule(
-        prioritized_avatar_requests(&targets, None, 0, targets.len()),
+        prioritized_avatar_requests(
+            &targets,
+            selected_target,
+            target_offset,
+            target_visible_count,
+        ),
         app.tx.clone(),
         Arc::clone(&app.picker),
     );
@@ -157,5 +182,47 @@ mod tests {
             })
             .unwrap();
         assert_eq!(test_app.app.runtime_diagnostics.chat_view_counts(), (1, 1));
+    }
+
+    #[test]
+    fn scrolling_reschedules_the_avatar_window_for_newly_visible_chats() {
+        let mut test_app = TestApp::new();
+        for index in 0..12 {
+            let chat: wr::JID = format!("chat-{index:02}@example.test").into();
+            test_app.chats.insert(
+                chat.clone(),
+                Chat {
+                    jid: chat.clone(),
+                    last_message_time: Some(0),
+                },
+            );
+            test_app.sorted_chats.push(chat);
+        }
+        let mut terminal = Terminal::new(TestBackend::new(80, 10)).unwrap();
+
+        terminal
+            .draw(|frame| render_contacts(frame, &mut test_app.app, frame.area()))
+            .unwrap();
+        let initial = test_app.app.contact_avatars.requested_targets().to_vec();
+        assert!(initial.len() < 12);
+        assert!(initial.iter().any(
+            |target| target == &AvatarTarget::Contact("chat-00@example.test".to_owned().into())
+        ));
+
+        test_app.app.chat_list_state.select(Some(8));
+        terminal
+            .draw(|frame| render_contacts(frame, &mut test_app.app, frame.area()))
+            .unwrap();
+        let scrolled = test_app.app.contact_avatars.requested_targets();
+        assert_ne!(scrolled, initial.as_slice());
+        assert!(scrolled.iter().any(
+            |target| target == &AvatarTarget::Contact("chat-08@example.test".to_owned().into())
+        ));
+        assert!(scrolled.iter().any(
+            |target| target == &AvatarTarget::Contact("chat-11@example.test".to_owned().into())
+        ));
+        assert!(!scrolled.iter().any(
+            |target| target == &AvatarTarget::Contact("chat-00@example.test".to_owned().into())
+        ));
     }
 }

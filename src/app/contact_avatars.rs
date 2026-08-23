@@ -280,7 +280,10 @@ impl ContactAvatars {
         self.generation = self.generation.wrapping_add(1);
         self.requested = requests;
         let desired = self.requested.iter().cloned().collect::<HashSet<_>>();
-        self.in_flight.retain(|jid| desired.contains(jid));
+        // Requests from the previous generation may be discarded by workers
+        // before producing a result. Reset ownership so overlapping targets
+        // are eligible for the current generation's request.
+        self.in_flight.clear();
         let runtime = self
             .runtime
             .get_or_insert_with(|| start_runtime(self.disk_root.clone(), tx, picker));
@@ -323,6 +326,11 @@ impl ContactAvatars {
         if let Some(runtime) = &self.runtime {
             *runtime.desired.lock().unwrap() = (self.generation, HashSet::new());
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn requested_targets(&self) -> &[AvatarTarget] {
+        &self.requested
     }
 
     pub fn apply(&mut self, result: AvatarResult) -> bool {
@@ -623,25 +631,31 @@ mod tests {
     }
 
     #[test]
-    fn scheduler_deduplicates_in_flight_and_replaces_fast_scroll_generation() {
+    fn scheduler_requeues_overlapping_target_after_generation_change() {
         let root = tempdir().unwrap();
         let mut avatars = ContactAvatars::new(root.path().into());
-        avatars.generation = 1;
-        avatars.requested = vec![target(1), target(2)];
-        avatars.in_flight.extend([target(1), target(2)]);
-        avatars.generation = 2;
-        avatars.requested = vec![target(8)];
-        let requested = avatars.requested.iter().cloned().collect::<HashSet<_>>();
-        avatars
-            .in_flight
-            .retain(|candidate| requested.contains(candidate));
+        let (request_tx, _request_rx) = mpsc::channel::<AvatarRequest>();
+        avatars.runtime = Some(AvatarRuntime {
+            sender: request_tx,
+            desired: Arc::new(Mutex::new((0, HashSet::new()))),
+        });
+        let (app_tx, _app_rx) = mpsc::channel();
+        let picker = Arc::new(Mutex::new(Picker::halfblocks()));
 
-        assert!(avatars.in_flight.is_empty());
-        assert!(!avatars.apply(AvatarResult::Failed {
-            generation: 1,
-            target: target(1)
-        }));
-        assert!(!avatars.failures.contains_key(&target(1)));
+        avatars.schedule(
+            vec![target(1), target(2)],
+            app_tx.clone(),
+            Arc::clone(&picker),
+        );
+        assert_eq!(avatars.enqueued, 2);
+        assert_eq!(avatars.in_flight, [target(1), target(2)].into());
+
+        avatars.schedule(vec![target(1), target(8)], app_tx, picker);
+
+        // The overlapping target was still in flight from the old generation,
+        // but schedule must enqueue it again for the new generation.
+        assert_eq!(avatars.enqueued, 4);
+        assert_eq!(avatars.in_flight, [target(1), target(8)].into());
     }
 
     #[test]
