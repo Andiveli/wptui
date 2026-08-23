@@ -18,6 +18,7 @@ func TestPayloadProtocolConstantsAreOwnedByPayloadProtocol(t *testing.T) {
 	for _, constant := range []string{
 		"MessageTypeText",
 		"MessageTypeFile",
+		"MessageTypeViewOnceUnavailable",
 		"FileTypeImage",
 		"FileTypeVideo",
 		"FileTypeAudio",
@@ -41,6 +42,7 @@ func TestPayloadProtocolValuesRemainStable(t *testing.T) {
 	}{
 		{"message text", MessageTypeText, 0},
 		{"message file", MessageTypeFile, 1},
+		{"message view-once unavailable", MessageTypeViewOnceUnavailable, 2},
 		{"file image", FileTypeImage, 0},
 		{"file video", FileTypeVideo, 1},
 		{"file audio", FileTypeAudio, 2},

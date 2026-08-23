@@ -60,6 +60,7 @@ pub(crate) fn notification_projection(
     summary: Arc<str>,
 ) -> NotificationProjection {
     let body = match &message.message {
+        wr::MessageContent::ViewOnceUnavailable => wr::VIEW_ONCE_UNAVAILABLE_DESCRIPTION.to_owned(),
         wr::MessageContent::Text(text) => text.to_string(),
         wr::MessageContent::File(file) => file.caption.as_ref().map_or_else(
             || match file.kind {

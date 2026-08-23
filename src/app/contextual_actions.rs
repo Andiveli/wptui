@@ -69,6 +69,13 @@ pub fn evaluate_availability(
     if implementation == ImplementationStatus::Planned {
         return ActionAvailability::planned();
     }
+    if action.is_some()
+        && facts
+            .contextual
+            .is_some_and(|context| context.selected_message_is_informational)
+    {
+        return ActionAvailability::disabled("informational item");
+    }
     if action == Some(ContextualAction::Copy)
         && !facts
             .contextual
@@ -347,6 +354,7 @@ pub struct ContextualContext {
     pub section: Section,
     pub has_selected_message: bool,
     pub selected_text: bool,
+    pub selected_message_is_informational: bool,
     pub has_reference: bool,
     pub attach_blocked: bool,
 }
@@ -415,12 +423,35 @@ pub fn contextual_key_action(rows: &[ContextualMenuRow], key: char) -> Option<Co
 mod tests {
     use super::*;
     #[test]
+    fn informational_message_disables_message_actions() {
+        let availability = evaluate_availability(
+            ImplementationStatus::Implemented,
+            Some(ContextualAction::Reply),
+            AvailabilityFacts {
+                contextual: Some(ContextualContext {
+                    focus: FocusPane::Conversation,
+                    section: Section::Chats,
+                    has_selected_message: true,
+                    selected_text: false,
+                    selected_message_is_informational: true,
+                    has_reference: false,
+                    attach_blocked: false,
+                }),
+                contextual_activatable: false,
+            },
+        );
+        assert_eq!(row_style(availability), RowStyle::Disabled);
+        assert_eq!(availability.reason, Some("informational item"));
+    }
+
+    #[test]
     fn scoped_catalog_preserves_colliding_shortcuts() {
         let rows = contextual_menu_rows(ContextualContext {
             focus: FocusPane::Conversation,
             section: Section::Chats,
             has_selected_message: true,
             selected_text: true,
+            selected_message_is_informational: false,
             has_reference: true,
             attach_blocked: false,
         });
@@ -442,6 +473,7 @@ mod tests {
             section: Section::Chats,
             has_selected_message: false,
             selected_text: false,
+            selected_message_is_informational: false,
             has_reference: false,
             attach_blocked: false,
         });
@@ -458,6 +490,7 @@ mod tests {
             section: Section::Chats,
             has_selected_message: false,
             selected_text: false,
+            selected_message_is_informational: false,
             has_reference: false,
             attach_blocked: false,
         });
@@ -476,6 +509,7 @@ mod tests {
                 section: Section::Chats,
                 has_selected_message: false,
                 selected_text: false,
+                selected_message_is_informational: false,
                 has_reference: false,
                 attach_blocked: false,
             }

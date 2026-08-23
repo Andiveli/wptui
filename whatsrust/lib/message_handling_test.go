@@ -15,10 +15,10 @@ func TestHandleMessageOrchestrationOwnership(t *testing.T) {
 	for _, fragment := range []string{
 		"#include \"callback_log_registration.h\"",
 		"func HandleMessage(",
-		"msg, viewOnceUnavailable := unavailableViewOnceMessage(msg)",
+		"func HandleViewOnceUnavailableMessage(info types.MessageInfo, isSync bool)",
 		"info = normalizeMessageInfo(info)",
 		"if dispatchMessageEvent(info, msg)",
-		"rawSource := forwardingSourcePayload(info, msg, viewOnceUnavailable)",
+		"rawSource := forwardingSourcePayload(info, msg, false)",
 		"callback := beginMessageCallback(info, msg, rawSource)",
 		"defer callback.close()",
 	} {

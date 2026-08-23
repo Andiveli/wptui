@@ -292,6 +292,7 @@ pub struct ForwardingInfo {
 enum MessageType {
     Text = 0,
     File = 1,
+    ViewOnceUnavailable = 2,
 }
 
 #[derive(Clone, Debug, Default, FromRepr)]
@@ -625,6 +626,9 @@ pub struct PresenceUpdate {
     pub last_seen: i64,
 }
 
+pub const VIEW_ONCE_UNAVAILABLE_DESCRIPTION: &str =
+    "View-once media is unavailable here. View it on your phone.";
+
 pub type FileId = Arc<str>;
 
 #[derive(Clone, Debug, Default)]
@@ -639,6 +643,7 @@ pub struct FileContent {
 pub enum MessageContent {
     Text(Arc<str>),
     File(FileContent),
+    ViewOnceUnavailable,
 }
 
 #[derive(Clone, Debug)]
@@ -1559,6 +1564,7 @@ impl CallbackTranslator<*const CMessage> for Message {
                 store_message_mention_ranges(&id, &message, ranges);
                 MessageContent::Text(message.into())
             }
+            MessageType::ViewOnceUnavailable => MessageContent::ViewOnceUnavailable,
             MessageType::File => {
                 let image_message = unsafe { &*(msg.message as *const CFileMessage) };
 
@@ -1612,6 +1618,7 @@ impl CallbackTranslator<*const CMessage> for Message {
             chat,
             sender,
             mentions_self: msg.info.mentions_self,
+
             timestamp: msg.info.timestamp,
             is_from_me: msg.info.is_from_me,
             quote_id,
@@ -1772,6 +1779,7 @@ pub fn subscribe_presence(jid: &JID) -> SubscribePresenceResult {
 /// The inner C structs are boxed so their heap addresses remain stable.
 #[allow(dead_code)]
 enum ContentHolder {
+    ViewOnceUnavailable,
     Text(CString, Vec<CString>, Vec<CJID>, Box<CTextMessage>),
     File(
         CString,
@@ -1810,6 +1818,11 @@ fn build_content_for_ffi(
                 ContentHolder::Text(text_c, mention_strings, mention_pointers, c_text),
             )
         }
+        MessageContent::ViewOnceUnavailable => (
+            MessageType::ViewOnceUnavailable as u8,
+            std::ptr::null(),
+            ContentHolder::ViewOnceUnavailable,
+        ),
         MessageContent::File(file) => {
             let path_c = CString::new(file.path.as_ref()).unwrap();
             let file_id_c = CString::new(file.file_id.as_ref()).unwrap();

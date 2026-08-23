@@ -255,6 +255,9 @@ impl DatabaseHandler {
                         let mut file_stmt = tx
                             .prepare("INSERT INTO file_messages (id, chat_jid, sender_jid, timestamp, quote_id, is_from_me, read, kind, path, file_id, caption, is_forwarded, forwarding_score, mention_ranges, mentions_self) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET chat_jid=excluded.chat_jid, sender_jid=excluded.sender_jid, timestamp=excluded.timestamp, quote_id=excluded.quote_id, is_from_me=(file_messages.is_from_me OR excluded.is_from_me), read=excluded.read, kind=excluded.kind, path=excluded.path, file_id=excluded.file_id, caption=excluded.caption, is_forwarded=excluded.is_forwarded, forwarding_score=excluded.forwarding_score, mention_ranges=excluded.mention_ranges, mentions_self=excluded.mentions_self")
                             .unwrap();
+                        let mut view_once_stmt = tx
+                            .prepare("INSERT INTO view_once_unavailable_messages (id, chat_jid, sender_jid, timestamp, is_from_me, read, mentions_self) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET chat_jid=excluded.chat_jid, sender_jid=excluded.sender_jid, timestamp=excluded.timestamp, is_from_me=(view_once_unavailable_messages.is_from_me OR excluded.is_from_me), read=excluded.read, mentions_self=excluded.mentions_self")
+                            .unwrap();
                         let mut source_stmt = tx.prepare("INSERT OR REPLACE INTO forward_sources (id, chat_jid, sender_jid, source) VALUES (?, ?, ?, ?)").unwrap();
                         for message in &messages {
                             let mut msg = message.clone();
@@ -316,6 +319,19 @@ impl DatabaseHandler {
                                                     caption,
                                                 ))
                                             }),
+                                            msg.info.mentions_self,
+                                        ])
+                                        .unwrap();
+                                }
+                                wr::MessageContent::ViewOnceUnavailable => {
+                                    view_once_stmt
+                                        .execute(rusqlite::params![
+                                            msg.info.id,
+                                            msg.info.chat.0,
+                                            msg.info.sender.0,
+                                            msg.info.timestamp,
+                                            msg.info.is_from_me,
+                                            msg.info.read_by,
                                             msg.info.mentions_self,
                                         ])
                                         .unwrap();
@@ -701,6 +717,31 @@ impl DatabaseHandler {
                         .unwrap()
                         .collect::<Vec<Result<_, _>>>()
                 }
+                wr::MessageContent::ViewOnceUnavailable => {
+                    let mut query = self
+                        .db
+                        .prepare("SELECT * FROM view_once_unavailable_messages")
+                        .unwrap();
+                    query
+                        .query_map([], |row| {
+                            Ok(wr::Message {
+                                info: wr::MessageInfo {
+                                    id: row.get::<_, String>(0)?.into(),
+                                    chat: row.get::<_, String>(1)?.into(),
+                                    sender: row.get::<_, String>(2)?.into(),
+                                    mentions_self: row.get(6).unwrap_or(false),
+                                    timestamp: row.get(3)?,
+                                    is_from_me: row.get(4)?,
+                                    quote_id: None,
+                                    read_by: row.get(5)?,
+                                    forwarding: Default::default(),
+                                },
+                                message: wr::MessageContent::ViewOnceUnavailable,
+                            })
+                        })
+                        .unwrap()
+                        .collect::<Vec<Result<_, _>>>()
+                }
             };
 
             for msg in msgs {
@@ -822,8 +863,23 @@ impl DatabaseHandler {
                         )
                         .unwrap();
                 }
+                wr::MessageContent::ViewOnceUnavailable => {}
             }
         }
+        self.db
+            .execute(
+                "CREATE TABLE IF NOT EXISTS view_once_unavailable_messages (
+                    id TEXT PRIMARY KEY,
+                    chat_jid TEXT,
+                    sender_jid TEXT,
+                    timestamp INTEGER,
+                    is_from_me INTEGER,
+                    read INTEGER,
+                    mentions_self INTEGER NOT NULL DEFAULT 0
+                )",
+                [],
+            )
+            .unwrap();
         self.migrate_forwarding_columns();
         ensure_mention_columns(&self.db);
         self.migrate_message_action_columns();

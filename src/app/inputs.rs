@@ -280,6 +280,26 @@ impl App<'_> {
         {
             return;
         }
+        if self.selected_message_is_informational()
+            && matches!(
+                action,
+                AppAction::OpenMessageMenu
+                    | AppAction::CopyMessage
+                    | AppAction::ReplyMessage
+                    | AppAction::ReplyPrivately
+                    | AppAction::ShareMessage
+                    | AppAction::ReactMessage
+                    | AppAction::DeleteMessage
+                    | AppAction::EditMessage
+                    | AppAction::OpenMessage
+                    | AppAction::DownloadMessage
+                    | AppAction::ViewMessage
+                    | AppAction::GoToReference
+            )
+        {
+            self.unavailable("Action is not available for this informational item");
+            return;
+        }
 
         match action {
             AppAction::Quit => {

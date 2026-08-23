@@ -8,6 +8,12 @@ impl App<'_> {
             .is_some_and(|message| self.message_status(&message.info.id).deleted)
     }
 
+    pub(crate) fn selected_message_is_informational(&self) -> bool {
+        self.selected_message().is_some_and(|message| {
+            matches!(message.message, wr::MessageContent::ViewOnceUnavailable)
+        })
+    }
+
     pub(crate) fn copy_selected_text(&mut self) {
         if self.selected_message_is_deleted() {
             return self.unavailable("This message was deleted.");

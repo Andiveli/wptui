@@ -60,7 +60,7 @@ impl ComposerOutcome {
                 .iter()
                 .filter_map(|message| match message {
                     wr::MessageContent::Text(text) => Some(text.as_ref()),
-                    wr::MessageContent::File(_) => None,
+                    wr::MessageContent::File(_) | wr::MessageContent::ViewOnceUnavailable => None,
                 })
                 .collect(),
         }
@@ -73,7 +73,7 @@ impl ComposerOutcome {
                 .iter()
                 .filter_map(|message| match message {
                     wr::MessageContent::File(file) => Some(file),
-                    wr::MessageContent::Text(_) => None,
+                    wr::MessageContent::Text(_) | wr::MessageContent::ViewOnceUnavailable => None,
                 })
                 .collect(),
         }

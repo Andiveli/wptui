@@ -1,18 +1,9 @@
 package main
 
-import (
-	"google.golang.org/protobuf/proto"
+import "go.mau.fi/whatsmeow/proto/waE2E"
 
-	"go.mau.fi/whatsmeow/proto/waE2E"
-)
-
-const viewOnceUnavailablePlaceholder = "View-once media is unavailable here. View it on your phone."
-
-func unavailableViewOnceMessage(message *waE2E.Message) (*waE2E.Message, bool) {
-	if !containsViewOnceWrapper(message) {
-		return message, false
-	}
-	return &waE2E.Message{Conversation: proto.String(viewOnceUnavailablePlaceholder)}, true
+func isUnavailableViewOnceMessage(message *waE2E.Message) bool {
+	return containsViewOnceWrapper(message)
 }
 
 func containsViewOnceWrapper(message *waE2E.Message) bool {

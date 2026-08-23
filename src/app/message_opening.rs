@@ -99,6 +99,7 @@ fn message_urls(message: &wr::Message) -> Vec<String> {
     let text = match &message.message {
         wr::MessageContent::Text(text) => Some(text.as_ref()),
         wr::MessageContent::File(file) => file.caption.as_deref(),
+        wr::MessageContent::ViewOnceUnavailable => None,
     };
     text.map(crate::url::extract_openable_urls)
         .unwrap_or_default()

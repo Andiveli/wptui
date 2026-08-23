@@ -12,8 +12,13 @@ func dispatchIncomingMessage(
 	evt *events.Message,
 	dispatchAction func(messageActionEvent),
 	dispatchMessage func(types.MessageInfo, *waE2E.Message, bool),
+	dispatchViewOnceUnavailable ...func(types.MessageInfo, bool),
 ) {
-	dispatchIncomingMessageWithDecrypt(evt, dispatchAction, dispatchMessage, decryptSecretEncryptedMessage)
+	viewOnceDispatcher := HandleViewOnceUnavailableMessage
+	if len(dispatchViewOnceUnavailable) > 0 && dispatchViewOnceUnavailable[0] != nil {
+		viewOnceDispatcher = dispatchViewOnceUnavailable[0]
+	}
+	dispatchIncomingMessageWithDecrypt(evt, dispatchAction, dispatchMessage, decryptSecretEncryptedMessage, viewOnceDispatcher)
 }
 
 func dispatchIncomingMessageWithDecrypt(
@@ -21,7 +26,12 @@ func dispatchIncomingMessageWithDecrypt(
 	dispatchAction func(messageActionEvent),
 	dispatchMessage func(types.MessageInfo, *waE2E.Message, bool),
 	decrypt decryptSecretEncryptedMessageFunc,
+	dispatchViewOnceUnavailable ...func(types.MessageInfo, bool),
 ) {
+	viewOnceDispatcher := HandleViewOnceUnavailableMessage
+	if len(dispatchViewOnceUnavailable) > 0 && dispatchViewOnceUnavailable[0] != nil {
+		viewOnceDispatcher = dispatchViewOnceUnavailable[0]
+	}
 	if action, ok := messageActionEventFromSecretEncryptedMessage(evt, decrypt); ok {
 		dispatchAction(action)
 		return
@@ -34,8 +44,11 @@ func dispatchIncomingMessageWithDecrypt(
 	if rawMessage == nil && evt.SourceWebMsg != nil {
 		rawMessage = evt.SourceWebMsg.GetMessage()
 	}
-	if message, ok := unavailableViewOnceMessage(rawMessage); ok {
-		dispatchMessage(evt.Info, message, false)
+	if rawMessage == nil {
+		rawMessage = evt.Message
+	}
+	if isUnavailableViewOnceMessage(rawMessage) {
+		viewOnceDispatcher(evt.Info, false)
 		return
 	}
 	dispatchMessage(evt.Info, evt.Message, false)

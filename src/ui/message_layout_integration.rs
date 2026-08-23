@@ -20,6 +20,11 @@ pub fn message_height(
         has_reactions: app.reactions.contains_key(&message.info.id),
         author_group,
         content: match &message.message {
+            wr::MessageContent::ViewOnceUnavailable => {
+                message_layout::HeightContent::Informational {
+                    body: wr::VIEW_ONCE_UNAVAILABLE_DESCRIPTION,
+                }
+            }
             wr::MessageContent::Text(text) => message_layout::HeightContent::Text {
                 body: text,
                 forwarding: forwarding_label(message),
@@ -60,6 +65,11 @@ pub(crate) fn message_height_for_id(
             has_reactions: app.reactions.contains_key(id),
             author_group,
             content: match &message.message {
+                wr::MessageContent::ViewOnceUnavailable => {
+                    message_layout::HeightContent::Informational {
+                        body: wr::VIEW_ONCE_UNAVAILABLE_DESCRIPTION,
+                    }
+                }
                 wr::MessageContent::Text(text) => message_layout::HeightContent::Text {
                     body: text,
                     forwarding: forwarding_label(message),

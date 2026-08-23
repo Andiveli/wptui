@@ -384,6 +384,65 @@ mod layout_contract_tests {
     }
 
     #[test]
+    fn view_once_unavailable_is_subdued_selectable_message_card() {
+        let mut test_app = crate::app::test_support::TestApp::new();
+        let message = wr::Message {
+            info: wr::MessageInfo {
+                id: "view-once".into(),
+                chat: "chat@g.us".to_owned().into(),
+                sender: "sender@s.whatsapp.net".to_owned().into(),
+                mentions_self: false,
+                timestamp: 0,
+                is_from_me: false,
+                quote_id: None,
+                read_by: 0,
+                forwarding: Default::default(),
+            },
+            message: wr::MessageContent::ViewOnceUnavailable,
+        };
+        let backend = TestBackend::new(60, 4);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                super::render_message(
+                    frame.buffer_mut(),
+                    &message,
+                    true,
+                    super::AuthorGroupContext::STARTS_GROUP,
+                    &mut test_app,
+                    Rect::new(0, 0, 60, 4),
+                    false,
+                    MessageTextMode::Chat,
+                );
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let rendered = buffer
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("View-once media is unavailable here. View it on your"));
+        assert!(rendered.contains("phone."));
+        assert!(rendered.contains("sender@s.whatsapp.net"));
+        assert!(rendered.contains("sender@s.whatsapp.net ("));
+        assert!(
+            buffer
+                .content
+                .iter()
+                .any(|cell| cell.fg == ratatui::style::Color::Green)
+        );
+        let description_cell = buffer
+            .content
+            .iter()
+            .find(|cell| cell.symbol() == "V")
+            .expect("informational description cell");
+        assert!(description_cell.modifier.contains(Modifier::DIM));
+        assert_eq!(description_cell.fg, ratatui::style::Color::DarkGray);
+    }
+
+    #[test]
     fn pending_tail_overflow_keeps_newest_fit_in_local_order() {
         let mut test_app = crate::app::test_support::TestApp::new();
         test_app.message_list_state.select(Some(7));
@@ -561,6 +620,7 @@ fn render_message(
             file.caption.as_deref().unwrap_or(file.path.as_ref()),
         )
         .alignment(),
+        wr::MessageContent::ViewOnceUnavailable => ratatui::layout::Alignment::Left,
     };
     // let alignment = if message.info.is_from_me {
     //     ratatui::layout::Alignment::Right
@@ -697,6 +757,17 @@ fn render_message(
                 alignment,
                 text_mode,
             );
+        }
+        wr::MessageContent::ViewOnceUnavailable => {
+            Paragraph::new(inline_content_lines(
+                wr::VIEW_ONCE_UNAVAILABLE_DESCRIPTION,
+                &[],
+                None,
+                content_area.width as usize,
+            ))
+            .style(Style::default().dark_gray().dim())
+            .alignment(alignment)
+            .render(content_area, buf);
         }
     };
     if !reactions_area.is_empty() {

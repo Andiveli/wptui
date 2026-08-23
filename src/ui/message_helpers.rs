@@ -560,6 +560,7 @@ mod tests {
 
 pub fn get_quoted_text(msg: &wr::Message) -> Arc<str> {
     match &msg.message {
+        wr::MessageContent::ViewOnceUnavailable => wr::VIEW_ONCE_UNAVAILABLE_DESCRIPTION.into(),
         wr::MessageContent::Text(text) => text.clone(),
         wr::MessageContent::File(data) => {
             format!("{}: {}", data.path, data.caption.as_deref().unwrap_or("")).into()

@@ -398,6 +398,7 @@ fn local_time(timestamp: i64) -> Option<String> {
 
 fn message_preview(message: &wr::Message) -> String {
     match &message.message {
+        wr::MessageContent::ViewOnceUnavailable => wr::VIEW_ONCE_UNAVAILABLE_DESCRIPTION.to_owned(),
         wr::MessageContent::Text(text) => text.to_string(),
         wr::MessageContent::File(file) => file
             .caption

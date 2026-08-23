@@ -15,6 +15,12 @@ impl App<'_> {
             selected_text: selected.is_some_and(|message| {
                 matches!(message.message, whatsrust::MessageContent::Text(_))
             }),
+            selected_message_is_informational: selected.is_some_and(|message| {
+                matches!(
+                    message.message,
+                    whatsrust::MessageContent::ViewOnceUnavailable
+                )
+            }),
             has_reference: selected.is_some_and(|message| message.info.quote_id.is_some()),
             attach_blocked: self.composer_blocked() || self.selected_section == Section::Status,
         }

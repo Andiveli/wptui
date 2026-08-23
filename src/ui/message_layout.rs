@@ -16,6 +16,9 @@ pub const MESSAGE_HEIGHT_CACHE_CAPACITY: usize = 256;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum OwnedHeightContent {
+    Informational {
+        body: Arc<str>,
+    },
     Text {
         body: Arc<str>,
         forwarding: Option<ForwardingLabel>,
@@ -31,6 +34,9 @@ enum OwnedHeightContent {
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum HeightContent<'a> {
+    Informational {
+        body: &'a str,
+    },
     Text {
         body: &'a str,
         forwarding: Option<ForwardingLabel>,
@@ -84,6 +90,9 @@ impl<'a> From<&LayoutInput<'a>> for OwnedLayoutInput {
             has_reactions: input.has_reactions,
             author_group: input.author_group,
             content: match input.content {
+                HeightContent::Informational { body } => {
+                    OwnedHeightContent::Informational { body: body.into() }
+                }
                 HeightContent::Text {
                     body,
                     forwarding,
@@ -118,6 +127,10 @@ impl OwnedLayoutInput {
             && self.has_reactions == input.has_reactions
             && self.author_group == input.author_group
             && match (&self.content, input.content) {
+                (
+                    OwnedHeightContent::Informational { body },
+                    HeightContent::Informational { body: other },
+                ) => body.as_ref() == other,
                 (
                     OwnedHeightContent::Text {
                         body,
@@ -257,6 +270,9 @@ pub(crate) fn height(
     }
     .max(1);
     let content_height = match &input.content {
+        HeightContent::Informational { body } => {
+            inline_content_lines(body, &[], None, content_width).len()
+        }
         HeightContent::Text {
             body,
             status,
@@ -325,6 +341,28 @@ mod tests {
             },
         }
     }
+
+    #[test]
+    fn informational_content_uses_message_card_height() {
+        let input = LayoutInput {
+            content: HeightContent::Informational {
+                body: "View-once media unavailable",
+            },
+            ..text("")
+        };
+        let mut cache = MessageHeightCache::default();
+        assert_eq!(height(&mut cache, &Arc::from("view-once"), &input), 3);
+
+        let selected = LayoutInput {
+            is_selected: true,
+            ..input
+        };
+        assert_eq!(
+            height(&mut cache, &Arc::from("view-once-selected"), &selected),
+            4
+        );
+    }
+
     #[test]
     fn cache_hit_refreshes_recency_before_eviction() {
         let mut cache = MessageHeightCache::default();

@@ -26,15 +26,8 @@ func TestViewOnceWrappersBecomeUnavailablePlaceholders(t *testing.T) {
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			wrapped := testCase.wrap(&waE2E.Message{ImageMessage: &waE2E.ImageMessage{Caption: stringPointer("private media")}})
-			placeholder, unavailable := unavailableViewOnceMessage(wrapped)
-			if !unavailable {
+			if !isUnavailableViewOnceMessage(wrapped) {
 				t.Fatal("view-once wrapper must be unavailable")
-			}
-			if got := placeholder.GetConversation(); got != viewOnceUnavailablePlaceholder {
-				t.Fatalf("placeholder = %q, want %q", got, viewOnceUnavailablePlaceholder)
-			}
-			if placeholder.GetImageMessage() != nil || placeholder.GetVideoMessage() != nil {
-				t.Fatal("view-once media must not reach the public message model")
 			}
 		})
 	}
@@ -42,11 +35,11 @@ func TestViewOnceWrappersBecomeUnavailablePlaceholders(t *testing.T) {
 
 func TestOrdinaryAndEphemeralMessagesRemainAvailable(t *testing.T) {
 	ordinary := &waE2E.Message{Conversation: stringPointer("ordinary")}
-	if got, unavailable := unavailableViewOnceMessage(ordinary); unavailable || got != ordinary {
-		t.Fatal("ordinary message must remain unchanged")
+	if isUnavailableViewOnceMessage(ordinary) {
+		t.Fatal("ordinary message must remain available")
 	}
 	ephemeral := &waE2E.Message{EphemeralMessage: &waE2E.FutureProofMessage{Message: ordinary}}
-	if got, unavailable := unavailableViewOnceMessage(ephemeral); unavailable || got != ephemeral {
-		t.Fatal("ephemeral message must remain unchanged")
+	if isUnavailableViewOnceMessage(ephemeral) {
+		t.Fatal("ephemeral message must remain available")
 	}
 }

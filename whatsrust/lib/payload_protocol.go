@@ -3,6 +3,7 @@ package main
 const (
 	MessageTypeText = iota
 	MessageTypeFile
+	MessageTypeViewOnceUnavailable
 )
 
 const (

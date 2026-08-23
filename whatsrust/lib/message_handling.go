@@ -11,15 +11,20 @@ import (
 	"go.mau.fi/whatsmeow/types"
 )
 
-func HandleMessage(info types.MessageInfo, msg *waE2E.Message, isSync bool) {
-	msg, viewOnceUnavailable := unavailableViewOnceMessage(msg)
+func HandleViewOnceUnavailableMessage(info types.MessageInfo, isSync bool) {
+	info = normalizeMessageInfo(info)
+	callback := beginMessageCallback(info, nil, nil)
+	defer callback.close()
+	emitViewOnceUnavailableMessage(callback.info, isSync)
+}
 
+func HandleMessage(info types.MessageInfo, msg *waE2E.Message, isSync bool) {
 	info = normalizeMessageInfo(info)
 
 	if dispatchMessageEvent(info, msg) {
 		return
 	}
-	rawSource := forwardingSourcePayload(info, msg, viewOnceUnavailable)
+	rawSource := forwardingSourcePayload(info, msg, false)
 	callback := beginMessageCallback(info, msg, rawSource)
 	defer callback.close()
 	cinfo := callback.info

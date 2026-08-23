@@ -40,6 +40,9 @@ impl super::App<'_> {
         let display_text = match &content {
             wr::MessageContent::Text(text) => text.clone(),
             wr::MessageContent::File(file) => file.caption.clone().unwrap_or_default(),
+            wr::MessageContent::ViewOnceUnavailable => {
+                unreachable!("view-once unavailable content cannot be staged for outbound text")
+            }
         };
         self.stage_text_send_with_display(
             chat,

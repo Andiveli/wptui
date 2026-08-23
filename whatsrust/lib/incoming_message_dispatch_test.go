@@ -76,34 +76,33 @@ func TestIncomingMessageDispatchesViewOncePlaceholderFromAuthoritativeEnvelope(t
 				},
 			},
 		},
+		{
+			name: "live message envelope",
+			event: &events.Message{
+				Info:    info,
+				Message: viewOnce(&waE2E.Message{ImageMessage: &waE2E.ImageMessage{}}),
+			},
+		},
 	}
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			var actions []messageActionEvent
-			var dispatched []struct {
-				info    types.MessageInfo
-				message *waE2E.Message
-				isRetry bool
-			}
+			var dispatched int
+			var viewOnceUnavailable []types.MessageInfo
 			dispatchIncomingMessageWithDecrypt(testCase.event, func(action messageActionEvent) {
 				actions = append(actions, action)
-			}, func(info types.MessageInfo, message *waE2E.Message, isRetry bool) {
-				dispatched = append(dispatched, struct {
-					info    types.MessageInfo
-					message *waE2E.Message
-					isRetry bool
-				}{info, message, isRetry})
-			}, nil)
+			}, func(types.MessageInfo, *waE2E.Message, bool) {
+				dispatched++
+			}, nil, func(info types.MessageInfo, _ bool) {
+				viewOnceUnavailable = append(viewOnceUnavailable, info)
+			})
 
-			if len(actions) != 0 || len(dispatched) != 1 {
-				t.Fatalf("actions=%d dispatched=%d, want actions=0 dispatched=1", len(actions), len(dispatched))
+			if len(actions) != 0 || dispatched != 0 || len(viewOnceUnavailable) != 1 {
+				t.Fatalf("actions=%d dispatched=%d view_once_unavailable=%d, want actions=0 dispatched=0 view_once_unavailable=1", len(actions), dispatched, len(viewOnceUnavailable))
 			}
-			if dispatched[0].info.ID != info.ID || dispatched[0].info.Chat != info.Chat || dispatched[0].info.Sender != info.Sender {
-				t.Fatalf("message info was not preserved: %#v", dispatched[0].info)
-			}
-			if dispatched[0].isRetry || dispatched[0].message.GetConversation() != viewOnceUnavailablePlaceholder {
-				t.Fatalf("unexpected placeholder dispatch: %#v", dispatched[0])
+			if viewOnceUnavailable[0].ID != info.ID || viewOnceUnavailable[0].Chat != info.Chat || viewOnceUnavailable[0].Sender != info.Sender {
+				t.Fatalf("message info was not preserved: %#v", viewOnceUnavailable[0])
 			}
 		})
 	}
@@ -125,7 +124,9 @@ func TestIncomingMessageDispatchKeepsOrdinaryMessageWithoutRawViewOnce(t *testin
 		if isRetry {
 			t.Fatal("ordinary message was marked as a retry")
 		}
-	}, nil)
+	}, nil, func(types.MessageInfo, bool) {
+		t.Fatal("ordinary message was routed to informational callback")
+	})
 
 	if actions != 0 || dispatched != 1 || got != ordinary {
 		t.Fatalf("actions=%d dispatched=%d got=%p, want actions=0 dispatched=1 original=%p", actions, dispatched, got, ordinary)
