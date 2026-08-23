@@ -21,6 +21,8 @@ pub struct ContactListItem {
     pub initials: String,
     pub preview: String,
     pub local_time: Option<String>,
+    pub unread: bool,
+    pub attention: bool,
 }
 
 impl ContactListItem {
@@ -29,6 +31,7 @@ impl ContactListItem {
         latest: Option<&wr::Message>,
         fallback_timestamp: Option<i64>,
         unread: usize,
+        attention: bool,
     ) -> Self {
         let name = row.label.clone();
         Self {
@@ -43,17 +46,19 @@ impl ContactListItem {
                 .map(|message| message.info.timestamp)
                 .or(fallback_timestamp)
                 .and_then(local_time),
+            unread: unread > 0,
+            attention,
         }
     }
 
     pub fn from_chat(app: &App<'_>, chat: &wr::JID) -> Self {
-        Self::from_row(
+        Self::from_contact_row(
             app,
-            &ChatRow {
+            &crate::app::ContactRow::Chat(ChatRow {
                 label: app.contact_name(chat).to_string(),
                 members: vec![chat.clone()],
                 target: chat.clone(),
-            },
+            }),
         )
     }
 
@@ -82,6 +87,8 @@ impl ContactListItem {
             name,
             preview: latest.map(message_preview).unwrap_or_default(),
             local_time: timestamp.and_then(local_time),
+            unread: false,
+            attention: false,
         }
     }
 
@@ -89,19 +96,41 @@ impl ContactListItem {
         match row {
             crate::app::ContactRow::Chat(row) => {
                 let mut item = Self::from_row(app, row);
-                let unread = row
+                let (unread, attention) = row
                     .members
                     .iter()
-                    .map(|jid| app.pending_new_messages(jid))
-                    .sum::<usize>();
+                    .map(|jid| app.pending_chat_activity(jid))
+                    .fold(
+                        (0, false),
+                        |(count, attention), (member_count, member_attention)| {
+                            (count + member_count, attention || member_attention)
+                        },
+                    );
                 if unread > 0 {
                     item.preview = format!("{unread} unread");
                 }
+                item.unread = unread > 0;
+                item.attention = attention;
                 item
             }
             crate::app::ContactRow::VirtualAnnouncement(row) => {
                 let mut item = Self::from_row(app, row);
                 item.initials = "📢".into();
+                let (unread, attention) = row
+                    .members
+                    .iter()
+                    .map(|jid| app.pending_chat_activity(jid))
+                    .fold(
+                        (0, false),
+                        |(count, attention), (member_count, member_attention)| {
+                            (count + member_count, attention || member_attention)
+                        },
+                    );
+                if unread > 0 {
+                    item.preview = format!("{unread} unread");
+                }
+                item.unread = unread > 0;
+                item.attention = attention;
                 item
             }
             crate::app::ContactRow::Available {
@@ -115,12 +144,16 @@ impl ContactListItem {
                     .map(|count| format!("{count} members"))
                     .unwrap_or_default(),
                 local_time: None,
+                unread: false,
+                attention: false,
             },
             crate::app::ContactRow::Header(name) | crate::app::ContactRow::Action(name) => Self {
                 name: name.clone(),
                 initials: String::new(),
                 preview: String::new(),
                 local_time: None,
+                unread: false,
+                attention: false,
             },
         }
     }
@@ -312,14 +345,46 @@ impl StatefulWidget for ContactList<'_> {
             let text_x = area
                 .x
                 .saturating_add(AVATAR_WIDTH.saturating_add(AVATAR_GAP).min(area.width));
-            let text_width = area.right().saturating_sub(text_x) as usize;
+            let marker_width = if item.attention { 2 } else { 0 };
+            let content_x = text_x.saturating_add(marker_width);
+            let text_width = area.right().saturating_sub(content_x) as usize;
             let first = format_row(&item.name, item.local_time.as_deref(), text_width);
             let second = format_row(&item.preview, None, text_width);
+            let unread_style = if item.unread {
+                base.fg(Color::Green).add_modifier(Modifier::BOLD)
+            } else {
+                base
+            };
             if item_area.height > 0 {
-                buf.set_stringn(text_x, y, first, text_width, name_style);
+                if item.attention {
+                    buf.set_stringn(
+                        text_x,
+                        y,
+                        "@ ",
+                        marker_width as usize,
+                        base.fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    );
+                }
+                buf.set_stringn(
+                    content_x,
+                    y,
+                    first,
+                    text_width,
+                    if item.unread {
+                        unread_style
+                    } else {
+                        name_style
+                    },
+                );
             }
             if item_area.height > 1 {
-                buf.set_stringn(text_x, y.saturating_add(1), second, text_width, base);
+                buf.set_stringn(
+                    content_x,
+                    y.saturating_add(1),
+                    second,
+                    text_width,
+                    unread_style,
+                );
             }
             y = y.saturating_add(row_height(item) as u16);
         }

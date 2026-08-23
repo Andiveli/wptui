@@ -16,6 +16,176 @@ fn add_chat(app: &mut TestApp, jid: &wr::JID) {
     );
 }
 
+fn message(chat: &wr::JID, id: &str, timestamp: i64) -> wr::Message {
+    crate::app::test_support::message(chat, id, timestamp)
+}
+
+fn unread_message(
+    chat: &wr::JID,
+    id: &str,
+    timestamp: i64,
+    mentions_self: bool,
+    quote_id: Option<&str>,
+) -> wr::Message {
+    let mut message = message(chat, id, timestamp);
+    message.info.mentions_self = mentions_self;
+    message.info.quote_id = quote_id.map(Into::into);
+    message
+}
+
+#[test]
+fn pending_activity_projects_unread_attention_from_cursor_and_metadata() {
+    let mut app = TestApp::new();
+    let group = jid("group@g.us");
+    let direct = jid("alice@s.whatsapp.net");
+    add_chat(&mut app, &group);
+    add_chat(&mut app, &direct);
+
+    let mut own = message(&group, "own", 10);
+    own.info.is_from_me = true;
+    app.add_message(own);
+    app.add_message(message(&group, "own", 11));
+    assert!(app.messages["own"].info.is_from_me);
+    app.add_message(message(&group, "someone", 15));
+    app.mark_chat_read_at_latest(&group);
+    app.add_message(unread_message(&group, "mention", 20, true, None));
+    app.add_message(unread_message(&group, "reply", 30, false, Some("own")));
+    app.add_message(unread_message(
+        &group,
+        "other-reply",
+        40,
+        false,
+        Some("someone"),
+    ));
+    app.add_message(unread_message(&direct, "direct-mention", 20, true, None));
+
+    assert_eq!(app.pending_chat_activity(&group), (3, true));
+    assert_eq!(app.pending_chat_activity(&direct), (1, false));
+    let group_item = ContactListItem::from_contact_row(
+        &app,
+        &ContactRow::Chat(ChatRow {
+            label: "Group".into(),
+            members: vec![group.clone()],
+            target: group.clone(),
+        }),
+    );
+    let direct_item = ContactListItem::from_contact_row(
+        &app,
+        &ContactRow::Chat(ChatRow {
+            label: "Alice".into(),
+            members: vec![direct.clone()],
+            target: direct.clone(),
+        }),
+    );
+    assert!(group_item.unread && group_item.attention);
+    assert!(direct_item.unread && !direct_item.attention);
+
+    app.mark_chat_read_at_latest(&group);
+    assert_eq!(app.pending_chat_activity(&group), (0, false));
+}
+
+#[test]
+fn pending_activity_uses_message_id_for_equal_timestamp_boundaries() {
+    let mut app = TestApp::new();
+    let group = jid("group@g.us");
+    add_chat(&mut app, &group);
+    app.add_message(message(&group, "a", 10));
+    app.mark_chat_read_at_latest(&group);
+    app.add_message(unread_message(&group, "b", 10, true, None));
+
+    assert_eq!(app.pending_chat_activity(&group), (1, true));
+}
+
+#[test]
+fn unread_group_projection_reports_reply_resolution_outcomes_without_raw_ids() {
+    let mut app = TestApp::new();
+    app.enable_message_action_diagnostics(true);
+    let group = jid("group@g.us");
+    let other_group = jid("other@g.us");
+    let mut own = message(&group, "own-message", 1);
+    own.info.is_from_me = true;
+    app.add_message(own);
+    app.mark_chat_read_at_latest(&group);
+
+    app.add_message(unread_message(&group, "no-quote", 2, false, None));
+    app.add_message(unread_message(
+        &group,
+        "missing-quote",
+        3,
+        false,
+        Some("missing"),
+    ));
+    let mut wrong_chat_target = message(&other_group, "wrong-chat-target", 4);
+    wrong_chat_target.info.is_from_me = true;
+    app.add_message(wrong_chat_target);
+    app.add_message(unread_message(
+        &group,
+        "wrong-chat-reply",
+        5,
+        false,
+        Some("wrong-chat-target"),
+    ));
+    app.add_message(message(&group, "other-target", 6));
+    app.add_message(unread_message(
+        &group,
+        "reply",
+        7,
+        false,
+        Some("own-message"),
+    ));
+    app.add_message(unread_message(
+        &group,
+        "other-reply",
+        8,
+        false,
+        Some("other-target"),
+    ));
+
+    assert_eq!(app.pending_chat_activity(&group), (6, true));
+    let mut output = Vec::new();
+    app.write_message_action_diagnostics(&mut output).unwrap();
+    let output = String::from_utf8(output).unwrap();
+
+    assert!(!output.contains("quote_present=false"));
+    assert!(output.contains("quote_present=true lookup=miss"));
+    assert!(output.contains(
+        "lookup=hit target_chat_equal=false target_is_from_me=true attention_applied=false"
+    ));
+    assert!(output.contains(
+        "lookup=hit target_chat_equal=true target_is_from_me=false attention_applied=false"
+    ));
+    assert!(output.contains(
+        "lookup=hit target_chat_equal=true target_is_from_me=true attention_applied=true"
+    ));
+    for raw in [
+        "group@g.us",
+        "no-quote",
+        "missing-quote",
+        "wrong-chat-target",
+        "own-message",
+        "other-target",
+    ] {
+        assert!(!output.contains(raw));
+    }
+}
+
+#[test]
+fn disabled_unread_group_diagnostics_do_not_change_projection_or_report() {
+    let mut app = TestApp::new();
+    app.enable_message_action_diagnostics(false);
+    let group = jid("group@g.us");
+    let mut own = message(&group, "own", 1);
+    own.info.is_from_me = true;
+    app.add_message(own);
+    app.mark_chat_read_at_latest(&group);
+    app.add_message(unread_message(&group, "reply", 2, false, Some("own")));
+
+    assert_eq!(app.pending_chat_activity(&group), (1, true));
+    let mut output = Vec::new();
+    app.write_message_action_diagnostics(&mut output).unwrap();
+    assert!(output.is_empty());
+}
+
 #[test]
 fn community_rows_use_the_most_recent_linked_chat_as_target() {
     let mut app = TestApp::new();

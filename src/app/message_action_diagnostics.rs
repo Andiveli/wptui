@@ -57,6 +57,31 @@ impl MessageActionDiagnostics {
         push_bounded(&mut state.read_sync_entries, entry());
     }
 
+    pub(crate) fn record_unread_group_reply(
+        &self,
+        chat: &str,
+        message: &str,
+        quote: Option<&str>,
+        lookup_hit: bool,
+        target_chat_equal: bool,
+        target_is_from_me: bool,
+        attention_applied: bool,
+    ) {
+        self.record(|| {
+            format!(
+                "source=rust classifier=unread_group_reply chat={} message_id={} quote_id={} quote_present={} lookup={} target_chat_equal={} target_is_from_me={} attention_applied={}",
+                identifier_for_log(chat),
+                identifier_for_log(message),
+                quote.map_or_else(|| "<missing>".to_owned(), identifier_for_log),
+                quote.is_some(),
+                if lookup_hit { "hit" } else { "miss" },
+                target_chat_equal,
+                target_is_from_me,
+                attention_applied,
+            )
+        });
+    }
+
     pub fn write_report(&self, mut output: impl Write) -> io::Result<()> {
         if !self.enabled {
             return Ok(());

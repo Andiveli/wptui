@@ -517,6 +517,17 @@ impl App<'_> {
 
         let id = message.info.id.clone();
         let is_new = !self.messages.contains_key(&id);
+        // Ownership is monotonic for a protocol message ID. A later echo or
+        // history revision may improve content, but it must not erase a
+        // previously verified local-owner fact.
+        let mut message = message;
+        if self
+            .messages
+            .get(&id)
+            .is_some_and(|existing| existing.info.is_from_me)
+        {
+            message.info.is_from_me = true;
+        }
         let old_order_key = self.messages.get(&id).map(|existing| {
             (
                 existing.info.timestamp,

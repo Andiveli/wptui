@@ -70,6 +70,71 @@ fn first_chat_index(rows: &[ContactRow]) -> Option<usize> {
 }
 
 impl App<'_> {
+    /// Projects unread activity from the durable read cursor and message metadata.
+    /// The cursor is compared using the same `(timestamp, message_id)` order as
+    /// `chat_messages`, so restoration and equal-timestamp messages remain stable.
+    pub(crate) fn pending_chat_activity(&self, chat: &wr::JID) -> (usize, bool) {
+        let Some(messages) = self.chat_messages.get(chat) else {
+            return (0, false);
+        };
+        let Some(cursor) = self.timeline.get(chat) else {
+            return (0, false);
+        };
+        let cursor_key = cursor.last_read_message.as_ref().map(|id| {
+            let timestamp = self
+                .messages
+                .get(id)
+                .map(|message| message.info.timestamp)
+                .or(cursor.last_read_at)
+                .unwrap_or_default();
+            (timestamp, &id[..])
+        });
+        let mut unread = 0;
+        let mut attention = false;
+        for id in messages {
+            let Some(message) = self.messages.get(id) else {
+                continue;
+            };
+            if message.info.is_from_me {
+                continue;
+            }
+            let key = (message.info.timestamp, &message.info.id[..]);
+            let is_unread = cursor_key.is_none_or(|cursor| key > cursor);
+            if !is_unread {
+                continue;
+            }
+            unread += 1;
+            if !Self::is_group_chat(chat) {
+                continue;
+            }
+            let quote = message.info.quote_id.as_deref();
+            let quoted = quote.and_then(|quote_id| self.messages.get(quote_id));
+            let lookup_hit = quoted.is_some();
+            let target_chat_equal = quoted.is_some_and(|target| target.info.chat == *chat);
+            let target_is_from_me = quoted.is_some_and(|target| target.info.is_from_me);
+            let reply_attention = target_chat_equal && target_is_from_me;
+            let attention_applied = message.info.mentions_self || reply_attention;
+            if quote.is_some() {
+                self.message_action_diagnostics.record_unread_group_reply(
+                    &chat.0,
+                    &message.info.id,
+                    quote,
+                    lookup_hit,
+                    target_chat_equal,
+                    target_is_from_me,
+                    attention_applied,
+                );
+            }
+            if attention_applied {
+                attention = true;
+            }
+        }
+        // The live-ingestion counter is the existing transient boundary for
+        // messages not yet materialized; scanning metadata supplies restart
+        // reconstruction and attention without creating another counter.
+        (unread.max(cursor.pending_new_messages), attention)
+    }
+
     fn linked_group_nodes(&self, root: &CommunityNode) -> Vec<CommunityNode> {
         let mut groups = Vec::new();
         for jid in &root.linked_groups {
@@ -362,16 +427,22 @@ impl App<'_> {
                             self.chats.get(jid).and_then(|chat| chat.last_message_time)
                         })
                         .max();
-                    let unread = row
+                    let (unread, attention) = row
                         .members
                         .iter()
-                        .map(|jid| self.pending_new_messages(jid))
-                        .sum();
+                        .map(|jid| self.pending_chat_activity(jid))
+                        .fold(
+                            (0, false),
+                            |(count, attention), (member_count, member_attention)| {
+                                (count + member_count, attention || member_attention)
+                            },
+                        );
                     crate::ui::contact_list::ContactListItem::from_summary(
                         row,
                         latest_message,
                         fallback,
                         unread,
+                        attention,
                     )
                 })
                 .collect::<Vec<_>>();
@@ -495,7 +566,10 @@ impl App<'_> {
     }
 
     pub fn chat_row_item(&self, row: &ChatRow) -> crate::ui::contact_list::ContactListItem {
-        crate::ui::contact_list::ContactListItem::from_row(self, row)
+        crate::ui::contact_list::ContactListItem::from_contact_row(
+            self,
+            &ContactRow::Chat(row.clone()),
+        )
     }
 }
 

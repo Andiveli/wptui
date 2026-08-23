@@ -315,6 +315,14 @@ impl App<'_> {
         self.message_action_diagnostics = MessageActionDiagnostics::new(enabled);
     }
 
+    #[cfg(test)]
+    pub(crate) fn write_message_action_diagnostics(
+        &self,
+        output: impl std::io::Write,
+    ) -> std::io::Result<()> {
+        self.message_action_diagnostics.write_report(output)
+    }
+
     pub fn enable_presence_diagnostics(&mut self, enabled: bool) {
         self.presence_diagnostics = PresenceDiagnostics::new(enabled);
     }

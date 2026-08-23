@@ -55,6 +55,21 @@ fn newer_message_revision_replaces_existing_body_without_duplicate_index() {
 }
 
 #[test]
+fn newer_same_id_echo_cannot_downgrade_ownership() {
+    let mut app = TestApp::new();
+    let chat = wr::JID::from("chat@example.test".to_owned());
+    let mut own = message(&chat, "message", 10);
+    own.info.is_from_me = true;
+    app.add_message(own);
+
+    app.add_message(message(&chat, "message", 20));
+
+    let stored = &app.messages[&wr::MessageId::from("message")];
+    assert_eq!(stored.info.timestamp, 20);
+    assert!(stored.info.is_from_me);
+}
+
+#[test]
 fn chat_cursor_sync_schedules_only_on_a_cursor_transition() {
     let mut app = TestApp::new();
     let chat = wr::JID::from("chat@g.us".to_owned());

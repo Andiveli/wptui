@@ -71,3 +71,47 @@ fn mention_ranges_round_trip_and_legacy_rows_reload_empty() {
     assert!(wr::message_mention_ranges(&loaded[0].info.id, "hello").is_empty());
     legacy.stop();
 }
+
+#[test]
+fn message_ownership_is_monotonic_for_text_and_file_rows() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("ownership.db");
+    let mut handler = DatabaseHandler::new(&path);
+    handler.init();
+
+    let mut text = message("text", "verified");
+    text.info.is_from_me = true;
+    handler.add_message(&text);
+    handler.add_message(&message("text", "echo"));
+
+    let mut file = message("file", "verified-file");
+    file.info.is_from_me = true;
+    file.message = wr::MessageContent::File(wr::FileContent {
+        kind: wr::FileKind::Document,
+        path: "file.bin".into(),
+        file_id: "file-id".into(),
+        caption: None,
+    });
+    handler.add_message(&file);
+    let mut file_echo = file.clone();
+    file_echo.info.is_from_me = false;
+    file_echo.info.timestamp += 1;
+    handler.add_message(&file_echo);
+    thread::sleep(Duration::from_millis(1_200));
+    handler.stop();
+
+    let mut reloaded = DatabaseHandler::new(&path);
+    reloaded.init();
+    let loaded = reloaded.get_messages();
+    assert!(
+        loaded
+            .iter()
+            .any(|item| { item.info.id.as_ref() == "text" && item.info.is_from_me })
+    );
+    assert!(
+        loaded
+            .iter()
+            .any(|item| { item.info.id.as_ref() == "file" && item.info.is_from_me })
+    );
+    reloaded.stop();
+}
