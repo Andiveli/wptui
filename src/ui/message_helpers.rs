@@ -105,48 +105,122 @@ fn line_range(paragraph: &str, width: usize) -> Vec<Range<usize>> {
         return vec![0..0];
     }
 
+    #[derive(Clone, Copy)]
+    struct Word {
+        start: usize,
+        end: usize,
+        width: usize,
+        separator_width: usize,
+    }
+
     let width = width.max(1);
-    let mut ranges = Vec::new();
-    let mut line_start = 0;
-    let mut line_end = 0;
-    let mut content_end = 0;
-    let mut line_width: usize = 0;
-    let mut has_content = false;
+    let mut words = Vec::new();
+    let mut word_start = None;
+    let mut word_end = 0;
+    let mut word_width: usize = 0;
+    let mut word_separator_width: usize = 0;
+    let mut separator_width: usize = 0;
+    let mut in_word = false;
 
     for (start, grapheme) in paragraph.grapheme_indices(true) {
-        let end = start + grapheme.len();
         let grapheme_width = Line::from(grapheme).width();
-        let is_whitespace = grapheme.chars().all(char::is_whitespace);
+        let is_whitespace = grapheme.chars().all(|character| character.is_whitespace());
 
         if is_whitespace {
-            if has_content {
-                line_end = end;
-                line_width = line_width.saturating_add(grapheme_width);
-            } else {
-                line_start = end;
+            if in_word {
+                separator_width = separator_width.saturating_add(grapheme_width);
+                in_word = false;
             }
             continue;
         }
 
-        if has_content && line_width.saturating_add(grapheme_width) > width {
-            ranges.push(line_start..content_end);
-            line_start = start;
-            line_width = 0;
-            has_content = false;
+        if !in_word {
+            if let Some(word_start) = word_start {
+                words.push(Word {
+                    start: word_start,
+                    end: word_end,
+                    width: word_width,
+                    separator_width: word_separator_width,
+                });
+            }
+            word_start = Some(start);
+            word_separator_width = separator_width;
+            separator_width = 0;
+            word_width = 0;
+            in_word = true;
         }
 
-        if !has_content {
-            line_start = start;
-        }
-        line_end = end;
-        content_end = end;
-        line_width = line_width.saturating_add(grapheme_width);
-        has_content = true;
+        word_width = word_width.saturating_add(grapheme_width);
+        word_end = start + grapheme.len();
     }
 
-    if has_content {
-        ranges.push(line_start..content_end);
-    } else if line_end > line_start {
+    if let Some(word_start) = word_start {
+        words.push(Word {
+            start: word_start,
+            end: word_end,
+            width: word_width,
+            separator_width: word_separator_width,
+        });
+    }
+
+    let mut ranges = Vec::new();
+    let mut line_start = 0;
+    let mut line_end = 0;
+    let mut line_width: usize = 0;
+    let mut has_line = false;
+
+    for word in words {
+        if word.width <= width {
+            let fits = has_line
+                && line_width
+                    .saturating_add(word.separator_width)
+                    .saturating_add(word.width)
+                    <= width;
+            if !fits {
+                if has_line {
+                    ranges.push(line_start..line_end);
+                }
+                line_start = word.start;
+                line_end = word.end;
+                line_width = word.width;
+                has_line = true;
+            } else {
+                line_end = word.end;
+                line_width = line_width
+                    .saturating_add(word.separator_width)
+                    .saturating_add(word.width);
+            }
+            continue;
+        }
+
+        if has_line {
+            ranges.push(line_start..line_end);
+            has_line = false;
+        }
+
+        let mut chunk_start = word.start;
+        let mut chunk_end = word.start;
+        let mut chunk_width: usize = 0;
+        for (relative_start, grapheme) in paragraph[word.start..word.end].grapheme_indices(true) {
+            let start = word.start + relative_start;
+            let end = start + grapheme.len();
+            let grapheme_width = Line::from(grapheme).width();
+
+            if chunk_width > 0 && chunk_width.saturating_add(grapheme_width) > width {
+                ranges.push(chunk_start..chunk_end);
+                chunk_start = start;
+                chunk_width = 0;
+            }
+
+            chunk_end = end;
+            chunk_width = chunk_width.saturating_add(grapheme_width);
+        }
+        if chunk_start < chunk_end {
+            ranges.push(chunk_start..chunk_end);
+        }
+    }
+
+    if has_line {
         ranges.push(line_start..line_end);
     }
 
@@ -335,6 +409,58 @@ mod tests {
     use unicode_segmentation::UnicodeSegmentation;
 
     use super::inline_content_lines;
+
+    #[test]
+    fn word_wrapping_prefers_whitespace_boundaries() {
+        assert_eq!(
+            super::line_range("a message that wraps", 8),
+            vec![0..1, 2..9, 10..14, 15..20]
+        );
+        let lines = inline_content_lines("a message that wraps", &[], None, 8);
+        let rendered = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(rendered, ["a", "message", "that", "wraps"]);
+    }
+
+    #[test]
+    fn word_wrapping_splits_only_words_wider_than_the_available_width() {
+        let lines = inline_content_lines("short superlongword", &[], None, 6);
+        let rendered = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(rendered, ["short", "superl", "ongwor", "d"]);
+    }
+
+    #[test]
+    fn word_wrapping_trims_leading_trailing_and_repeated_whitespace() {
+        let lines = inline_content_lines("  a   b  ", &[], None, 1);
+        let rendered = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(rendered, ["a", "b"]);
+    }
 
     #[test]
     fn canonical_lines_align_each_paragraph_by_its_base_direction() {
