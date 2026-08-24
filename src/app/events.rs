@@ -140,6 +140,7 @@ impl AttachmentViewerState {
 }
 
 pub enum AppEvent {
+    UpdateAvailable(String),
     OptimisticTextSent {
         local_send_id: u64,
         message: wr::Message,
@@ -186,6 +187,9 @@ pub enum DrawSource {
 impl fmt::Debug for AppEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            AppEvent::UpdateAvailable(version) => {
+                f.debug_tuple("UpdateAvailable").field(version).finish()
+            }
             AppEvent::OptimisticTextSent {
                 local_send_id,
                 message,

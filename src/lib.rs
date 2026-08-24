@@ -8,4 +8,5 @@ pub mod key_handler;
 pub mod keybindings;
 pub mod media;
 pub mod ui;
+pub mod updater;
 pub mod url;

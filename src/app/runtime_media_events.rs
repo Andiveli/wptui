@@ -24,6 +24,10 @@ impl App<'_> {
         download_tx: &DownloadSender,
     ) -> bool {
         match event {
+            AppEvent::UpdateAvailable(version) => {
+                self.update_notice = Some(version);
+                true
+            }
             AppEvent::OptimisticTextSent {
                 local_send_id,
                 message,

@@ -12,6 +12,7 @@ use crate::app::unix_now;
 /// This keeps storage preparation, bridge assembly, connection setup, and the
 /// handoff to the already-running event loop in their original order.
 pub(crate) fn run(app: &mut App<'_>, phone: Option<String>) {
+    crate::updater::startup_check(app.tx.clone());
     app.db_handler.init();
     // Statuses expire 24h after posting (server-side). Prune the local
     // copies at startup so the DB and media dir do not accumulate them.

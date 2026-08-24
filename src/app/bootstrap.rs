@@ -136,6 +136,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         message_forwarder: Box::new(WhatsAppMessageForwarder),
         message_revoker: Box::new(WhatsAppMessageRevoker),
         action_notice: None,
+        update_notice: None,
         message_menu: None,
         contextual_menu: None,
         leader_menu: None,

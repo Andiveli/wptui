@@ -241,17 +241,8 @@ const ANDIVELI_LOGO: [&str; 19] = [
 
 /// Renders the Andiveli logo and product name in the empty chat panel
 /// shown before any conversation is opened.
-fn render_chat_empty_state(frame: &mut Frame, area: Rect) {
-    let mut lines: Vec<Line<'static>> = ANDIVELI_LOGO
-        .iter()
-        .map(|line| Line::styled((*line).to_string(), Style::default().dark_gray()))
-        .collect();
-    lines.push(Line::raw(""));
-    lines.push(Line::styled(
-        "Andiveli",
-        Style::default().fg(ratatui::style::Color::Green).bold(),
-    ));
-
+fn render_chat_empty_state(frame: &mut Frame, app: &App, area: Rect) {
+    let lines = empty_chat_lines(app.update_notice.as_deref());
     let total = lines.len() as u16;
     if total >= area.height {
         frame.render_widget(Paragraph::new(lines).alignment(Alignment::Center), area);
@@ -265,6 +256,31 @@ fn render_chat_empty_state(frame: &mut Frame, area: Rect) {
     ])
     .areas(area);
     frame.render_widget(Paragraph::new(lines).alignment(Alignment::Center), body);
+}
+
+fn empty_chat_lines(update_notice: Option<&str>) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = ANDIVELI_LOGO
+        .iter()
+        .map(|line| Line::styled((*line).to_string(), Style::default().dark_gray()))
+        .collect();
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(
+        "Andiveli",
+        Style::default().fg(ratatui::style::Color::Green).bold(),
+    ));
+    if let Some(version) = update_notice {
+        lines.push(Line::raw(""));
+        lines.push(Line::styled(
+            format!("Update available: v{version}"),
+            Style::default().fg(ratatui::style::Color::Yellow),
+        ));
+        lines.push(Line::styled(
+            "Run wp-tui update to install",
+            Style::default().dark_gray(),
+        ));
+    }
+
+    lines
 }
 
 pub fn render_chats(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -430,7 +446,7 @@ pub fn render_chats(frame: &mut Frame, app: &mut App, area: Rect) {
     );
 
     if app.open_chat().is_none() {
-        render_chat_empty_state(frame, chat_area);
+        render_chat_empty_state(frame, app, chat_area);
     } else {
         app.record_phase(Phase::MessageListRenderLayout, |app| {
             render_messages(frame, app, chat_area)
@@ -536,6 +552,23 @@ pub fn render_chats(frame: &mut Frame, app: &mut App, area: Rect) {
     if app.open_chat().is_some() && !app.composer_blocked() && app.composer.mention_picker_active()
     {
         render_mention_picker(frame, app, chat_area, composer_area);
+    }
+}
+
+#[cfg(test)]
+mod update_notice_tests {
+    use super::empty_chat_lines;
+
+    #[test]
+    fn empty_chat_notice_is_discreet_and_uses_public_command() {
+        let text = empty_chat_lines(Some("9.9.9"))
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("Update available: v9.9.9"));
+        assert!(text.contains("Run wp-tui update to install"));
+        assert!(!text.contains("wptui update"));
     }
 }
 

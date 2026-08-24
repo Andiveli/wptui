@@ -115,6 +115,12 @@ Or request a pairing code using an international-format phone number:
 wp-tui --phone +1234567890
 ```
 
+Check for and install the latest stable release when using a standalone binary:
+
+```bash
+wp-tui update
+```
+
 When running through Cargo, separate application arguments with `--`:
 
 ```bash

@@ -11,6 +11,11 @@ notify-rust = "4"
 log = "0.4"
 whatsrust = { path = "whatsrust", version = "0.1.1" }
 clap = { version = "4.5", features = ["derive"] }
+flate2 = "1"
+semver = "1"
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+tar = "0.4"
 textwrap = "0.16.2"
 unicode-segmentation = "1.12"
 unicode-bidi = "0.3.18"
@@ -29,6 +34,7 @@ tempfile = "3.26.0"
 directories = "6.0.0"
 arboard = { version = "3.6.1", features = ["wayland-data-control"] }
 libc = "0.2"
+ureq = { version = "3", features = ["json"] }
 edit = "0.1.5"
 lofty = "0.25"
 # simple_logger = { version = "5.2.0", default-features = false, features = ["stderr"] }

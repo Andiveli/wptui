@@ -209,6 +209,7 @@ pub struct App<'a> {
     pub message_forwarder: Box<dyn MessageForwarder>,
     pub message_revoker: Box<dyn MessageRevoker>,
     pub action_notice: Option<ActionNotice>,
+    pub update_notice: Option<String>,
     pub message_menu: Option<(Vec<MessageMenuAction>, usize)>,
     pub contextual_menu: Option<(
         Vec<crate::app::contextual_actions::ContextualMenuRow>,
