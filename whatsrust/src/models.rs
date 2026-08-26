@@ -1,12 +1,11 @@
 use std::{
     ffi::{CStr, CString},
-    ops::Range,
     sync::Arc,
 };
 
 use strum::{EnumIter, FromRepr};
 
-use crate::abi::{CContact, CJID, CMentionRange, LogoutStatus, ReceiptKind};
+use crate::abi::{CContact, CJID, LogoutStatus, ReceiptKind};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct JID(pub Arc<str>);

@@ -1,9 +1,7 @@
 use std::{
     ffi::{CStr, CString, c_char, c_void},
     path::Path,
-    sync::{
-        Arc,
-    },
+    sync::Arc,
 };
 
 #[macro_use]
@@ -19,9 +17,10 @@ mod incoming;
 mod models;
 use abi::*;
 pub use abi::{LogoutStatus, ReceiptKind};
+pub use events::set_event_handler;
 pub use callbacks::CallbackTranslator;
 pub use registrations::{
-    set_event_handler, set_log_handler, set_message_handler,
+    set_log_handler, set_message_handler,
     set_optimistic_text_sent_handler, set_presence_handler,
 };
 pub use lifecycle::{connect, disconnect, logout, new_client, pair_phone};
@@ -37,7 +36,6 @@ pub use models::{
 };
 use strum::FromRepr;
 
-static PRESENCE_CALLBACK_INGRESS: AtomicUsize = AtomicUsize::new(0);
 #[cfg(test)]
 mod file_kind_tests {
     use super::{FileKind, file_kind_discriminant};
@@ -1049,7 +1047,7 @@ mod group_info_tests {
 /// JID is unusable.
 pub fn resolve_dm_chat(jid: &JID) -> Option<JID> {
     unsafe {
-        take_owned_c_string(C_ResolveDmChatId(CJID::from(jid)), C_FreeResolveDmChatId)
+        presence::take_owned_c_string(C_ResolveDmChatId(CJID::from(jid)), C_FreeResolveDmChatId)
             .map(JID::from)
     }
 }

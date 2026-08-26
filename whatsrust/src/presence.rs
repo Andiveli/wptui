@@ -8,7 +8,7 @@ pub(crate) fn record_callback_ingress() {
     PRESENCE_CALLBACK_INGRESS.fetch_add(1, Ordering::Relaxed);
 }
 
-unsafe fn take_owned_c_string(
+pub(crate) unsafe fn take_owned_c_string(
     value: *mut c_char,
     free: unsafe extern "C" fn(*mut c_char),
 ) -> Option<String> {
