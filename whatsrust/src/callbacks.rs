@@ -2,12 +2,6 @@ pub trait CallbackTranslator<T> {
     unsafe fn to_rust(c_value: T) -> Self;
 }
 
-// impl<T, U: From<T>> CallbackTranslator<T> for U {
-//     unsafe fn to_rust(c_value: T) -> Self {
-//         Self::from(c_value)
-//     }
-// }
-
 macro_rules! setup_handler {
     ($fn_name:ident, $c_func:ident) => {
         setup_handler!($fn_name, $c_func,);
@@ -23,29 +17,29 @@ macro_rules! setup_handler {
         where
             F: FnMut($($rs_type),*) + 'static,
         {
-            // Go has no unregister API, so this allocation intentionally lives for the
-            // process lifetime. The shim must only borrow it; reconstructing a Box on
-            // each call creates concurrent owners for the same allocation.
             type CallbackType = dyn FnMut($($rs_type),*);
             let callback: Box<CallbackType> = Box::new(callback);
-            let callback_state = Box::new(Arc::new(Mutex::new(callback)));
-            let user_data = Box::into_raw(callback_state) as *mut c_void;
+            let callback_state = Box::new(std::sync::Arc::new(
+                std::sync::Mutex::new(callback),
+            ));
+            let user_data = Box::into_raw(callback_state) as *mut std::ffi::c_void;
 
-            // Shim callback compatible with C
             extern "C" fn shim(
                 $( $param_name: $c_type, )*
-                user_data: *mut c_void
+                user_data: *mut std::ffi::c_void
             ) {
                 unsafe {
-                    let callback_state =
-                        &*(user_data as *const Arc<Mutex<Box<CallbackType>>>);
-                    let closure = Arc::clone(callback_state);
+                    let callback_state = &*(user_data
+                        as *const std::sync::Arc<
+                            std::sync::Mutex<Box<CallbackType>>,
+                        >);
+                    let closure = std::sync::Arc::clone(callback_state);
                     let mut guard = closure.lock().unwrap();
-
                     guard($(
-                        <$rs_type>::to_rust($param_name),
+                        <$rs_type as $crate::callbacks::CallbackTranslator<$c_type>>::to_rust(
+                            $param_name,
+                        ),
                     )*);
-
                 }
             }
 
