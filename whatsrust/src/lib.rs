@@ -40,7 +40,6 @@ pub use models::{
 };
 use strum::FromRepr;
 
-static PRESENCE_CALLBACK_INGRESS: AtomicUsize = AtomicUsize::new(0);
 #[cfg(test)]
 mod file_kind_tests {
     use super::{FileKind, file_kind_discriminant};
