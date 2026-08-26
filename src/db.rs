@@ -31,61 +31,6 @@ pub(crate) fn with_database_write_lock<T>(operation: impl FnOnce() -> T) -> T {
     operation()
 }
 
-fn ensure_forwarding_columns(db: &Connection, table: &str) {
-    let columns = db
-        .prepare(&format!("PRAGMA table_info({table})"))
-        .unwrap()
-        .query_map([], |row| row.get::<_, String>(1))
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    if columns.is_empty() {
-        return;
-    }
-    for (column, definition) in [
-        ("is_forwarded", "INTEGER NOT NULL DEFAULT 0"),
-        ("forwarding_score", "INTEGER NOT NULL DEFAULT 0"),
-    ] {
-        if !columns.iter().any(|present| present == column) {
-            db.execute(
-                &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
-                [],
-            )
-            .unwrap();
-        }
-    }
-}
-
-fn ensure_mention_columns(db: &Connection) {
-    for table in ["text_messages", "file_messages"] {
-        let columns = db
-            .prepare(&format!("PRAGMA table_info({table})"))
-            .unwrap()
-            .query_map([], |row| row.get::<_, String>(1))
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        if !columns.is_empty() {
-            if !columns.iter().any(|column| column == "mention_ranges") {
-                db.execute(
-                    &format!("ALTER TABLE {table} ADD COLUMN mention_ranges TEXT"),
-                    [],
-                )
-                .unwrap();
-            }
-            if !columns.iter().any(|column| column == "mentions_self") {
-                db.execute(
-                    &format!(
-                        "ALTER TABLE {table} ADD COLUMN mentions_self INTEGER NOT NULL DEFAULT 0"
-                    ),
-                    [],
-                )
-                .unwrap();
-            }
-        }
-    }
-}
-
 fn encode_mention_ranges(ranges: &[Range<usize>]) -> Option<String> {
     (!ranges.is_empty()).then(|| {
         ranges
@@ -314,8 +259,7 @@ impl DatabaseHandler {
     }
 
     pub fn add_message(&self, message: &wr::Message) {
-        self.migrate_forwarding_columns();
-        ensure_mention_columns(&self.db);
+        schema::prepare_legacy_message_schema(&self.db);
         let mut queue = self.new_messages_queue.lock().unwrap();
         queue.push(message.clone());
     }
@@ -370,7 +314,7 @@ impl DatabaseHandler {
     /// Inserts once by the protocol action ID. A duplicate arriving from
     /// live delivery or history sync is ignored.
     pub fn record_message_action(&self, action: &MessageAction) -> MessageActionPersistence {
-        self.migrate_forwarding_columns();
+        schema::prepare_legacy_forwarding_schema(&self.db);
         let kind = match &action.kind {
             MessageActionKind::Edit { .. } => 0_u8,
             MessageActionKind::Delete => 1_u8,
@@ -542,8 +486,7 @@ impl DatabaseHandler {
     }
 
     pub fn get_messages(&self) -> Vec<wr::Message> {
-        self.migrate_forwarding_columns();
-        ensure_mention_columns(&self.db);
+        schema::prepare_legacy_message_schema(&self.db);
         let mut messages = Vec::new();
         for kind in wr::MessageContent::iter() {
             let msgs = match kind {
@@ -719,104 +662,7 @@ impl DatabaseHandler {
 
     pub fn init(&self) {
         let _write_lock = DATABASE_WRITE_LOCK.lock().unwrap();
-        self.db
-            .execute(
-                "CREATE TABLE IF NOT EXISTS chats (
-                    jid TEXT PRIMARY KEY
-                )",
-                [],
-            )
-            .unwrap();
-
-        self.db
-            .execute(
-                "CREATE TABLE IF NOT EXISTS contacts (
-                    jid TEXT PRIMARY KEY,
-                    name TEXT NOT NULL
-                )",
-                [],
-            )
-            .unwrap();
-        self.db
-            .execute(
-                "CREATE TABLE IF NOT EXISTS chat_read_cursors (
-                    chat_jid TEXT PRIMARY KEY,
-                    message_id TEXT NOT NULL,
-                    timestamp INTEGER NOT NULL
-                )",
-                [],
-            )
-            .unwrap();
-        self.db
-            .execute(
-                "CREATE TABLE IF NOT EXISTS status_read_cursors (
-                    contact_jid TEXT PRIMARY KEY,
-                    timestamp INTEGER NOT NULL
-                )",
-                [],
-            )
-            .unwrap();
-
-        for kind in wr::MessageContent::iter() {
-            match kind {
-                wr::MessageContent::Text(_) => {
-                    self.db
-                        .execute(
-                            "CREATE TABLE IF NOT EXISTS text_messages (
-                                id TEXT PRIMARY KEY,
-                                chat_jid TEXT,
-                                sender_jid TEXT,
-                                timestamp INTEGER,
-                                quote_id TEXT,
-                                is_from_me INTEGER,
-                                read INTEGER,
-
-                                message TEXT
-                            )",
-                            [],
-                        )
-                        .unwrap();
-                }
-                wr::MessageContent::File(_) => {
-                    self.db
-                        .execute(
-                            "CREATE TABLE IF NOT EXISTS file_messages (
-                                id TEXT PRIMARY KEY,
-                                chat_jid TEXT,
-                                sender_jid TEXT,
-                                timestamp INTEGER,
-                                quote_id TEXT,
-                                is_from_me INTEGER,
-                                read INTEGER,
-
-                                kind INTEGER,
-                                path TEXT,
-                                file_id TEXT,
-                                caption TEXT
-                            )",
-                            [],
-                        )
-                        .unwrap();
-                }
-                wr::MessageContent::ViewOnceUnavailable => {}
-            }
-        }
-        self.db
-            .execute(
-                "CREATE TABLE IF NOT EXISTS view_once_unavailable_messages (
-                    id TEXT PRIMARY KEY,
-                    chat_jid TEXT,
-                    sender_jid TEXT,
-                    timestamp INTEGER,
-                    is_from_me INTEGER,
-                    read INTEGER,
-                    mentions_self INTEGER NOT NULL DEFAULT 0
-                )",
-                [],
-            )
-            .unwrap();
-        self.migrate_forwarding_columns();
-        ensure_mention_columns(&self.db);
+        schema::initialize(&self.db);
         self.migrate_message_action_columns();
     }
 
@@ -953,11 +799,6 @@ impl DatabaseHandler {
         self.db
             .execute("ALTER TABLE message_actions DROP COLUMN replacement", [])
             .unwrap();
-    }
-
-    fn migrate_forwarding_columns(&self) {
-        ensure_forwarding_columns(&self.db, "text_messages");
-        ensure_forwarding_columns(&self.db, "file_messages");
     }
 }
 
