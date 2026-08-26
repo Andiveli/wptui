@@ -15,6 +15,8 @@ use crate::app::{Chat, DELETED_MESSAGE_TEXT, MessageAction, STATUS_BROADCAST_CHA
 mod action_repository;
 #[path = "db/connection.rs"]
 mod connection;
+#[path = "db/cursor_repository.rs"]
+mod cursor_repository;
 #[path = "db/reaction_repository.rs"]
 mod reaction_repository;
 #[path = "schema.rs"]
@@ -492,31 +494,11 @@ impl DatabaseHandler {
         message_id: Option<wr::MessageId>,
         timestamp: i64,
     ) {
-        let _write_lock = DATABASE_WRITE_LOCK.lock().unwrap();
-        self.db
-            .execute(
-                "INSERT INTO chat_read_cursors (chat_jid, message_id, timestamp)
-                 VALUES (?1, ?2, ?3)
-                 ON CONFLICT(chat_jid) DO UPDATE SET message_id = excluded.message_id, timestamp = excluded.timestamp",
-                rusqlite::params![chat.0, message_id, timestamp],
-            )
-            .unwrap();
+        cursor_repository::set_last_read(&self.db, chat, message_id, timestamp);
     }
 
     pub fn read_cursors(&self) -> Vec<(wr::JID, wr::MessageId, i64)> {
-        self.db
-            .prepare("SELECT chat_jid, message_id, timestamp FROM chat_read_cursors")
-            .unwrap()
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?.into(),
-                    row.get::<_, String>(1)?.into(),
-                    row.get(2)?,
-                ))
-            })
-            .unwrap()
-            .map(Result::unwrap)
-            .collect()
+        cursor_repository::read_cursors(&self.db)
     }
 
     pub fn set_status_last_seen(
@@ -524,22 +506,11 @@ impl DatabaseHandler {
         contact: &wr::JID,
         timestamp: i64,
     ) -> Result<usize, rusqlite::Error> {
-        let _write_lock = DATABASE_WRITE_LOCK.lock().unwrap();
-        self.db
-            .execute(
-                "INSERT INTO status_read_cursors (contact_jid, timestamp) VALUES (?1, ?2)
-                 ON CONFLICT(contact_jid) DO UPDATE SET timestamp = MAX(timestamp, excluded.timestamp)",
-                rusqlite::params![contact.0, timestamp],
-            )
+        cursor_repository::set_status_last_seen(&self.db, contact, timestamp)
     }
 
     pub fn status_last_seen(&self) -> Result<Vec<(wr::JID, i64)>, rusqlite::Error> {
-        let mut query = self
-            .db
-            .prepare("SELECT contact_jid, timestamp FROM status_read_cursors")?;
-        query
-            .query_map([], |row| Ok((row.get::<_, String>(0)?.into(), row.get(1)?)))?
-            .collect()
+        cursor_repository::status_last_seen(&self.db)
     }
 }
 
