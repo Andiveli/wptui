@@ -1,4 +1,4 @@
-use std::ffi::{CStr, c_char};
+use std::ffi::CStr;
 
 use crate::abi::{CFileMessage, CIncomingTextMessage, CMessage, MessageType};
 use crate::caches::{
@@ -6,7 +6,8 @@ use crate::caches::{
     validated_mention_ranges,
 };
 use crate::{
-    CallbackTranslator, FileContent, FileKind, ForwardingInfo, Message, MessageContent, MessageInfo,
+    CallbackTranslator, FileContent, FileKind, ForwardingInfo, JID, Message, MessageContent,
+    MessageInfo,
 };
 
 impl CallbackTranslator<*const CMessage> for Message {
