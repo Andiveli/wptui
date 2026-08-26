@@ -839,7 +839,7 @@ impl CallbackTranslator<*const CMessage> for Message {
                 {
                     Vec::new()
                 } else {
-                    validated_mention_ranges(&message, unsafe {
+                    crate::caches::validated_mention_ranges(&message, unsafe {
                         std::slice::from_raw_parts(
                             text_message.mention_ranges,
                             text_message.mention_range_count,
@@ -865,7 +865,7 @@ impl CallbackTranslator<*const CMessage> for Message {
                 {
                     Vec::new()
                 } else {
-                    validated_mention_ranges(&caption_text, unsafe {
+                    crate::caches::validated_mention_ranges(&caption_text, unsafe {
                         std::slice::from_raw_parts(
                             image_message.mention_ranges,
                             image_message.mention_range_count,
