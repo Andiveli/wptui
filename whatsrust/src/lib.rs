@@ -16,6 +16,7 @@ mod incoming;
 mod models;
 use abi::*;
 pub use abi::{LogoutStatus, ReceiptKind};
+pub use events::set_event_handler;
 use callbacks::CallbackTranslator;
 pub(crate) use models::file_kind_discriminant;
 pub use models::{

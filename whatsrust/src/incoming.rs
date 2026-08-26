@@ -1,16 +1,12 @@
 use std::ffi::CStr;
 
-use crate::abi::{
-    C_SetMessageHandler, C_SetOptimisticTextSentHandler, CFileMessage, CIncomingTextMessage,
-    CMessage, MessageType,
-};
+use crate::abi::{CFileMessage, CIncomingTextMessage, CMessage, MessageType};
 use crate::caches::{
     store_forward_source, store_message_mention_ranges, store_message_push_name,
     validated_mention_ranges,
 };
 use crate::callbacks::CallbackTranslator;
 use crate::{FileContent, FileKind, ForwardingInfo, JID, Message, MessageContent, MessageInfo};
-use strum::FromRepr;
 
 impl CallbackTranslator<*const CMessage> for Message {
     unsafe fn to_rust(ptr: *const CMessage) -> Self {
