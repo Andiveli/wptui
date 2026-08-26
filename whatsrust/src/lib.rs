@@ -18,8 +18,10 @@ pub use abi::{LogoutStatus, ReceiptKind};
 use callbacks::CallbackTranslator;
 pub(crate) use models::file_kind_discriminant;
 pub use models::{
-    FileContent, FileId, FileKind, ForwardingInfo, JID, Mention, Message, MessageContent,
-    MessageId, MessageInfo,
+    ChatSettings, CommunitiesError, CommunityInfo, Contact, DownloadFailed, FileContent, FileId,
+    FileKind, ForwardingInfo, GroupInfo, GroupInfoError, GroupParticipant, JID, LogoutError,
+    Mention, Message, MessageActionFailed, MessageContent, MessageId, MessageInfo, ProfilePicture,
+    ProfilePictureAvailability, ProfilePictureError,
 };
 use strum::{EnumIter, FromRepr};
 
@@ -462,132 +464,6 @@ pub fn remove_forward_source(chat: &JID, id: &MessageId) {
         .retain(|(source_chat, _, source_id), _| {
             source_chat.as_ref() != chat.0.as_ref() || source_id.as_ref() != id.as_ref()
         });
-}
-
-#[derive(Clone, Debug)]
-pub struct Contact {
-    pub found: bool,
-    pub first_name: Arc<str>,
-    pub full_name: Arc<str>,
-    pub push_name: Arc<str>,
-    pub business_name: Arc<str>,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct ChatSettings {
-    pub found: bool,
-    pub muted_until: i64,
-    pub pinned: bool,
-    pub archived: bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct GroupInfo {
-    pub jid: JID,
-    pub name: Arc<str>,
-    pub is_announce: bool,
-    pub is_admin: bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct GroupParticipant {
-    pub jid: JID,
-    pub phone_number: JID,
-    pub name: Arc<str>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum GroupInfoError {
-    NotGroup,
-    ClientUnavailable,
-    RequestFailed,
-    InvalidBridgeResult,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CommunityInfo {
-    pub jid: JID,
-    pub name: Arc<str>,
-    pub parent_jid: Option<JID>,
-    pub is_parent: bool,
-    pub is_joined: bool,
-    pub is_default_subgroup: bool,
-    /// `None` is unknown, `Some(false)` is no, and `Some(true)` is yes.
-    pub is_announce: Option<bool>,
-    /// Unknown or values outside `u32` are mapped to `None` without truncation.
-    pub participant_count: Option<u32>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CommunitiesError {
-    BridgeUnavailable,
-}
-
-impl From<&CContact> for Contact {
-    fn from(ccontact: &CContact) -> Self {
-        let first_name = unsafe { CStr::from_ptr(ccontact.first_name) }
-            .to_string_lossy()
-            .into_owned()
-            .into();
-        let full_name = unsafe { CStr::from_ptr(ccontact.full_name) }
-            .to_string_lossy()
-            .into_owned()
-            .into();
-        let push_name = unsafe { CStr::from_ptr(ccontact.push_name) }
-            .to_string_lossy()
-            .into_owned()
-            .into();
-        let business_name = unsafe { CStr::from_ptr(ccontact.business_name) }
-            .to_string_lossy()
-            .into_owned()
-            .into();
-
-        Contact {
-            found: ccontact.found,
-            first_name,
-            full_name,
-            push_name,
-            business_name,
-        }
-    }
-}
-
-pub struct DownloadFailed;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum LogoutError {
-    NotLoggedIn,
-    Failed,
-    InvalidBridgeResult,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MessageActionFailed;
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ProfilePicture {
-    pub id: Arc<str>,
-    pub picture_type: Arc<str>,
-    pub bytes: Vec<u8>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ProfilePictureAvailability {
-    Available(ProfilePicture),
-    Unavailable,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ProfilePictureError {
-    InvalidJid,
-    ClientUnavailable,
-    RequestCancelled,
-    Metadata,
-    EmptyUrl,
-    Download,
-    Oversized,
-    InvalidImage,
-    InvalidBridgeResult,
 }
 
 fn profile_picture_from_parts(
