@@ -52,7 +52,6 @@ macro_rules! setup_handler {
 
 #[cfg(test)]
 mod tests {
-    use super::CallbackTranslator;
     use std::{
         ffi::c_void,
         sync::{
