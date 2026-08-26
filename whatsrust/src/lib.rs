@@ -12,9 +12,15 @@ use std::{
 #[macro_use]
 mod callbacks;
 mod abi;
+mod models;
 use abi::*;
-pub use abi::{FileKind, LogoutStatus, ReceiptKind};
+pub use abi::{LogoutStatus, ReceiptKind};
 use callbacks::CallbackTranslator;
+pub(crate) use models::file_kind_discriminant;
+pub use models::{
+    FileContent, FileId, FileKind, ForwardingInfo, JID, Mention, Message, MessageContent,
+    MessageId, MessageInfo,
+};
 use strum::{EnumIter, FromRepr};
 
 static PRESENCE_CALLBACK_INGRESS: AtomicUsize = AtomicUsize::new(0);
@@ -24,46 +30,6 @@ static MESSAGE_PUSH_NAMES: LazyLock<Mutex<HashMap<Arc<str>, Arc<str>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static MESSAGE_MENTION_RANGES: LazyLock<Mutex<HashMap<MessageId, (Arc<str>, Vec<Range<usize>>)>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct JID(pub Arc<str>);
-
-impl From<JID> for Arc<str> {
-    fn from(jid: JID) -> Self {
-        jid.0
-    }
-}
-impl From<String> for JID {
-    fn from(jid: String) -> Self {
-        JID(jid.into())
-    }
-}
-
-impl From<&CJID> for JID {
-    fn from(cjid: &CJID) -> Self {
-        JID(unsafe { CStr::from_ptr(*cjid) }.to_string_lossy().into())
-    }
-}
-impl From<&JID> for CJID {
-    fn from(jid: &JID) -> Self {
-        CString::new(jid.0.as_ref()).unwrap().into_raw()
-    }
-}
-
-pub type MessageId = Arc<str>;
-
-#[derive(Clone, Debug)]
-pub struct MessageInfo {
-    pub id: MessageId,
-    pub chat: JID,
-    pub sender: JID,
-    pub mentions_self: bool,
-    pub timestamp: i64,
-    pub is_from_me: bool,
-    pub quote_id: Option<Arc<str>>,
-    pub read_by: u16,
-    pub forwarding: ForwardingInfo,
-}
 
 #[cfg(test)]
 mod message_push_name_tests {
@@ -88,12 +54,6 @@ mod message_push_name_tests {
             Some("WhatsApp Profile")
         );
     }
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct ForwardingInfo {
-    pub is_forwarded: bool,
-    pub score: u32,
 }
 
 #[cfg(test)]
@@ -382,29 +342,6 @@ pub struct PresenceUpdate {
 pub const VIEW_ONCE_UNAVAILABLE_DESCRIPTION: &str =
     "View-once media is unavailable here. View it on your phone.";
 
-pub type FileId = Arc<str>;
-
-#[derive(Clone, Debug, Default)]
-pub struct FileContent {
-    pub kind: FileKind,
-    pub path: Arc<str>,
-    pub file_id: FileId,
-    pub caption: Option<Arc<str>>,
-}
-
-#[derive(Clone, Debug, EnumIter)]
-pub enum MessageContent {
-    Text(Arc<str>),
-    File(FileContent),
-    ViewOnceUnavailable,
-}
-
-#[derive(Clone, Debug)]
-pub struct Message {
-    pub info: MessageInfo,
-    pub message: MessageContent,
-}
-
 fn validated_mention_ranges(text: &str, ranges: &[CMentionRange]) -> Vec<Range<usize>> {
     let mut result = ranges
         .iter()
@@ -557,12 +494,6 @@ pub struct GroupParticipant {
     pub jid: JID,
     pub phone_number: JID,
     pub name: Arc<str>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Mention {
-    pub jid: JID,
-    pub numeric_user: Arc<str>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
