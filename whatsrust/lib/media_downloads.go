@@ -9,6 +9,8 @@ import (
 	"math"
 	"mime"
 	"sort"
+
+	"go.mau.fi/whatsmeow"
 )
 
 func SliceIndex(list []string, value string, defaultValue int) int {
@@ -36,10 +38,18 @@ func ExtensionByType(mimeType string, defaultExt string) string {
 	return ext
 }
 
+func downloadFile(client *whatsmeow.Client, fileID string, basePath string) int {
+	if client == nil {
+		return FileStatusDownloadFailed
+	}
+	return DownloadFromFileId(client, fileID, basePath)
+}
+
 //export C_DownloadFile
 func C_DownloadFile(fileId *C.char, basePath *C.char) C.uint8_t {
 	goFileId := C.GoString(fileId)
 	goBasePath := C.GoString(basePath)
-	status := DownloadFromFileId(client, goFileId, goBasePath)
+	clientSnapshot := lifecycleState.clientSnapshot()
+	status := downloadFile(clientSnapshot, goFileId, goBasePath)
 	return C.uint8_t(status)
 }

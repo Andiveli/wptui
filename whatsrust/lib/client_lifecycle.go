@@ -41,6 +41,21 @@ type clientLifecycleState struct {
 
 var lifecycleState clientLifecycleState
 
+// clientSnapshot returns one lifecycle-consistent client pointer for an
+// operation. The client remains valid while the caller retains this pointer;
+// lifecycle replacement does not mutate the captured client object.
+func (state *clientLifecycleState) clientSnapshot() *whatsmeow.Client {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	return client
+}
+
+func (state *clientLifecycleState) publishClient(newClient *whatsmeow.Client) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	client = newClient
+}
+
 func (state *clientLifecycleState) reset() {
 	state.mu.Lock()
 	defer state.mu.Unlock()
@@ -72,8 +87,9 @@ func C_NewClient(dbPath *C.char) {
 	}
 	deviceStore, _ := container.GetFirstDevice(context.Background())
 	clientLog := &WrLogger{}
-	client = whatsmeow.NewClient(deviceStore, clientLog)
-	configurePresenceSubscriptions(client)
+	newClient := whatsmeow.NewClient(deviceStore, clientLog)
+	configurePresenceSubscriptions(newClient)
+	lifecycleState.publishClient(newClient)
 }
 
 func requestFullHistorySync() {

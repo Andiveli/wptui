@@ -37,6 +37,63 @@ func TestClientLifecycleResetClearsRegistrationAndQR(t *testing.T) {
 	}
 }
 
+func TestClientLifecycleClientSnapshotUsesLifecycleLock(t *testing.T) {
+	previous := client
+	t.Cleanup(func() { lifecycleState.publishClient(previous) })
+	want := &whatsmeow.Client{}
+	lifecycleState.publishClient(want)
+
+	if got := lifecycleState.clientSnapshot(); got != want {
+		t.Fatalf("client snapshot = %p, want %p", got, want)
+	}
+}
+
+func TestClientLifecyclePublicationIsSynchronized(t *testing.T) {
+	var state clientLifecycleState
+	first, second := &whatsmeow.Client{}, &whatsmeow.Client{}
+	state.publishClient(first)
+
+	state.mu.Lock()
+	published := make(chan struct{})
+	go func() {
+		state.publishClient(second)
+		close(published)
+	}()
+	select {
+	case <-published:
+		t.Fatal("publication bypassed lifecycle lock")
+	default:
+	}
+	state.mu.Unlock()
+	<-published
+
+	if got := state.clientSnapshot(); got != second {
+		t.Fatalf("published client = %p, want %p", got, second)
+	}
+}
+
+func TestClientLifecycleOperationKeepsOneSnapshot(t *testing.T) {
+	var state clientLifecycleState
+	first, second := &whatsmeow.Client{}, &whatsmeow.Client{}
+	state.publishClient(first)
+	snapshotTaken := make(chan *whatsmeow.Client)
+	release := make(chan struct{})
+
+	go func() {
+		snapshot := state.clientSnapshot()
+		snapshotTaken <- snapshot
+		<-release
+	}()
+	if got := <-snapshotTaken; got != first {
+		t.Fatalf("operation snapshot = %p, want %p", got, first)
+	}
+	state.publishClient(second)
+	close(release)
+	if got := state.clientSnapshot(); got != second {
+		t.Fatalf("published client = %p, want %p", got, second)
+	}
+}
+
 func TestLogoutStatusAfterRemoteFailure(t *testing.T) {
 	for _, testCase := range []struct {
 		name           string
