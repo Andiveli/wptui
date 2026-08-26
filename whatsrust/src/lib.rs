@@ -18,12 +18,13 @@ pub use abi::{LogoutStatus, ReceiptKind};
 use callbacks::CallbackTranslator;
 pub(crate) use models::file_kind_discriminant;
 pub use models::{
-    ChatSettings, CommunitiesError, CommunityInfo, Contact, DownloadFailed, FileContent, FileId,
-    FileKind, ForwardingInfo, GroupInfo, GroupInfoError, GroupParticipant, JID, LogoutError,
-    Mention, Message, MessageActionFailed, MessageContent, MessageId, MessageInfo, ProfilePicture,
-    ProfilePictureAvailability, ProfilePictureError,
+    ChatSettings, CommunitiesError, CommunityInfo, Contact, DownloadFailed, Event, FileContent,
+    FileId, FileKind, ForwardingInfo, GroupInfo, GroupInfoError, GroupParticipant, JID,
+    LogoutError, Mention, Message, MessageActionFailed, MessageActionKind, MessageContent,
+    MessageId, MessageInfo, PresenceUpdate, ProfilePicture, ProfilePictureAvailability,
+    ProfilePictureError,
 };
-use strum::{EnumIter, FromRepr};
+use strum::FromRepr;
 
 static PRESENCE_CALLBACK_INGRESS: AtomicUsize = AtomicUsize::new(0);
 static FORWARD_SOURCES: LazyLock<Mutex<HashMap<(Arc<str>, Arc<str>, Arc<str>), Vec<u8>>>> =
@@ -279,66 +280,6 @@ mod presence_event_tests {
             assert_eq!(update.last_seen, expected);
         }
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum MessageActionKind {
-    Edit { replacement: Arc<str> },
-    Delete,
-}
-
-#[derive(Clone, Debug)]
-pub enum Event {
-    SyncProgress(u8),
-    AppStateSyncComplete,
-    Receipt {
-        kind: ReceiptKind,
-        chat: JID,
-        message_ids: Vec<MessageId>,
-    },
-    Reaction {
-        chat: JID,
-        target_message_id: MessageId,
-        participant: JID,
-        text: Arc<str>,
-        is_from_me: bool,
-    },
-    Connected,
-    MessageAction {
-        action_id: Arc<str>,
-        target_message_id: MessageId,
-        chat: JID,
-        sender: JID,
-        kind: MessageActionKind,
-        occurred_at: i64,
-        arrival_order: u64,
-    },
-    /// A chat that exists even though the history sync batch carried no
-    /// messages for it. Lets the app populate the full chat list instead of
-    /// only the subset that shipped messages.
-    Chat {
-        jid: JID,
-        last_message_time: i64,
-    },
-    /// Terminal outcome of an asynchronous logout. The Go bridge runs the
-    /// remove-companion-device IQ off the event loop so `logout()` no longer
-    /// blocks the UI; this event drives the local cleanup on completion.
-    LogoutResult(LogoutStatus),
-    MarkChatAsRead {
-        chat: JID,
-        message_id: MessageId,
-        read: bool,
-        timestamp: i64,
-        from_me: bool,
-        participant: Option<JID>,
-    },
-}
-
-#[derive(Clone, Debug)]
-pub struct PresenceUpdate {
-    pub from: JID,
-    pub unavailable: bool,
-    pub last_seen: i64,
 }
 
 pub const VIEW_ONCE_UNAVAILABLE_DESCRIPTION: &str =
