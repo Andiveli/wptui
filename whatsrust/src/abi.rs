@@ -5,6 +5,113 @@ use strum::FromRepr;
 
 pub(crate) type CJID = *const c_char;
 
+pub(super) type CLogCallback = extern "C" fn(*const c_char, u8, *mut c_void);
+pub(super) type CQrCallback = extern "C" fn(*const c_char, *mut c_void);
+pub(super) type CMessageCallback = extern "C" fn(*const CMessage, bool, *mut c_void);
+pub(super) type COptimisticTextSentCallback = extern "C" fn(u64, *const CMessage, *mut c_void);
+pub(super) type CEventCallback = extern "C" fn(*const CEvent, *mut c_void);
+pub(super) type CPresenceCallback = extern "C" fn(CJID, bool, i64, *mut c_void);
+
+#[repr(C)]
+pub(super) struct CForwardResult {
+    pub(super) succeeded: u32,
+    pub(super) failed: u32,
+    pub(super) failure: u8,
+}
+
+unsafe extern "C" {
+    #[cfg(test)]
+    pub(super) fn C_TestEmitPresenceEvent(from: *const c_char, unavailable: bool, last_seen: i64);
+    #[cfg(test)]
+    pub(super) fn C_TestEmitPresenceEventsConcurrently(from: *const c_char, count: u32);
+    pub(super) fn C_NewClient(db_path: *const c_char);
+    pub(super) fn C_Connect(qr_cb: CQrCallback, data: *mut c_void);
+    pub(super) fn C_SendMessage(
+        jid: CJID,
+        message_type: u8,
+        message_content: *const c_void,
+        quote_id: *const c_char,
+        quote_sender: CJID,
+        quote_chat: CJID,
+        quote_message_type: u8,
+        quote_message_content: *const c_void,
+    );
+    pub(super) fn C_SendTextMessage(
+        jid: CJID,
+        message_content: *const c_void,
+        quote_id: *const c_char,
+        quote_sender: CJID,
+        quote_chat: CJID,
+        quote_message_type: u8,
+        quote_message_content: *const c_void,
+        local_send_id: u64,
+    ) -> u8;
+    pub(super) fn C_ForwardMessage(
+        source_id: *const c_char,
+        source_chat: CJID,
+        source_sender: CJID,
+        source_is_from_me: bool,
+        destinations: *const *const c_char,
+        destination_count: usize,
+        forward_source: *const u8,
+        forward_source_len: usize,
+    ) -> CForwardResult;
+    pub(super) fn C_GetContacts() -> CGetContactsResult;
+    pub(super) fn C_FreeContacts(result: CGetContactsResult);
+    pub(super) fn C_GetCommunities() -> CGetCommunitiesResult;
+    pub(super) fn C_FreeCommunities(result: CGetCommunitiesResult);
+    pub(super) fn C_GetProfilePicture(jid: CJID) -> CProfilePictureResult;
+    pub(super) fn C_GetCommunityProfilePicture(jid: CJID) -> CProfilePictureResult;
+    pub(super) fn C_FreeProfilePicture(result: CProfilePictureResult);
+    pub(super) fn C_GetChatSettings(jid: CJID) -> CChatSettings;
+    pub(super) fn C_GetGroupInfo(jid: CJID) -> CGroupInfoResult;
+    pub(super) fn C_GetGroupParticipants(jid: CJID) -> CGroupParticipantsResult;
+    pub(super) fn C_FreeGroupParticipants(result: CGroupParticipantsResult);
+    pub(super) fn C_ResolveDmChatId(jid: CJID) -> *mut c_char;
+    pub(super) fn C_FreeResolveDmChatId(value: *mut c_char);
+    pub(super) fn C_Disconnect();
+    pub(super) fn C_Logout() -> u8;
+    pub(super) fn C_DrainRawPresenceDiagnostics() -> *mut c_char;
+    pub(super) fn C_FreeRawPresenceDiagnostics(report: *mut c_char);
+    pub(super) fn C_SubscribePresence(jid: CJID) -> u8;
+    pub(super) fn C_PairPhone(phone: *const c_char) -> *const c_char;
+    pub(super) fn C_FreePairPhoneResult(result: *const c_char);
+    pub(super) fn C_DownloadFile(file_id: *const c_char, base_path: *const c_char) -> u8;
+    pub(super) fn C_ReactToMessage(
+        target_jid: CJID,
+        destination_jid: CJID,
+        sender_jid: CJID,
+        message_id: *const c_char,
+        reaction: *const c_char,
+    ) -> u8;
+    pub(super) fn C_EditMessage(
+        chat_jid: CJID,
+        message_id: *const c_char,
+        replacement: *const c_char,
+    ) -> u8;
+    pub(super) fn C_RevokeMessage(
+        chat_jid: CJID,
+        sender_jid: CJID,
+        message_id: *const c_char,
+    ) -> u8;
+    pub(super) fn C_MarkAsRead(msg_id: *const c_char, chat_jid: CJID, sender_jid: CJID) -> i32;
+    pub(super) fn C_MarkChatReadSync(
+        chat_jid: CJID,
+        msg_id: *const c_char,
+        timestamp: i64,
+        from_me: bool,
+        participant_jid: CJID,
+    ) -> i32;
+    pub(super) fn C_SetMessageHandler(message_cb: CMessageCallback, data: *mut c_void);
+    pub(super) fn C_SetOptimisticTextSentHandler(
+        callback: COptimisticTextSentCallback,
+        data: *mut c_void,
+    );
+    pub(super) fn C_SetEventHandler(event_cb: CEventCallback, data: *mut c_void);
+    pub(super) fn C_SetPresenceHandler(presence_cb: CPresenceCallback, data: *mut c_void);
+    pub(super) fn C_SetLogHandler(log_fn: CLogCallback, data: *mut c_void);
+}
+
 #[repr(C)]
 pub(super) struct CMessageInfo {
     pub(super) id: *const c_char,

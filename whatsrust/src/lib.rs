@@ -12,13 +12,7 @@ use std::{
 #[macro_use]
 mod callbacks;
 mod abi;
-use abi::{
-    CChatEvent, CChatSettings, CContact, CEvent, CFileMessage, CGetCommunitiesResult,
-    CGetContactsResult, CGroupInfoResult, CGroupParticipantsResult, CIncomingTextMessage, CJID,
-    CLogoutResultEvent, CMarkChatAsReadEvent, CMentionRange, CMessage, CMessageActionEvent,
-    CProfilePictureResult, CReactionEvent, CReceipt, CTextMessage, EventType, MessageType,
-    file_kind_discriminant,
-};
+use abi::*;
 pub use abi::{FileKind, LogoutStatus, ReceiptKind};
 use callbacks::CallbackTranslator;
 use strum::{EnumIter, FromRepr};
@@ -625,104 +619,6 @@ impl From<&CContact> for Contact {
             business_name,
         }
     }
-}
-
-type CLogCallback = extern "C" fn(*const c_char, u8, *mut c_void);
-type CQrCallback = extern "C" fn(*const c_char, *mut c_void);
-type CMessageCallback = extern "C" fn(*const CMessage, bool, *mut c_void);
-type COptimisticTextSentCallback = extern "C" fn(u64, *const CMessage, *mut c_void);
-type CEventCallback = extern "C" fn(*const CEvent, *mut c_void);
-type CPresenceCallback = extern "C" fn(CJID, bool, i64, *mut c_void);
-
-#[repr(C)]
-struct CForwardResult {
-    succeeded: u32,
-    failed: u32,
-    failure: u8,
-}
-
-unsafe extern "C" {
-    #[cfg(test)]
-    fn C_TestEmitPresenceEvent(from: *const c_char, unavailable: bool, last_seen: i64);
-    #[cfg(test)]
-    fn C_TestEmitPresenceEventsConcurrently(from: *const c_char, count: u32);
-    fn C_NewClient(db_path: *const c_char);
-    fn C_Connect(qr_cb: CQrCallback, data: *mut c_void);
-    fn C_SendMessage(
-        jid: CJID,
-        message_type: u8,
-        message_content: *const c_void,
-        quote_id: *const c_char,
-        quote_sender: CJID,
-        quote_chat: CJID,
-        quote_message_type: u8,
-        quote_message_content: *const c_void,
-    );
-    fn C_SendTextMessage(
-        jid: CJID,
-        message_content: *const c_void,
-        quote_id: *const c_char,
-        quote_sender: CJID,
-        quote_chat: CJID,
-        quote_message_type: u8,
-        quote_message_content: *const c_void,
-        local_send_id: u64,
-    ) -> u8;
-    fn C_ForwardMessage(
-        source_id: *const c_char,
-        source_chat: CJID,
-        source_sender: CJID,
-        source_is_from_me: bool,
-        destinations: *const *const c_char,
-        destination_count: usize,
-        forward_source: *const u8,
-        forward_source_len: usize,
-    ) -> CForwardResult;
-    fn C_GetContacts() -> CGetContactsResult;
-    fn C_FreeContacts(result: CGetContactsResult);
-    fn C_GetCommunities() -> CGetCommunitiesResult;
-    fn C_FreeCommunities(result: CGetCommunitiesResult);
-    fn C_GetProfilePicture(jid: CJID) -> CProfilePictureResult;
-    fn C_GetCommunityProfilePicture(jid: CJID) -> CProfilePictureResult;
-    fn C_FreeProfilePicture(result: CProfilePictureResult);
-    fn C_GetChatSettings(jid: CJID) -> CChatSettings;
-    fn C_GetGroupInfo(jid: CJID) -> CGroupInfoResult;
-    fn C_GetGroupParticipants(jid: CJID) -> CGroupParticipantsResult;
-    fn C_FreeGroupParticipants(result: CGroupParticipantsResult);
-    fn C_ResolveDmChatId(jid: CJID) -> *mut c_char;
-    fn C_FreeResolveDmChatId(value: *mut c_char);
-    fn C_Disconnect();
-    fn C_Logout() -> u8;
-    fn C_DrainRawPresenceDiagnostics() -> *mut c_char;
-    fn C_FreeRawPresenceDiagnostics(report: *mut c_char);
-    fn C_SubscribePresence(jid: CJID) -> u8;
-    fn C_PairPhone(phone: *const c_char) -> *const c_char;
-    fn C_FreePairPhoneResult(result: *const c_char);
-    fn C_DownloadFile(file_id: *const c_char, base_path: *const c_char) -> u8;
-    fn C_ReactToMessage(
-        target_jid: CJID,
-        destination_jid: CJID,
-        sender_jid: CJID,
-        message_id: *const c_char,
-        reaction: *const c_char,
-    ) -> u8;
-    fn C_EditMessage(chat_jid: CJID, message_id: *const c_char, replacement: *const c_char) -> u8;
-    fn C_RevokeMessage(chat_jid: CJID, sender_jid: CJID, message_id: *const c_char) -> u8;
-
-    fn C_MarkAsRead(msg_id: *const c_char, chat_jid: CJID, sender_jid: CJID) -> i32;
-    fn C_MarkChatReadSync(
-        chat_jid: CJID,
-        msg_id: *const c_char,
-        timestamp: i64,
-        from_me: bool,
-        participant_jid: CJID,
-    ) -> i32;
-
-    fn C_SetMessageHandler(message_cb: CMessageCallback, data: *mut c_void);
-    fn C_SetOptimisticTextSentHandler(callback: COptimisticTextSentCallback, data: *mut c_void);
-    fn C_SetEventHandler(event_cb: CEventCallback, data: *mut c_void);
-    fn C_SetPresenceHandler(presence_cb: CPresenceCallback, data: *mut c_void);
-    fn C_SetLogHandler(log_fn: CLogCallback, data: *mut c_void);
 }
 
 pub struct DownloadFailed;
