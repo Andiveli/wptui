@@ -233,21 +233,6 @@ pub(super) enum MessageType {
     ViewOnceUnavailable = 2,
 }
 
-#[derive(Clone, Debug, Default, FromRepr)]
-#[repr(u8)]
-pub enum FileKind {
-    #[default]
-    Image = 0,
-    Video = 1,
-    Audio = 2,
-    Document = 3,
-    Sticker = 4,
-}
-
-pub(super) fn file_kind_discriminant(kind: &FileKind) -> u8 {
-    kind.clone() as u8
-}
-
 #[derive(Clone, Debug, FromRepr)]
 #[repr(u8)]
 pub(super) enum EventType {
