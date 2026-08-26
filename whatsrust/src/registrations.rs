@@ -12,13 +12,6 @@ impl CallbackTranslator<u64> for u64 {
     }
 }
 
-impl CallbackTranslator<*const c_char> for String {
-    unsafe fn to_rust(ptr: *const c_char) -> String {
-        let c_str = unsafe { CStr::from_ptr(ptr) };
-        c_str.to_string_lossy().into_owned()
-    }
-}
-
 impl CallbackTranslator<u8> for u8 {
     unsafe fn to_rust(value: u8) -> Self {
         value
@@ -69,5 +62,3 @@ setup_handler!(
     msg: *const c_char => String,
     level: u8 => u8
 );
-
-setup_handler!(connect, C_Connect, qr: *const c_char => String);
