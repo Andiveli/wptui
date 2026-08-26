@@ -5,10 +5,8 @@ use crate::caches::{
     store_forward_source, store_message_mention_ranges, store_message_push_name,
     validated_mention_ranges,
 };
-use crate::{
-    CallbackTranslator, FileContent, FileKind, ForwardingInfo, JID, Message, MessageContent,
-    MessageInfo,
-};
+use crate::callbacks::CallbackTranslator;
+use crate::{FileContent, FileKind, ForwardingInfo, JID, Message, MessageContent, MessageInfo};
 
 impl CallbackTranslator<*const CMessage> for Message {
     unsafe fn to_rust(ptr: *const CMessage) -> Self {
