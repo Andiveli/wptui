@@ -1,10 +1,12 @@
 use std::ffi::CStr;
 
 use crate::abi::{
-    CChatEvent, CEvent, CLogoutResultEvent, CMarkChatAsReadEvent, CMessageActionEvent,
-    CReactionEvent, CReceipt, EventType, LogoutStatus, ReceiptKind,
+    C_SetEventHandler, CChatEvent, CEvent, CLogoutResultEvent, CMarkChatAsReadEvent,
+    CMessageActionEvent, CReactionEvent, CReceipt, EventType, LogoutStatus, ReceiptKind,
 };
-use crate::{CallbackTranslator, Event, JID, MessageActionKind, MessageId};
+use crate::callbacks::CallbackTranslator;
+use crate::{Event, JID, MessageActionKind, MessageId};
+use strum::FromRepr;
 
 impl CallbackTranslator<*const CEvent> for Event {
     unsafe fn to_rust(ptr: *const CEvent) -> Self {
