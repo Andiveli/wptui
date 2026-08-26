@@ -1,10 +1,27 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
 )
+
+func TestDownloadFileReturnsFailureWhenClientIsUnavailable(t *testing.T) {
+	fileID, err := json.Marshal(DownloadInfo{Version: downloadInfoVersion, TargetPath: "media.jpg"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := client
+	t.Cleanup(func() { lifecycleState.publishClient(previous) })
+	lifecycleState.publishClient(nil)
+
+	root := t.TempDir()
+	clientSnapshot := lifecycleState.clientSnapshot()
+	if got := downloadFile(clientSnapshot, string(fileID), root); got != FileStatusDownloadFailed {
+		t.Fatalf("download status = %d, want failure", got)
+	}
+}
 
 func TestMediaDownloadExportsAndPathHelpersStayOutOfMain(t *testing.T) {
 	mediaSource, err := os.ReadFile("media_downloads.go")

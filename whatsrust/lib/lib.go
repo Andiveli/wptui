@@ -150,6 +150,9 @@ func FileIdToDownloadInfo(fileId string) (DownloadInfo, error) {
 	return info, nil
 }
 func DownloadFromFileId(client *whatsmeow.Client, fileId string, basePath string) int {
+	if client == nil {
+		return FileStatusDownloadFailed
+	}
 	info, err := FileIdToDownloadInfo(fileId)
 	if err != nil {
 		return FileStatusDownloadFailed

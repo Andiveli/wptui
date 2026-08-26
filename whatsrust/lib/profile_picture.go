@@ -111,20 +111,22 @@ func fetchProfilePicture(ctx context.Context, jidText string, lookup profilePict
 	return fetchProfilePictureWithParams(ctx, jidText, false, lookup, download)
 }
 
-func downloadProfilePicture(ctx context.Context, url string, limit int64) ([]byte, error) {
-	response, err := client.DangerousInternals().DoMediaDownloadRequest(ctx, url)
-	if err != nil {
-		return nil, err
+func downloadProfilePicture(client *whatsmeow.Client) profilePictureDownload {
+	return func(ctx context.Context, url string, limit int64) ([]byte, error) {
+		response, err := client.DangerousInternals().DoMediaDownloadRequest(ctx, url)
+		if err != nil {
+			return nil, err
+		}
+		defer response.Body.Close()
+		data, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
+		if err != nil {
+			return nil, err
+		}
+		if int64(len(data)) > limit {
+			return nil, errProfilePictureOversized
+		}
+		return data, nil
 	}
-	defer response.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(data)) > limit {
-		return nil, errProfilePictureOversized
-	}
-	return data, nil
 }
 
 func profilePictureToC(outcome profilePictureOutcome) C.ProfilePictureResult {
@@ -147,12 +149,13 @@ func C_GetProfilePicture(jid *C.char) C.ProfilePictureResult {
 	if jid == nil {
 		return C.ProfilePictureResult{status: C.uint8_t(profilePictureStatusInvalidJID)}
 	}
-	if client == nil {
+	clientSnapshot := lifecycleState.clientSnapshot()
+	if clientSnapshot == nil {
 		return C.ProfilePictureResult{status: C.uint8_t(profilePictureStatusClientUnavailable)}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), profilePictureTimeout)
 	defer cancel()
-	return profilePictureToC(fetchProfilePicture(ctx, C.GoString(jid), client.GetProfilePictureInfo, downloadProfilePicture))
+	return profilePictureToC(fetchProfilePicture(ctx, C.GoString(jid), clientSnapshot.GetProfilePictureInfo, downloadProfilePicture(clientSnapshot)))
 }
 
 //export C_GetCommunityProfilePicture
@@ -160,12 +163,13 @@ func C_GetCommunityProfilePicture(jid *C.char) C.ProfilePictureResult {
 	if jid == nil {
 		return C.ProfilePictureResult{status: C.uint8_t(profilePictureStatusInvalidJID)}
 	}
-	if client == nil {
+	clientSnapshot := lifecycleState.clientSnapshot()
+	if clientSnapshot == nil {
 		return C.ProfilePictureResult{status: C.uint8_t(profilePictureStatusClientUnavailable)}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), profilePictureTimeout)
 	defer cancel()
-	return profilePictureToC(fetchProfilePictureWithParams(ctx, C.GoString(jid), true, client.GetProfilePictureInfo, downloadProfilePicture))
+	return profilePictureToC(fetchProfilePictureWithParams(ctx, C.GoString(jid), true, clientSnapshot.GetProfilePictureInfo, downloadProfilePicture(clientSnapshot)))
 }
 
 //export C_FreeProfilePicture
