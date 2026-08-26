@@ -6,7 +6,7 @@ use std::{
 
 use strum::{EnumIter, FromRepr};
 
-use crate::abi::{CContact, CJID, CMentionRange};
+use crate::abi::{CContact, CJID, CMentionRange, LogoutStatus, ReceiptKind};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct JID(pub Arc<str>);
@@ -92,6 +92,66 @@ pub enum MessageContent {
 pub struct Message {
     pub info: MessageInfo,
     pub message: MessageContent,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MessageActionKind {
+    Edit { replacement: Arc<str> },
+    Delete,
+}
+
+#[derive(Clone, Debug)]
+pub enum Event {
+    SyncProgress(u8),
+    AppStateSyncComplete,
+    Receipt {
+        kind: ReceiptKind,
+        chat: JID,
+        message_ids: Vec<MessageId>,
+    },
+    Reaction {
+        chat: JID,
+        target_message_id: MessageId,
+        participant: JID,
+        text: Arc<str>,
+        is_from_me: bool,
+    },
+    Connected,
+    MessageAction {
+        action_id: Arc<str>,
+        target_message_id: MessageId,
+        chat: JID,
+        sender: JID,
+        kind: MessageActionKind,
+        occurred_at: i64,
+        arrival_order: u64,
+    },
+    /// A chat that exists even though the history sync batch carried no
+    /// messages for it. Lets the app populate the full chat list instead of
+    /// only the subset that shipped messages.
+    Chat {
+        jid: JID,
+        last_message_time: i64,
+    },
+    /// Terminal outcome of an asynchronous logout. The Go bridge runs the
+    /// remove-companion-device IQ off the event loop so `logout()` no longer
+    /// blocks the UI; this event drives the local cleanup on completion.
+    LogoutResult(LogoutStatus),
+    MarkChatAsRead {
+        chat: JID,
+        message_id: MessageId,
+        read: bool,
+        timestamp: i64,
+        from_me: bool,
+        participant: Option<JID>,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub struct PresenceUpdate {
+    pub from: JID,
+    pub unavailable: bool,
+    pub last_seen: i64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
