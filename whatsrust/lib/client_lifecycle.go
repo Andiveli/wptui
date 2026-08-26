@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sync"
 	"time"
 	"unsafe"
 
@@ -27,13 +28,39 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// client and qrChan remain package-owned because the other bridge actions use
-// the same client after this lifecycle boundary is crossed.
+// client remains package-owned because the other bridge actions use the same
+// client after this lifecycle boundary is crossed. The QR stream and handler
+// registration state live here so reconnect setup has one resettable owner.
 var client *whatsmeow.Client
-var qrChan <-chan whatsmeow.QRChannelItem
+
+type clientLifecycleState struct {
+	mu                 sync.Mutex
+	qrChan             <-chan whatsmeow.QRChannelItem
+	handlersRegistered bool
+}
+
+var lifecycleState clientLifecycleState
+
+func (state *clientLifecycleState) reset() {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	state.qrChan = nil
+	state.handlersRegistered = false
+}
+
+func (state *clientLifecycleState) registerEventHandlers(register func()) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.handlersRegistered {
+		return
+	}
+	register()
+	state.handlersRegistered = true
+}
 
 //export C_NewClient
 func C_NewClient(dbPath *C.char) {
+	lifecycleState.reset()
 	clearAuthenticatedPushNameCache()
 	rawPresenceProbe.reset(os.Getenv("WPTUI_PRESENCE_DEBUG") == "1")
 	requestFullHistorySync()
@@ -68,12 +95,15 @@ func C_Connect(handler C.QrCallback, data unsafe.Pointer) {
 			store.DeviceProps.GetHistorySyncConfig().GetFullSyncSizeMbLimit(),
 			store.DeviceProps.GetPlatformType(),
 		)
-		qrChan, _ = client.GetQRChannel(context.Background())
+		lifecycleState.mu.Lock()
+		lifecycleState.qrChan, _ = client.GetQRChannel(context.Background())
+		qrChannel := lifecycleState.qrChan
+		lifecycleState.mu.Unlock()
 		if err := client.Connect(); err != nil {
 			panic(err)
 		}
 
-		for evt := range qrChan {
+		for evt := range qrChannel {
 			if evt.Event != "code" {
 				continue
 			}

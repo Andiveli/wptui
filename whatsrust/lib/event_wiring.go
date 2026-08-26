@@ -64,6 +64,12 @@ func (dispatcher *viewOnceUnavailableDispatcher) dispatchOnce(info types.Message
 }
 
 func AddEventHandlers() {
+	lifecycleState.registerEventHandlers(func() {
+		addEventHandlers()
+	})
+}
+
+func addEventHandlers() {
 	viewOnceDispatcher := newViewOnceUnavailableDispatcher(HandleViewOnceUnavailableMessage)
 	client.AddEventHandler(func(rawEvt any) {
 		messageActionCensusDiagnostic(rawEvt)
