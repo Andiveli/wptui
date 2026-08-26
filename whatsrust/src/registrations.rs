@@ -1,3 +1,5 @@
+use std::ffi::c_char;
+
 use super::*;
 
 impl CallbackTranslator<bool> for bool {

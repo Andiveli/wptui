@@ -1,3 +1,5 @@
+use std::{ffi::CStr, path::Path};
+
 use super::*;
 
 fn profile_picture_from_parts(

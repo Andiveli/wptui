@@ -1,3 +1,5 @@
+use std::ffi::{CStr, c_char};
+
 use super::*;
 
 impl CallbackTranslator<*const c_char> for String {
