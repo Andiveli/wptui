@@ -73,6 +73,80 @@ fn mention_ranges_round_trip_and_legacy_rows_reload_empty() {
 }
 
 #[test]
+fn legacy_message_schema_survives_lazy_reads_and_repeated_init_with_positional_order() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("initialized-legacy.db");
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "CREATE TABLE chats (jid TEXT PRIMARY KEY);
+             CREATE TABLE contacts (jid TEXT PRIMARY KEY, name TEXT NOT NULL);
+             CREATE TABLE text_messages (id TEXT PRIMARY KEY, chat_jid TEXT, sender_jid TEXT, timestamp INTEGER, quote_id TEXT, is_from_me INTEGER, read INTEGER, message TEXT);
+             CREATE TABLE file_messages (id TEXT PRIMARY KEY, chat_jid TEXT, sender_jid TEXT, timestamp INTEGER, quote_id TEXT, is_from_me INTEGER, read INTEGER, kind INTEGER, path TEXT, file_id TEXT, caption TEXT);
+             CREATE TABLE view_once_unavailable_messages (id TEXT PRIMARY KEY, chat_jid TEXT, sender_jid TEXT, timestamp INTEGER, is_from_me INTEGER, read INTEGER, mentions_self INTEGER NOT NULL DEFAULT 0);
+             INSERT INTO text_messages VALUES ('legacy-text', 'chat@example.test', 'chat@example.test', 1, NULL, 0, 0, 'hello');
+             INSERT INTO file_messages VALUES ('legacy-file', 'chat@example.test', 'chat@example.test', 2, NULL, 0, 0, 3, 'file.bin', 'file-id', NULL);",
+        )
+        .unwrap();
+    drop(connection);
+
+    let mut handler = DatabaseHandler::new(&path);
+    let lazy_messages = handler.get_messages();
+    assert_eq!(lazy_messages.len(), 2);
+    handler.init();
+    handler.init();
+    handler.stop();
+
+    let connection = rusqlite::Connection::open(path).unwrap();
+    let columns = |table: &str| {
+        connection
+            .prepare(&format!("PRAGMA table_info({table})"))
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    };
+    assert_eq!(
+        columns("text_messages"),
+        [
+            "id",
+            "chat_jid",
+            "sender_jid",
+            "timestamp",
+            "quote_id",
+            "is_from_me",
+            "read",
+            "message",
+            "is_forwarded",
+            "forwarding_score",
+            "mention_ranges",
+            "mentions_self",
+        ]
+    );
+    assert_eq!(
+        columns("file_messages"),
+        [
+            "id",
+            "chat_jid",
+            "sender_jid",
+            "timestamp",
+            "quote_id",
+            "is_from_me",
+            "read",
+            "kind",
+            "path",
+            "file_id",
+            "caption",
+            "is_forwarded",
+            "forwarding_score",
+            "mention_ranges",
+            "mentions_self",
+        ]
+    );
+}
+
+#[test]
 fn message_ownership_is_monotonic_for_text_and_file_rows() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("ownership.db");
