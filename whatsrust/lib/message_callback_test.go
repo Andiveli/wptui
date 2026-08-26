@@ -116,6 +116,46 @@ func TestBeginMessageCallbackPreservesPushNameAcrossCMetadata(t *testing.T) {
 	}
 }
 
+func TestHandleMessageQuotedTextUsesOwnedCallbackQuoteID(t *testing.T) {
+	previousObserve := observeTextCallback
+	t.Cleanup(func() { observeTextCallback = previousObserve })
+
+	var output textCallbackOutput
+	observeTextCallback = func(got textCallbackOutput) { output = got }
+	stanzaID := "quoted-message"
+	text := "reply"
+	HandleMessage(types.MessageInfo{ID: "message-id"}, &waE2E.Message{
+		ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+			Text:        &text,
+			ContextInfo: &waE2E.ContextInfo{StanzaID: &stanzaID},
+		},
+	}, false)
+
+	if output.quoteID != stanzaID {
+		t.Fatalf("quoted callback quote ID = %q, want %q", output.quoteID, stanzaID)
+	}
+}
+
+func TestMessageCallbackCloseReleasesAllCallbackStateExactlyOnce(t *testing.T) {
+	callback := beginMessageCallback(types.MessageInfo{PushName: "profile"}, &waE2E.Message{}, []byte("forwarded"))
+	callback.setQuoteID("quoted-message")
+	callback.close()
+	callback.close()
+
+	if callback.forwardData != nil || callback.info.id != nil || callback.info.chat != nil || callback.info.sender != nil || callback.info.pushName != nil || callback.info.quoteID != nil {
+		t.Fatalf("callback cleanup left owned state: %#v", callback)
+	}
+
+	// A second callback proves the first close released the serialization lock.
+	next := beginMessageCallback(types.MessageInfo{}, &waE2E.Message{}, nil)
+	next.close()
+}
+
+func TestMessageCallbackCloseNilIsSafe(t *testing.T) {
+	var callback *messageCallback
+	callback.close()
+}
+
 func TestSelfMentionUsesAuthenticatedPushNameLearnedFromOwnCallback(t *testing.T) {
 	previousClient := client
 	t.Cleanup(func() {

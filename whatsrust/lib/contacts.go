@@ -131,6 +131,15 @@ func freeContactResult(result C.GetContactsResult) {
 	C.free(unsafe.Pointer(result.entries))
 }
 
+// C_FreeContacts releases the entries and strings returned by C_GetContacts.
+// The caller owns the result and must invoke this exactly once after copying
+// all entries. Empty results are valid and nil-safe.
+//
+//export C_FreeContacts
+func C_FreeContacts(result C.GetContactsResult) {
+	freeContactResult(result)
+}
+
 func contactEntryStrings(entry C.ContactEntry) (string, string) {
 	return C.GoString(entry.jid), C.GoString(entry.name)
 }
