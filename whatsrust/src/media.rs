@@ -4,6 +4,10 @@ use std::{
 };
 
 use super::*;
+use crate::abi::{
+    C_DownloadFile, C_FreeProfilePicture, C_GetCommunityProfilePicture, C_GetProfilePicture, CJID,
+    CProfilePictureResult,
+};
 
 fn profile_picture_from_parts(
     status: u8,

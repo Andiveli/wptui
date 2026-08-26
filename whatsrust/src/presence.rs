@@ -4,6 +4,9 @@ use std::{
 };
 
 use super::*;
+use crate::abi::{
+    C_DrainRawPresenceDiagnostics, C_FreeRawPresenceDiagnostics, C_SubscribePresence,
+};
 
 static PRESENCE_CALLBACK_INGRESS: AtomicUsize = AtomicUsize::new(0);
 

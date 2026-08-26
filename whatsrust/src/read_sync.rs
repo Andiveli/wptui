@@ -1,9 +1,7 @@
 use std::ffi::{CString, c_char};
 
-use crate::{
-    abi::*,
-    models::{JID, MessageId},
-};
+use crate::abi::{C_MarkAsRead, C_MarkChatReadSync};
+use crate::models::{JID, MessageId};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MarkAsReadError {
