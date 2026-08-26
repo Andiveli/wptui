@@ -9,6 +9,7 @@ use std::{
 
 #[macro_use]
 mod callbacks;
+mod registrations;
 mod abi;
 mod caches;
 mod events;
@@ -17,7 +18,11 @@ mod models;
 use abi::*;
 pub use abi::{LogoutStatus, ReceiptKind};
 pub use events::set_event_handler;
-use callbacks::CallbackTranslator;
+pub use callbacks::CallbackTranslator;
+pub use registrations::{
+    connect, set_log_handler, set_message_handler,
+    set_optimistic_text_sent_handler, set_presence_handler,
+};
 pub(crate) use models::file_kind_discriminant;
 pub use models::{
     ChatSettings, CommunitiesError, CommunityInfo, Contact, DownloadFailed, Event, FileContent,
@@ -655,78 +660,6 @@ impl CallbackTranslator<i64> for i64 {
         value
     }
 }
-
-pub fn set_presence_handler<F>(mut callback: F)
-where
-    F: FnMut(PresenceUpdate) + 'static,
-{
-    setup_presence_handler(move |from, unavailable, last_seen| {
-        if std::env::var("WPTUI_PRESENCE_DEBUG").as_deref() == Ok("1") {
-            PRESENCE_CALLBACK_INGRESS.fetch_add(1, Ordering::Relaxed);
-        }
-        callback(PresenceUpdate {
-            from,
-            unavailable,
-            last_seen,
-        });
-    });
-}
-
-setup_handler!(
-    setup_presence_handler,
-    C_SetPresenceHandler,
-    from: CJID => JID,
-    unavailable: bool => bool,
-    last_seen: i64 => i64
-);
-
-impl CallbackTranslator<bool> for bool {
-    unsafe fn to_rust(ptr: bool) -> bool {
-        ptr
-    }
-}
-
-impl CallbackTranslator<u64> for u64 {
-    unsafe fn to_rust(value: u64) -> Self {
-        value
-    }
-}
-
-setup_handler!(
-    set_message_handler,
-    C_SetMessageHandler,
-    msg: *const CMessage => Message,
-    is_sync: bool => bool
-);
-
-setup_handler!(
-    set_optimistic_text_sent_handler,
-    C_SetOptimisticTextSentHandler,
-    local_send_id: u64 => u64,
-    msg: *const CMessage => Message
-);
-
-impl CallbackTranslator<*const c_char> for String {
-    unsafe fn to_rust(ptr: *const c_char) -> String {
-        let c_str = unsafe { CStr::from_ptr(ptr) };
-        c_str.to_string_lossy().into_owned()
-    }
-}
-
-impl CallbackTranslator<u8> for u8 {
-    unsafe fn to_rust(ptr: u8) -> u8 {
-        ptr
-    }
-}
-
-setup_handler!(
-    set_log_handler,
-    C_SetLogHandler,
-    msg: *const c_char => String,
-    level: u8 => u8
-);
-
-setup_handler!(connect, C_Connect, qr: *const c_char => String);
 
 pub fn disconnect() {
     unsafe { C_Disconnect() }
