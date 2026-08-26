@@ -9,7 +9,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 use strum::IntoEnumIterator;
 use whatsrust as wr;
 
-use crate::app::{Chat, DELETED_MESSAGE_TEXT, MessageAction, STATUS_BROADCAST_CHAT};
+use crate::app::{Chat, DELETED_MESSAGE_TEXT, MessageAction};
 
 #[path = "db/action_repository.rs"]
 mod action_repository;
@@ -19,16 +19,14 @@ mod connection;
 mod cursor_repository;
 #[path = "db/reaction_repository.rs"]
 mod reaction_repository;
+#[path = "db/retention.rs"]
+mod retention;
 #[path = "schema.rs"]
 mod schema;
 pub use action_repository::MessageActionPersistence;
 pub(crate) use connection::{
     DATABASE_WRITE_LOCK, open_database, try_open_database, with_database_write_lock,
 };
-
-/// WhatsApp statuses expire 24 hours after posting (server-side). The local
-/// purge uses the same window so status broadcasts do not accumulate forever.
-const STATUS_RETENTION_SECS: i64 = 24 * 60 * 60;
 
 fn encode_mention_ranges(ranges: &[Range<usize>]) -> Option<String> {
     (!ranges.is_empty()).then(|| {
@@ -519,38 +517,6 @@ impl DatabaseHandler {
     /// retention window. Returns the relative media paths of the purged
     /// file messages so the caller can remove them from disk.
     pub fn purge_expired_statuses(&mut self, now: i64) -> Vec<PathBuf> {
-        let cutoff = now - STATUS_RETENTION_SECS;
-        let _write_lock = DATABASE_WRITE_LOCK.lock().unwrap();
-        let tx = self
-            .db
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .unwrap();
-
-        let purged_paths = {
-            let mut query = tx
-                .prepare("SELECT path FROM file_messages WHERE chat_jid = ?1 AND timestamp < ?2")
-                .unwrap();
-            query
-                .query_map(rusqlite::params![STATUS_BROADCAST_CHAT, cutoff], |row| {
-                    row.get::<_, String>(0)
-                })
-                .unwrap()
-                .filter_map(Result::ok)
-                .map(PathBuf::from)
-                .collect::<Vec<_>>()
-        };
-
-        tx.execute(
-            "DELETE FROM file_messages WHERE chat_jid = ?1 AND timestamp < ?2",
-            rusqlite::params![STATUS_BROADCAST_CHAT, cutoff],
-        )
-        .unwrap();
-        tx.execute(
-            "DELETE FROM text_messages WHERE chat_jid = ?1 AND timestamp < ?2",
-            rusqlite::params![STATUS_BROADCAST_CHAT, cutoff],
-        )
-        .unwrap();
-        tx.commit().unwrap();
-        purged_paths
+        retention::purge(&mut self.db, now)
     }
 }
