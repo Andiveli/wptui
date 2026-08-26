@@ -1,9 +1,8 @@
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
-use log::debug;
 use rusqlite::Connection;
 use whatsrust as wr;
 
@@ -25,6 +24,8 @@ mod reaction_repository;
 mod retention;
 #[path = "schema.rs"]
 mod schema;
+#[path = "db/worker.rs"]
+mod worker;
 pub use action_repository::MessageActionPersistence;
 pub(crate) use connection::{
     DATABASE_WRITE_LOCK, open_database, try_open_database, with_database_write_lock,
@@ -32,10 +33,7 @@ pub(crate) use connection::{
 
 pub struct DatabaseHandler {
     db: Connection,
-    new_messages_queue: Arc<Mutex<Vec<wr::Message>>>,
-    new_chats_queue: Arc<Mutex<Vec<Chat>>>,
-    should_stop: Arc<Mutex<bool>>,
-    thread: Option<std::thread::JoinHandle<()>>,
+    worker: worker::Worker,
 }
 
 impl DatabaseHandler {
@@ -43,77 +41,23 @@ impl DatabaseHandler {
         let db = open_database(db_path);
         let _write_lock = DATABASE_WRITE_LOCK.lock().unwrap();
         schema::prepare(&db);
-        let new_messages_queue = Arc::new(Mutex::new(Vec::<wr::Message>::new()));
-        let new_chats_queue = Arc::new(Mutex::new(Vec::<Chat>::new()));
-        let should_stop = Arc::new(Mutex::new(false));
-
-        let new_messages_queue_clone = Arc::clone(&new_messages_queue);
-        let new_chats_queue_clone = Arc::clone(&new_chats_queue);
-        let should_stop_clone = Arc::clone(&should_stop);
-        let db_path = db_path.to_owned();
-        let thread = std::thread::spawn(move || {
-            let mut db = open_database(&db_path);
-            loop {
-                std::thread::sleep(std::time::Duration::from_secs(1));
-                let new_chats = {
-                    let mut queue = new_chats_queue_clone.lock().unwrap();
-                    let mut chats = Vec::new();
-                    while let Some(chat) = queue.pop() {
-                        chats.push(chat);
-                    }
-                    chats
-                };
-                if !new_chats.is_empty() {
-                    debug!("Saving {} new chats to the database", new_chats.len());
-                    let _write_lock = DATABASE_WRITE_LOCK.lock().unwrap();
-                    chat_store::persist(&mut db, new_chats);
-                }
-
-                let messages = {
-                    let mut queue = new_messages_queue_clone.lock().unwrap();
-                    std::mem::take(&mut *queue)
-                };
-                if !messages.is_empty() {
-                    debug!("Saving {} new messages to the database", messages.len());
-                    let _write_lock = DATABASE_WRITE_LOCK.lock().unwrap();
-                    message_store::persist(&mut db, messages);
-                }
-
-                let should_stop = should_stop_clone.lock().unwrap();
-                if *should_stop {
-                    break;
-                }
-                drop(should_stop);
-            }
-        });
-
         Self {
             db,
-            new_messages_queue,
-            new_chats_queue,
-            should_stop,
-            thread: Some(thread),
+            worker: worker::Worker::new(db_path),
         }
     }
 
     pub fn stop(&mut self) {
-        let mut should_stop = self.should_stop.lock().unwrap();
-        *should_stop = true;
-        drop(should_stop);
-        if let Some(thread) = self.thread.take() {
-            thread.join().unwrap();
-        }
+        self.worker.stop();
     }
 
     pub fn add_message(&self, message: &wr::Message) {
         schema::prepare_legacy_message_schema(&self.db);
-        let mut queue = self.new_messages_queue.lock().unwrap();
-        queue.push(message.clone());
+        self.worker.queue_message(message.clone());
     }
 
     pub fn add_chat(&self, chat: &Chat) {
-        let mut queue = self.new_chats_queue.lock().unwrap();
-        queue.push(chat.clone());
+        self.worker.queue_chat(chat.clone());
     }
 
     pub fn record_reaction(
