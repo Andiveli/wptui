@@ -6,6 +6,7 @@ use std::{
 use strum::{EnumIter, FromRepr};
 
 use crate::abi::{CContact, CJID, LogoutStatus, ReceiptKind};
+use crate::callbacks::CallbackTranslator;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct JID(pub Arc<str>);
@@ -33,6 +34,15 @@ impl From<&JID> for CJID {
         CString::new(jid.0.as_ref()).unwrap().into_raw()
     }
 }
+
+impl CallbackTranslator<CJID> for JID {
+    unsafe fn to_rust(from: CJID) -> Self {
+        (&from).into()
+    }
+}
+
+pub const VIEW_ONCE_UNAVAILABLE_DESCRIPTION: &str =
+    "View-once media is unavailable here. View it on your phone.";
 
 pub type MessageId = Arc<str>;
 

@@ -2,8 +2,6 @@
 //! Implementation and focused tests live in owning modules.
 //! Explicit reexports keep the public API boundary auditable.
 
-use std::ffi::CString;
-
 #[macro_use]
 mod callbacks;
 mod abi;
@@ -37,7 +35,7 @@ pub use models::{
     FileId, FileKind, ForwardingInfo, GroupInfo, GroupInfoError, GroupParticipant, JID,
     LogoutError, Mention, Message, MessageActionFailed, MessageActionKind, MessageContent,
     MessageId, MessageInfo, PresenceUpdate, ProfilePicture, ProfilePictureAvailability,
-    ProfilePictureError,
+    ProfilePictureError, VIEW_ONCE_UNAVAILABLE_DESCRIPTION,
 };
 pub use presence::{SubscribePresenceResult, drain_raw_presence_diagnostics, subscribe_presence};
 pub use queries::{
@@ -54,18 +52,3 @@ pub use caches::{
     remove_forward_source, store_forward_source, store_message_mention_ranges,
     store_message_push_name,
 };
-
-pub const VIEW_ONCE_UNAVAILABLE_DESCRIPTION: &str =
-    "View-once media is unavailable here. View it on your phone.";
-
-impl CallbackTranslator<CJID> for JID {
-    unsafe fn to_rust(from: CJID) -> Self {
-        (&from).into()
-    }
-}
-
-impl CallbackTranslator<i64> for i64 {
-    unsafe fn to_rust(value: i64) -> Self {
-        value
-    }
-}

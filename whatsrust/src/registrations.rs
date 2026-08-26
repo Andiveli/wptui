@@ -20,6 +20,12 @@ impl CallbackTranslator<u8> for u8 {
     }
 }
 
+impl CallbackTranslator<i64> for i64 {
+    unsafe fn to_rust(value: i64) -> Self {
+        value
+    }
+}
+
 pub fn set_presence_handler<F>(mut callback: F)
 where
     F: FnMut(PresenceUpdate) + 'static,

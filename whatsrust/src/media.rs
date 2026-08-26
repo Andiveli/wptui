@@ -1,4 +1,7 @@
-use std::{ffi::CStr, path::Path};
+use std::{
+    ffi::{CStr, CString},
+    path::Path,
+};
 
 use super::*;
 
