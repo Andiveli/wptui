@@ -15,6 +15,8 @@ use crate::app::{Chat, DELETED_MESSAGE_TEXT, MessageAction, STATUS_BROADCAST_CHA
 mod action_repository;
 #[path = "db/connection.rs"]
 mod connection;
+#[path = "db/reaction_repository.rs"]
+mod reaction_repository;
 #[path = "schema.rs"]
 mod schema;
 pub use action_repository::MessageActionPersistence;
@@ -263,40 +265,11 @@ impl DatabaseHandler {
         participant: wr::JID,
         emoji: Arc<str>,
     ) {
-        let _write_lock = DATABASE_WRITE_LOCK.lock().unwrap();
-        if emoji.is_empty() {
-            self.db
-                .execute(
-                    "DELETE FROM message_reactions WHERE message_id = ?1 AND participant_jid = ?2",
-                    rusqlite::params![message_id, participant.0],
-                )
-                .unwrap();
-        } else {
-            self.db
-                .execute(
-                    "INSERT OR REPLACE INTO message_reactions (message_id, participant_jid, emoji) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![message_id, participant.0, emoji],
-                )
-                .unwrap();
-        }
+        reaction_repository::record(&self.db, message_id, participant, emoji);
     }
 
     pub fn get_reactions(&self) -> Vec<(wr::MessageId, wr::JID, Arc<str>)> {
-        let mut query = self
-            .db
-            .prepare("SELECT message_id, participant_jid, emoji FROM message_reactions ORDER BY message_id, participant_jid")
-            .unwrap();
-        query
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?.into(),
-                    row.get::<_, String>(1)?.into(),
-                    Arc::from(row.get::<_, String>(2)?),
-                ))
-            })
-            .unwrap()
-            .map(Result::unwrap)
-            .collect()
+        reaction_repository::get(&self.db)
     }
 
     /// Inserts once by the protocol action ID. A duplicate arriving from
