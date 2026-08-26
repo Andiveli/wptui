@@ -65,12 +65,14 @@ func messageCallbackMetadataFrom(info types.MessageInfo, msg *waE2E.Message) mes
 type messageCallback struct {
 	info        C.MessageInfo
 	forwardData unsafe.Pointer
+	locked      bool
+	closed      bool
 }
 
 func beginMessageCallback(info types.MessageInfo, msg *waE2E.Message, rawSource []byte) *messageCallback {
 	messageCallbackMu.Lock()
 	rememberAuthenticatedPushName(info)
-	callback := &messageCallback{}
+	callback := &messageCallback{locked: true}
 	if len(rawSource) > 0 {
 		callback.forwardData = C.CBytes(rawSource)
 	}
@@ -134,13 +136,38 @@ func messageCallbackPushName(callback *messageCallback) string {
 	return C.GoString(callback.info.pushName)
 }
 
+func (callback *messageCallback) setQuoteID(id string) {
+	callback.info.quoteID = C.CString(id)
+}
+
 func (callback *messageCallback) close() {
+	if callback == nil || callback.closed {
+		return
+	}
+	callback.closed = true
 	C.setActiveForwardSource(nil, 0)
 	if callback.forwardData != nil {
 		C.free(callback.forwardData)
+		callback.forwardData = nil
 	}
-	if callback.info.pushName != nil {
-		C.free(unsafe.Pointer(callback.info.pushName))
+	for _, pointer := range []unsafe.Pointer{
+		unsafe.Pointer(callback.info.id),
+		unsafe.Pointer(callback.info.chat),
+		unsafe.Pointer(callback.info.sender),
+		unsafe.Pointer(callback.info.pushName),
+		unsafe.Pointer(callback.info.quoteID),
+	} {
+		if pointer != nil {
+			C.free(pointer)
+		}
 	}
-	messageCallbackMu.Unlock()
+	callback.info.id = nil
+	callback.info.chat = nil
+	callback.info.sender = nil
+	callback.info.pushName = nil
+	callback.info.quoteID = nil
+	if callback.locked {
+		callback.locked = false
+		messageCallbackMu.Unlock()
+	}
 }

@@ -920,6 +920,7 @@ unsafe extern "C" {
         forward_source_len: usize,
     ) -> CForwardResult;
     fn C_GetContacts() -> CGetContactsResult;
+    fn C_FreeContacts(result: CGetContactsResult);
     fn C_GetCommunities() -> CGetCommunitiesResult;
     fn C_FreeCommunities(result: CGetCommunitiesResult);
     fn C_GetProfilePicture(jid: CJID) -> CProfilePictureResult;
@@ -937,6 +938,7 @@ unsafe extern "C" {
     fn C_FreeRawPresenceDiagnostics(report: *mut c_char);
     fn C_SubscribePresence(jid: CJID) -> u8;
     fn C_PairPhone(phone: *const c_char) -> *const c_char;
+    fn C_FreePairPhoneResult(result: *const c_char);
     fn C_DownloadFile(file_id: *const c_char, base_path: *const c_char) -> u8;
     fn C_ReactToMessage(
         target_jid: CJID,
@@ -1348,6 +1350,7 @@ pub fn pair_phone(phone: &str) -> String {
     let result_str = unsafe { CStr::from_ptr(result) }
         .to_string_lossy()
         .into_owned();
+    unsafe { C_FreePairPhoneResult(result) };
     result_str
 }
 
@@ -2096,7 +2099,7 @@ pub fn get_contacts() -> Vec<(JID, Arc<str>)> {
     let result = unsafe { C_GetContacts() };
     let entries = unsafe { std::slice::from_raw_parts(result.entries, result.size as usize) };
 
-    entries
+    let contacts = entries
         .iter()
         .map(|e| {
             let jid: JID = (&e.jid).into();
@@ -2106,7 +2109,9 @@ pub fn get_contacts() -> Vec<(JID, Arc<str>)> {
                 .into();
             (jid, name)
         })
-        .collect()
+        .collect();
+    unsafe { C_FreeContacts(result) };
+    contacts
 }
 
 const COMMUNITY_ANNOUNCEMENT_UNKNOWN: u8 = 0;

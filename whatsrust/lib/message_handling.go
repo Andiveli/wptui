@@ -40,7 +40,8 @@ func HandleMessage(info types.MessageInfo, msg *waE2E.Message, isSync bool) {
 			id := context_info.GetStanzaID()
 			// LOG_ERROR("asdfasdf %s", co)
 			if id != "" {
-				cinfo.quoteID = C.CString(id)
+				callback.setQuoteID(id)
+				cinfo.quoteID = callback.info.quoteID
 			}
 		}
 

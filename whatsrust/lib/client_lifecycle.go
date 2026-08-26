@@ -97,6 +97,16 @@ func C_PairPhone(phone *C.char) *C.char {
 	return C.CString(code)
 }
 
+// C_FreePairPhoneResult releases the string returned by C_PairPhone. The
+// caller owns the result and must invoke this exactly once after copying it.
+//
+//export C_FreePairPhoneResult
+func C_FreePairPhoneResult(result *C.char) {
+	if result != nil {
+		C.free(unsafe.Pointer(result))
+	}
+}
+
 //export C_Disconnect
 func C_Disconnect() {
 	client.Disconnect()

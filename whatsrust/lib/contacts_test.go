@@ -67,8 +67,10 @@ func TestContactEntriesToCPreservesOrderAndEmptyOwnership(t *testing.T) {
 			t.Errorf("entry %d name = %q, want %q", i, name, want.name)
 		}
 	}
-	freeContactResult(result)
+	C_FreeContacts(result)
 	if empty := contactEntriesToC(nil); empty.entries != nil || empty.size != 0 {
 		t.Fatalf("empty result = (%p, %d), want nil and zero", empty.entries, empty.size)
+	} else {
+		C_FreeContacts(empty)
 	}
 }
