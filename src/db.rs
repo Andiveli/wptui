@@ -1,7 +1,7 @@
 use std::{
     ops::Range,
     path::{Path, PathBuf},
-    sync::{Arc, LazyLock, Mutex},
+    sync::{Arc, Mutex},
 };
 
 use log::debug;
@@ -13,22 +13,17 @@ use crate::app::{
     Chat, DELETED_MESSAGE_TEXT, MessageAction, MessageActionKind, STATUS_BROADCAST_CHAT,
 };
 
+#[path = "db/connection.rs"]
+mod connection;
 #[path = "schema.rs"]
 mod schema;
-pub(crate) use schema::try_open_database;
-
-// SQLite allows only one writer. All handlers in this process share this lock,
-// including the asynchronous queue writer started by each handler.
-static DATABASE_WRITE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+pub(crate) use connection::{
+    DATABASE_WRITE_LOCK, open_database, try_open_database, with_database_write_lock,
+};
 
 /// WhatsApp statuses expire 24 hours after posting (server-side). The local
 /// purge uses the same window so status broadcasts do not accumulate forever.
 const STATUS_RETENTION_SECS: i64 = 24 * 60 * 60;
-
-pub(crate) fn with_database_write_lock<T>(operation: impl FnOnce() -> T) -> T {
-    let _lock = DATABASE_WRITE_LOCK.lock().unwrap();
-    operation()
-}
 
 fn encode_mention_ranges(ranges: &[Range<usize>]) -> Option<String> {
     (!ranges.is_empty()).then(|| {
@@ -76,7 +71,7 @@ pub enum MessageActionPersistence {
 
 impl DatabaseHandler {
     pub fn new(db_path: &Path) -> Self {
-        let db = schema::open_database(db_path);
+        let db = open_database(db_path);
         let _write_lock = DATABASE_WRITE_LOCK.lock().unwrap();
         schema::prepare(&db);
         let new_messages_queue = Arc::new(Mutex::new(Vec::<wr::Message>::new()));
@@ -88,7 +83,7 @@ impl DatabaseHandler {
         let should_stop_clone = Arc::clone(&should_stop);
         let db_path = db_path.to_owned();
         let thread = std::thread::spawn(move || {
-            let mut db = schema::open_database(&db_path);
+            let mut db = open_database(&db_path);
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(1));
                 let new_chats = {

@@ -1,27 +1,10 @@
-use std::time::Duration;
-use std::{
-    collections::{HashMap, HashSet},
-    path::Path,
-};
+use std::collections::{HashMap, HashSet};
 
 use rusqlite::Connection;
 use strum::IntoEnumIterator;
 use whatsrust as wr;
 
-const SQLITE_BUSY_TIMEOUT: Duration = Duration::from_secs(2);
 const READ_RECEIPT_SCHEMA_VERSION: i64 = 2;
-
-pub(crate) fn open_database(path: &Path) -> Connection {
-    let db = Connection::open(path).unwrap();
-    db.busy_timeout(SQLITE_BUSY_TIMEOUT).unwrap();
-    db
-}
-
-pub(crate) fn try_open_database(path: &Path) -> rusqlite::Result<Connection> {
-    let db = Connection::open(path)?;
-    db.busy_timeout(SQLITE_BUSY_TIMEOUT)?;
-    Ok(db)
-}
 
 /// Prepares the tables required by the handler before full initialization.
 /// This preserves the historical constructor lifecycle.
