@@ -93,18 +93,7 @@ impl DatabaseHandler {
     }
 
     pub fn get_chats(&self) -> Vec<Chat> {
-        let mut query = self.db.prepare("SELECT jid FROM chats").unwrap();
-        query
-            .query_map([], |row| {
-                let jid: String = row.get(0).unwrap();
-                Ok(Chat {
-                    jid: jid.into(),
-                    last_message_time: None,
-                })
-            })
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap()
+        chat_store::get_chats(&self.db)
     }
 
     pub fn get_messages(&self) -> Vec<wr::Message> {
@@ -112,25 +101,11 @@ impl DatabaseHandler {
     }
 
     pub fn add_contact(&self, jid: &wr::JID, name: &str) {
-        let _write_lock = DATABASE_WRITE_LOCK.lock().unwrap();
-        self.db
-            .execute(
-                "INSERT OR REPLACE INTO contacts (jid, name) VALUES (?1, ?2)",
-                rusqlite::params![&*jid.0, name],
-            )
-            .unwrap();
+        chat_store::add_contact(&self.db, jid, name);
     }
 
     pub fn get_contacts(&self) -> Vec<(wr::JID, Arc<str>)> {
-        let mut stmt = self.db.prepare("SELECT jid, name FROM contacts").unwrap();
-        let rows = stmt
-            .query_map([], |row| {
-                let jid: String = row.get(0).unwrap();
-                let name: String = row.get(1).unwrap();
-                Ok((jid.into(), Arc::from(name)))
-            })
-            .unwrap();
-        rows.map(|r| r.unwrap()).collect()
+        chat_store::get_contacts(&self.db)
     }
 
     pub fn init(&self) {
