@@ -24,7 +24,7 @@ pub use callbacks::CallbackTranslator;
 pub use events::set_event_handler;
 pub use lifecycle::{connect, disconnect, logout, new_client, pair_phone};
 pub use media::{download_file, get_community_profile_picture, get_profile_picture};
-use message_send::{build_content_for_ffi, quote_to_ffi};
+pub use message_send::{TextSendResult, forward_message, send_message, send_text_message};
 pub(crate) use models::file_kind_discriminant;
 pub use models::{
     ChatSettings, CommunitiesError, CommunityInfo, Contact, DownloadFailed, Event, FileContent,
@@ -308,132 +308,6 @@ impl CallbackTranslator<CJID> for JID {
 impl CallbackTranslator<i64> for i64 {
     unsafe fn to_rust(value: i64) -> Self {
         value
-    }
-}
-
-pub fn forward_message(source: &Message, destinations: &[JID]) -> ForwardReport {
-    if destinations.is_empty() {
-        return ForwardReport::default();
-    }
-    let Some(forward_source) = forward_source(&source.info) else {
-        return ForwardReport::with_reason(
-            0,
-            destinations.len(),
-            ForwardFailure::SourceUnavailable,
-        );
-    };
-    let source_id = match CString::new(source.info.id.as_ref()) {
-        Ok(value) => value,
-        Err(_) => {
-            return ForwardReport::with_reason(
-                0,
-                destinations.len(),
-                ForwardFailure::InvalidSource,
-            );
-        }
-    };
-    let destination_values: Result<Vec<_>, _> = destinations
-        .iter()
-        .map(|jid| CString::new(jid.0.as_ref()))
-        .collect();
-    let Ok(destination_values) = destination_values else {
-        return ForwardReport::with_reason(
-            0,
-            destinations.len(),
-            ForwardFailure::InvalidDestination,
-        );
-    };
-    let destination_pointers: Vec<_> = destination_values.iter().map(|jid| jid.as_ptr()).collect();
-    let result = unsafe {
-        C_ForwardMessage(
-            source_id.as_ptr(),
-            CJID::from(&source.info.chat),
-            CJID::from(&source.info.sender),
-            source.info.is_from_me,
-            destination_pointers.as_ptr(),
-            destination_pointers.len(),
-            forward_source.as_ptr(),
-            forward_source.len(),
-        )
-    };
-    ForwardReport {
-        succeeded: result.succeeded as usize,
-        failed: result.failed as usize,
-        failure: ForwardFailure::from_repr(result.failure).unwrap_or(ForwardFailure::SendFailed),
-    }
-}
-
-pub fn send_message(
-    jid: &JID,
-    content: &MessageContent,
-    quoted_message: Option<&Message>,
-    mentions: &[Mention],
-) {
-    let jid_c = CJID::from(jid);
-    let (msg_type, content_ptr, _holder) = build_content_for_ffi(content, mentions);
-    let (_quote_id_owner, quote_id, quote_sender, quote_chat) = quote_to_ffi(quoted_message);
-    let quote_content = quoted_message.map(|message| build_content_for_ffi(&message.message, &[]));
-    let (quote_message_type, quote_message_content) = quote_content
-        .as_ref()
-        .map_or((0, std::ptr::null()), |(message_type, pointer, _)| {
-            (*message_type, *pointer)
-        });
-
-    unsafe {
-        C_SendMessage(
-            jid_c,
-            msg_type,
-            content_ptr,
-            quote_id,
-            quote_sender,
-            quote_chat,
-            quote_message_type,
-            quote_message_content,
-        )
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TextSendResult {
-    Sent,
-    Failed,
-}
-
-pub fn send_text_message(
-    jid: &JID,
-    content: &MessageContent,
-    quoted_message: Option<&Message>,
-    mentions: &[Mention],
-    local_send_id: u64,
-) -> TextSendResult {
-    let MessageContent::Text(_) = content else {
-        return TextSendResult::Failed;
-    };
-    let jid_c = CJID::from(jid);
-    let (_message_type, content_ptr, _holder) = build_content_for_ffi(content, mentions);
-    let (_quote_id_owner, quote_id, quote_sender, quote_chat) = quote_to_ffi(quoted_message);
-    let quote_content = quoted_message.map(|message| build_content_for_ffi(&message.message, &[]));
-    let (quote_message_type, quote_message_content) = quote_content
-        .as_ref()
-        .map_or((0, std::ptr::null()), |(message_type, pointer, _)| {
-            (*message_type, *pointer)
-        });
-    let status = unsafe {
-        C_SendTextMessage(
-            jid_c,
-            content_ptr,
-            quote_id,
-            quote_sender,
-            quote_chat,
-            quote_message_type,
-            quote_message_content,
-            local_send_id,
-        )
-    };
-    if status == 0 {
-        TextSendResult::Sent
-    } else {
-        TextSendResult::Failed
     }
 }
 
