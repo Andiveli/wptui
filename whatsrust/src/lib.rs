@@ -18,9 +18,10 @@ mod incoming;
 mod models;
 use abi::*;
 pub use abi::{LogoutStatus, ReceiptKind};
+pub use events::set_event_handler;
 pub use callbacks::CallbackTranslator;
 pub use registrations::{
-    set_event_handler, set_log_handler, set_message_handler,
+    set_log_handler, set_message_handler,
     set_optimistic_text_sent_handler, set_presence_handler,
 };
 pub use lifecycle::{connect, disconnect, logout, new_client, pair_phone};

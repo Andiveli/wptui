@@ -5,8 +5,7 @@ use crate::abi::{
     CMessageActionEvent, CReactionEvent, CReceipt, EventType, LogoutStatus, ReceiptKind,
 };
 use crate::callbacks::CallbackTranslator;
-use crate::{Event, JID, MessageActionKind, MessageId};
-use strum::FromRepr;
+use crate::{Event, JID, MessageActionKind};
 
 impl CallbackTranslator<*const CEvent> for Event {
     unsafe fn to_rust(ptr: *const CEvent) -> Self {
