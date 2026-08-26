@@ -1,5 +1,8 @@
-use std::path::Path;
 use std::time::Duration;
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 
 use rusqlite::Connection;
 use strum::IntoEnumIterator;
@@ -87,7 +90,7 @@ pub(crate) fn prepare_legacy_forwarding_schema(db: &Connection) {
 
 /// Creates the complete message schema and applies its legacy migrations.
 /// Callers hold the process-wide database write lock.
-pub(crate) fn initialize(db: &Connection) {
+pub(crate) fn initialize(db: &Connection, deleted_message_text: &str) {
     db.execute(
         "CREATE TABLE IF NOT EXISTS chats (jid TEXT PRIMARY KEY)",
         [],
@@ -143,6 +146,7 @@ pub(crate) fn initialize(db: &Connection) {
     )
     .unwrap();
     prepare_legacy_message_schema(db);
+    migrate_message_action_columns(db, deleted_message_text);
 }
 
 fn ensure_read_receipt_schema(db: &Connection) -> rusqlite::Result<()> {
@@ -205,6 +209,66 @@ fn ensure_mention_columns(db: &Connection) {
     }
 }
 
+/// Migrates legacy action replacement bodies into message rows, then removes
+/// the obsolete action column. The caller holds the database write lock.
+fn migrate_message_action_columns(db: &Connection, deleted_message_text: &str) {
+    let has_replacement = db
+        .prepare(
+            "SELECT COUNT(*) FROM pragma_table_info('message_actions') WHERE name = 'replacement'",
+        )
+        .unwrap()
+        .query_row([], |row| row.get::<_, i64>(0))
+        .unwrap()
+        > 0;
+    if !has_replacement {
+        return;
+    }
+    let mut effective_bodies = HashMap::new();
+    let mut deleted_targets = HashSet::new();
+    let rows = db
+        .prepare("SELECT target_message_id, kind, replacement FROM message_actions ORDER BY occurred_at, arrival_order, action_id")
+        .unwrap()
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, Option<String>>(2)?))
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    for (target, kind, replacement) in rows {
+        // kind 0 is Edit; the last edit in stable order wins.
+        if kind == 1 {
+            deleted_targets.insert(target);
+        } else if kind == 0
+            && let Some(body) = replacement
+        {
+            effective_bodies.insert(target, body);
+        }
+    }
+    for (target, body) in &effective_bodies {
+        if !deleted_targets.contains(target) {
+            db.execute(
+                "UPDATE text_messages SET message = ?1 WHERE id = ?2",
+                rusqlite::params![body, target],
+            )
+            .unwrap();
+        }
+    }
+    for target in deleted_targets {
+        db.execute(
+            "UPDATE text_messages SET message = ?1, quote_id = NULL WHERE id = ?2",
+            rusqlite::params![deleted_message_text, target],
+        )
+        .unwrap();
+        db.execute(
+            "DELETE FROM file_messages WHERE id = ?1",
+            rusqlite::params![target],
+        )
+        .unwrap();
+    }
+    db.execute("ALTER TABLE message_actions DROP COLUMN replacement", [])
+        .unwrap();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -212,8 +276,8 @@ mod tests {
     #[test]
     fn message_schema_initialization_is_idempotent() {
         let db = Connection::open_in_memory().unwrap();
-        initialize(&db);
-        initialize(&db);
+        initialize(&db, "[deleted]");
+        initialize(&db, "[deleted]");
         assert_eq!(columns(&db, "text_messages").len(), 12);
         assert_eq!(columns(&db, "file_messages").len(), 15);
     }
@@ -232,5 +296,55 @@ mod tests {
         assert!(columns(&db, "text_messages").contains(&"mention_ranges".into()));
         assert!(columns(&db, "text_messages").contains(&"mentions_self".into()));
         assert!(columns(&db, "file_messages").contains(&"forwarding_score".into()));
+    }
+
+    #[test]
+    fn legacy_action_replacements_migrate_in_order_and_are_idempotent() {
+        let db = Connection::open_in_memory().unwrap();
+        prepare(&db);
+        db.execute_batch(
+            "CREATE TABLE text_messages (id TEXT PRIMARY KEY, chat_jid TEXT, sender_jid TEXT, timestamp INTEGER, quote_id TEXT, is_from_me INTEGER, read INTEGER, message TEXT);
+             CREATE TABLE file_messages (id TEXT PRIMARY KEY, chat_jid TEXT, sender_jid TEXT, timestamp INTEGER, quote_id TEXT, is_from_me INTEGER, read INTEGER, kind INTEGER, path TEXT, file_id TEXT, caption TEXT);
+             INSERT INTO text_messages VALUES ('target', 'chat', 'sender', 1, 'quote', 0, 0, 'old');
+             ALTER TABLE message_actions ADD COLUMN replacement TEXT;
+             INSERT INTO message_actions (action_id, target_message_id, chat_jid, sender_jid, kind, replacement, occurred_at, arrival_order) VALUES ('edit-1', 'target', 'chat', 'sender', 0, 'first', 1, 1);
+             INSERT INTO message_actions (action_id, target_message_id, chat_jid, sender_jid, kind, replacement, occurred_at, arrival_order) VALUES ('edit-2', 'target', 'chat', 'sender', 0, 'last', 2, 1);
+             INSERT INTO message_actions (action_id, target_message_id, chat_jid, sender_jid, kind, replacement, occurred_at, arrival_order) VALUES ('delete-1', 'target', 'chat', 'sender', 1, NULL, 3, 1);",
+        )
+        .unwrap();
+
+        initialize(&db, "[deleted]");
+        initialize(&db, "[deleted]");
+
+        assert_eq!(
+            db.query_row(
+                "SELECT message FROM text_messages WHERE id = 'target'",
+                [],
+                |row| row.get::<_, String>(0)
+            )
+            .unwrap(),
+            "[deleted]"
+        );
+        assert_eq!(
+            db.query_row(
+                "SELECT message, quote_id FROM text_messages WHERE id = 'target'",
+                [],
+                |row| { Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)) }
+            )
+            .unwrap(),
+            ("[deleted]".to_owned(), None)
+        );
+        // Persisted edits intentionally load as empty replacement markers; the
+        // migrated message row is the source of the displayed body.
+        assert_eq!(
+            db.query_row(
+                "SELECT group_concat(kind, ',') FROM (SELECT kind FROM message_actions WHERE target_message_id = 'target' ORDER BY occurred_at, arrival_order, action_id)",
+                [],
+                |row| row.get::<_, String>(0)
+            )
+            .unwrap(),
+            "0,0,1"
+        );
+        assert!(!columns(&db, "message_actions").contains(&"replacement".into()));
     }
 }

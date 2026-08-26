@@ -1,5 +1,4 @@
 use std::{
-    collections::{HashMap, HashSet},
     ops::Range,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock, Mutex},
@@ -662,8 +661,7 @@ impl DatabaseHandler {
 
     pub fn init(&self) {
         let _write_lock = DATABASE_WRITE_LOCK.lock().unwrap();
-        schema::initialize(&self.db);
-        self.migrate_message_action_columns();
+        schema::initialize(&self.db, DELETED_MESSAGE_TEXT);
     }
 
     pub fn set_last_read_cursor(
@@ -720,85 +718,6 @@ impl DatabaseHandler {
         query
             .query_map([], |row| Ok((row.get::<_, String>(0)?.into(), row.get(1)?)))?
             .collect()
-    }
-
-    /// Migrates the `message_actions` table to the current schema. Any
-    /// stored replacement body is folded into the message row first, then
-    /// the now-unused column is removed. Runs under the write lock from
-    /// `init`, before any handler reads the actions. The steps are
-    /// idempotent: an interrupted migration resumes safely on the next open.
-    fn migrate_message_action_columns(&self) {
-        let has_replacement = self
-            .db
-            .prepare(
-                "SELECT COUNT(*) FROM pragma_table_info('message_actions') WHERE name = 'replacement'",
-            )
-            .unwrap()
-            .query_row([], |row| row.get::<_, i64>(0))
-            .unwrap()
-            > 0;
-        if !has_replacement {
-            return;
-        }
-        let mut effective_bodies: HashMap<String, String> = HashMap::new();
-        let mut deleted_targets: HashSet<String> = HashSet::new();
-        {
-            let mut query = self
-                .db
-                .prepare(
-                    "SELECT target_message_id, kind, replacement FROM message_actions ORDER BY occurred_at, arrival_order, action_id",
-                )
-                .unwrap();
-            let rows = query
-                .query_map([], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, Option<String>>(2)?,
-                    ))
-                })
-                .unwrap()
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap();
-            for (target, kind, replacement) in rows {
-                // kind 0 is Edit; the last edit in the stable order wins.
-                if kind == 1 {
-                    deleted_targets.insert(target.clone());
-                } else if kind == 0
-                    && let Some(body) = replacement
-                {
-                    effective_bodies.insert(target, body);
-                }
-            }
-        }
-        for (target, body) in &effective_bodies {
-            if deleted_targets.contains(target) {
-                continue;
-            }
-            self.db
-                .execute(
-                    "UPDATE text_messages SET message = ?1 WHERE id = ?2",
-                    rusqlite::params![body, target],
-                )
-                .unwrap();
-        }
-        for target in deleted_targets {
-            self.db
-                .execute(
-                    "UPDATE text_messages SET message = ?1, quote_id = NULL WHERE id = ?2",
-                    rusqlite::params![DELETED_MESSAGE_TEXT, target],
-                )
-                .unwrap();
-            self.db
-                .execute(
-                    "DELETE FROM file_messages WHERE id = ?1",
-                    rusqlite::params![target],
-                )
-                .unwrap();
-        }
-        self.db
-            .execute("ALTER TABLE message_actions DROP COLUMN replacement", [])
-            .unwrap();
     }
 }
 
