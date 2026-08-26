@@ -22,7 +22,9 @@ pub use callbacks::CallbackTranslator;
 pub use events::set_event_handler;
 pub use lifecycle::{connect, disconnect, logout, new_client, pair_phone};
 pub use media::{download_file, get_community_profile_picture, get_profile_picture};
-pub use message_send::{TextSendResult, forward_message, send_message, send_text_message};
+pub use message_send::{
+    ForwardFailure, ForwardReport, TextSendResult, forward_message, send_message, send_text_message,
+};
 pub(crate) use models::file_kind_discriminant;
 pub use models::{
     ChatSettings, CommunitiesError, CommunityInfo, Contact, DownloadFailed, Event, FileContent,
@@ -40,7 +42,6 @@ pub use read_sync::{MarkAsReadError, mark_as_read, sync_chat_read};
 pub use registrations::{
     set_log_handler, set_message_handler, set_optimistic_text_sent_handler, set_presence_handler,
 };
-use strum::FromRepr;
 
 #[cfg(test)]
 mod file_kind_tests {
@@ -272,34 +273,6 @@ pub use caches::{
 
 pub const VIEW_ONCE_UNAVAILABLE_DESCRIPTION: &str =
     "View-once media is unavailable here. View it on your phone.";
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct ForwardReport {
-    pub succeeded: usize,
-    pub failed: usize,
-    pub failure: ForwardFailure,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, FromRepr)]
-#[repr(u8)]
-pub enum ForwardFailure {
-    #[default]
-    None = 0,
-    SourceUnavailable = 1,
-    InvalidSource = 2,
-    InvalidDestination = 3,
-    SendFailed = 4,
-}
-
-impl ForwardReport {
-    pub fn with_reason(succeeded: usize, failed: usize, failure: ForwardFailure) -> Self {
-        Self {
-            succeeded,
-            failed,
-            failure,
-        }
-    }
-}
 
 impl CallbackTranslator<CJID> for JID {
     unsafe fn to_rust(from: CJID) -> Self {
