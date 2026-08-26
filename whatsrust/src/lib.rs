@@ -1,9 +1,7 @@
 use std::{
     ffi::{CStr, CString, c_char, c_void},
     path::Path,
-    sync::{
-        Arc,
-    },
+    sync::Arc,
 };
 
 #[macro_use]
@@ -36,7 +34,6 @@ pub use models::{
 };
 use strum::FromRepr;
 
-static PRESENCE_CALLBACK_INGRESS: AtomicUsize = AtomicUsize::new(0);
 #[cfg(test)]
 mod file_kind_tests {
     use super::{FileKind, file_kind_discriminant};
@@ -1176,7 +1173,7 @@ mod group_info_tests {
 /// JID is unusable.
 pub fn resolve_dm_chat(jid: &JID) -> Option<JID> {
     unsafe {
-        take_owned_c_string(C_ResolveDmChatId(CJID::from(jid)), C_FreeResolveDmChatId)
+        presence::take_owned_c_string(C_ResolveDmChatId(CJID::from(jid)), C_FreeResolveDmChatId)
             .map(JID::from)
     }
 }
