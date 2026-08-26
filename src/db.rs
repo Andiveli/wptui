@@ -3,7 +3,6 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock, Mutex},
-    time::Duration,
 };
 
 use log::debug;
@@ -15,7 +14,9 @@ use crate::app::{
     Chat, DELETED_MESSAGE_TEXT, MessageAction, MessageActionKind, STATUS_BROADCAST_CHAT,
 };
 
-const SQLITE_BUSY_TIMEOUT: Duration = Duration::from_secs(2);
+#[path = "schema.rs"]
+mod schema;
+pub(crate) use schema::try_open_database;
 
 // SQLite allows only one writer. All handlers in this process share this lock,
 // including the asynchronous queue writer started by each handler.
@@ -25,31 +26,9 @@ static DATABASE_WRITE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()
 /// purge uses the same window so status broadcasts do not accumulate forever.
 const STATUS_RETENTION_SECS: i64 = 24 * 60 * 60;
 
-fn open_database(path: &Path) -> Connection {
-    let db = Connection::open(path).unwrap();
-    db.busy_timeout(SQLITE_BUSY_TIMEOUT).unwrap();
-    db
-}
-
-pub(crate) fn try_open_database(path: &Path) -> rusqlite::Result<Connection> {
-    let db = Connection::open(path)?;
-    db.busy_timeout(SQLITE_BUSY_TIMEOUT)?;
-    Ok(db)
-}
-
 pub(crate) fn with_database_write_lock<T>(operation: impl FnOnce() -> T) -> T {
     let _lock = DATABASE_WRITE_LOCK.lock().unwrap();
     operation()
-}
-
-const READ_RECEIPT_SCHEMA_VERSION: i64 = 2;
-
-fn ensure_read_receipt_schema(db: &Connection) -> rusqlite::Result<()> {
-    let version: i64 = db.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    if version < READ_RECEIPT_SCHEMA_VERSION {
-        db.execute_batch("CREATE TABLE IF NOT EXISTS read_receipt_pending (chat TEXT NOT NULL, sender TEXT NOT NULL, message_id TEXT NOT NULL, timestamp INTEGER NOT NULL, kind INTEGER NOT NULL, PRIMARY KEY (chat, sender, message_id)); CREATE INDEX IF NOT EXISTS idx_read_receipt_pending_timestamp ON read_receipt_pending(timestamp); CREATE TABLE IF NOT EXISTS read_receipt_sent (chat TEXT NOT NULL, sender TEXT NOT NULL, message_id TEXT NOT NULL, PRIMARY KEY (chat, sender, message_id)); CREATE TABLE IF NOT EXISTS read_receipt_rejected (chat TEXT NOT NULL, sender TEXT NOT NULL, message_id TEXT NOT NULL, PRIMARY KEY (chat, sender, message_id)); PRAGMA user_version = 2")?;
-    }
-    Ok(())
 }
 
 fn ensure_forwarding_columns(db: &Connection, table: &str) {
@@ -153,53 +132,9 @@ pub enum MessageActionPersistence {
 
 impl DatabaseHandler {
     pub fn new(db_path: &Path) -> Self {
-        let db = open_database(db_path);
+        let db = schema::open_database(db_path);
         let _write_lock = DATABASE_WRITE_LOCK.lock().unwrap();
-        if let Err(error) = ensure_read_receipt_schema(&db) {
-            log::error!("read-receipt schema migration failed: {error}");
-        }
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS chat_read_cursors (
-                chat_jid TEXT PRIMARY KEY,
-                message_id TEXT NOT NULL,
-                timestamp INTEGER NOT NULL
-            )",
-            [],
-        )
-        .unwrap();
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS status_read_cursors (
-                contact_jid TEXT PRIMARY KEY,
-                timestamp INTEGER NOT NULL
-            )",
-            [],
-        )
-        .unwrap();
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS message_reactions (
-                message_id TEXT NOT NULL,
-                participant_jid TEXT NOT NULL,
-                emoji TEXT NOT NULL,
-                PRIMARY KEY (message_id, participant_jid)
-            )",
-            [],
-        )
-        .unwrap();
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS message_actions (
-                action_id TEXT PRIMARY KEY,
-                target_message_id TEXT NOT NULL,
-                chat_jid TEXT NOT NULL,
-                sender_jid TEXT NOT NULL,
-                kind INTEGER NOT NULL,
-                occurred_at INTEGER NOT NULL,
-                arrival_order INTEGER NOT NULL
-            )",
-            [],
-        )
-        .unwrap();
-
-        db.execute("CREATE TABLE IF NOT EXISTS forward_sources (id TEXT NOT NULL, chat_jid TEXT NOT NULL, sender_jid TEXT NOT NULL, source BLOB NOT NULL, PRIMARY KEY (id, chat_jid, sender_jid))", []).unwrap();
+        schema::prepare(&db);
         let new_messages_queue = Arc::new(Mutex::new(Vec::<wr::Message>::new()));
         let new_chats_queue = Arc::new(Mutex::new(Vec::<Chat>::new()));
         let should_stop = Arc::new(Mutex::new(false));
@@ -209,7 +144,7 @@ impl DatabaseHandler {
         let should_stop_clone = Arc::clone(&should_stop);
         let db_path = db_path.to_owned();
         let thread = std::thread::spawn(move || {
-            let mut db = open_database(&db_path);
+            let mut db = schema::open_database(&db_path);
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(1));
                 let new_chats = {
