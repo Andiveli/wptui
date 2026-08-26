@@ -13,9 +13,13 @@ use std::{
 mod callbacks;
 mod abi;
 use abi::{
-    CChatSettings, CContact, CGetCommunitiesResult, CGetContactsResult, CGroupInfoResult,
-    CGroupParticipantsResult, CJID, CProfilePictureResult,
+    CChatEvent, CChatSettings, CContact, CEvent, CFileMessage, CGetCommunitiesResult,
+    CGetContactsResult, CGroupInfoResult, CGroupParticipantsResult, CIncomingTextMessage, CJID,
+    CLogoutResultEvent, CMarkChatAsReadEvent, CMentionRange, CMessage, CMessageActionEvent,
+    CProfilePictureResult, CReactionEvent, CReceipt, CTextMessage, EventType, MessageType,
+    file_kind_discriminant,
 };
+pub use abi::{FileKind, LogoutStatus, ReceiptKind};
 use callbacks::CallbackTranslator;
 use strum::{EnumIter, FromRepr};
 
@@ -50,119 +54,6 @@ impl From<&JID> for CJID {
     fn from(jid: &JID) -> Self {
         CString::new(jid.0.as_ref()).unwrap().into_raw()
     }
-}
-
-#[repr(C)]
-struct CMessageInfo {
-    id: *const c_char,
-    chat: CJID,
-    sender: CJID,
-    push_name: *const c_char,
-    mentions_self: bool,
-    timestamp: i64,
-    is_from_me: bool,
-    quote_id: *const c_char,
-    read_by: u16,
-    is_forwarded: bool,
-    forwarding_score: u32,
-}
-
-#[repr(C)]
-struct CMentionRange {
-    start: usize,
-    end: usize,
-}
-
-#[repr(C)]
-struct CIncomingTextMessage {
-    text: *const c_char,
-    mention_ranges: *const CMentionRange,
-    mention_range_count: usize,
-}
-
-#[repr(C)]
-struct CTextMessage {
-    text: *const c_char,
-    mentioned_jids: *const CJID,
-    mentioned_count: usize,
-}
-
-#[repr(C)]
-struct CFileMessage {
-    kind: u8,
-    path: *const c_char,
-    file_id: *const c_char,
-    caption: *const c_char,
-    mentioned_jids: *const CJID,
-    mentioned_count: usize,
-    mention_ranges: *const CMentionRange,
-    mention_range_count: usize,
-}
-
-#[repr(C)]
-struct CMessage {
-    info: CMessageInfo,
-    message_type: u8,
-    message: *const c_void,
-    forward_source: *const u8,
-    forward_source_len: usize,
-}
-
-#[repr(C)]
-struct CReceipt {
-    kind: u8,
-    chat: CJID,
-    message_ids: *const *const c_char,
-    count: u32,
-}
-
-#[derive(Clone, Debug)]
-#[repr(C)]
-struct CEvent {
-    event_type: u8,
-    data: *const c_void,
-}
-
-#[repr(C)]
-struct CReactionEvent {
-    chat: CJID,
-    target_message_id: *const c_char,
-    participant: CJID,
-    text: *const c_char,
-    is_from_me: bool,
-}
-
-#[repr(C)]
-struct CMessageActionEvent {
-    action_id: *const c_char,
-    chat: CJID,
-    sender: CJID,
-    target_message_id: *const c_char,
-    replacement: *const c_char,
-    occurred_at: i64,
-    arrival_order: u64,
-    kind: u8,
-}
-
-#[repr(C)]
-struct CChatEvent {
-    chat: CJID,
-    last_message_time: i64,
-}
-
-#[repr(C)]
-struct CMarkChatAsReadEvent {
-    chat: CJID,
-    message_id: *const c_char,
-    read: bool,
-    timestamp: i64,
-    from_me: bool,
-    participant: CJID,
-}
-
-#[repr(C)]
-struct CLogoutResultEvent {
-    status: u8,
 }
 
 pub type MessageId = Arc<str>;
@@ -209,29 +100,6 @@ mod message_push_name_tests {
 pub struct ForwardingInfo {
     pub is_forwarded: bool,
     pub score: u32,
-}
-
-#[derive(FromRepr)]
-#[repr(u8)]
-enum MessageType {
-    Text = 0,
-    File = 1,
-    ViewOnceUnavailable = 2,
-}
-
-#[derive(Clone, Debug, Default, FromRepr)]
-#[repr(u8)]
-pub enum FileKind {
-    #[default]
-    Image = 0,
-    Video = 1,
-    Audio = 2,
-    Document = 3,
-    Sticker = 4,
-}
-
-fn file_kind_discriminant(kind: &FileKind) -> u8 {
-    kind.clone() as u8
 }
 
 #[cfg(test)]
@@ -455,39 +323,6 @@ mod presence_event_tests {
             assert_eq!(update.last_seen, expected);
         }
     }
-}
-
-#[derive(Clone, Debug, FromRepr)]
-#[repr(u8)]
-enum EventType {
-    SyncProgress = 0,
-    AppStateSyncComplete = 1,
-    Receipt = 2,
-    Reaction = 3,
-    // Event type 4 is reserved (removed multiplexed Presence event on Go side)
-    Connected = 5,
-    MessageAction = 6,
-    Chat = 7,
-    LogoutResult = 8,
-    MarkChatAsRead = 9,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, FromRepr)]
-#[repr(u8)]
-pub enum ReceiptKind {
-    Read = 0,
-    ReadSelf = 1,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, FromRepr)]
-#[repr(u8)]
-pub enum LogoutStatus {
-    LoggedOut = 0,
-    NotLoggedIn = 1,
-    Failed = 2,
-    /// Remote revocation failed, but the local sign-out succeeded. The device
-    /// remains linked on the phone until removed manually.
-    LocalOnly = 3,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
