@@ -11,10 +11,13 @@ use std::{
 
 #[macro_use]
 mod callbacks;
+mod abi;
+use abi::{
+    CChatSettings, CContact, CGetCommunitiesResult, CGetContactsResult, CGroupInfoResult,
+    CGroupParticipantsResult, CJID, CProfilePictureResult,
+};
 use callbacks::CallbackTranslator;
 use strum::{EnumIter, FromRepr};
-
-type CJID = *const c_char;
 
 static PRESENCE_CALLBACK_INGRESS: AtomicUsize = AtomicUsize::new(0);
 static FORWARD_SOURCES: LazyLock<Mutex<HashMap<(Arc<str>, Arc<str>, Arc<str>), Vec<u8>>>> =
@@ -47,85 +50,6 @@ impl From<&JID> for CJID {
     fn from(jid: &JID) -> Self {
         CString::new(jid.0.as_ref()).unwrap().into_raw()
     }
-}
-
-#[repr(C)]
-struct CContact {
-    found: bool,
-    first_name: *const c_char,
-    full_name: *const c_char,
-    push_name: *const c_char,
-    business_name: *const c_char,
-}
-
-#[repr(C)]
-struct CContactEntry {
-    jid: CJID,
-    name: *const c_char,
-}
-
-#[repr(C)]
-struct CCommunityEntry {
-    jid: CJID,
-    name: *const c_char,
-    parent_jid: CJID,
-    is_parent: bool,
-    is_joined: bool,
-    is_default_subgroup: bool,
-    // Stable C encoding: 0 unknown, 1 no, 2 yes.
-    announcement: u8,
-    // Stable C encoding: -1 unknown, otherwise a known signed count.
-    participant_count: i64,
-}
-
-#[repr(C)]
-struct CGetContactsResult {
-    entries: *const CContactEntry,
-    size: u32,
-}
-
-#[repr(C)]
-struct CGetCommunitiesResult {
-    entries: *const CCommunityEntry,
-    size: u32,
-    status: u8,
-}
-
-#[repr(C)]
-struct CProfilePictureResult {
-    status: u8,
-    picture_id: *mut c_char,
-    picture_type: *mut c_char,
-    data: *mut u8,
-    size: u32,
-}
-
-#[repr(C)]
-struct CChatSettings {
-    found: bool,
-    muted_until: i64,
-    pinned: bool,
-    archived: bool,
-}
-
-#[repr(C)]
-struct CGroupInfoResult {
-    status: u8,
-    is_announce: bool,
-    is_admin: bool,
-}
-
-#[repr(C)]
-struct CGroupParticipantEntry {
-    jid: CJID,
-    phone_number: CJID,
-    name: *const c_char,
-}
-
-#[repr(C)]
-struct CGroupParticipantsResult {
-    entries: *const CGroupParticipantEntry,
-    size: u32,
 }
 
 #[repr(C)]
