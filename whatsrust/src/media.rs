@@ -79,7 +79,7 @@ pub fn download_file(file_id: &FileId, base_path: &Path) -> Result<(), DownloadF
 
 #[cfg(test)]
 mod tests {
-    use super::{profile_picture_from_parts, ProfilePictureAvailability, ProfilePictureError};
+    use super::{ProfilePictureAvailability, ProfilePictureError, profile_picture_from_parts};
 
     #[test]
     fn maps_available_payload_without_exposing_the_temporary_url() {

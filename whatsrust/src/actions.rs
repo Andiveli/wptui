@@ -32,8 +32,13 @@ pub fn react_to_message_in_chat(
     message_id: &MessageId,
     reaction: &str,
 ) -> Result<(), MessageActionFailed> {
-    let (target, destination, sender, id, reaction) =
-        reaction_to_ffi(target_jid, destination_jid, sender_jid, message_id, reaction)?;
+    let (target, destination, sender, id, reaction) = reaction_to_ffi(
+        target_jid,
+        destination_jid,
+        sender_jid,
+        message_id,
+        reaction,
+    )?;
     let result = unsafe {
         C_ReactToMessage(
             target.as_ptr(),
@@ -43,7 +48,11 @@ pub fn react_to_message_in_chat(
             reaction.as_ptr(),
         )
     };
-    if result == 0 { Ok(()) } else { Err(MessageActionFailed) }
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(MessageActionFailed)
+    }
 }
 
 pub(crate) fn edit_to_ffi(
@@ -68,7 +77,11 @@ pub fn edit_message(
 ) -> Result<(), MessageActionFailed> {
     let (chat, id, replacement) = edit_to_ffi(chat_jid, message_id, replacement)?;
     let result = unsafe { C_EditMessage(chat.as_ptr(), id.as_ptr(), replacement.as_ptr()) };
-    if result == 0 { Ok(()) } else { Err(MessageActionFailed) }
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(MessageActionFailed)
+    }
 }
 
 pub(crate) fn revoke_to_ffi(
@@ -90,5 +103,9 @@ pub fn revoke_message(
 ) -> Result<(), MessageActionFailed> {
     let (chat, sender, id) = revoke_to_ffi(chat_jid, sender_jid, message_id)?;
     let result = unsafe { C_RevokeMessage(chat.as_ptr(), sender.as_ptr(), id.as_ptr()) };
-    if result == 0 { Ok(()) } else { Err(MessageActionFailed) }
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(MessageActionFailed)
+    }
 }

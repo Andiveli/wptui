@@ -6,29 +6,24 @@ use std::{
 
 #[macro_use]
 mod callbacks;
-mod registrations;
-mod lifecycle;
-mod presence;
-mod media;
-mod actions;
 mod abi;
+mod actions;
 mod caches;
 mod events;
 mod incoming;
+mod lifecycle;
+mod media;
 mod models;
+mod presence;
+mod read_sync;
+mod registrations;
 use abi::*;
 pub use abi::{LogoutStatus, ReceiptKind};
-pub use events::set_event_handler;
-pub use callbacks::CallbackTranslator;
-pub use registrations::{
-    set_log_handler, set_message_handler,
-    set_optimistic_text_sent_handler, set_presence_handler,
-};
-pub use lifecycle::{connect, disconnect, logout, new_client, pair_phone};
-pub use presence::{SubscribePresenceResult, drain_raw_presence_diagnostics, subscribe_presence};
-pub use media::{download_file, get_community_profile_picture, get_profile_picture};
 pub use actions::{edit_message, react_to_message, react_to_message_in_chat, revoke_message};
-pub(crate) use actions::{edit_to_ffi, reaction_to_ffi, revoke_to_ffi};
+pub use callbacks::CallbackTranslator;
+pub use events::set_event_handler;
+pub use lifecycle::{connect, disconnect, logout, new_client, pair_phone};
+pub use media::{download_file, get_community_profile_picture, get_profile_picture};
 pub(crate) use models::file_kind_discriminant;
 pub use models::{
     ChatSettings, CommunitiesError, CommunityInfo, Contact, DownloadFailed, Event, FileContent,
@@ -36,6 +31,11 @@ pub use models::{
     LogoutError, Mention, Message, MessageActionFailed, MessageActionKind, MessageContent,
     MessageId, MessageInfo, PresenceUpdate, ProfilePicture, ProfilePictureAvailability,
     ProfilePictureError,
+};
+pub use presence::{SubscribePresenceResult, drain_raw_presence_diagnostics, subscribe_presence};
+pub use read_sync::{MarkAsReadError, mark_as_read, sync_chat_read};
+pub use registrations::{
+    set_log_handler, set_message_handler, set_optimistic_text_sent_handler, set_presence_handler,
 };
 use strum::FromRepr;
 
@@ -63,10 +63,9 @@ mod file_kind_tests {
 mod message_action_tests {
     use std::ffi::CString;
 
-    use super::{
-        CMessageActionEvent, CReactionEvent, Event, JID, MessageActionKind, edit_to_ffi,
-        message_action_event_from_ffi, reaction_event_from_ffi, reaction_to_ffi, revoke_to_ffi,
-    };
+    use super::actions::{edit_to_ffi, reaction_to_ffi, revoke_to_ffi};
+    use super::events::{message_action_event_from_ffi, reaction_event_from_ffi};
+    use super::{CMessageActionEvent, CReactionEvent, Event, JID, MessageActionKind};
 
     #[test]
     fn reaction_mapping_preserves_every_ordinary_message_field() {
@@ -295,108 +294,6 @@ impl ForwardReport {
             succeeded,
             failed,
             failure,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum MarkAsReadError {
-    Disconnected,
-    Transient,
-    Permanent,
-}
-
-fn with_borrowed_mark_read_args<T>(
-    msg_id: &MessageId,
-    chat_jid: &JID,
-    sender_jid: &JID,
-    send: impl FnOnce(*const c_char, CJID, CJID) -> T,
-) -> Result<T, MarkAsReadError> {
-    let msg_id_c = CString::new(msg_id.as_ref()).map_err(|_| MarkAsReadError::Permanent)?;
-    let chat_jid_c = CString::new(chat_jid.0.as_ref()).map_err(|_| MarkAsReadError::Permanent)?;
-    let sender_jid_c =
-        CString::new(sender_jid.0.as_ref()).map_err(|_| MarkAsReadError::Permanent)?;
-    Ok(send(
-        msg_id_c.as_ptr(),
-        chat_jid_c.as_ptr(),
-        sender_jid_c.as_ptr(),
-    ))
-}
-
-pub fn mark_as_read(
-    msg_id: &MessageId,
-    chat_jid: &JID,
-    sender_jid: &JID,
-) -> Result<(), MarkAsReadError> {
-    let result =
-        with_borrowed_mark_read_args(msg_id, chat_jid, sender_jid, |id, chat, sender| unsafe {
-            C_MarkAsRead(id, chat, sender)
-        })?;
-    match result {
-        0 => Ok(()),
-        1 => Err(MarkAsReadError::Disconnected),
-        3 => Err(MarkAsReadError::Permanent),
-        _ => Err(MarkAsReadError::Transient),
-    }
-}
-
-pub fn sync_chat_read(
-    chat_jid: &JID,
-    message_id: &MessageId,
-    timestamp: i64,
-    from_me: bool,
-    participant_jid: Option<&JID>,
-) {
-    let chat = chat_jid.0.to_string();
-    let message = message_id.to_string();
-    let participant = participant_jid.map(|jid| jid.0.to_string());
-    std::thread::spawn(move || {
-        let chat_c = match CString::new(chat) {
-            Ok(value) => value,
-            Err(_) => {
-                log::warn!("chat read sync skipped: invalid chat JID");
-                return;
-            }
-        };
-        let message_c = match CString::new(message) {
-            Ok(value) => value,
-            Err(_) => {
-                log::warn!("chat read sync skipped: invalid message ID");
-                return;
-            }
-        };
-        let participant_c = participant.and_then(|value| CString::new(value).ok());
-        let participant_ptr = participant_c
-            .as_ref()
-            .map_or(std::ptr::null(), |value| value.as_ptr());
-        let result = unsafe {
-            C_MarkChatReadSync(
-                chat_c.as_ptr(),
-                message_c.as_ptr(),
-                timestamp,
-                from_me,
-                participant_ptr,
-            )
-        };
-        if result != 0 {
-            log::warn!("chat read sync failed with bridge status {result}");
-        }
-    });
-}
-
-#[cfg(test)]
-mod read_receipt_ffi_tests {
-    use super::*;
-    #[test]
-    fn borrowed_ffi_arguments_can_be_reused_without_owned_pointer_leaks() {
-        let id: MessageId = "message".into();
-        let chat = JID::from("chat@s.whatsapp.net".to_owned());
-        let sender = JID::from("sender@s.whatsapp.net".to_owned());
-        for _ in 0..1_000 {
-            with_borrowed_mark_read_args(&id, &chat, &sender, |id, chat, sender| {
-                assert!(!id.is_null() && !chat.is_null() && !sender.is_null());
-            })
-            .unwrap();
         }
     }
 }
