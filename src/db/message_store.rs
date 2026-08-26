@@ -4,6 +4,18 @@ use rusqlite::{Connection, OptionalExtension};
 use strum::IntoEnumIterator;
 use whatsrust as wr;
 
+use crate::app::DELETED_MESSAGE_TEXT;
+
+fn encode_mention_ranges(ranges: &[Range<usize>]) -> Option<String> {
+    (!ranges.is_empty()).then(|| {
+        ranges
+            .iter()
+            .map(|range| format!("{}:{}", range.start, range.end))
+            .collect::<Vec<_>>()
+            .join(",")
+    })
+}
+
 fn decode_mention_ranges(encoded: Option<String>, text: &str) -> Vec<Range<usize>> {
     encoded
         .unwrap_or_default()
@@ -162,4 +174,96 @@ pub(super) fn get_messages(db: &Connection) -> Vec<wr::Message> {
         }
     }
     messages
+}
+
+pub(super) fn persist(db: &mut Connection, messages: Vec<wr::Message>) {
+    let tx = db
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .unwrap();
+    let mut text_stmt = tx.prepare("INSERT INTO text_messages (id, chat_jid, sender_jid, timestamp, quote_id, is_from_me, read, message, is_forwarded, forwarding_score, mention_ranges, mentions_self) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET chat_jid=excluded.chat_jid, sender_jid=excluded.sender_jid, timestamp=excluded.timestamp, quote_id=excluded.quote_id, is_from_me=(text_messages.is_from_me OR excluded.is_from_me), read=excluded.read, message=excluded.message, is_forwarded=excluded.is_forwarded, forwarding_score=excluded.forwarding_score, mention_ranges=excluded.mention_ranges, mentions_self=excluded.mentions_self").unwrap();
+    let mut file_stmt = tx.prepare("INSERT INTO file_messages (id, chat_jid, sender_jid, timestamp, quote_id, is_from_me, read, kind, path, file_id, caption, is_forwarded, forwarding_score, mention_ranges, mentions_self) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET chat_jid=excluded.chat_jid, sender_jid=excluded.sender_jid, timestamp=excluded.timestamp, quote_id=excluded.quote_id, is_from_me=(file_messages.is_from_me OR excluded.is_from_me), read=excluded.read, kind=excluded.kind, path=excluded.path, file_id=excluded.file_id, is_forwarded=excluded.is_forwarded, forwarding_score=excluded.forwarding_score, mention_ranges=excluded.mention_ranges, mentions_self=excluded.mentions_self").unwrap();
+    let mut view_once_stmt = tx.prepare("INSERT INTO view_once_unavailable_messages (id, chat_jid, sender_jid, timestamp, is_from_me, read, mentions_self) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET chat_jid=excluded.chat_jid, sender_jid=excluded.sender_jid, timestamp=excluded.timestamp, is_from_me=(view_once_unavailable_messages.is_from_me OR excluded.is_from_me), read=excluded.read, mentions_self=excluded.mentions_self").unwrap();
+    let mut source_stmt = tx.prepare("INSERT OR REPLACE INTO forward_sources (id, chat_jid, sender_jid, source) VALUES (?, ?, ?, ?)").unwrap();
+    for message in messages {
+        let mut msg = message;
+        if tx
+            .query_row(
+                "SELECT 1 FROM message_actions WHERE target_message_id = ?1 AND kind = 1 LIMIT 1",
+                rusqlite::params![msg.info.id],
+                |_| Ok(()),
+            )
+            .optional()
+            .unwrap()
+            .is_some()
+        {
+            msg.message = wr::MessageContent::Text(DELETED_MESSAGE_TEXT.into());
+            msg.info.quote_id = None;
+            msg.info.forwarding = Default::default();
+        }
+        match &msg.message {
+            wr::MessageContent::Text(text) => text_stmt
+                .execute(rusqlite::params![
+                    msg.info.id,
+                    msg.info.chat.0,
+                    msg.info.sender.0,
+                    msg.info.timestamp,
+                    msg.info.quote_id,
+                    msg.info.is_from_me,
+                    msg.info.read_by,
+                    text,
+                    msg.info.forwarding.is_forwarded,
+                    msg.info.forwarding.score,
+                    encode_mention_ranges(&wr::message_mention_ranges(&msg.info.id, text)),
+                    msg.info.mentions_self
+                ])
+                .unwrap(),
+            wr::MessageContent::File(file) => file_stmt
+                .execute(rusqlite::params![
+                    msg.info.id,
+                    msg.info.chat.0,
+                    msg.info.sender.0,
+                    msg.info.timestamp,
+                    msg.info.quote_id,
+                    msg.info.is_from_me,
+                    msg.info.read_by,
+                    file.kind.clone() as u8,
+                    file.path,
+                    file.file_id,
+                    file.caption,
+                    msg.info.forwarding.is_forwarded,
+                    msg.info.forwarding.score,
+                    file.caption
+                        .as_ref()
+                        .and_then(|caption| encode_mention_ranges(&wr::message_mention_ranges(
+                            &msg.info.id,
+                            caption
+                        ))),
+                    msg.info.mentions_self
+                ])
+                .unwrap(),
+            wr::MessageContent::ViewOnceUnavailable => view_once_stmt
+                .execute(rusqlite::params![
+                    msg.info.id,
+                    msg.info.chat.0,
+                    msg.info.sender.0,
+                    msg.info.timestamp,
+                    msg.info.is_from_me,
+                    msg.info.read_by,
+                    msg.info.mentions_self
+                ])
+                .unwrap(),
+        };
+        if let Some(source) = wr::forward_source(&msg.info) {
+            source_stmt
+                .execute(rusqlite::params![
+                    msg.info.id,
+                    msg.info.chat.0,
+                    msg.info.sender.0,
+                    source
+                ])
+                .unwrap();
+        }
+    }
+    drop((text_stmt, file_stmt, view_once_stmt, source_stmt));
+    tx.commit().unwrap();
 }
