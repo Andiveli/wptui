@@ -9,7 +9,7 @@ import (
 	"go.mau.fi/whatsmeow"
 )
 
-func TestQueryAndMediaBridgeCallersUseLifecycleSnapshots(t *testing.T) {
+func TestBridgeCallersUseLifecycleSnapshots(t *testing.T) {
 	for _, file := range []string{
 		"contacts.go",
 		"communities.go",
@@ -20,6 +20,9 @@ func TestQueryAndMediaBridgeCallersUseLifecycleSnapshots(t *testing.T) {
 		"mention_names.go",
 		"media_downloads.go",
 		"profile_picture.go",
+		"presence.go",
+		"mark_as_read_ffi.go",
+		"chat_read_sync_ffi.go",
 	} {
 		source, err := os.ReadFile(file)
 		if err != nil {
