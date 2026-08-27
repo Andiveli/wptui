@@ -10,6 +10,7 @@ use std::{
 #[macro_use]
 mod callbacks;
 mod registrations;
+mod lifecycle;
 mod abi;
 mod caches;
 mod events;
@@ -20,9 +21,10 @@ pub use abi::{LogoutStatus, ReceiptKind};
 pub use events::set_event_handler;
 pub use callbacks::CallbackTranslator;
 pub use registrations::{
-    connect, set_log_handler, set_message_handler,
+    set_log_handler, set_message_handler,
     set_optimistic_text_sent_handler, set_presence_handler,
 };
+pub use lifecycle::{connect, disconnect, logout, new_client, pair_phone};
 pub(crate) use models::file_kind_discriminant;
 pub use models::{
     ChatSettings, CommunitiesError, CommunityInfo, Contact, DownloadFailed, Event, FileContent,
@@ -634,21 +636,6 @@ mod read_receipt_ffi_tests {
     }
 }
 
-pub fn pair_phone(phone: &str) -> String {
-    let phone_c = CString::new(phone).unwrap();
-    let result = unsafe { C_PairPhone(phone_c.as_ptr()) };
-    let result_str = unsafe { CStr::from_ptr(result) }
-        .to_string_lossy()
-        .into_owned();
-    unsafe { C_FreePairPhoneResult(result) };
-    result_str
-}
-
-pub fn new_client(db_path: &str) {
-    let db_path_c = CString::new(db_path).unwrap();
-    unsafe { C_NewClient(db_path_c.as_ptr()) }
-}
-
 impl CallbackTranslator<CJID> for JID {
     unsafe fn to_rust(from: CJID) -> Self {
         (&from).into()
@@ -659,18 +646,6 @@ impl CallbackTranslator<i64> for i64 {
     unsafe fn to_rust(value: i64) -> Self {
         value
     }
-}
-
-pub fn disconnect() {
-    unsafe { C_Disconnect() }
-}
-
-pub fn logout() {
-    // Performs a deterministic local sign-out on the Go side (disconnect +
-    // clear the persisted device). The result arrives via Event::LogoutResult
-    // so the app can remove the DB file and quit. No network round-trip, so
-    // the UI never blocks.
-    unsafe { C_Logout() };
 }
 
 unsafe fn take_owned_c_string(
