@@ -34,9 +34,9 @@ import (
 	"go.mau.fi/whatsmeow/types"
 )
 
-type sendMessageRequest func(context.Context, types.JID, *waE2E.Message) (whatsmeow.SendResponse, error)
+type sendMessageRequest func(*whatsmeow.Client, context.Context, types.JID, *waE2E.Message) (whatsmeow.SendResponse, error)
 
-var requestSendMessage sendMessageRequest = func(ctx context.Context, jid types.JID, message *waE2E.Message) (whatsmeow.SendResponse, error) {
+var requestSendMessage sendMessageRequest = func(client *whatsmeow.Client, ctx context.Context, jid types.JID, message *waE2E.Message) (whatsmeow.SendResponse, error) {
 	return client.SendMessage(ctx, jid, message)
 }
 
@@ -52,14 +52,14 @@ type textSendQuote struct {
 
 type textSendRequest struct {
 	messageType   uint8
-	chat         types.JID
-	text         string
+	chat          types.JID
+	text          string
 	mentionedJIDs []string
-	fileKind     uint8
-	filePath     string
-	caption      *string
-	quote        *textSendQuote
-	localSendID  uint64
+	fileKind      uint8
+	filePath      string
+	caption       *string
+	quote         *textSendQuote
+	localSendID   uint64
 }
 
 const optimisticTextSendTimeout = 5 * time.Second
@@ -71,6 +71,10 @@ func optimisticTextSendContext(parent context.Context, timeout time.Duration) (c
 // ContentToWaE2EMessage converts the public FFI payload into a WhatsApp
 // message. File construction remains delegated to the injectable builder.
 func ContentToWaE2EMessage(messageType C.uint8_t, messageContent unsafe.Pointer, contextInfo *waE2E.ContextInfo) *waE2E.Message {
+	clientSnapshot := lifecycleState.clientSnapshot()
+	if clientSnapshot == nil {
+		panic("WhatsApp client is unavailable")
+	}
 	switch messageType {
 	case C.uint8_t(MessageTypeText):
 		textMsg := (*C.SendTextMessage)(messageContent)
@@ -82,7 +86,7 @@ func ContentToWaE2EMessage(messageType C.uint8_t, messageContent unsafe.Pointer,
 			"",
 			nil,
 			contextInfo,
-			client.Upload,
+			clientSnapshot.Upload,
 		)
 
 	case C.uint8_t(MessageTypeFile):
@@ -102,7 +106,7 @@ func ContentToWaE2EMessage(messageType C.uint8_t, messageContent unsafe.Pointer,
 			filePath,
 			caption,
 			contextInfo,
-			client.Upload,
+			clientSnapshot.Upload,
 		)
 
 	default:
@@ -244,9 +248,9 @@ func textSendRequestFromC(cjid C.JID, messageType C.uint8_t, messageContent unsa
 		return textSendRequest{}, false
 	}
 	request := textSendRequest{
-		messageType:   uint8(messageType),
-		chat:          cToJid(cjid),
-		localSendID:   localSendID,
+		messageType: uint8(messageType),
+		chat:        cToJid(cjid),
+		localSendID: localSendID,
 	}
 	switch messageType {
 	case C.uint8_t(MessageTypeText):
@@ -289,7 +293,8 @@ func sendOptimisticTextRequest(request textSendRequest) uint8 {
 }
 
 func sendTextRequest(request textSendRequest) uint8 {
-	if client == nil || client.Store == nil || client.Store.ID == nil {
+	clientSnapshot := lifecycleState.clientSnapshot()
+	if clientSnapshot == nil || clientSnapshot.Store == nil || clientSnapshot.Store.ID == nil {
 		LOG_WARN("message send rejected: client or message is unavailable")
 		return 1
 	}
@@ -298,7 +303,7 @@ func sendTextRequest(request textSendRequest) uint8 {
 		contextInfo = quotedContextInfo(request.quote.stanzaID, request.quote.participant, request.quote.remoteJID)
 		contextInfo.QuotedMessage = request.quote.content
 	}
-	message := contentToWaE2EMessage(request.messageType, request.text, normalizeMentionedJIDs(request.mentionedJIDs), request.fileKind, request.filePath, request.caption, contextInfo, client.Upload)
+	message := contentToWaE2EMessage(request.messageType, request.text, normalizeMentionedJIDs(request.mentionedJIDs), request.fileKind, request.filePath, request.caption, contextInfo, clientSnapshot.Upload)
 
 	sendContext := context.Background()
 	if request.localSendID != 0 {
@@ -306,14 +311,14 @@ func sendTextRequest(request textSendRequest) uint8 {
 		sendContext, cancel = optimisticTextSendContext(sendContext, optimisticTextSendTimeout)
 		defer cancel()
 	}
-	sendResponse, err := requestSendMessage(sendContext, request.chat, message)
+	sendResponse, err := requestSendMessage(clientSnapshot, sendContext, request.chat, message)
 	if err != nil {
 		LOG_WARN("message send failed: %v", err)
 		return 1
 	}
 
 	messageInfo := types.MessageInfo{
-		MessageSource: types.MessageSource{Chat: request.chat, Sender: *client.Store.ID, IsFromMe: true},
+		MessageSource: types.MessageSource{Chat: request.chat, Sender: *clientSnapshot.Store.ID, IsFromMe: true},
 		ID:            sendResponse.ID,
 		Timestamp:     sendResponse.Timestamp,
 	}
