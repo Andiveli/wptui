@@ -37,6 +37,7 @@ type clientLifecycleState struct {
 	mu                 sync.Mutex
 	qrChan             <-chan whatsmeow.QRChannelItem
 	handlersRegistered bool
+	registrationDone   chan struct{}
 }
 
 var lifecycleState clientLifecycleState
@@ -58,20 +59,50 @@ func (state *clientLifecycleState) publishClient(newClient *whatsmeow.Client) {
 
 func (state *clientLifecycleState) reset() {
 	state.mu.Lock()
-	defer state.mu.Unlock()
+	for state.registrationDone != nil {
+		done := state.registrationDone
+		state.mu.Unlock()
+		<-done
+		state.mu.Lock()
+	}
 	client = nil
 	state.qrChan = nil
 	state.handlersRegistered = false
+	state.mu.Unlock()
 }
 
 func (state *clientLifecycleState) registerEventHandlers(register func()) {
 	state.mu.Lock()
-	defer state.mu.Unlock()
 	if state.handlersRegistered {
+		state.mu.Unlock()
 		return
 	}
+	if state.registrationDone != nil {
+		done := state.registrationDone
+		state.mu.Unlock()
+		<-done
+		state.registerEventHandlers(register)
+		return
+	}
+	done := make(chan struct{})
+	state.registrationDone = done
+	state.mu.Unlock()
+
+	registered := false
+	defer func() {
+		state.mu.Lock()
+		if state.registrationDone == done {
+			if registered {
+				state.handlersRegistered = true
+			}
+			state.registrationDone = nil
+			close(done)
+		}
+		state.mu.Unlock()
+	}()
+
 	register()
-	state.handlersRegistered = true
+	registered = true
 }
 
 //export C_NewClient

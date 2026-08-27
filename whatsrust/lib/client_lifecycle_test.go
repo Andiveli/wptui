@@ -4,7 +4,9 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"go.mau.fi/whatsmeow"
 )
@@ -49,6 +51,89 @@ func TestClientLifecycleRegistrationIsIdempotent(t *testing.T) {
 
 	if registrations != 1 {
 		t.Fatalf("registrations = %d, want one", registrations)
+	}
+}
+
+func TestClientLifecycleRegistrationCallbackCanTakeClientSnapshot(t *testing.T) {
+	var state clientLifecycleState
+	done := make(chan struct{})
+
+	go func() {
+		state.registerEventHandlers(func() {
+			state.clientSnapshot()
+		})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("registration callback deadlocked while taking a client snapshot")
+	}
+}
+
+func TestClientLifecycleRegistrationIsConcurrentAndOnceOnly(t *testing.T) {
+	var state clientLifecycleState
+	const callers = 16
+	var registrations int
+	var registrationsMu sync.Mutex
+	started := make(chan struct{})
+	release := make(chan struct{})
+	register := func() {
+		registrationsMu.Lock()
+		registrations++
+		registrationsMu.Unlock()
+		close(started)
+		<-release
+	}
+
+	var waiters sync.WaitGroup
+	waiters.Add(callers)
+	for range callers {
+		go func() {
+			defer waiters.Done()
+			state.registerEventHandlers(register)
+		}()
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("registration did not start")
+	}
+	close(release)
+	finished := make(chan struct{})
+	go func() {
+		waiters.Wait()
+		close(finished)
+	}()
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("concurrent registration did not complete")
+	}
+
+	registrationsMu.Lock()
+	defer registrationsMu.Unlock()
+	if registrations != 1 {
+		t.Fatalf("registrations = %d, want one", registrations)
+	}
+}
+
+func TestClientLifecycleRegistrationPanicCanRetry(t *testing.T) {
+	var state clientLifecycleState
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("registration panic was not propagated")
+			}
+		}()
+		state.registerEventHandlers(func() { panic("registration failed") })
+	}()
+
+	registrations := 0
+	state.registerEventHandlers(func() { registrations++ })
+	if registrations != 1 {
+		t.Fatalf("retry registrations = %d, want one", registrations)
 	}
 }
 
