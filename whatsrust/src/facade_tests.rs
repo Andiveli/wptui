@@ -22,9 +22,10 @@ mod file_kind_tests {
 mod message_action_tests {
     use std::ffi::CString;
 
+    use crate::abi::{CMessageActionEvent, CReactionEvent};
     use crate::actions::{edit_to_ffi, reaction_to_ffi, revoke_to_ffi};
     use crate::events::{message_action_event_from_ffi, reaction_event_from_ffi};
-    use crate::{CMessageActionEvent, CReactionEvent, Event, JID, MessageActionKind};
+    use crate::{Event, JID, MessageActionKind};
 
     #[test]
     fn reaction_mapping_preserves_every_ordinary_message_field() {
@@ -171,7 +172,8 @@ mod presence_event_tests {
     };
 
     use crate::{
-        C_TestEmitPresenceEvent, C_TestEmitPresenceEventsConcurrently, PresenceUpdate,
+        PresenceUpdate,
+        abi::{C_TestEmitPresenceEvent, C_TestEmitPresenceEventsConcurrently},
         set_presence_handler,
     };
 

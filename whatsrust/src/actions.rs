@@ -1,6 +1,7 @@
 use std::ffi::CString;
 
 use super::*;
+use crate::abi::{C_EditMessage, C_ReactToMessage, C_RevokeMessage};
 
 pub(crate) fn reaction_to_ffi(
     target_jid: &JID,

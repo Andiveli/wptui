@@ -19,7 +19,6 @@ mod presence;
 mod queries;
 mod read_sync;
 mod registrations;
-use abi::*;
 pub use abi::{LogoutStatus, ReceiptKind};
 pub use actions::{edit_message, react_to_message, react_to_message_in_chat, revoke_message};
 pub use callbacks::CallbackTranslator;

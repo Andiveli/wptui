@@ -1,6 +1,9 @@
 use std::ffi::{CStr, CString, c_char};
 
 use super::*;
+use crate::abi::{
+    C_Connect, C_Disconnect, C_FreePairPhoneResult, C_Logout, C_NewClient, C_PairPhone,
+};
 
 impl CallbackTranslator<*const c_char> for String {
     unsafe fn to_rust(ptr: *const c_char) -> String {

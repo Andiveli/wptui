@@ -2,12 +2,12 @@ use std::ffi::CStr;
 use std::sync::Arc;
 
 use super::{
+    ChatSettings, CommunitiesError, CommunityInfo, GroupInfo, GroupInfoError, GroupParticipant, JID,
+};
+use crate::abi::{
     C_FreeCommunities, C_FreeContacts, C_FreeGroupParticipants, C_FreeResolveDmChatId,
     C_GetChatSettings, C_GetCommunities, C_GetContacts, C_GetGroupInfo, C_GetGroupParticipants,
     C_ResolveDmChatId, CJID,
-};
-use super::{
-    ChatSettings, CommunitiesError, CommunityInfo, GroupInfo, GroupInfoError, GroupParticipant, JID,
 };
 
 /// Returns all contacts and groups as (JID, display name). Includes LID aliases for contacts.

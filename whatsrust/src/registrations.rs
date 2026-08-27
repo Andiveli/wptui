@@ -1,6 +1,10 @@
 use std::ffi::c_char;
 
 use super::*;
+use crate::abi::{
+    C_SetLogHandler, C_SetMessageHandler, C_SetOptimisticTextSentHandler, C_SetPresenceHandler,
+    CJID, CMessage,
+};
 
 impl CallbackTranslator<bool> for bool {
     unsafe fn to_rust(value: bool) -> Self {
