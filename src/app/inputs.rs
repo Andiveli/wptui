@@ -1,9 +1,7 @@
 use ratatui::crossterm::event::Event;
 
 use crate::app::App;
-use crate::app::actions::{
-    AppAction, ConversationMode, FocusPane, Section, focus_after,
-};
+use crate::app::actions::{AppAction, ConversationMode, FocusPane, Section, focus_after};
 pub use crate::app::composer_input_mapping::composer_action_for_editing_key;
 pub use crate::app::composer_input_paste::apply_clipboard_paste;
 use crate::app::input_router::{InputRoute, ModalContext, route_context_key, route_modal_key};
