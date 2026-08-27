@@ -79,7 +79,10 @@ impl App<'_> {
                 self.dispatch_action(AppAction::ToggleLogs);
             } else if self.handle_composer_input(key.clone()) {
             } else if self.shortcut_popup {
-                if matches!(route_modal_key(&key, ModalContext::ShortcutPopup), InputRoute::DismissLeader) {
+                if matches!(
+                    route_modal_key(&key, ModalContext::ShortcutPopup),
+                    InputRoute::DismissLeader
+                ) {
                     self.shortcut_popup = false;
                 }
             } else if self.leader_menu.is_some() {
@@ -118,7 +121,9 @@ impl App<'_> {
                     _ => {}
                 }
             } else if self.attachment_viewer.is_some() {
-                if let InputRoute::Action(action) = route_modal_key(&key, ModalContext::AttachmentViewer) {
+                if let InputRoute::Action(action) =
+                    route_modal_key(&key, ModalContext::AttachmentViewer)
+                {
                     self.dispatch_action(action);
                 }
             } else if self.url_picker.is_some() {
@@ -129,25 +134,33 @@ impl App<'_> {
                 // Search mode: the keyboard buffer owns every key except the
                 // explicit exits, so `h/j/k/l` build the filter instead of
                 // moving. Esc leaves search mode back to navigation.
-                if let InputRoute::Action(action) = route_modal_key(&key, ModalContext::FilePickerSearch) {
+                if let InputRoute::Action(action) =
+                    route_modal_key(&key, ModalContext::FilePickerSearch)
+                {
                     self.dispatch_action(action);
                 }
             } else if self.file_picker.is_some() {
                 // Navigation mode. `h/l` move across the tree, `Enter` commits
                 // (files under the cursor, or every `Space`-selected file).
-                if let InputRoute::Action(action) = route_modal_key(&key, ModalContext::FilePickerNavigation) {
+                if let InputRoute::Action(action) =
+                    route_modal_key(&key, ModalContext::FilePickerNavigation)
+                {
                     self.dispatch_action(action);
                 }
             } else if self.share_picker.is_some() {
-                if let InputRoute::Action(action) = route_modal_key(&key, ModalContext::SharePicker) {
+                if let InputRoute::Action(action) = route_modal_key(&key, ModalContext::SharePicker)
+                {
                     self.dispatch_action(action);
                 }
             } else if self.reaction_picker.is_some() {
-                if let InputRoute::Action(action) = route_modal_key(&key, ModalContext::ReactionPicker) {
+                if let InputRoute::Action(action) =
+                    route_modal_key(&key, ModalContext::ReactionPicker)
+                {
                     self.dispatch_action(action);
                 }
             } else if self.message_menu.is_some() {
-                if let InputRoute::Action(action) = route_modal_key(&key, ModalContext::MessageMenu) {
+                if let InputRoute::Action(action) = route_modal_key(&key, ModalContext::MessageMenu)
+                {
                     self.dispatch_action(action);
                 }
             } else if self.focus_pane == FocusPane::Conversation
@@ -155,9 +168,9 @@ impl App<'_> {
             {
                 // Read-only status view: Esc returns to the contact list and
                 // Enter opens the fullscreen viewer on a media status.
-                if let Some(action) = route_context_key(
-                    &key, self.focus_pane, self.selected_section, false, false,
-                ) {
+                if let Some(action) =
+                    route_context_key(&key, self.focus_pane, self.selected_section, false, false)
+                {
                     self.dispatch_action(action);
                 } else {
                     match self.kh.resolve(key.clone()) {

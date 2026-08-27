@@ -106,10 +106,7 @@ pub(crate) fn route_context_key(
     if focus_pane == FocusPane::ChatList && community_detail && *key == Key::k(KeyCode::Esc) {
         return None;
     }
-    if focus_pane == FocusPane::SectionRail
-        && rail_on_logout
-        && *key == Key::k(KeyCode::Enter)
-    {
+    if focus_pane == FocusPane::SectionRail && rail_on_logout && *key == Key::k(KeyCode::Enter) {
         return None;
     }
     if *key == Key::k(KeyCode::Enter) {
@@ -130,7 +127,13 @@ mod tests {
     #[test]
     fn status_enter_precedes_generic_enter() {
         assert_eq!(
-            route_context_key(&Key::k(KeyCode::Enter), FocusPane::Conversation, Section::Status, false, false),
+            route_context_key(
+                &Key::k(KeyCode::Enter),
+                FocusPane::Conversation,
+                Section::Status,
+                false,
+                false
+            ),
             Some(AppAction::ViewMessage)
         );
     }
@@ -138,15 +141,27 @@ mod tests {
     #[test]
     fn generic_enter_maps_to_the_focused_pane() {
         assert_eq!(
-            route_context_key(&Key::k(KeyCode::Enter), FocusPane::ChatList, Section::Chats, false, false),
+            route_context_key(
+                &Key::k(KeyCode::Enter),
+                FocusPane::ChatList,
+                Section::Chats,
+                false,
+                false
+            ),
             Some(AppAction::OpenChat)
         );
     }
 
     #[test]
     fn picker_routes_only_supported_keys() {
-        assert_eq!(route_modal_key(&Key::k(KeyCode::Down), ModalContext::ReactionPicker), InputRoute::Action(AppAction::ReactionNext));
-        assert_eq!(route_modal_key(&Key::k(KeyCode::Tab), ModalContext::ReactionPicker), InputRoute::Ignore);
+        assert_eq!(
+            route_modal_key(&Key::k(KeyCode::Down), ModalContext::ReactionPicker),
+            InputRoute::Action(AppAction::ReactionNext)
+        );
+        assert_eq!(
+            route_modal_key(&Key::k(KeyCode::Tab), ModalContext::ReactionPicker),
+            InputRoute::Ignore
+        );
     }
 
     #[test]
