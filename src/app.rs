@@ -46,6 +46,7 @@ pub mod message_interactions;
 pub mod message_menu;
 pub mod message_navigation;
 pub mod message_opening;
+pub mod navigation_conversation_dispatch;
 pub mod notifications;
 pub mod optimistic_text_send;
 pub mod preferences;
