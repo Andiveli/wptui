@@ -37,6 +37,25 @@ fn receipt_coordination_has_a_dedicated_owner() {
 }
 
 #[test]
+fn read_state_policy_owns_read_transitions_without_cursor_restoration() {
+    let chat_store = include_str!("../chat_store.rs");
+    let hydration = include_str!("hydration.rs");
+    let read_state = include_str!("read_state.rs");
+
+    for method in [
+        "fn is_viewing_latest_message",
+        "pub fn mark_chat_read_at_latest",
+        "pub(crate) fn apply_remote_chat_read",
+        "pub fn unread_boundary",
+    ] {
+        assert!(read_state.contains(method));
+        assert!(!chat_store.contains(method));
+    }
+    assert!(!read_state.contains("read_cursors"));
+    assert!(hydration.contains("db_handler.read_cursors"));
+}
+
+#[test]
 fn adding_a_message_registers_chat_and_indexes_message() {
     let mut app = TestApp::new();
     let chat = wr::JID::from("chat@example.test".to_owned());
