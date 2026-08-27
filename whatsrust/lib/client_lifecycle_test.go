@@ -26,6 +26,8 @@ func TestBridgeCallersUseLifecycleSnapshots(t *testing.T) {
 		"message_callback.go",
 		"receipt_events.go",
 		"message_action_secret_edit.go",
+		"file_message_payload.go",
+		"message_event_dispatch.go",
 	} {
 		source, err := os.ReadFile(file)
 		if err != nil {

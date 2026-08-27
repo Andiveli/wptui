@@ -123,11 +123,12 @@ func mentionJIDMatchesWithContext(ctx context.Context, left, right types.JID) bo
 	if left == right || left.ToNonAD() == right.ToNonAD() {
 		return true
 	}
-	if !isUserJID(left) || !isUserJID(right) || client == nil || client.Store == nil || client.Store.LIDs == nil {
+	clientSnapshot := lifecycleState.clientSnapshot()
+	if !isUserJID(left) || !isUserJID(right) || clientSnapshot == nil || clientSnapshot.Store == nil || clientSnapshot.Store.LIDs == nil {
 		return false
 	}
 
-	lids := client.Store.LIDs
+	lids := clientSnapshot.Store.LIDs
 	leftCanonical := left.ToNonAD()
 	rightCanonical := right.ToNonAD()
 	if leftCanonical.Server == types.HiddenUserServer {

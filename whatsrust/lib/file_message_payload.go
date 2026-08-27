@@ -100,9 +100,10 @@ func emitImageMessage(cinfo C.MessageInfo, messageID string, image *waE2E.ImageM
 		return false
 	}
 	setMessageQuoteID(&cinfo, image.GetContextInfo())
+	clientSnapshot := lifecycleState.clientSnapshot()
 	ext := ExtensionByType(image.GetMimetype(), ".jpg")
 	filePath := fmt.Sprintf("imgs/%s%s", messageID, ext)
-	fileID := DownloadableMessageToFileId(client, image, filePath)
+	fileID := DownloadableMessageToFileId(clientSnapshot, image, filePath)
 	emitFileMessage(cinfo, FileTypeImage, filePath, fileID, captionWithMentionNames(image.GetCaption(), image.GetContextInfo(), cinfo), isSync)
 	return true
 }
@@ -113,9 +114,10 @@ func emitVideoMessage(cinfo C.MessageInfo, messageID string, video *waE2E.VideoM
 		return false
 	}
 	setMessageQuoteID(&cinfo, video.GetContextInfo())
+	clientSnapshot := lifecycleState.clientSnapshot()
 	ext := ExtensionByType(video.GetMimetype(), ".mp4")
 	filePath := fmt.Sprintf("videos/%s%s", messageID, ext)
-	fileID := DownloadableMessageToFileId(client, video, filePath)
+	fileID := DownloadableMessageToFileId(clientSnapshot, video, filePath)
 	if thumbnail := video.GetJPEGThumbnail(); len(thumbnail) > 0 {
 		thumbPath := strings.TrimSuffix(filePath, ext) + ".jpg"
 		fileID = AddThumbnailToFileId(fileID, thumbnail, thumbPath)
@@ -130,9 +132,10 @@ func emitAudioMessage(cinfo C.MessageInfo, messageID string, audio *waE2E.AudioM
 		return false
 	}
 	setMessageQuoteID(&cinfo, audio.GetContextInfo())
+	clientSnapshot := lifecycleState.clientSnapshot()
 	ext := ExtensionByType(audio.GetMimetype(), ".ogg")
 	filePath := fmt.Sprintf("audios/%s%s", messageID, ext)
-	fileID := DownloadableMessageToFileId(client, audio, filePath)
+	fileID := DownloadableMessageToFileId(clientSnapshot, audio, filePath)
 	emitFileMessage(cinfo, FileTypeAudio, filePath, fileID, "", isSync)
 	return true
 }
@@ -143,8 +146,9 @@ func emitDocumentMessage(cinfo C.MessageInfo, messageID string, document *waE2E.
 		return false
 	}
 	setMessageQuoteID(&cinfo, document.GetContextInfo())
+	clientSnapshot := lifecycleState.clientSnapshot()
 	filePath := fmt.Sprintf("docs/%s-%s", messageID, *document.FileName)
-	fileID := DownloadableMessageToFileId(client, document, filePath)
+	fileID := DownloadableMessageToFileId(clientSnapshot, document, filePath)
 	emitFileMessage(cinfo, FileTypeDocument, filePath, fileID, captionWithMentionNames(document.GetCaption(), document.GetContextInfo(), cinfo), isSync)
 	return true
 }
@@ -170,9 +174,10 @@ func emitStickerMessage(cinfo C.MessageInfo, messageID string, sticker *waE2E.St
 		return false
 	}
 	setMessageQuoteID(&cinfo, sticker.GetContextInfo())
+	clientSnapshot := lifecycleState.clientSnapshot()
 	ext := ExtensionByType(sticker.GetMimetype(), ".webp")
 	filePath := fmt.Sprintf("stickers/%s%s", messageID, ext)
-	fileID := DownloadableMessageToFileId(client, sticker, filePath)
+	fileID := DownloadableMessageToFileId(clientSnapshot, sticker, filePath)
 	emitFileMessage(cinfo, FileTypeSticker, filePath, fileID, "", isSync)
 	return true
 }
