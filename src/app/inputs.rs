@@ -278,6 +278,50 @@ impl App<'_> {
         }
 
         match action {
+            action @ (AppAction::DownloadMessage
+            | AppAction::ViewMessage
+            | AppAction::ViewerNext
+            | AppAction::ViewerPrevious
+            | AppAction::ViewerZoomIn
+            | AppAction::ViewerZoomOut
+            | AppAction::ViewerOpenExternal
+            | AppAction::CloseAttachmentViewer
+            | AppAction::CloseStatusPane
+            | AppAction::OpenMessageMenu
+            | AppAction::MenuNext
+            | AppAction::MenuPrevious
+            | AppAction::ConfirmMessageMenu
+            | AppAction::CancelMessageMenu
+            | AppAction::SharePickerPrevious
+            | AppAction::SharePickerNext
+            | AppAction::ToggleShareRecipient
+            | AppAction::ConfirmShare
+            | AppAction::CancelShare
+            | AppAction::ShareSearchBackspace
+            | AppAction::ShareSearchCharacter(_)
+            | AppAction::ReactionPrev
+            | AppAction::ReactionNext
+            | AppAction::ConfirmReaction
+            | AppAction::CancelReaction
+            | AppAction::UrlPickerPrevious
+            | AppAction::UrlPickerNext
+            | AppAction::ConfirmUrlPicker
+            | AppAction::CancelUrlPicker
+            | AppAction::AttachFile
+            | AppAction::FilePickerPrevious
+            | AppAction::FilePickerNext
+            | AppAction::FilePickerParent
+            | AppAction::FilePickerDescend
+            | AppAction::FilePickerToggle
+            | AppAction::FilePickerConfirm
+            | AppAction::FilePickerEnterSearch
+            | AppAction::FilePickerEndSearch
+            | AppAction::FilePickerBackspace
+            | AppAction::FilePickerCharacter(_)
+            | AppAction::CancelFilePicker) => {
+                self.dispatch_picker_viewer_action(action)
+                    .expect("picker/viewer action family must be handled by its dispatcher");
+            }
             AppAction::Quit => {
                 self.db_handler.stop();
                 self.should_quit = true;
@@ -406,67 +450,6 @@ impl App<'_> {
                 }
             }
             AppAction::OpenMessage => self.open_selected_url(),
-            AppAction::DownloadMessage => self.plan_selected_media_launch(),
-            AppAction::ViewMessage => self.open_attachment_viewer(),
-            AppAction::ViewerNext => self.navigate_viewer(1),
-            AppAction::ViewerPrevious => self.navigate_viewer(-1),
-            AppAction::ViewerZoomIn => {
-                self.viewer_zoom = self.viewer_zoom.saturating_add(25).min(400);
-                self.viewer_preview = None;
-            }
-            AppAction::ViewerZoomOut => {
-                self.viewer_zoom = self.viewer_zoom.saturating_sub(25).max(25);
-                self.viewer_preview = None;
-            }
-            AppAction::ViewerOpenExternal => self.plan_viewer_media_launch(),
-            AppAction::CloseAttachmentViewer => {
-                self.attachment_viewer = None;
-                self.viewer_preview = None;
-            }
-            AppAction::CloseStatusPane => {
-                self.focus_pane = FocusPane::ChatList;
-            }
-            AppAction::OpenMessageMenu => self.open_message_menu(),
-            AppAction::MenuNext => self.move_menu(1),
-            AppAction::MenuPrevious => self.move_menu(-1),
-            AppAction::ConfirmMessageMenu => self.confirm_message_menu(),
-            AppAction::CancelMessageMenu => {
-                self.message_menu = None;
-                self.action_notice = Some(crate::app::actions::ActionNotice::Cancelled);
-            }
-            AppAction::SharePickerPrevious => self.move_share_picker(-1),
-            AppAction::SharePickerNext => self.move_share_picker(1),
-            AppAction::ToggleShareRecipient => self.toggle_share_recipient(),
-            AppAction::ConfirmShare => self.confirm_share(),
-            AppAction::CancelShare => {
-                self.share_picker = None;
-                self.action_notice = Some(crate::app::actions::ActionNotice::Cancelled);
-            }
-            AppAction::ShareSearchBackspace => self.share_search_backspace(),
-            AppAction::ShareSearchCharacter(character) => self.share_search_character(character),
-            action @ (AppAction::ReactionPrev
-            | AppAction::ReactionNext
-            | AppAction::ConfirmReaction
-            | AppAction::CancelReaction) => self.dispatch_reaction_picker_action(action),
-            AppAction::UrlPickerPrevious => self.move_url_picker(-1),
-            AppAction::UrlPickerNext => self.move_url_picker(1),
-            AppAction::ConfirmUrlPicker => self.confirm_url_picker(),
-            AppAction::CancelUrlPicker => {
-                self.url_picker = None;
-                self.action_notice = Some(crate::app::actions::ActionNotice::Cancelled);
-            }
-            action @ (AppAction::AttachFile
-            | AppAction::FilePickerPrevious
-            | AppAction::FilePickerNext
-            | AppAction::FilePickerParent
-            | AppAction::FilePickerDescend
-            | AppAction::FilePickerToggle
-            | AppAction::FilePickerConfirm
-            | AppAction::FilePickerEnterSearch
-            | AppAction::FilePickerEndSearch
-            | AppAction::FilePickerBackspace
-            | AppAction::FilePickerCharacter(_)
-            | AppAction::CancelFilePicker) => self.dispatch_file_picker_action(action),
             AppAction::GoToReference => {
                 if !self.follow_selected_reference() {
                     self.unavailable("Reference is not available");

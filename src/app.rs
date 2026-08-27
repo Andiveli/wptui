@@ -6,6 +6,7 @@ use std::{
     sync::Mutex,
 };
 
+pub mod action_dispatch;
 pub mod actions;
 pub mod attachment_viewer;
 pub mod bootstrap;
