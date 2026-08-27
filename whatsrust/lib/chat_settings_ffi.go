@@ -29,14 +29,15 @@ func chatSettingsPayloadToC(payload chatSettingsPayload) C.ChatSettings {
 
 //export C_GetChatSettings
 func C_GetChatSettings(cjid C.JID) C.ChatSettings {
+	clientSnapshot := lifecycleState.clientSnapshot()
 	ctx := context.Background()
 	jid := cToJid(cjid).ToNonAD()
 	settings, err := lookupChatSettings(
 		ctx,
 		jid,
-		client.Store.ChatSettings.GetChatSettings,
-		client.Store.LIDs.GetLIDForPN,
-		client.Store.LIDs.GetPNForLID,
+		clientSnapshot.Store.ChatSettings.GetChatSettings,
+		clientSnapshot.Store.LIDs.GetLIDForPN,
+		clientSnapshot.Store.LIDs.GetPNForLID,
 	)
 	if err != nil {
 		LOG_WARN("failed to get chat settings for %s: %v", jid, err)

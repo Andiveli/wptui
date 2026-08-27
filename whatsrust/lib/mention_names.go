@@ -158,32 +158,34 @@ func isUserJID(jid types.JID) bool {
 }
 
 func mentionEntriesForGroup(ctx context.Context, group types.JID, mentionedJIDs ...string) []contactEntry {
+	clientSnapshot := lifecycleState.clientSnapshot()
 	if group.Server != types.GroupServer {
 		return lookupMentionContactEntries()
 	}
-	if client == nil || client.Store == nil {
+	if clientSnapshot == nil || clientSnapshot.Store == nil {
 		return nil
 	}
-	info, err := client.GetGroupInfo(ctx, group.ToNonAD())
+	info, err := clientSnapshot.GetGroupInfo(ctx, group.ToNonAD())
 	if err != nil || info == nil {
 		return directMentionEntries(ctx, mentionedJIDs)
 	}
 	entries := make([]contactEntry, 0, len(info.Participants))
-	participants := deduplicateGroupParticipants(ctx, info.Participants, client.Store.LIDs)
+	participants := deduplicateGroupParticipants(ctx, info.Participants, clientSnapshot.Store.LIDs)
 	for _, participant := range participants {
-		name := groupParticipantName(ctx, participant, client.Store.Contacts)
-		for _, jid := range participantJIDs(ctx, participant, client.Store.LIDs) {
+		name := groupParticipantName(ctx, participant, clientSnapshot.Store.Contacts)
+		for _, jid := range participantJIDs(ctx, participant, clientSnapshot.Store.LIDs) {
 			entries = append(entries, contactEntry{jid: jid, name: name})
 		}
 	}
 	// The picker intentionally filters self, so add the authenticated identity
 	// explicitly for incoming mentions. The helper only returns verified aliases.
-	entries = append(entries, selfMentionEntries(ctx, client)...)
+	entries = append(entries, selfMentionEntries(ctx, clientSnapshot)...)
 	return entries
 }
 
 func directMentionEntries(ctx context.Context, mentionedJIDs []string) []contactEntry {
-	if client == nil || client.Store == nil {
+	clientSnapshot := lifecycleState.clientSnapshot()
+	if clientSnapshot == nil || clientSnapshot.Store == nil {
 		return nil
 	}
 	entries := make([]contactEntry, 0, len(mentionedJIDs))
@@ -194,15 +196,15 @@ func directMentionEntries(ctx context.Context, mentionedJIDs []string) []contact
 		}
 		aliases := mentionJIDAliases(ctx, jid)
 		name := ""
-		if participantMatchesSelf(client, types.GroupParticipant{JID: jid}) {
-			name = selfDisplayName(ctx, client)
+		if participantMatchesSelf(clientSnapshot, types.GroupParticipant{JID: jid}) {
+			name = selfDisplayName(ctx, clientSnapshot)
 		}
-		if client.Store.Contacts != nil {
+		if clientSnapshot.Store.Contacts != nil {
 			for _, alias := range aliases {
 				if name != "" {
 					break
 				}
-				contact, err := client.Store.Contacts.GetContact(ctx, alias)
+				contact, err := clientSnapshot.Store.Contacts.GetContact(ctx, alias)
 				if err != nil {
 					continue
 				}
@@ -222,10 +224,11 @@ func directMentionEntries(ctx context.Context, mentionedJIDs []string) []contact
 }
 
 func mentionJIDAliases(ctx context.Context, jid types.JID) []types.JID {
-	if client == nil || client.Store == nil {
+	clientSnapshot := lifecycleState.clientSnapshot()
+	if clientSnapshot == nil || clientSnapshot.Store == nil {
 		return []types.JID{jid, jid.ToNonAD()}
 	}
-	return participantJIDs(ctx, types.GroupParticipant{JID: jid}, client.Store.LIDs)
+	return participantJIDs(ctx, types.GroupParticipant{JID: jid}, clientSnapshot.Store.LIDs)
 }
 
 func appendMentionAliases(ctx context.Context, mentioned, contact types.JID) []types.JID {
