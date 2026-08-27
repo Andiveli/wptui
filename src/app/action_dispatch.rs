@@ -24,7 +24,9 @@ impl App<'_> {
                 self.attachment_viewer = None;
                 self.viewer_preview = None;
             }
-            AppAction::CloseStatusPane => self.focus_pane = crate::app::actions::FocusPane::ChatList,
+            AppAction::CloseStatusPane => {
+                self.focus_pane = crate::app::actions::FocusPane::ChatList
+            }
             AppAction::OpenMessageMenu => self.open_message_menu(),
             AppAction::MenuNext => self.move_menu(1),
             AppAction::MenuPrevious => self.move_menu(-1),
