@@ -77,7 +77,7 @@ unsafe fn chat_event_from_ffi(event: &CChatEvent) -> Event {
     }
 }
 
-unsafe fn reaction_event_from_ffi(event: &CReactionEvent) -> Event {
+pub(crate) unsafe fn reaction_event_from_ffi(event: &CReactionEvent) -> Event {
     Event::Reaction {
         chat: (&event.chat).into(),
         target_message_id: unsafe { CStr::from_ptr(event.target_message_id) }
@@ -93,7 +93,7 @@ unsafe fn reaction_event_from_ffi(event: &CReactionEvent) -> Event {
     }
 }
 
-unsafe fn message_action_event_from_ffi(event: &CMessageActionEvent) -> Event {
+pub(crate) unsafe fn message_action_event_from_ffi(event: &CMessageActionEvent) -> Event {
     let kind = match event.kind {
         0 => MessageActionKind::Edit {
             replacement: unsafe { CStr::from_ptr(event.replacement) }
