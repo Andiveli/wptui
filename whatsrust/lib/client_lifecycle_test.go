@@ -22,15 +22,22 @@ func TestClientLifecycleRegistrationIsIdempotent(t *testing.T) {
 
 func TestClientLifecycleResetClearsRegistrationAndQR(t *testing.T) {
 	qr := make(chan whatsmeow.QRChannelItem)
+	previous := client
+	t.Cleanup(func() { lifecycleState.publishClient(previous) })
+	testClient := &whatsmeow.Client{}
 	state := clientLifecycleState{
 		qrChan:             qr,
 		handlersRegistered: true,
 	}
+	state.publishClient(testClient)
 
 	state.reset()
 
 	if state.qrChan != nil {
 		t.Fatal("reset retained QR channel")
+	}
+	if state.clientSnapshot() != nil {
+		t.Fatal("reset retained client")
 	}
 	if state.handlersRegistered {
 		t.Fatal("reset retained handler registration")
@@ -50,6 +57,8 @@ func TestClientLifecycleClientSnapshotUsesLifecycleLock(t *testing.T) {
 
 func TestClientLifecyclePublicationIsSynchronized(t *testing.T) {
 	var state clientLifecycleState
+	previous := client
+	t.Cleanup(func() { lifecycleState.publishClient(previous) })
 	first, second := &whatsmeow.Client{}, &whatsmeow.Client{}
 	state.publishClient(first)
 
@@ -74,6 +83,8 @@ func TestClientLifecyclePublicationIsSynchronized(t *testing.T) {
 
 func TestClientLifecycleOperationKeepsOneSnapshot(t *testing.T) {
 	var state clientLifecycleState
+	previous := client
+	t.Cleanup(func() { lifecycleState.publishClient(previous) })
 	first, second := &whatsmeow.Client{}, &whatsmeow.Client{}
 	state.publishClient(first)
 	snapshotTaken := make(chan *whatsmeow.Client)
@@ -91,6 +102,28 @@ func TestClientLifecycleOperationKeepsOneSnapshot(t *testing.T) {
 	close(release)
 	if got := state.clientSnapshot(); got != second {
 		t.Fatalf("published client = %p, want %p", got, second)
+	}
+}
+
+func TestClientLifecycleReconnectPublishesReplacementSnapshot(t *testing.T) {
+	var state clientLifecycleState
+	previous := client
+	t.Cleanup(func() { lifecycleState.publishClient(previous) })
+	first, second := &whatsmeow.Client{}, &whatsmeow.Client{}
+
+	state.publishClient(first)
+	if got := state.clientSnapshot(); got != first {
+		t.Fatalf("initial client snapshot = %p, want %p", got, first)
+	}
+
+	state.reset()
+	if got := state.clientSnapshot(); got != nil {
+		t.Fatalf("snapshot after reset = %p, want nil", got)
+	}
+
+	state.publishClient(second)
+	if got := state.clientSnapshot(); got != second {
+		t.Fatalf("reconnect client snapshot = %p, want %p", got, second)
 	}
 }
 

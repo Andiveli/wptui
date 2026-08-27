@@ -66,7 +66,7 @@ func TestEventWiringOwnsRegistrationAndDispatchCases(t *testing.T) {
 	body := string(source)
 	for _, expected := range []string{
 		"func AddEventHandlers()",
-		"client.AddEventHandler(func(rawEvt any)",
+		"clientSnapshot.AddEventHandler(func(rawEvt any)",
 		"case *events.Connected:",
 		"case *events.Presence:",
 		"case *events.AppStateSyncComplete:",
