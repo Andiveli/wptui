@@ -1,3 +1,5 @@
+use std::ffi::CString;
+
 use super::*;
 
 pub(crate) fn reaction_to_ffi(
