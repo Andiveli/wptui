@@ -277,12 +277,51 @@ impl App<'_> {
             return;
         }
 
-        let action = match self.dispatch_picker_viewer_action(action) {
-            Ok(()) => return,
-            Err(action) => action,
-        };
-
         match action {
+            action @ (AppAction::DownloadMessage
+            | AppAction::ViewMessage
+            | AppAction::ViewerNext
+            | AppAction::ViewerPrevious
+            | AppAction::ViewerZoomIn
+            | AppAction::ViewerZoomOut
+            | AppAction::ViewerOpenExternal
+            | AppAction::CloseAttachmentViewer
+            | AppAction::CloseStatusPane
+            | AppAction::OpenMessageMenu
+            | AppAction::MenuNext
+            | AppAction::MenuPrevious
+            | AppAction::ConfirmMessageMenu
+            | AppAction::CancelMessageMenu
+            | AppAction::SharePickerPrevious
+            | AppAction::SharePickerNext
+            | AppAction::ToggleShareRecipient
+            | AppAction::ConfirmShare
+            | AppAction::CancelShare
+            | AppAction::ShareSearchBackspace
+            | AppAction::ShareSearchCharacter(_)
+            | AppAction::ReactionPrev
+            | AppAction::ReactionNext
+            | AppAction::ConfirmReaction
+            | AppAction::CancelReaction
+            | AppAction::UrlPickerPrevious
+            | AppAction::UrlPickerNext
+            | AppAction::ConfirmUrlPicker
+            | AppAction::CancelUrlPicker
+            | AppAction::AttachFile
+            | AppAction::FilePickerPrevious
+            | AppAction::FilePickerNext
+            | AppAction::FilePickerParent
+            | AppAction::FilePickerDescend
+            | AppAction::FilePickerToggle
+            | AppAction::FilePickerConfirm
+            | AppAction::FilePickerEnterSearch
+            | AppAction::FilePickerEndSearch
+            | AppAction::FilePickerBackspace
+            | AppAction::FilePickerCharacter(_)
+            | AppAction::CancelFilePicker) => {
+                self.dispatch_picker_viewer_action(action)
+                    .expect("picker/viewer action family must be handled by its dispatcher");
+            }
             AppAction::Quit => {
                 self.db_handler.stop();
                 self.should_quit = true;
