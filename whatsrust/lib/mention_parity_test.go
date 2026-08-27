@@ -90,10 +90,10 @@ func TestNormalAndOptimisticProductionRoutesHaveWireAndCallbackParity(t *testing
 	otherLID := types.NewJID("222", types.HiddenUserServer)
 	selfLID := types.NewJID("444", types.HiddenUserServer)
 	client = &whatsmeow.Client{Store: &store.Device{
-		ID:       &self,
-		LID:      selfLID,
+		ID:  &self,
+		LID: selfLID,
 		Contacts: parityContactStore{contacts: map[types.JID]types.ContactInfo{
-			self: {FullName: "Álvaro"},
+			self:    {FullName: "Álvaro"},
 			otherPN: {FullName: "李雷"},
 		}},
 		LIDs: participantIdentityLIDStore{
@@ -117,7 +117,7 @@ func TestNormalAndOptimisticProductionRoutesHaveWireAndCallbackParity(t *testing
 
 	var sent []*waE2E.Message
 	var outputs []textCallbackOutput
-	requestSendMessage = func(_ context.Context, _ types.JID, message *waE2E.Message) (whatsmeow.SendResponse, error) {
+	requestSendMessage = func(_ *whatsmeow.Client, _ context.Context, _ types.JID, message *waE2E.Message) (whatsmeow.SendResponse, error) {
 		sent = append(sent, message)
 		return whatsmeow.SendResponse{ID: "server-1"}, nil
 	}

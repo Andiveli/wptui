@@ -136,7 +136,7 @@ func TestOptimisticTextSendUsesRequestScopedCallbackInsteadOfGenericLocalState(t
 		"sendOptimisticTextRequest(request)",
 		"request.localSendID != 0",
 		"optimisticTextSentCallback(request.localSendID, messageInfo, message)",
-		"requestSendMessage(sendContext, request.chat, message)",
+		"requestSendMessage(clientSnapshot, sendContext, request.chat, message)",
 	} {
 		if !strings.Contains(text, fragment) {
 			t.Fatalf("optimistic text send missing request-scoped fragment %q", fragment)
@@ -167,5 +167,17 @@ func TestOptimisticTextSendContextHonorsCancellation(t *testing.T) {
 	cancel()
 	if err := ctx.Err(); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled context error = %v, want context canceled", err)
+	}
+}
+
+func TestOutboundSendCallersUseLifecycleClientSnapshots(t *testing.T) {
+	for _, file := range []string{"message_send.go", "message_actions.go", "forwarding_orchestration.go"} {
+		source, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(source), "lifecycleState.clientSnapshot()") {
+			t.Fatalf("%s does not capture a lifecycle client snapshot", file)
+		}
 	}
 }
