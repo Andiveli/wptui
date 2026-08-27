@@ -23,6 +23,9 @@ func TestBridgeCallersUseLifecycleSnapshots(t *testing.T) {
 		"presence.go",
 		"mark_as_read_ffi.go",
 		"chat_read_sync_ffi.go",
+		"message_callback.go",
+		"receipt_events.go",
+		"message_action_secret_edit.go",
 	} {
 		source, err := os.ReadFile(file)
 		if err != nil {
