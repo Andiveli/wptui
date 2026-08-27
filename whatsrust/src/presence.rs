@@ -1,4 +1,7 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{
+    ffi::{CStr, c_char},
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use super::*;
 
