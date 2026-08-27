@@ -1,7 +1,7 @@
 use ratatui::crossterm::event::Event;
 
 use crate::app::App;
-use crate::app::actions::{AppAction, ConversationMode, FocusPane, Section, focus_after};
+use crate::app::actions::{AppAction, FocusPane, Section, focus_after};
 pub use crate::app::composer_input_mapping::composer_action_for_editing_key;
 pub use crate::app::composer_input_paste::apply_clipboard_paste;
 use crate::app::input_router::{InputRoute, ModalContext, route_context_key, route_modal_key};
@@ -333,108 +333,28 @@ impl App<'_> {
                 self.dispatch_lifecycle_settings_action(action)
                     .expect("lifecycle/settings action family must be handled by its dispatcher");
             }
-            AppAction::FocusNext | AppAction::FocusPrevious => {}
-            AppAction::SelectNext => self.select_next(),
-            AppAction::SelectPrevious => self.select_previous(),
-            AppAction::JumpTop => self.jump_top(),
-            AppAction::JumpBottom => self.jump_bottom(),
-            AppAction::HalfPageDown => self.half_page_down(),
-            AppAction::HalfPageUp => self.half_page_up(),
-            AppAction::InsertMode => {
-                if self.focus_pane == FocusPane::Conversation && !self.composer_blocked() {
-                    self.conversation_mode = ConversationMode::ComposerEditing;
-                }
-            }
-            AppAction::CopyMessage => self.copy_selected_text(),
-            AppAction::ReplyMessage => {
-                if self.selected_section == Section::Status {
-                    self.reply_to_status();
-                } else {
-                    self.reply_to_selected();
-                }
-            }
-            AppAction::ReplyPrivately => self.reply_privately(),
-            AppAction::ShareMessage => self.open_share_picker(),
-            AppAction::ReactMessage => {
-                if self.selected_section == Section::Status {
-                    self.heart_selected_status();
-                } else {
-                    self.open_reaction_picker();
-                }
-            }
-            AppAction::DeleteMessage => self.delete_selected_message(),
-            AppAction::EditMessage => self.start_message_edit(),
-            AppAction::OpenChat => {
-                if self.selected_section == Section::Status {
-                    let opened = self.selected_status_contact().is_some();
-                    if opened {
-                        self.open_selected_status();
-                        self.focus_pane = FocusPane::Conversation;
-                        if self.status_message_count() > 0 {
-                            self.message_list_state.select(Some(0));
-                        }
-                    }
-                } else if self.selected_section == Section::Communities
-                    && self.community_detail.is_none()
-                {
-                    match self
-                        .community_navigation_rows()
-                        .into_iter()
-                        .filter(|row| !matches!(row, crate::app::CommunityNavigationRow::Separator))
-                        .nth(self.chat_list_state.selected().unwrap_or_default())
-                    {
-                        Some(crate::app::CommunityNavigationRow::Root(jid))
-                        | Some(crate::app::CommunityNavigationRow::ViewAll(jid)) => {
-                            self.open_community_detail(jid);
-                        }
-                        Some(crate::app::CommunityNavigationRow::Group(jid))
-                        | Some(crate::app::CommunityNavigationRow::Announcement(jid)) => {
-                            self.open_chat_by_jid(jid);
-                            self.focus_pane = FocusPane::Conversation;
-                        }
-                        Some(crate::app::CommunityNavigationRow::Separator) => {}
-                        None => {}
-                    }
-                } else if let Some(root) = self.selected_community_contact() {
-                    let unread = self
-                        .communities
-                        .iter()
-                        .find(|node| node.jid == root)
-                        .map(|node| {
-                            node.linked_groups
-                                .iter()
-                                .filter(|jid| self.pending_new_messages(jid) > 0)
-                                .cloned()
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default();
-                    if unread.len() == 1 {
-                        self.open_chat_by_jid(unread[0].clone());
-                        self.focus_pane = FocusPane::Conversation;
-                        if self.message_count() > 0 {
-                            self.message_list_state.select(Some(0));
-                        }
-                    } else {
-                        self.open_community_detail(root);
-                    }
-                } else {
-                    let opened = self.get_selected_chat().is_some();
-                    self.open_selected_chat();
-                    if opened {
-                        self.focus_pane = FocusPane::Conversation;
-                        if self.message_count() > 0 {
-                            self.message_list_state.select(Some(0));
-                        }
-                    }
-                }
-            }
-            AppAction::OpenMessage => self.open_selected_url(),
-            AppAction::GoToReference => {
-                if !self.follow_selected_reference() {
-                    self.unavailable("Reference is not available");
-                }
-            }
-            AppAction::Composer(action) => self.dispatch_composer_action(action),
+            action @ (AppAction::FocusNext
+            | AppAction::FocusPrevious
+            | AppAction::SelectNext
+            | AppAction::SelectPrevious
+            | AppAction::JumpTop
+            | AppAction::JumpBottom
+            | AppAction::HalfPageDown
+            | AppAction::HalfPageUp
+            | AppAction::InsertMode
+            | AppAction::CopyMessage
+            | AppAction::ReplyMessage
+            | AppAction::ReplyPrivately
+            | AppAction::ShareMessage
+            | AppAction::ReactMessage
+            | AppAction::DeleteMessage
+            | AppAction::EditMessage
+            | AppAction::OpenChat
+            | AppAction::OpenMessage
+            | AppAction::GoToReference
+            | AppAction::Composer(_)) => self
+                .dispatch_navigation_conversation_action(action)
+                .expect("navigation/conversation action family must be handled by its dispatcher"),
         }
     }
 
