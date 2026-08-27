@@ -34,6 +34,7 @@ pub mod input_reader;
 pub mod input_router;
 pub mod inputs;
 pub mod leader_menu;
+pub mod lifecycle_settings_dispatch;
 pub mod log_toggle;
 pub mod logout;
 pub mod media_cache;
