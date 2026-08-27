@@ -24,7 +24,7 @@ where
 {
     setup_presence_handler(move |from, unavailable, last_seen| {
         if std::env::var("WPTUI_PRESENCE_DEBUG").as_deref() == Ok("1") {
-            PRESENCE_CALLBACK_INGRESS.fetch_add(1, Ordering::Relaxed);
+            super::presence::record_callback_ingress();
         }
         callback(PresenceUpdate {
             from,
