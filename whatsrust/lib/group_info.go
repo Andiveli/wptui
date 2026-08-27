@@ -81,8 +81,9 @@ func C_GetGroupInfo(cjid C.JID) C.GroupInfoResult {
 	if cjid == nil {
 		return groupInfoResultToC(groupInfoClientUnavailable)
 	}
-	return groupInfoResultToC(fetchGroupInfo(client, cToJid(cjid).ToNonAD(), func(participant types.GroupParticipant) bool {
-		return participantMatchesSelf(client, participant)
+	clientSnapshot := lifecycleState.clientSnapshot()
+	return groupInfoResultToC(fetchGroupInfo(clientSnapshot, cToJid(cjid).ToNonAD(), func(participant types.GroupParticipant) bool {
+		return participantMatchesSelf(clientSnapshot, participant)
 	}))
 }
 

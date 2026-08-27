@@ -2,10 +2,34 @@ package main
 
 import (
 	"errors"
+	"os"
+	"strings"
 	"testing"
 
 	"go.mau.fi/whatsmeow"
 )
+
+func TestQueryAndMediaBridgeCallersUseLifecycleSnapshots(t *testing.T) {
+	for _, file := range []string{
+		"contacts.go",
+		"communities.go",
+		"group_info.go",
+		"group_participants.go",
+		"chat_settings_ffi.go",
+		"dm_resolution.go",
+		"mention_names.go",
+		"media_downloads.go",
+		"profile_picture.go",
+	} {
+		source, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(source), "lifecycleState.clientSnapshot()") {
+			t.Fatalf("%s does not use the lifecycle client snapshot", file)
+		}
+	}
+}
 
 func TestClientLifecycleRegistrationIsIdempotent(t *testing.T) {
 	var state clientLifecycleState

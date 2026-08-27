@@ -35,8 +35,9 @@ func resolveDMChatID(client *whatsmeow.Client, jidText string, resolve dmChatIDR
 //
 //export C_ResolveDmChatId
 func C_ResolveDmChatId(cjid C.JID) *C.char {
-	value, ok := resolveDMChatID(client, C.GoString(cjid), func(jid types.JID) string {
-		return GetChatId(client, &jid, nil)
+	clientSnapshot := lifecycleState.clientSnapshot()
+	value, ok := resolveDMChatID(clientSnapshot, C.GoString(cjid), func(jid types.JID) string {
+		return GetChatId(clientSnapshot, &jid, nil)
 	})
 	if !ok {
 		return nil
