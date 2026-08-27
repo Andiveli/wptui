@@ -19,6 +19,24 @@ fn message(chat: &wr::JID, id: &str, timestamp: i64) -> wr::Message {
 }
 
 #[test]
+fn receipt_coordination_has_a_dedicated_owner() {
+    let chat_store = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/app/chat_store.rs"
+    ))
+    .expect("chat store source should be readable");
+    let receipts = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/app/chat_store/receipts.rs"
+    ))
+    .expect("receipt owner source should be readable");
+
+    assert!(receipts.contains("pub(crate) fn apply_receipt"));
+    assert!(receipts.contains("fn apply_local_read_cursor"));
+    assert!(!chat_store.contains("pub(crate) fn apply_receipt"));
+}
+
+#[test]
 fn adding_a_message_registers_chat_and_indexes_message() {
     let mut app = TestApp::new();
     let chat = wr::JID::from("chat@example.test".to_owned());
