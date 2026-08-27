@@ -6,11 +6,7 @@ use crate::app::actions::{
 };
 pub use crate::app::composer_input_mapping::composer_action_for_editing_key;
 pub use crate::app::composer_input_paste::apply_clipboard_paste;
-use crate::app::contextual_routing::route_contextual_key;
-use crate::app::input_mapping::{
-    attachment_viewer_action, file_picker_navigation_action, file_picker_search_action,
-    message_menu_action, reaction_picker_action, share_picker_action, url_picker_action,
-};
+use crate::app::input_router::{InputRoute, ModalContext, route_context_key, route_modal_key};
 use crate::app::leader_menu::{LeaderMenuContext, build_leader_menu};
 use crate::app::log_toggle::is_toggle_logs_key;
 use crate::app::status_input::status_view_allows;
@@ -83,88 +79,99 @@ impl App<'_> {
                 self.dispatch_action(AppAction::ToggleLogs);
             } else if self.handle_composer_input(key.clone()) {
             } else if self.shortcut_popup {
-                if key == Key::k(KeyCode::Esc) || key == Key::c('?') {
+                if matches!(
+                    route_modal_key(&key, ModalContext::ShortcutPopup),
+                    InputRoute::DismissLeader
+                ) {
                     self.shortcut_popup = false;
                 }
             } else if self.leader_menu.is_some() {
-                if key == Key::k(KeyCode::Esc) {
-                    self.leader_menu = None;
-                    self.kh.key_buffer.clear();
-                    self.kh.key_sequence_active = false;
-                } else if key == Key::k(KeyCode::Enter) {
-                    self.activate_leader_selection();
-                } else if key == Key::k(KeyCode::Char('j')) || key == Key::k(KeyCode::Down) {
-                    self.move_leader_menu(1);
-                } else if key == Key::k(KeyCode::Char('k')) || key == Key::k(KeyCode::Up) {
-                    self.move_leader_menu(-1);
-                } else {
-                    self.activate_leader_key(key);
+                let route = route_modal_key(
+                    &key,
+                    ModalContext::Leader(&self.leader_menu.as_ref().unwrap().0),
+                );
+                match route {
+                    InputRoute::DismissLeader => {
+                        self.leader_menu = None;
+                        self.kh.key_buffer.clear();
+                        self.kh.key_sequence_active = false;
+                    }
+                    InputRoute::ActivateLeader => {
+                        if key == Key::k(KeyCode::Enter) {
+                            self.activate_leader_selection();
+                        } else {
+                            self.activate_leader_key(key);
+                        }
+                    }
+                    InputRoute::MoveLeader(delta) => self.move_leader_menu(delta),
+                    _ => {}
                 }
             } else if self.contextual_menu.is_some() {
-                if key == Key::k(KeyCode::Esc) {
-                    self.contextual_menu = None;
-                } else if key == Key::k(KeyCode::Enter) {
-                    self.activate_contextual_action();
-                } else if key == Key::k(KeyCode::Char('j')) || key == Key::k(KeyCode::Down) {
-                    self.move_contextual_menu(1);
-                } else if key == Key::k(KeyCode::Char('k')) || key == Key::k(KeyCode::Up) {
-                    self.move_contextual_menu(-1);
-                } else if let Some(action) = self
-                    .contextual_menu
-                    .as_ref()
-                    .and_then(|(rows, _)| route_contextual_key(rows, &key))
-                {
-                    self.activate_contextual_shortcut(action);
+                let route = route_modal_key(
+                    &key,
+                    ModalContext::Contextual(&self.contextual_menu.as_ref().unwrap().0),
+                );
+                match route {
+                    InputRoute::DismissContextual => self.contextual_menu = None,
+                    InputRoute::ActivateContextualSelection => self.activate_contextual_action(),
+                    InputRoute::ActivateContextualShortcut(action) => {
+                        self.activate_contextual_shortcut(action)
+                    }
+                    InputRoute::MoveContextual(delta) => self.move_contextual_menu(delta),
+                    _ => {}
                 }
             } else if self.attachment_viewer.is_some() {
-                let Some(action) = attachment_viewer_action(&key) else {
-                    return;
-                };
-                self.dispatch_action(action);
+                if let InputRoute::Action(action) =
+                    route_modal_key(&key, ModalContext::AttachmentViewer)
+                {
+                    self.dispatch_action(action);
+                }
             } else if self.url_picker.is_some() {
-                let Some(action) = url_picker_action(&key) else {
-                    return;
-                };
-                self.dispatch_action(action);
+                if let InputRoute::Action(action) = route_modal_key(&key, ModalContext::UrlPicker) {
+                    self.dispatch_action(action);
+                }
             } else if self.file_picker.is_some() && self.file_picker.as_ref().unwrap().searching {
                 // Search mode: the keyboard buffer owns every key except the
                 // explicit exits, so `h/j/k/l` build the filter instead of
                 // moving. Esc leaves search mode back to navigation.
-                let Some(action) = file_picker_search_action(&key) else {
-                    return;
-                };
-                self.dispatch_action(action);
+                if let InputRoute::Action(action) =
+                    route_modal_key(&key, ModalContext::FilePickerSearch)
+                {
+                    self.dispatch_action(action);
+                }
             } else if self.file_picker.is_some() {
                 // Navigation mode. `h/l` move across the tree, `Enter` commits
                 // (files under the cursor, or every `Space`-selected file).
-                let Some(action) = file_picker_navigation_action(&key) else {
-                    return;
-                };
-                self.dispatch_action(action);
+                if let InputRoute::Action(action) =
+                    route_modal_key(&key, ModalContext::FilePickerNavigation)
+                {
+                    self.dispatch_action(action);
+                }
             } else if self.share_picker.is_some() {
-                let Some(action) = share_picker_action(&key) else {
-                    return;
-                };
-                self.dispatch_action(action);
+                if let InputRoute::Action(action) = route_modal_key(&key, ModalContext::SharePicker)
+                {
+                    self.dispatch_action(action);
+                }
             } else if self.reaction_picker.is_some() {
-                let Some(action) = reaction_picker_action(&key) else {
-                    return;
-                };
-                self.dispatch_action(action);
+                if let InputRoute::Action(action) =
+                    route_modal_key(&key, ModalContext::ReactionPicker)
+                {
+                    self.dispatch_action(action);
+                }
             } else if self.message_menu.is_some() {
-                let Some(action) = message_menu_action(&key) else {
-                    return;
-                };
-                self.dispatch_action(action);
+                if let InputRoute::Action(action) = route_modal_key(&key, ModalContext::MessageMenu)
+                {
+                    self.dispatch_action(action);
+                }
             } else if self.focus_pane == FocusPane::Conversation
                 && self.selected_section == Section::Status
             {
                 // Read-only status view: Esc returns to the contact list and
                 // Enter opens the fullscreen viewer on a media status.
-                if key == Key::k(KeyCode::Esc) {
-                    self.dispatch_action(AppAction::CloseStatusPane);
-                } else if key == Key::k(KeyCode::Enter) {
-                    self.dispatch_action(AppAction::ViewMessage);
+                if let Some(action) =
+                    route_context_key(&key, self.focus_pane, self.selected_section, false, false)
+                {
+                    self.dispatch_action(action);
                 } else {
                     match self.kh.resolve(key.clone()) {
                         SequenceResolution::Complete(action) => self.dispatch_action(action),
@@ -183,15 +190,22 @@ impl App<'_> {
                 && key == Key::k(KeyCode::Enter)
             {
                 self.begin_logout_confirmation();
+            } else if let Some(action) = route_context_key(
+                &key,
+                self.focus_pane,
+                self.selected_section,
+                self.community_detail.is_some(),
+                self.rail_on_logout,
+            ) {
+                self.dispatch_action(action);
             } else if key == Key::k(KeyCode::Enter) {
-                match self.focus_pane {
-                    FocusPane::SectionRail => {
-                        self.dispatch_action(AppAction::FocusPane(FocusPane::ChatList))
-                    }
-                    FocusPane::ChatList => self.dispatch_action(AppAction::OpenChat),
-                    FocusPane::Conversation => {
-                        self.dispatch_action(AppAction::OpenContextualActions)
-                    }
+                if self.focus_pane == FocusPane::ChatList
+                    && self.community_detail.is_some()
+                    && key == Key::k(KeyCode::Enter)
+                {
+                    self.dispatch_action(AppAction::OpenChat);
+                } else if self.focus_pane == FocusPane::SectionRail && self.rail_on_logout {
+                    self.begin_logout_confirmation();
                 }
             } else {
                 match self.kh.resolve(key.clone()) {

@@ -30,6 +30,7 @@ pub mod events;
 pub mod file_picker_input;
 pub mod input_mapping;
 pub mod input_reader;
+pub mod input_router;
 pub mod inputs;
 pub mod leader_menu;
 pub mod log_toggle;
