@@ -326,6 +326,7 @@ impl App<'_> {
             | AppAction::ToggleSectionRail
             | AppAction::ToggleChatList
             | AppAction::FocusPane(_)
+            | AppAction::OpenContextualActions
             | AppAction::ToggleShortcutPopup
             | AppAction::ToggleComposerDirection
             | AppAction::PlannedLeaderAction(_)) => {
