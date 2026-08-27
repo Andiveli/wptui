@@ -1,7 +1,6 @@
 use std::ffi::{CString, c_char, c_void};
 
 use crate::{
-    ForwardFailure, ForwardReport,
     abi::{CFileMessage, CJID, CTextMessage, MessageType},
     file_kind_discriminant,
     models::{JID, Mention, Message, MessageContent},
@@ -315,5 +314,34 @@ mod tests {
         };
         assert_eq!(pointers.len(), 1);
         assert_eq!(file.mentioned_count, 1);
+    }
+}
+use strum::FromRepr;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ForwardReport {
+    pub succeeded: usize,
+    pub failed: usize,
+    pub failure: ForwardFailure,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, FromRepr)]
+#[repr(u8)]
+pub enum ForwardFailure {
+    #[default]
+    None = 0,
+    SourceUnavailable = 1,
+    InvalidSource = 2,
+    InvalidDestination = 3,
+    SendFailed = 4,
+}
+
+impl ForwardReport {
+    pub fn with_reason(succeeded: usize, failed: usize, failure: ForwardFailure) -> Self {
+        Self {
+            succeeded,
+            failed,
+            failure,
+        }
     }
 }
