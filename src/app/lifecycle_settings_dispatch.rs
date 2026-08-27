@@ -33,6 +33,7 @@ impl App<'_> {
                     self.focus_pane = pane;
                 }
             }
+            AppAction::OpenContextualActions => self.open_contextual_actions(),
             AppAction::ToggleShortcutPopup => self.shortcut_popup = !self.shortcut_popup,
             AppAction::ToggleComposerDirection => self.toggle_composer_direction(),
             AppAction::PlannedLeaderAction(label) => {
@@ -52,6 +53,7 @@ mod tests {
     #[test]
     fn hidden_pane_toggle_moves_focus_to_visible_pane() {
         let mut app = TestApp::new();
+        app.pane_visibility.section_rail = false;
         app.focus_pane = FocusPane::ChatList;
 
         app.dispatch_action(AppAction::ToggleChatList);
