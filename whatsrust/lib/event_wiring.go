@@ -71,13 +71,14 @@ func AddEventHandlers() {
 
 func addEventHandlers() {
 	viewOnceDispatcher := newViewOnceUnavailableDispatcher(HandleViewOnceUnavailableMessage)
-	client.AddEventHandler(func(rawEvt any) {
+	clientSnapshot := lifecycleState.clientSnapshot()
+	clientSnapshot.AddEventHandler(func(rawEvt any) {
 		messageActionCensusDiagnostic(rawEvt)
 		switch evt := rawEvt.(type) {
 		case *events.Connected:
-			handleConnected(client.SendPresence, dispatchConnectedEvent, LOG_WARN)
+			handleConnected(clientSnapshot.SendPresence, dispatchConnectedEvent, LOG_WARN)
 		case *events.Presence:
-			dispatchPresenceEvent(evt, client.Store.LIDs.GetPNForLID, rawPresenceProbe.record, rawPresenceProbe.update, dispatchPresenceCallback)
+			dispatchPresenceEvent(evt, clientSnapshot.Store.LIDs.GetPNForLID, rawPresenceProbe.record, rawPresenceProbe.update, dispatchPresenceCallback)
 		case *events.MarkChatAsRead:
 			dispatchMarkChatAsReadEvent(evt)
 		case *events.AppStateSyncComplete:
@@ -90,12 +91,12 @@ func addEventHandlers() {
 		case *events.UndecryptableMessage:
 			dispatchUndecryptableMessage(evt, viewOnceDispatcher.dispatchOnce)
 		case *events.Receipt:
-			if receipt, ok := receiptEventFromEventWithClient(client, evt); ok {
+			if receipt, ok := receiptEventFromEventWithClient(clientSnapshot, evt); ok {
 				LOG_DEBUG("%#v was read by %s at %s", evt.MessageIDs, evt.SourceString(), evt.Timestamp)
 				dispatchReceiptEvent(receipt)
 			}
 		case *events.HistorySync:
-			dispatchHistorySync(evt, client.DangerousInternals().StoreHistoricalMessageSecrets, client.ParseWebMessage, func(parsed *events.Message) {
+			dispatchHistorySync(evt, clientSnapshot.DangerousInternals().StoreHistoricalMessageSecrets, clientSnapshot.ParseWebMessage, func(parsed *events.Message) {
 				dispatchIncomingMessage(parsed, dispatchMessageActionEvent, func(info types.MessageInfo, message *waE2E.Message, _ bool) {
 					HandleMessage(info, message, true)
 				}, viewOnceDispatcher.dispatchOnce)

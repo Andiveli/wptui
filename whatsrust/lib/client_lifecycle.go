@@ -28,9 +28,9 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// client remains package-owned because the other bridge actions use the same
-// client after this lifecycle boundary is crossed. The QR stream and handler
-// registration state live here so reconnect setup has one resettable owner.
+// client remains package-owned until the remaining bridge callers migrate to
+// clientSnapshot. Publication and reset are centralized in lifecycleState so
+// the migrated callers observe one synchronized lifecycle boundary.
 var client *whatsmeow.Client
 
 type clientLifecycleState struct {
@@ -59,6 +59,7 @@ func (state *clientLifecycleState) publishClient(newClient *whatsmeow.Client) {
 func (state *clientLifecycleState) reset() {
 	state.mu.Lock()
 	defer state.mu.Unlock()
+	client = nil
 	state.qrChan = nil
 	state.handlersRegistered = false
 }
@@ -103,7 +104,8 @@ func requestFullHistorySync() {
 //export C_Connect
 func C_Connect(handler C.QrCallback, data unsafe.Pointer) {
 	AddEventHandlers()
-	if client.Store.ID == nil {
+	clientSnapshot := lifecycleState.clientSnapshot()
+	if clientSnapshot.Store.ID == nil {
 		LOG_INFO(
 			"Pairing: DeviceProps require_full_sync=%t days_limit=%d size_mb=%d platform=%s",
 			store.DeviceProps.GetRequireFullSync(),
@@ -112,10 +114,10 @@ func C_Connect(handler C.QrCallback, data unsafe.Pointer) {
 			store.DeviceProps.GetPlatformType(),
 		)
 		lifecycleState.mu.Lock()
-		lifecycleState.qrChan, _ = client.GetQRChannel(context.Background())
+		lifecycleState.qrChan, _ = clientSnapshot.GetQRChannel(context.Background())
 		qrChannel := lifecycleState.qrChan
 		lifecycleState.mu.Unlock()
-		if err := client.Connect(); err != nil {
+		if err := clientSnapshot.Connect(); err != nil {
 			panic(err)
 		}
 
@@ -129,14 +131,15 @@ func C_Connect(handler C.QrCallback, data unsafe.Pointer) {
 		}
 		return
 	}
-	if err := client.Connect(); err != nil {
+	if err := clientSnapshot.Connect(); err != nil {
 		panic(err)
 	}
 }
 
 //export C_PairPhone
 func C_PairPhone(phone *C.char) *C.char {
-	code, err := client.PairPhone(context.Background(), C.GoString(phone), true, whatsmeow.PairClientChrome, "Chrome (Linux)")
+	clientSnapshot := lifecycleState.clientSnapshot()
+	code, err := clientSnapshot.PairPhone(context.Background(), C.GoString(phone), true, whatsmeow.PairClientChrome, "Chrome (Linux)")
 	if err != nil {
 		panic(err)
 	}
@@ -155,7 +158,8 @@ func C_FreePairPhoneResult(result *C.char) {
 
 //export C_Disconnect
 func C_Disconnect() {
-	client.Disconnect()
+	clientSnapshot := lifecycleState.clientSnapshot()
+	clientSnapshot.Disconnect()
 	clearAuthenticatedPushNameCache()
 }
 
@@ -178,11 +182,12 @@ func logoutStatusAfterRemoteFailure(localDeleteErr error) uint8 {
 //export C_Logout
 func C_Logout() C.uint8_t {
 	status := logoutStatusLoggedOut
-	if client == nil {
+	clientSnapshot := lifecycleState.clientSnapshot()
+	if clientSnapshot == nil {
 		status = logoutStatusNotLoggedIn
 	} else {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		err := client.Logout(ctx)
+		err := clientSnapshot.Logout(ctx)
 		cancel()
 		switch {
 		case err == nil:
@@ -191,11 +196,11 @@ func C_Logout() C.uint8_t {
 			status = logoutStatusNotLoggedIn
 		default:
 			LOG_ERROR("Logout: remote revocation failed, clearing locally only: %v", err)
-			client.Disconnect()
-			if client.Store == nil {
+			clientSnapshot.Disconnect()
+			if clientSnapshot.Store == nil {
 				status = logoutStatusLocalOnly
 			} else {
-				localDeleteErr := client.Store.Delete(context.Background())
+				localDeleteErr := clientSnapshot.Store.Delete(context.Background())
 				if localDeleteErr != nil {
 					LOG_ERROR("Logout: failed to clear local store: %v", localDeleteErr)
 				}
