@@ -32,6 +32,7 @@ import (
 	"sync"
 	"unsafe"
 
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 )
@@ -50,12 +51,16 @@ type messageCallbackMetadata struct {
 }
 
 func messageCallbackMetadataFrom(info types.MessageInfo, msg *waE2E.Message) messageCallbackMetadata {
+	return messageCallbackMetadataFromWithClient(lifecycleState.clientSnapshot(), info, msg)
+}
+
+func messageCallbackMetadataFromWithClient(c *whatsmeow.Client, info types.MessageInfo, msg *waE2E.Message) messageCallbackMetadata {
 	return messageCallbackMetadata{
 		id:           info.ID,
 		chat:         info.Chat,
 		sender:       info.Sender,
 		pushName:     info.PushName,
-		mentionsSelf: messageMentionsSelf(msg),
+		mentionsSelf: messageMentionsSelfWithClient(c, msg),
 		timestamp:    info.Timestamp.Unix(),
 		isFromMe:     info.IsFromMe,
 		forwarding:   forwardingStateFromMessage(msg),
@@ -72,12 +77,13 @@ type messageCallback struct {
 func beginMessageCallback(info types.MessageInfo, msg *waE2E.Message, rawSource []byte) *messageCallback {
 	messageCallbackMu.Lock()
 	rememberAuthenticatedPushName(info)
+	clientSnapshot := lifecycleState.clientSnapshot()
 	callback := &messageCallback{locked: true}
 	if len(rawSource) > 0 {
 		callback.forwardData = C.CBytes(rawSource)
 	}
 	C.setActiveForwardSource((*C.uint8_t)(callback.forwardData), C.size_t(len(rawSource)))
-	metadata := messageCallbackMetadataFrom(info, msg)
+	metadata := messageCallbackMetadataFromWithClient(clientSnapshot, info, msg)
 	callback.info = C.MessageInfo{
 		id:              C.CString(metadata.id),
 		chat:            jidToC(metadata.chat),
@@ -95,13 +101,17 @@ func beginMessageCallback(info types.MessageInfo, msg *waE2E.Message, rawSource 
 }
 
 func messageMentionsSelf(msg *waE2E.Message) bool {
-	if client == nil || client.Store == nil || msg == nil {
+	return messageMentionsSelfWithClient(lifecycleState.clientSnapshot(), msg)
+}
+
+func messageMentionsSelfWithClient(c *whatsmeow.Client, msg *waE2E.Message) bool {
+	if c == nil || c.Store == nil || msg == nil {
 		return false
 	}
 	for _, contextInfo := range messageContextInfos(msg) {
 		for _, mentioned := range contextInfo.GetMentionedJID() {
 			jid, err := types.ParseJID(mentioned)
-			if err == nil && participantMatchesSelf(client, types.GroupParticipant{JID: jid}) {
+			if err == nil && participantMatchesSelf(c, types.GroupParticipant{JID: jid}) {
 				return true
 			}
 		}

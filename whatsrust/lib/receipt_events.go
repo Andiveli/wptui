@@ -92,7 +92,7 @@ func receiptEventFromEventWithClient(c *whatsmeow.Client, event *events.Receipt)
 }
 
 func receiptEventFromEvent(event *events.Receipt) (receiptEvent, bool) {
-	return receiptEventFromEventWithClient(client, event)
+	return receiptEventFromEventWithClient(lifecycleState.clientSnapshot(), event)
 }
 
 func receiptKind(kind types.ReceiptType) uint8 {
