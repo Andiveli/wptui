@@ -43,12 +43,10 @@ mod tests {
 
     #[test]
     fn translates_supported_terminal_key_and_modifiers() {
-        let event = Event::Key(
-            ratatui::crossterm::event::KeyEvent::new(
-                TerminalKeyCode::Char('x'),
-                KeyModifiers::SHIFT | KeyModifiers::CONTROL | KeyModifiers::ALT,
-            ),
-        );
+        let event = Event::Key(ratatui::crossterm::event::KeyEvent::new(
+            TerminalKeyCode::Char('x'),
+            KeyModifiers::SHIFT | KeyModifiers::CONTROL | KeyModifiers::ALT,
+        ));
 
         assert_eq!(
             translate_terminal_event(&event),
