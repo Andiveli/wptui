@@ -61,6 +61,7 @@ pub mod share_picker_input;
 pub mod status_actions;
 pub mod status_input;
 pub mod status_projection;
+pub mod terminal_input_translation;
 pub mod terminal_session;
 #[cfg(test)]
 pub(crate) mod test_support;

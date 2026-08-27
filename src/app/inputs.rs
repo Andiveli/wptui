@@ -1,4 +1,4 @@
-use ratatui::crossterm::event::{Event, KeyEventKind};
+use ratatui::crossterm::event::Event;
 
 use crate::app::App;
 use crate::app::actions::{
@@ -14,6 +14,7 @@ use crate::app::input_mapping::{
 use crate::app::leader_menu::{LeaderMenuContext, build_leader_menu};
 use crate::app::log_toggle::is_toggle_logs_key;
 use crate::app::status_input::status_view_allows;
+use crate::app::terminal_input_translation::translate_terminal_event;
 use crate::input_key::{Key, KeyCode};
 use crate::keybindings::SequenceResolution;
 use crate::keybindings::matches_leader_binding;
@@ -67,46 +68,7 @@ impl App<'_> {
     }
 
     pub fn on_terminal_event(&mut self, event: Event) {
-        if let Event::Key(key_event) = event
-            && key_event.kind == KeyEventKind::Press
-        {
-            let key = Key {
-                code: match key_event.code {
-                    ratatui::crossterm::event::KeyCode::Backspace => KeyCode::Backspace,
-                    ratatui::crossterm::event::KeyCode::Enter => KeyCode::Enter,
-                    ratatui::crossterm::event::KeyCode::Esc => KeyCode::Esc,
-                    ratatui::crossterm::event::KeyCode::Left => KeyCode::Left,
-                    ratatui::crossterm::event::KeyCode::Right => KeyCode::Right,
-                    ratatui::crossterm::event::KeyCode::Up => KeyCode::Up,
-                    ratatui::crossterm::event::KeyCode::Down => KeyCode::Down,
-                    ratatui::crossterm::event::KeyCode::Tab => KeyCode::Tab,
-                    ratatui::crossterm::event::KeyCode::Char(c) => KeyCode::Char(c),
-                    _ => return,
-                },
-                modifiers: {
-                    let mut modifiers = crate::input_key::KeyModifiers::NONE;
-                    if key_event
-                        .modifiers
-                        .contains(ratatui::crossterm::event::KeyModifiers::SHIFT)
-                    {
-                        modifiers = modifiers | crate::input_key::KeyModifiers::SHIFT;
-                    }
-                    if key_event
-                        .modifiers
-                        .contains(ratatui::crossterm::event::KeyModifiers::CONTROL)
-                    {
-                        modifiers = modifiers | crate::input_key::KeyModifiers::CONTROL;
-                    }
-                    if key_event
-                        .modifiers
-                        .contains(ratatui::crossterm::event::KeyModifiers::ALT)
-                    {
-                        modifiers = modifiers | crate::input_key::KeyModifiers::ALT;
-                    }
-                    modifiers
-                },
-            };
-
+        if let Some(key) = translate_terminal_event(&event) {
             if self.pending_logout {
                 if self.logout_in_progress {
                     // The async logout is running (off the event loop). Ignore
