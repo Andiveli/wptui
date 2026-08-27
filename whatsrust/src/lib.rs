@@ -1,5 +1,4 @@
-use std::ffi::{CStr, CString};
-use std::sync::Arc;
+use std::ffi::CString;
 
 #[macro_use]
 mod callbacks;
@@ -33,7 +32,10 @@ pub use models::{
     ProfilePictureError,
 };
 pub use presence::{SubscribePresenceResult, drain_raw_presence_diagnostics, subscribe_presence};
-pub use queries::{get_communities, get_contacts};
+pub use queries::{
+    get_chat_settings, get_communities, get_contacts, get_group_info, get_group_participants,
+    resolve_dm_chat,
+};
 pub use read_sync::{MarkAsReadError, mark_as_read, sync_chat_read};
 pub use registrations::{
     set_log_handler, set_message_handler, set_optimistic_text_sent_handler, set_presence_handler,
@@ -308,121 +310,5 @@ impl CallbackTranslator<CJID> for JID {
 impl CallbackTranslator<i64> for i64 {
     unsafe fn to_rust(value: i64) -> Self {
         value
-    }
-}
-
-pub fn get_chat_settings(jid: &JID) -> ChatSettings {
-    let jid_c = CJID::from(jid);
-    let settings = unsafe { C_GetChatSettings(jid_c) };
-
-    ChatSettings {
-        found: settings.found,
-        muted_until: settings.muted_until,
-        pinned: settings.pinned,
-        archived: settings.archived,
-    }
-}
-
-fn group_info_from_parts(
-    jid: &JID,
-    status: u8,
-    is_announce: bool,
-    is_admin: bool,
-) -> Result<GroupInfo, GroupInfoError> {
-    match status {
-        0 => Ok(GroupInfo {
-            jid: jid.clone(),
-            name: "".into(),
-            is_announce,
-            is_admin,
-        }),
-        1 => Err(GroupInfoError::NotGroup),
-        2 => Err(GroupInfoError::ClientUnavailable),
-        3 => Err(GroupInfoError::RequestFailed),
-        _ => Err(GroupInfoError::InvalidBridgeResult),
-    }
-}
-
-pub fn get_group_info(jid: &JID) -> Result<GroupInfo, GroupInfoError> {
-    let jid_c = CJID::from(jid);
-    let result = unsafe { C_GetGroupInfo(jid_c) };
-    group_info_from_parts(jid, result.status, result.is_announce, result.is_admin)
-}
-
-pub fn get_group_participants(jid: &JID) -> Vec<GroupParticipant> {
-    let jid_c = CJID::from(jid);
-    let result = unsafe { C_GetGroupParticipants(jid_c) };
-    if result.entries.is_null() || result.size == 0 {
-        return Vec::new();
-    }
-    let entries = unsafe { std::slice::from_raw_parts(result.entries, result.size as usize) };
-    let participants = entries
-        .iter()
-        .filter_map(|entry| {
-            let jid: JID = (!entry.jid.is_null()).then(|| (&entry.jid).into())?;
-            let phone_number = if entry.phone_number.is_null() {
-                jid.clone()
-            } else {
-                (&entry.phone_number).into()
-            };
-            let name = if entry.name.is_null() {
-                Arc::<str>::from("")
-            } else {
-                unsafe { CStr::from_ptr(entry.name) }
-                    .to_string_lossy()
-                    .into_owned()
-                    .into()
-            };
-            Some(GroupParticipant {
-                jid,
-                phone_number,
-                name,
-            })
-        })
-        .collect();
-    unsafe { C_FreeGroupParticipants(result) };
-    participants
-}
-
-#[cfg(test)]
-mod group_info_tests {
-    use super::{GroupInfoError, JID, group_info_from_parts};
-
-    #[test]
-    fn maps_announce_and_admin_flags() {
-        let jid = JID("123@g.us".into());
-        let info = group_info_from_parts(&jid, 0, true, false).unwrap();
-
-        assert_eq!(info.jid, jid);
-        assert!(info.is_announce);
-        assert!(!info.is_admin);
-    }
-
-    #[test]
-    fn maps_bridge_failures_without_claiming_send_permission() {
-        for (status, expected) in [
-            (1, GroupInfoError::NotGroup),
-            (2, GroupInfoError::ClientUnavailable),
-            (3, GroupInfoError::RequestFailed),
-            (255, GroupInfoError::InvalidBridgeResult),
-        ] {
-            assert_eq!(
-                group_info_from_parts(&JID("chat@g.us".into()), status, false, false),
-                Err(expected)
-            );
-        }
-    }
-}
-
-/// Resolves a group participant (or any user JID) to the canonical JID of
-/// its direct conversation: a LID is mapped to its phone number when known,
-/// matching how direct chats are keyed in the conversation list. Used so a
-/// "reply privately" opens/sends to the real stored chat, not an empty
-/// LID-keyed thread. Returns `None` only if the client is not ready or the
-/// JID is unusable.
-pub fn resolve_dm_chat(jid: &JID) -> Option<JID> {
-    unsafe {
-        presence::take_owned_c_string(C_ResolveDmChatId(CJID::from(jid)), C_FreeResolveDmChatId)
-            .map(JID::from)
     }
 }
