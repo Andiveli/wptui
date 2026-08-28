@@ -216,7 +216,6 @@ impl App<'_> {
         record("applied");
     }
 
-
     pub fn unread_boundary(&self, chat: &wr::JID) -> Option<(usize, i64)> {
         let state = self.timeline.get(chat)?;
         let cursor = (state.last_read_at?, state.last_read_message.clone()?);
