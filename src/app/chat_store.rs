@@ -406,7 +406,6 @@ impl App<'_> {
             .first()
             .map(|message| (unread.len(), message.info.timestamp))
     }
-
 }
 
 #[cfg(test)]
