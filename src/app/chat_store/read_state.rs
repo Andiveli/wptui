@@ -2,6 +2,19 @@ use super::super::App;
 use whatsrust as wr;
 
 impl App<'_> {
+    pub(super) fn restore_read_cursors(&mut self) {
+        for (chat, message_id, timestamp) in self.db_handler.read_cursors() {
+            self.timeline.insert(
+                chat,
+                super::super::unread_messages::ChatTimelineState {
+                    pending_new_messages: 0,
+                    last_read_message: Some(message_id),
+                    last_read_at: Some(timestamp),
+                },
+            );
+        }
+    }
+
     pub(super) fn is_viewing_latest_message(&self, chat: &wr::JID) -> bool {
         let latest = self
             .chat_messages

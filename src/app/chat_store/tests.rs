@@ -37,7 +37,7 @@ fn receipt_coordination_has_a_dedicated_owner() {
 }
 
 #[test]
-fn read_state_policy_owns_read_transitions_without_cursor_restoration() {
+fn read_state_policy_owns_read_transitions_and_cursor_restoration() {
     let chat_store = include_str!("../chat_store.rs");
     let hydration = include_str!("hydration.rs");
     let read_state = include_str!("read_state.rs");
@@ -47,12 +47,51 @@ fn read_state_policy_owns_read_transitions_without_cursor_restoration() {
         "pub fn mark_chat_read_at_latest",
         "pub(crate) fn apply_remote_chat_read",
         "pub fn unread_boundary",
+        "pub(super) fn restore_read_cursors",
     ] {
         assert!(read_state.contains(method));
         assert!(!chat_store.contains(method));
     }
-    assert!(!read_state.contains("read_cursors"));
-    assert!(hydration.contains("db_handler.read_cursors"));
+    assert!(read_state.contains("db_handler.read_cursors"));
+    assert!(!hydration.contains("db_handler.read_cursors"));
+    assert!(hydration.contains("self.restore_read_cursors()"));
+}
+
+#[test]
+fn persisted_chat_cursor_restores_into_read_state() {
+    let directory = tempfile::tempdir().unwrap();
+    let chat = wr::JID::from("chat@example.test".to_owned());
+    let message_id = wr::MessageId::from("read-message");
+    {
+        let app = TestApp::with_database(directory.path());
+        app.db_handler
+            .set_last_read_cursor(&chat, Some(message_id.clone()), 42);
+    }
+
+    let mut app = TestApp::with_database(directory.path());
+    app.restore_read_cursors();
+
+    assert_eq!(app.timeline[&chat].last_read_message, Some(message_id));
+    assert_eq!(app.timeline[&chat].last_read_at, Some(42));
+    assert_eq!(app.timeline[&chat].pending_new_messages, 0);
+}
+
+#[test]
+fn persisted_chat_cursor_survives_hydration_reload() {
+    let directory = tempfile::tempdir().unwrap();
+    let chat = wr::JID::from("chat@example.test".to_owned());
+    let message_id = wr::MessageId::from("read-message");
+    {
+        let app = TestApp::with_database(directory.path());
+        app.db_handler
+            .set_last_read_cursor(&chat, Some(message_id.clone()), 42);
+    }
+
+    let mut app = TestApp::with_database(directory.path());
+    app.load_data_from_db();
+
+    assert_eq!(app.timeline[&chat].last_read_message, Some(message_id));
+    assert_eq!(app.timeline[&chat].last_read_at, Some(42));
 }
 
 #[test]

@@ -36,16 +36,7 @@ impl App<'_> {
             }
             Err(error) => log::error!("status cursor read failed: {error}"),
         }
-        for (chat, message_id, timestamp) in self.db_handler.read_cursors() {
-            self.timeline.insert(
-                chat,
-                super::super::unread_messages::ChatTimelineState {
-                    pending_new_messages: 0,
-                    last_read_message: Some(message_id),
-                    last_read_at: Some(timestamp),
-                },
-            );
-        }
+        self.restore_read_cursors();
 
         for action in self.db_handler.get_message_actions() {
             self.local_action_sequence = self.local_action_sequence.max(
