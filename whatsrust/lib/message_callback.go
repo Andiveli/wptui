@@ -147,7 +147,22 @@ func messageCallbackPushName(callback *messageCallback) string {
 }
 
 func (callback *messageCallback) setQuoteID(id string) {
+	callback.clearQuoteID()
 	callback.info.quoteID = C.CString(id)
+}
+
+func (callback *messageCallback) setQuoteIDFromContext(contextInfo *waE2E.ContextInfo) {
+	callback.clearQuoteID()
+	if contextInfo != nil && contextInfo.GetStanzaID() != "" {
+		callback.info.quoteID = C.CString(contextInfo.GetStanzaID())
+	}
+}
+
+func (callback *messageCallback) clearQuoteID() {
+	if callback.info.quoteID != nil {
+		C.free(unsafe.Pointer(callback.info.quoteID))
+		callback.info.quoteID = nil
+	}
 }
 
 func (callback *messageCallback) close() {
