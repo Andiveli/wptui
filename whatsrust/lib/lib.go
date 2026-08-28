@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -34,91 +33,6 @@ var mediaTypeToMMSType = map[whatsmeow.MediaType]string{
 	MediaLinkThumbnail: "thumbnail-link",
 }
 
-type downloadableMessageWithLength interface {
-	whatsmeow.DownloadableMessage
-	GetFileLength() uint64
-}
-
-type downloadableMessageWithSizeBytes interface {
-	whatsmeow.DownloadableMessage
-	GetFileSizeBytes() uint64
-}
-
-func getSize(msg whatsmeow.DownloadableMessage) int {
-	switch sized := msg.(type) {
-	case downloadableMessageWithLength:
-		return int(sized.GetFileLength())
-	case downloadableMessageWithSizeBytes:
-		return int(sized.GetFileSizeBytes())
-	default:
-		return -1
-	}
-}
-
-var downloadInfoVersion = 1 // bump version upon any struct change
-type DownloadInfo struct {
-	Version int `json:"Version_int"`
-	// Url        string `json:"Url_string"`
-	DirectPath string `json:"DirectPath_string"`
-
-	TargetPath string              `json:"TargetPath_string"`
-	MediaKey   []byte              `json:"MediaKey_arraybyte"`
-	MediaType  whatsmeow.MediaType `json:"MediaType_MediaType"`
-	Size       int                 `json:"Size_int"`
-
-	FileEncSha256 []byte `json:"FileEncSha256_arraybyte"`
-	FileSha256    []byte `json:"FileSha256_arraybyte"`
-
-	// Optional video thumbnail sidecar
-	ThumbnailData       []byte `json:"ThumbnailData_arraybyte,omitempty"`
-	ThumbnailTargetPath string `json:"ThumbnailTargetPath_string,omitempty"`
-}
-
-// AddThumbnailToFileId embeds JPEG thumbnail data into an existing fileId
-// so DownloadFromFileId can save it as a sidecar alongside the media file.
-func AddThumbnailToFileId(fileId string, thumbnailData []byte, thumbTargetPath string) string {
-	if len(thumbnailData) == 0 || thumbTargetPath == "" {
-		return fileId
-	}
-	var info DownloadInfo
-	if err := json.Unmarshal([]byte(fileId), &info); err != nil {
-		return fileId
-	}
-	info.ThumbnailData = thumbnailData
-	info.ThumbnailTargetPath = thumbTargetPath
-	bytes, err := json.Marshal(info)
-	if err != nil {
-		return fileId
-	}
-	return string(bytes)
-}
-
-func DownloadableMessageToFileId(client *whatsmeow.Client, msg whatsmeow.DownloadableMessage, targetPath string) string {
-	var info DownloadInfo
-	info.Version = downloadInfoVersion
-
-	info.TargetPath = targetPath
-	info.MediaKey = msg.GetMediaKey()
-	info.Size = getSize(msg)
-	info.FileEncSha256 = msg.GetFileEncSHA256()
-	info.FileSha256 = msg.GetFileSHA256()
-	info.DirectPath = msg.GetDirectPath()
-
-	info.MediaType = whatsmeow.GetMediaType(msg)
-	if len(info.MediaType) == 0 {
-		return ""
-	}
-
-	bytes, err := json.Marshal(info)
-	if err != nil {
-		return ""
-	}
-
-	str := string(bytes)
-
-	return str
-}
-
 const (
 	FileStatusNone = iota - 1
 	FileStatusDownloaded
@@ -137,17 +51,6 @@ func DownloadFromFileInfo(client *whatsmeow.Client, info DownloadInfo) ([]byte, 
 		mediaTypeToMMSType[info.MediaType],
 		false,
 	)
-}
-func FileIdToDownloadInfo(fileId string) (DownloadInfo, error) {
-	var info DownloadInfo
-	err := json.Unmarshal([]byte(fileId), &info)
-	if err != nil {
-		return info, err
-	}
-	if info.Version != downloadInfoVersion {
-		return info, err
-	}
-	return info, nil
 }
 func DownloadFromFileId(client *whatsmeow.Client, fileId string, basePath string) int {
 	if client == nil {
