@@ -132,3 +132,33 @@ func TestReceiptDispatchKeepsCArrayAndPayloadThroughCallback(t *testing.T) {
 		t.Fatal("receipt C array must be populated before the callback")
 	}
 }
+
+func TestReceiptDispatchAndRustDecoderSupportEmptyMessageIDs(t *testing.T) {
+	goSource, err := os.ReadFile("receipt_events.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	goBody, ok := extractFunctionBody(string(goSource), "func dispatchReceiptEvent(receipt receiptEvent)")
+	if !ok {
+		t.Fatal("dispatchReceiptEvent function body not found in receipt_events.go")
+	}
+	for _, fragment := range []string{
+		"var cmessageIDs **C.char",
+		"if n > 0 {",
+		"creceipt.messageIDs = cmessageIDs",
+		"creceipt.size = C.uint32_t(n)",
+	} {
+		if !strings.Contains(goBody, fragment) {
+			t.Fatalf("empty receipt dispatch must contain %q", fragment)
+		}
+	}
+
+	rustSource, err := os.ReadFile("../src/events.rs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rustText := string(rustSource)
+	if !strings.Contains(rustText, "if receipt.count == 0 { &[] } else {") {
+		t.Fatal("Rust receipt decoder must avoid dereferencing the message ID pointer for empty arrays")
+	}
+}
