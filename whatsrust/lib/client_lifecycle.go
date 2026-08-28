@@ -33,11 +33,21 @@ import (
 // the migrated callers observe one synchronized lifecycle boundary.
 var client *whatsmeow.Client
 
+type logoutReservation struct {
+	client     *whatsmeow.Client
+	generation uint64
+	done       chan struct{}
+}
+
 type clientLifecycleState struct {
-	mu                 sync.Mutex
-	qrChan             <-chan whatsmeow.QRChannelItem
-	handlersRegistered bool
-	registrationDone   chan struct{}
+	mu                   sync.Mutex
+	qrChan               <-chan whatsmeow.QRChannelItem
+	handlersRegistered   bool
+	registrationDone     chan struct{}
+	logoutDone           chan struct{}
+	logoutGeneration     uint64
+	logoutCallbackActive bool
+	resetInProgress      bool
 }
 
 var lifecycleState clientLifecycleState
@@ -59,6 +69,14 @@ func (state *clientLifecycleState) publishClient(newClient *whatsmeow.Client) {
 
 func (state *clientLifecycleState) reset() {
 	state.mu.Lock()
+	state.resetInProgress = true
+	state.logoutGeneration++
+	for state.logoutDone != nil {
+		done := state.logoutDone
+		state.mu.Unlock()
+		<-done
+		state.mu.Lock()
+	}
 	for state.registrationDone != nil {
 		done := state.registrationDone
 		state.mu.Unlock()
@@ -68,6 +86,43 @@ func (state *clientLifecycleState) reset() {
 	client = nil
 	state.qrChan = nil
 	state.handlersRegistered = false
+	state.resetInProgress = false
+	state.mu.Unlock()
+}
+
+func (state *clientLifecycleState) beginLogout() (logoutReservation, bool) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	reservation := logoutReservation{client: client}
+	if reservation.client == nil || state.logoutDone != nil || state.logoutCallbackActive || state.resetInProgress {
+		return reservation, false
+	}
+	reservation.generation = state.logoutGeneration
+	reservation.done = make(chan struct{})
+	state.logoutDone = reservation.done
+	return reservation, true
+}
+
+func (state *clientLifecycleState) completeLogout(done chan struct{}, generation uint64) bool {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	if state.logoutDone != done {
+		return false
+	}
+	state.logoutDone = nil
+	close(done)
+	if state.logoutGeneration != generation {
+		return false
+	}
+	state.logoutCallbackActive = true
+	return true
+}
+
+func (state *clientLifecycleState) finishLogoutCallback() {
+	state.mu.Lock()
+	state.logoutCallbackActive = false
 	state.mu.Unlock()
 }
 
@@ -210,36 +265,106 @@ func logoutStatusAfterRemoteFailure(localDeleteErr error) uint8 {
 	return logoutStatusLocalOnly
 }
 
+type logoutOperation struct {
+	timeout         time.Duration
+	remoteLogout    func(context.Context, *whatsmeow.Client) error
+	onRemoteFailure func(*whatsmeow.Client, error) uint8
+	emit            func(uint8)
+	state           *clientLifecycleState
+}
+
+func (operation logoutOperation) start(clientSnapshot *whatsmeow.Client) {
+	if operation.state != nil {
+		reservation, ok := operation.state.beginLogout()
+		if !ok {
+			return
+		}
+		operation.startWithReservation(reservation)
+		return
+	}
+	go operation.run(clientSnapshot, nil)
+}
+
+func (operation logoutOperation) startWithReservation(reservation logoutReservation) {
+	go operation.run(reservation.client, &reservation)
+}
+
+func (operation logoutOperation) run(clientSnapshot *whatsmeow.Client, reservation *logoutReservation) {
+	ctx, cancel := context.WithTimeout(context.Background(), operation.timeout)
+	defer cancel()
+
+	remoteResult := make(chan error, 1)
+	go func() {
+		remoteResult <- operation.remoteLogout(ctx, clientSnapshot)
+	}()
+
+	var err error
+	select {
+	case err = <-remoteResult:
+	case <-ctx.Done():
+		err = ctx.Err()
+	}
+	status := logoutStatusLoggedOut
+	switch {
+	case err == nil:
+		status = logoutStatusLoggedOut
+	case errors.Is(err, whatsmeow.ErrNotLoggedIn):
+		status = logoutStatusNotLoggedIn
+	default:
+		status = operation.onRemoteFailure(clientSnapshot, err)
+	}
+	if reservation != nil {
+		if !operation.state.completeLogout(reservation.done, reservation.generation) {
+			return
+		}
+		defer operation.state.finishLogoutCallback()
+	}
+	operation.emit(status)
+}
+
+const logoutStoreDeleteTimeout = 5 * time.Second
+
+func deleteLogoutStore(deleteStore func(context.Context) error) error {
+	ctx, cancel := context.WithTimeout(context.Background(), logoutStoreDeleteTimeout)
+	defer cancel()
+	return deleteStore(ctx)
+}
+
+func localLogoutAfterRemoteFailure(clientSnapshot *whatsmeow.Client, err error) uint8 {
+	LOG_ERROR("Logout: remote revocation failed, clearing locally only: %v", err)
+	clientSnapshot.Disconnect()
+	if clientSnapshot.Store == nil {
+		return logoutStatusLocalOnly
+	}
+	localDeleteErr := deleteLogoutStore(clientSnapshot.Store.Delete)
+	if localDeleteErr != nil {
+		LOG_ERROR("Logout: failed to clear local store: %v", localDeleteErr)
+	}
+	return logoutStatusAfterRemoteFailure(localDeleteErr)
+}
+
 //export C_Logout
 func C_Logout() C.uint8_t {
-	status := logoutStatusLoggedOut
-	clientSnapshot := lifecycleState.clientSnapshot()
-	if clientSnapshot == nil {
-		status = logoutStatusNotLoggedIn
-	} else {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		err := clientSnapshot.Logout(ctx)
-		cancel()
-		switch {
-		case err == nil:
-			status = logoutStatusLoggedOut
-		case errors.Is(err, whatsmeow.ErrNotLoggedIn):
-			status = logoutStatusNotLoggedIn
-		default:
-			LOG_ERROR("Logout: remote revocation failed, clearing locally only: %v", err)
-			clientSnapshot.Disconnect()
-			if clientSnapshot.Store == nil {
-				status = logoutStatusLocalOnly
-			} else {
-				localDeleteErr := clientSnapshot.Store.Delete(context.Background())
-				if localDeleteErr != nil {
-					LOG_ERROR("Logout: failed to clear local store: %v", localDeleteErr)
-				}
-				status = logoutStatusAfterRemoteFailure(localDeleteErr)
-			}
-		}
+	reservation, started := lifecycleState.beginLogout()
+	if reservation.client == nil {
+		clearAuthenticatedPushNameCache()
+		emitLogoutResult(logoutStatusNotLoggedIn)
+		return C.uint8_t(logoutStatusNotLoggedIn)
 	}
-	clearAuthenticatedPushNameCache()
-	emitLogoutResult(status)
-	return C.uint8_t(status)
+	if !started {
+		return C.uint8_t(logoutStatusLoggedOut)
+	}
+
+	logoutOperation{
+		timeout:         20 * time.Second,
+		remoteLogout:    func(ctx context.Context, client *whatsmeow.Client) error { return client.Logout(ctx) },
+		onRemoteFailure: localLogoutAfterRemoteFailure,
+		state:           &lifecycleState,
+		emit: func(status uint8) {
+			clearAuthenticatedPushNameCache()
+			emitLogoutResult(status)
+		},
+	}.startWithReservation(reservation)
+
+	return C.uint8_t(logoutStatusLoggedOut)
 }
