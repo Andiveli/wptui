@@ -128,6 +128,8 @@ func dispatchHistorySync(
 			kind: C.uint8_t(EventTypeChat),
 			data: unsafe.Pointer(payload),
 		})
+		C.free(unsafe.Pointer(payload.chat))
+		C.free(unsafe.Pointer(payload))
 
 		for _, syncMessage := range conversation.GetMessages() {
 			webMessageInfo := syncMessage.Message
