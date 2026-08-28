@@ -4,16 +4,25 @@ use std::sync::Arc;
 use super::{
     ChatSettings, CommunitiesError, CommunityInfo, GroupInfo, GroupInfoError, GroupParticipant, JID,
 };
+use crate::models::CJIDOwner;
 use crate::abi::{
     C_FreeCommunities, C_FreeContacts, C_FreeGroupParticipants, C_FreeResolveDmChatId,
     C_GetChatSettings, C_GetCommunities, C_GetContacts, C_GetGroupInfo, C_GetGroupParticipants,
-    C_ResolveDmChatId, CJID,
+    C_ResolveDmChatId, CContactEntry, CGetContactsResult,
 };
 
 /// Returns all contacts and groups as (JID, display name). Includes LID aliases for contacts.
+fn contact_entries(result: &CGetContactsResult) -> &[CContactEntry] {
+    if result.entries.is_null() || result.size == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(result.entries, result.size as usize) }
+    }
+}
+
 pub fn get_contacts() -> Vec<(JID, Arc<str>)> {
     let result = unsafe { C_GetContacts() };
-    let entries = unsafe { std::slice::from_raw_parts(result.entries, result.size as usize) };
+    let entries = contact_entries(&result);
 
     let contacts = entries
         .iter()
@@ -84,7 +93,21 @@ pub fn get_communities() -> Result<Vec<CommunityInfo>, CommunitiesError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{community_announcement_from_code, community_participant_count_from_abi};
+    use super::{
+        community_announcement_from_code, community_participant_count_from_abi, contact_entries,
+    };
+    use crate::abi::CGetContactsResult;
+    use std::ptr;
+
+    #[test]
+    fn treats_null_empty_contact_results_as_empty() {
+        let result = CGetContactsResult {
+            entries: ptr::null(),
+            size: 0,
+        };
+
+        assert!(contact_entries(&result).is_empty());
+    }
 
     #[test]
     fn maps_community_announcement_tristate() {
@@ -110,8 +133,8 @@ mod tests {
 }
 
 pub fn get_chat_settings(jid: &JID) -> ChatSettings {
-    let jid_c = CJID::from(jid);
-    let settings = unsafe { C_GetChatSettings(jid_c) };
+    let jid_c = CJIDOwner::from(jid);
+    let settings = unsafe { C_GetChatSettings(jid_c.as_ptr()) };
 
     ChatSettings {
         found: settings.found,
@@ -142,14 +165,14 @@ fn group_info_from_parts(
 }
 
 pub fn get_group_info(jid: &JID) -> Result<GroupInfo, GroupInfoError> {
-    let jid_c = CJID::from(jid);
-    let result = unsafe { C_GetGroupInfo(jid_c) };
+    let jid_c = CJIDOwner::from(jid);
+    let result = unsafe { C_GetGroupInfo(jid_c.as_ptr()) };
     group_info_from_parts(jid, result.status, result.is_announce, result.is_admin)
 }
 
 pub fn get_group_participants(jid: &JID) -> Vec<GroupParticipant> {
-    let jid_c = CJID::from(jid);
-    let result = unsafe { C_GetGroupParticipants(jid_c) };
+    let jid_c = CJIDOwner::from(jid);
+    let result = unsafe { C_GetGroupParticipants(jid_c.as_ptr()) };
     if result.entries.is_null() || result.size == 0 {
         return Vec::new();
     }
@@ -185,7 +208,7 @@ pub fn get_group_participants(jid: &JID) -> Vec<GroupParticipant> {
 pub fn resolve_dm_chat(jid: &JID) -> Option<JID> {
     unsafe {
         super::presence::take_owned_c_string(
-            C_ResolveDmChatId(CJID::from(jid)),
+            C_ResolveDmChatId(CJIDOwner::from(jid).as_ptr()),
             C_FreeResolveDmChatId,
         )
         .map(JID::from)

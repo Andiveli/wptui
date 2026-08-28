@@ -104,7 +104,13 @@ func receiptKind(kind types.ReceiptType) uint8 {
 
 func dispatchReceiptEvent(receipt receiptEvent) {
 	n := len(receipt.messageIDs)
-	cmessageIDs := (**C.char)(C.malloc(C.size_t(n) * C.size_t(unsafe.Sizeof(uintptr(0)))))
+	var cmessageIDs **C.char
+	if n > 0 {
+		cmessageIDs = (**C.char)(C.malloc(C.size_t(n) * C.size_t(unsafe.Sizeof(uintptr(0)))))
+		if cmessageIDs == nil {
+			return
+		}
+	}
 	messageIDs := unsafe.Slice(cmessageIDs, n)
 	for i, id := range receipt.messageIDs {
 		messageIDs[i] = C.CString(id)

@@ -19,8 +19,10 @@ impl CallbackTranslator<*const CEvent> for Event {
             EventType::Receipt => {
                 let receipt = unsafe { &(*(event.data as *const CReceipt)) };
                 let chat: JID = (&receipt.chat).into();
-                let message_ids = unsafe {
-                    std::slice::from_raw_parts(receipt.message_ids, receipt.count as usize)
+                let message_ids = if receipt.count == 0 { &[] } else {
+                    unsafe {
+                        std::slice::from_raw_parts(receipt.message_ids, receipt.count as usize)
+                    }
                 }
                 .iter()
                 .map(|&id| {
