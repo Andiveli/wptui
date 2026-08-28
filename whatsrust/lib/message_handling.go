@@ -49,27 +49,27 @@ func HandleMessage(info types.MessageInfo, msg *waE2E.Message, isSync bool) {
 		emitTextMessage(cinfo, text, isSync)
 	}
 	if msg.ImageMessage != nil {
-		if !emitImageMessage(cinfo, info.ID, msg.GetImageMessage(), isSync) {
+		if !emitImageMessage(callback, info.ID, msg.GetImageMessage(), isSync) {
 			return
 		}
 	}
 	if msg.VideoMessage != nil {
-		if !emitVideoMessage(cinfo, info.ID, msg.GetVideoMessage(), isSync) {
+		if !emitVideoMessage(callback, info.ID, msg.GetVideoMessage(), isSync) {
 			return
 		}
 	}
 	if msg.AudioMessage != nil {
-		if !emitAudioMessage(cinfo, info.ID, msg.GetAudioMessage(), isSync) {
+		if !emitAudioMessage(callback, info.ID, msg.GetAudioMessage(), isSync) {
 			return
 		}
 	}
 	if msg.DocumentMessage != nil {
-		if !emitDocumentMessage(cinfo, info.ID, msg.GetDocumentMessage(), isSync) {
+		if !emitDocumentMessage(callback, info.ID, msg.GetDocumentMessage(), isSync) {
 			return
 		}
 	}
 	if msg.StickerMessage != nil {
-		if !emitStickerMessage(cinfo, info.ID, msg.GetStickerMessage(), isSync) {
+		if !emitStickerMessage(callback, info.ID, msg.GetStickerMessage(), isSync) {
 			return
 		}
 	}
