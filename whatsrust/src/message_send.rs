@@ -3,7 +3,7 @@ use std::ffi::{CString, c_char, c_void};
 use crate::{
     abi::{CFileMessage, CJID, CTextMessage, MessageType},
     file_kind_discriminant,
-    models::{JID, Mention, Message, MessageContent},
+    models::{CJIDOwner, JID, Mention, Message, MessageContent},
 };
 
 /// Keeps CStrings and C structs alive for the duration of an FFI call.
@@ -101,21 +101,18 @@ pub(crate) fn build_content_for_ffi(
     }
 }
 
-pub(crate) fn quote_to_ffi(quoted: Option<&Message>) -> (CString, *const c_char, CJID, CJID) {
+pub(crate) fn quote_to_ffi(
+    quoted: Option<&Message>,
+) -> (CString, *const c_char, Option<CJIDOwner>, Option<CJIDOwner>) {
     match quoted {
         Some(qm) => {
             let id_c = CString::new(qm.info.id.as_ref()).unwrap();
             let id_ptr = id_c.as_ptr();
-            let sender = CJID::from(&qm.info.sender);
-            let chat = CJID::from(&qm.info.chat);
+            let sender = Some(CJIDOwner::from(&qm.info.sender));
+            let chat = Some(CJIDOwner::from(&qm.info.chat));
             (id_c, id_ptr, sender, chat)
         }
-        None => (
-            CString::default(),
-            std::ptr::null(),
-            std::ptr::null(),
-            std::ptr::null(),
-        ),
+        None => (CString::default(), std::ptr::null(), None, None),
     }
 }
 
@@ -152,11 +149,13 @@ pub fn forward_message(source: &Message, destinations: &[JID]) -> ForwardReport 
         );
     };
     let destination_pointers: Vec<_> = destination_values.iter().map(|jid| jid.as_ptr()).collect();
+    let source_chat = CJIDOwner::from(&source.info.chat);
+    let source_sender = CJIDOwner::from(&source.info.sender);
     let result = unsafe {
         crate::abi::C_ForwardMessage(
             source_id.as_ptr(),
-            CJID::from(&source.info.chat),
-            CJID::from(&source.info.sender),
+            source_chat.as_ptr(),
+            source_sender.as_ptr(),
             source.info.is_from_me,
             destination_pointers.as_ptr(),
             destination_pointers.len(),
@@ -177,9 +176,16 @@ pub fn send_message(
     quoted_message: Option<&Message>,
     mentions: &[Mention],
 ) {
-    let jid_c = CJID::from(jid);
+    let jid_c = CJIDOwner::from(jid);
     let (msg_type, content_ptr, _holder) = build_content_for_ffi(content, mentions);
-    let (_quote_id_owner, quote_id, quote_sender, quote_chat) = quote_to_ffi(quoted_message);
+    let (_quote_id_owner, quote_id, quote_sender_owner, quote_chat_owner) =
+        quote_to_ffi(quoted_message);
+    let quote_sender = quote_sender_owner
+        .as_ref()
+        .map_or(std::ptr::null(), CJIDOwner::as_ptr);
+    let quote_chat = quote_chat_owner
+        .as_ref()
+        .map_or(std::ptr::null(), CJIDOwner::as_ptr);
     let quote_content = quoted_message.map(|message| build_content_for_ffi(&message.message, &[]));
     let (quote_message_type, quote_message_content) = quote_content
         .as_ref()
@@ -188,7 +194,7 @@ pub fn send_message(
         });
     unsafe {
         crate::abi::C_SendMessage(
-            jid_c,
+            jid_c.as_ptr(),
             msg_type,
             content_ptr,
             quote_id,
@@ -216,9 +222,16 @@ pub fn send_text_message(
     let MessageContent::Text(_) = content else {
         return TextSendResult::Failed;
     };
-    let jid_c = CJID::from(jid);
+    let jid_c = CJIDOwner::from(jid);
     let (_message_type, content_ptr, _holder) = build_content_for_ffi(content, mentions);
-    let (_quote_id_owner, quote_id, quote_sender, quote_chat) = quote_to_ffi(quoted_message);
+    let (_quote_id_owner, quote_id, quote_sender_owner, quote_chat_owner) =
+        quote_to_ffi(quoted_message);
+    let quote_sender = quote_sender_owner
+        .as_ref()
+        .map_or(std::ptr::null(), CJIDOwner::as_ptr);
+    let quote_chat = quote_chat_owner
+        .as_ref()
+        .map_or(std::ptr::null(), CJIDOwner::as_ptr);
     let quote_content = quoted_message.map(|message| build_content_for_ffi(&message.message, &[]));
     let (quote_message_type, quote_message_content) = quote_content
         .as_ref()
@@ -227,7 +240,7 @@ pub fn send_text_message(
         });
     let status = unsafe {
         crate::abi::C_SendTextMessage(
-            jid_c,
+            jid_c.as_ptr(),
             content_ptr,
             quote_id,
             quote_sender,
@@ -250,6 +263,15 @@ mod tests {
     use super::*;
     use crate::models::{FileContent, FileKind, ForwardingInfo, JID, MessageInfo};
     #[test]
+    fn quote_without_message_keeps_jid_owners_absent() {
+        let (_, quote_id, sender, chat) = quote_to_ffi(None);
+
+        assert!(quote_id.is_null());
+        assert!(sender.is_none());
+        assert!(chat.is_none());
+    }
+
+    #[test]
     fn quote_transport_preserves_the_original_status_chat() {
         let quoted = Message {
             info: MessageInfo {
@@ -265,7 +287,9 @@ mod tests {
             },
             message: MessageContent::Text("status".into()),
         };
-        let (_id_owner, id, sender, chat) = quote_to_ffi(Some(&quoted));
+        let (_id_owner, id, sender_owner, chat_owner) = quote_to_ffi(Some(&quoted));
+        let sender = sender_owner.as_ref().unwrap().as_ptr();
+        let chat = chat_owner.as_ref().unwrap().as_ptr();
         assert_eq!(unsafe { CStr::from_ptr(id) }.to_str(), Ok("status-id"));
         assert_eq!(
             unsafe { CStr::from_ptr(sender) }.to_str(),

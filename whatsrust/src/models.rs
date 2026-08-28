@@ -29,9 +29,34 @@ impl From<&CJID> for JID {
     }
 }
 
-impl From<&JID> for CJID {
+#[cfg(test)]
+mod tests {
+    use super::{CJIDOwner, JID};
+    use std::ffi::CStr;
+
+    #[test]
+    fn jid_ffi_owner_exposes_borrowed_pointer_for_its_scope() {
+        let jid = JID::from("123@s.whatsapp.net".to_owned());
+        let owner = CJIDOwner::from(&jid);
+
+        assert_eq!(
+            unsafe { CStr::from_ptr(owner.as_ptr()) }.to_str(),
+            Ok("123@s.whatsapp.net")
+        );
+    }
+}
+
+pub(crate) struct CJIDOwner(CString);
+
+impl From<&JID> for CJIDOwner {
     fn from(jid: &JID) -> Self {
-        CString::new(jid.0.as_ref()).unwrap().into_raw()
+        Self(CString::new(jid.0.as_ref()).unwrap())
+    }
+}
+
+impl CJIDOwner {
+    pub(crate) fn as_ptr(&self) -> CJID {
+        self.0.as_ptr()
     }
 }
 
