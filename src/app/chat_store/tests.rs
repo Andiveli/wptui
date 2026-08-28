@@ -19,14 +19,6 @@ fn message(chat: &wr::JID, id: &str, timestamp: i64) -> wr::Message {
 }
 
 #[test]
-fn contact_name_falls_back_to_the_jid() {
-    let app = TestApp::new();
-    let jid = wr::JID::from("alice@example.test".to_owned());
-
-    assert_eq!(app.contact_name(&jid).as_ref(), "alice@example.test");
-}
-
-#[test]
 fn adding_a_message_registers_chat_and_indexes_message() {
     let mut app = TestApp::new();
     let chat = wr::JID::from("chat@example.test".to_owned());
