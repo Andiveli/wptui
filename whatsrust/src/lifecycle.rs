@@ -24,10 +24,9 @@ pub fn disconnect() {
 }
 
 pub fn logout() {
-    // Performs a deterministic local sign-out on the Go side (disconnect +
-    // clear the persisted device). The result arrives via Event::LogoutResult
-    // so the app can remove the DB file and quit. No network round-trip, so
-    // the UI never blocks.
+    // Initiates logout on the Go side. The remote companion-device removal
+    // runs asynchronously; Event::LogoutResult reports the terminal outcome
+    // and drives the app's local cleanup.
     unsafe { C_Logout() };
 }
 
