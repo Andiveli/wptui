@@ -201,10 +201,6 @@ impl App<'_> {
                 }
                 true
             }
-            AppEvent::ContactAvatar(result) => self.contact_avatars.apply(result),
-            AppEvent::ContactAvatarRefreshed { generation, target } => {
-                self.contact_avatars.mark_refreshed(generation, target)
-            }
             AppEvent::DownloadFile(message_id, file_id) => {
                 if matches!(
                     self.metadata.get(&message_id),
@@ -225,6 +221,9 @@ impl App<'_> {
                 self.message_height_cache.invalidate(&message_id);
                 true
             }
+            _ => unreachable!(
+                "runtime_loop must route only MediaViewer and Updater events to handle_media_event"
+            ),
         }
     }
 }

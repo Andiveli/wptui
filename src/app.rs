@@ -58,6 +58,7 @@ pub mod read_receipts;
 pub mod runtime_callbacks;
 pub mod runtime_diagnostics;
 pub mod runtime_loop;
+pub mod runtime_avatar_events;
 pub mod runtime_media_events;
 pub mod runtime_read_receipt_events;
 pub mod runtime_send_events;

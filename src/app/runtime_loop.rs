@@ -18,9 +18,10 @@ fn dispatch_app_event(
     match event.family() {
         AppEventFamily::Send => app.handle_send_event(event),
         AppEventFamily::ReadReceipt => app.handle_read_receipt_event(event),
-        AppEventFamily::Updater
-        | AppEventFamily::MediaViewer
-        | AppEventFamily::Avatar => app.handle_media_event(event, download_tx),
+        AppEventFamily::Avatar => app.handle_avatar_event(event),
+        AppEventFamily::Updater | AppEventFamily::MediaViewer => {
+            app.handle_media_event(event, download_tx)
+        }
     }
 }
 
