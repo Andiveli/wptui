@@ -168,6 +168,40 @@ pub enum AppEvent {
     },
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AppEventFamily {
+    Updater,
+    Send,
+    ReadReceipt,
+    MediaViewer,
+    Avatar,
+}
+
+impl AppEvent {
+    pub const fn family(&self) -> AppEventFamily {
+        match self {
+            Self::UpdateAvailable(_) => AppEventFamily::Updater,
+            Self::OutboundSendSucceeded { .. } | Self::OutboundSendFailed { .. } => {
+                AppEventFamily::Send
+            }
+            Self::ReadReceiptResult(_, _)
+            | Self::ReadReceiptRestored(_)
+            | Self::ReadReceiptPersisted(_, _)
+            | Self::ReadReceiptCompleted(_, _)
+            | Self::ReadReceiptRejected(_, _) => AppEventFamily::ReadReceipt,
+            Self::DownloadFile(_, _)
+            | Self::DownloadFileDone(_, _)
+            | Self::LoadFilePreview(_)
+            | Self::SetFilePreview(_, _, _)
+            | Self::LoadViewerPreview(_)
+            | Self::SetViewerPreview(_, _)
+            | Self::SetFileState(_, _)
+            | Self::SetAudioDuration(_, _, _) => AppEventFamily::MediaViewer,
+            Self::ContactAvatar(_) | Self::ContactAvatarRefreshed { .. } => AppEventFamily::Avatar,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum AppInput {
     Draw(DrawSource),
@@ -278,3 +312,36 @@ impl fmt::Debug for AppEvent {
 }
 
 impl App<'_> {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn event_families_classify_every_runtime_owner() {
+        assert_eq!(
+            AppEvent::UpdateAvailable("1.2.3".to_owned()).family(),
+            AppEventFamily::Updater
+        );
+        assert_eq!(
+            AppEvent::OutboundSendFailed { local_send_id: 1 }.family(),
+            AppEventFamily::Send
+        );
+        assert_eq!(
+            AppEvent::ReadReceiptRestored(Ok(vec![])).family(),
+            AppEventFamily::ReadReceipt
+        );
+        assert_eq!(
+            AppEvent::LoadFilePreview("message-1".into()).family(),
+            AppEventFamily::MediaViewer
+        );
+        assert_eq!(
+            AppEvent::ContactAvatarRefreshed {
+                generation: 1,
+                target: AvatarTarget::Contact("contact@s.whatsapp.net".to_owned().into()),
+            }
+            .family(),
+            AppEventFamily::Avatar
+        );
+    }
+}

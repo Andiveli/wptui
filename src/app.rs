@@ -59,6 +59,7 @@ pub mod runtime_callbacks;
 pub mod runtime_diagnostics;
 pub mod runtime_loop;
 pub mod runtime_media_events;
+pub mod runtime_send_events;
 pub mod runtime_startup;
 pub mod share_picker;
 pub mod share_picker_input;

@@ -4,11 +4,25 @@ use log::error;
 use whatsrust as wr;
 
 use crate::app::App;
-use crate::app::events::{AppInput, DrawSource};
+use crate::app::events::{AppEvent, AppEventFamily, AppInput, DrawSource};
 use crate::app::terminal_session::TerminalSession;
 use crate::ui;
 
 type DownloadSender = Sender<(wr::MessageId, wr::FileId)>;
+
+fn dispatch_app_event(
+    app: &mut App<'_>,
+    event: AppEvent,
+    download_tx: &DownloadSender,
+) -> bool {
+    match event.family() {
+        AppEventFamily::Send => app.handle_send_event(event),
+        AppEventFamily::Updater
+        | AppEventFamily::ReadReceipt
+        | AppEventFamily::MediaViewer
+        | AppEventFamily::Avatar => app.handle_media_event(event, download_tx),
+    }
+}
 
 fn should_draw_for_source(app: &App<'_>, source: DrawSource) -> bool {
     match source {
@@ -113,7 +127,7 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
             app.runtime_diagnostics.record_input(input);
         }
         let should_draw = match msg {
-            Ok(AppInput::App(event)) => app.handle_media_event(event, &download_tx),
+            Ok(AppInput::App(event)) => dispatch_app_event(app, event, &download_tx),
             Ok(AppInput::WhatsApp(event)) => app.handle_whatsapp_event(event),
             Ok(AppInput::Message { message, is_sync }) => app.process_message(message, is_sync),
             Ok(AppInput::Presence(update)) => app.handle_presence_update(update),
@@ -177,6 +191,7 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::events::AppEvent;
     use crate::app::test_support::TestApp;
 
     #[test]
@@ -193,6 +208,18 @@ mod tests {
                 TerminalInitializationFailureTeardown::FinalizeDiagnostics,
             ]
         );
+    }
+
+    #[test]
+    fn send_events_route_to_the_send_handler() {
+        let mut app = TestApp::new();
+        let (download_tx, _download_rx) = mpsc::channel();
+
+        assert!(!dispatch_app_event(
+            &mut app,
+            AppEvent::OutboundSendFailed { local_send_id: 1 },
+            &download_tx,
+        ));
     }
 
     #[test]

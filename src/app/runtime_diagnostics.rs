@@ -4,7 +4,7 @@ use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use super::events::{AppEvent, AppInput, DrawSource};
+use super::events::{AppEventFamily, AppInput, DrawSource};
 
 const REPORT_LIMIT: usize = 16 * 1024;
 const DRAW_BUCKETS: [u64; 8] = [1, 5, 10, 25, 50, 100, u64::MAX, u64::MAX];
@@ -34,6 +34,13 @@ const PHASE_NAMES: [&str; 14] = [
     "message_pending_tail",
     "message_overlays",
 ];
+
+const fn app_event_category(family: AppEventFamily) -> usize {
+    match family {
+        AppEventFamily::Updater | AppEventFamily::MediaViewer | AppEventFamily::Avatar => 3,
+        AppEventFamily::Send | AppEventFamily::ReadReceipt => 5,
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Phase {
@@ -234,25 +241,7 @@ impl RuntimeDiagnostics {
             AppInput::Terminal(_) => 0,
             AppInput::Draw(_) => 1,
             AppInput::Message { .. } => 2,
-            AppInput::App(event) => match event {
-                AppEvent::UpdateAvailable(_) => 3,
-                AppEvent::OutboundSendSucceeded { .. } | AppEvent::OutboundSendFailed { .. } => 5,
-                AppEvent::ContactAvatar(_)
-                | AppEvent::ContactAvatarRefreshed { .. }
-                | AppEvent::DownloadFile(_, _)
-                | AppEvent::DownloadFileDone(_, _)
-                | AppEvent::LoadFilePreview(_)
-                | AppEvent::SetFilePreview(_, _, _)
-                | AppEvent::LoadViewerPreview(_)
-                | AppEvent::SetViewerPreview(_, _)
-                | AppEvent::SetFileState(_, _)
-                | AppEvent::SetAudioDuration(_, _, _) => 3,
-                AppEvent::ReadReceiptResult(_, _)
-                | AppEvent::ReadReceiptRestored(_)
-                | AppEvent::ReadReceiptPersisted(_, _)
-                | AppEvent::ReadReceiptCompleted(_, _)
-                | AppEvent::ReadReceiptRejected(_, _) => 5,
-            },
+            AppInput::App(event) => app_event_category(event.family()),
             AppInput::Presence(_) => 4,
             AppInput::WhatsApp(event) => match event {
                 whatsrust::Event::AppStateSyncComplete
@@ -678,6 +667,20 @@ mod tests {
             report_path: path,
             clock: Some(Box::new(FixedClock(6_000))),
             finalized: false,
+        }
+    }
+
+    #[test]
+    fn app_event_families_preserve_legacy_diagnostic_categories() {
+        for family in [
+            AppEventFamily::Updater,
+            AppEventFamily::MediaViewer,
+            AppEventFamily::Avatar,
+        ] {
+            assert_eq!(app_event_category(family), 3);
+        }
+        for family in [AppEventFamily::Send, AppEventFamily::ReadReceipt] {
+            assert_eq!(app_event_category(family), 5);
         }
     }
 

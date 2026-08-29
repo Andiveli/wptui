@@ -28,11 +28,9 @@ impl App<'_> {
                 self.update_notice = Some(version);
                 true
             }
-            AppEvent::OutboundSendSucceeded {
-                local_send_id,
-                message,
-            } => self.complete_text_send(local_send_id, message),
-            AppEvent::OutboundSendFailed { local_send_id } => self.fail_text_send(local_send_id),
+            AppEvent::OutboundSendSucceeded { .. } | AppEvent::OutboundSendFailed { .. } => {
+                unreachable!("runtime_loop must route Send events to handle_send_event")
+            }
             AppEvent::ReadReceiptResult(key, status) => {
                 self.complete_read_receipt(&key, status);
                 false
