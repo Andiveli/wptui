@@ -63,6 +63,7 @@ pub mod runtime_media_events;
 pub mod runtime_read_receipt_events;
 pub mod runtime_send_events;
 pub mod runtime_startup;
+pub mod runtime_updater_events;
 pub mod share_picker;
 pub mod share_picker_input;
 pub mod status_actions;

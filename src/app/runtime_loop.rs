@@ -19,9 +19,8 @@ fn dispatch_app_event(
         AppEventFamily::Send => app.handle_send_event(event),
         AppEventFamily::ReadReceipt => app.handle_read_receipt_event(event),
         AppEventFamily::Avatar => app.handle_avatar_event(event),
-        AppEventFamily::Updater | AppEventFamily::MediaViewer => {
-            app.handle_media_event(event, download_tx)
-        }
+        AppEventFamily::Updater => app.handle_updater_event(event),
+        AppEventFamily::MediaViewer => app.handle_media_event(event, download_tx),
     }
 }
 
@@ -234,6 +233,19 @@ mod tests {
             AppEvent::ReadReceiptRestored(Ok(Vec::new())),
             &download_tx,
         ));
+    }
+
+    #[test]
+    fn updater_events_route_to_the_updater_handler() {
+        let mut app = TestApp::new();
+        let (download_tx, _download_rx) = mpsc::channel();
+
+        assert!(dispatch_app_event(
+            &mut app,
+            AppEvent::UpdateAvailable("1.2.3".to_owned()),
+            &download_tx,
+        ));
+        assert_eq!(app.update_notice.as_deref(), Some("1.2.3"));
     }
 
     #[test]

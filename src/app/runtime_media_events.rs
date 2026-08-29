@@ -24,10 +24,6 @@ impl App<'_> {
         download_tx: &DownloadSender,
     ) -> bool {
         match event {
-            AppEvent::UpdateAvailable(version) => {
-                self.update_notice = Some(version);
-                true
-            }
             AppEvent::OutboundSendSucceeded { .. } | AppEvent::OutboundSendFailed { .. } => {
                 unreachable!("runtime_loop must route Send events to handle_send_event")
             }
@@ -222,7 +218,7 @@ impl App<'_> {
                 true
             }
             _ => unreachable!(
-                "runtime_loop must route only MediaViewer and Updater events to handle_media_event"
+                "runtime_loop must route only MediaViewer events to handle_media_event"
             ),
         }
     }
