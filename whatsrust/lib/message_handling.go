@@ -99,23 +99,23 @@ func HandleOptimisticTextSent(localSendID uint64, info types.MessageInfo, msg *w
 		return
 	}
 	if image := msg.GetImageMessage(); image != nil {
-		emitOptimisticFileMessage(callback.info, FileTypeImage, "", "", image.GetCaption(), localSendID)
+		emitImageMessageWithLocalSendID(callback, info.ID, image, false, localSendID)
 		return
 	}
 	if video := msg.GetVideoMessage(); video != nil {
-		emitOptimisticFileMessage(callback.info, FileTypeVideo, "", "", video.GetCaption(), localSendID)
+		emitVideoMessageWithLocalSendID(callback, info.ID, video, false, localSendID)
 		return
 	}
 	if audio := msg.GetAudioMessage(); audio != nil {
-		emitOptimisticFileMessage(callback.info, FileTypeAudio, "", "", "", localSendID)
+		emitAudioMessageWithLocalSendID(callback, info.ID, audio, false, localSendID)
 		return
 	}
 	if document := msg.GetDocumentMessage(); document != nil {
-		emitOptimisticFileMessage(callback.info, FileTypeDocument, "", "", document.GetCaption(), localSendID)
+		emitDocumentMessageWithLocalSendID(callback, info.ID, document, false, localSendID)
 		return
 	}
-	if msg.GetStickerMessage() != nil {
-		emitOptimisticFileMessage(callback.info, FileTypeSticker, "", "", "", localSendID)
+	if sticker := msg.GetStickerMessage(); sticker != nil {
+		emitStickerMessageWithLocalSendID(callback, info.ID, sticker, false, localSendID)
 	}
 }
 

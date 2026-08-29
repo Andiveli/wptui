@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -138,19 +139,46 @@ func TestHandleMessageQuotedTextUsesOwnedCallbackQuoteID(t *testing.T) {
 	}
 }
 
-func TestHandleOptimisticTextSentDeliversFilePayloadWithLocalSendID(t *testing.T) {
+func TestHandleOptimisticTextSentDeliversDownloadableFilePayloadWithLocalSendID(t *testing.T) {
 	previousObserve := observeOptimisticFileCallback
 	t.Cleanup(func() { observeOptimisticFileCallback = previousObserve })
 
-	var output fileCallbackOutput
-	observeOptimisticFileCallback = func(got fileCallbackOutput) { output = got }
 	caption := "caption"
-	HandleOptimisticTextSent(42, types.MessageInfo{ID: "message-id"}, &waE2E.Message{
-		ImageMessage: &waE2E.ImageMessage{Caption: &caption},
-	})
+	directPath := "/media/direct"
+	tests := []struct {
+		name       string
+		message    *waE2E.Message
+		kind       uint8
+		pathPrefix string
+		caption    string
+	}{
+		{name: "image", message: &waE2E.Message{ImageMessage: &waE2E.ImageMessage{Caption: &caption, DirectPath: &directPath}}, kind: FileTypeImage, pathPrefix: "imgs/", caption: caption},
+		{name: "video", message: &waE2E.Message{VideoMessage: &waE2E.VideoMessage{Caption: &caption, DirectPath: &directPath}}, kind: FileTypeVideo, pathPrefix: "videos/", caption: caption},
+		{name: "audio", message: &waE2E.Message{AudioMessage: &waE2E.AudioMessage{DirectPath: &directPath}}, kind: FileTypeAudio, pathPrefix: "audios/"},
+		{name: "document", message: &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{Caption: &caption, DirectPath: &directPath}}, kind: FileTypeDocument, pathPrefix: "docs/", caption: caption},
+		{name: "sticker", message: &waE2E.Message{StickerMessage: &waE2E.StickerMessage{DirectPath: &directPath}}, kind: FileTypeSticker, pathPrefix: "stickers/"},
+	}
 
-	if output.localSendID != 42 || output.kind != FileTypeImage || output.caption != caption {
-		t.Fatalf("optimistic file callback = %#v", output)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var output fileCallbackOutput
+			observeOptimisticFileCallback = func(got fileCallbackOutput) { output = got }
+			HandleOptimisticTextSent(42, types.MessageInfo{ID: "message-id"}, test.message)
+
+			if output.localSendID != 42 || output.kind != test.kind || output.caption != test.caption {
+				t.Fatalf("optimistic file callback = %#v", output)
+			}
+			if !strings.HasPrefix(output.path, test.pathPrefix) {
+				t.Fatalf("optimistic file path = %q, want prefix %q", output.path, test.pathPrefix)
+			}
+			info, err := FileIdToDownloadInfo(output.fileID)
+			if err != nil {
+				t.Fatalf("decode optimistic file ID: %v", err)
+			}
+			if info.TargetPath != output.path || info.DirectPath != directPath {
+				t.Fatalf("optimistic download info = %#v", info)
+			}
+		})
 	}
 }
 

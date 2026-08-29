@@ -48,6 +48,8 @@ func fileMessageCaption(caption string) *C.char {
 type fileCallbackOutput struct {
 	localSendID uint64
 	kind        uint8
+	path        string
+	fileID      string
 	caption     string
 }
 
@@ -95,7 +97,13 @@ func emitFileMessageWithLocalSendID(cinfo C.MessageInfo, kind uint8, filePath, f
 		message:     unsafe.Pointer(content),
 	}
 	if localSendID != 0 {
-		observeOptimisticFileCallback(fileCallbackOutput{localSendID: localSendID, kind: kind, caption: caption})
+		observeOptimisticFileCallback(fileCallbackOutput{
+			localSendID: localSendID,
+			kind:        kind,
+			path:        filePath,
+			fileID:      fileID,
+			caption:     caption,
+		})
 		if optimisticTextSentHandler.callback != nil {
 			C.callOptimisticTextSentHandler(optimisticTextSentHandler, C.uint64_t(localSendID), &message)
 		}
@@ -125,6 +133,10 @@ func buildFileMessageMentionRanges(ranges []mentionRange) (unsafe.Pointer, *C.Me
 }
 
 func emitImageMessage(callback *messageCallback, messageID string, image *waE2E.ImageMessage, isSync bool) bool {
+	return emitImageMessageWithLocalSendID(callback, messageID, image, isSync, 0)
+}
+
+func emitImageMessageWithLocalSendID(callback *messageCallback, messageID string, image *waE2E.ImageMessage, isSync bool, localSendID uint64) bool {
 	if image == nil {
 		LOG_ERROR("ImageMessage is nil")
 		return false
@@ -134,11 +146,15 @@ func emitImageMessage(callback *messageCallback, messageID string, image *waE2E.
 	ext := ExtensionByType(image.GetMimetype(), ".jpg")
 	filePath := fmt.Sprintf("imgs/%s%s", messageID, ext)
 	fileID := DownloadableMessageToFileId(clientSnapshot, image, filePath)
-	emitFileMessage(callback.info, FileTypeImage, filePath, fileID, captionWithMentionNames(image.GetCaption(), image.GetContextInfo(), callback.info), isSync)
+	emitFileMessageResult(callback.info, FileTypeImage, filePath, fileID, captionWithMentionNames(image.GetCaption(), image.GetContextInfo(), callback.info), isSync, localSendID)
 	return true
 }
 
 func emitVideoMessage(callback *messageCallback, messageID string, video *waE2E.VideoMessage, isSync bool) bool {
+	return emitVideoMessageWithLocalSendID(callback, messageID, video, isSync, 0)
+}
+
+func emitVideoMessageWithLocalSendID(callback *messageCallback, messageID string, video *waE2E.VideoMessage, isSync bool, localSendID uint64) bool {
 	if video == nil {
 		LOG_ERROR("VideoMessage is nil")
 		return false
@@ -152,11 +168,15 @@ func emitVideoMessage(callback *messageCallback, messageID string, video *waE2E.
 		thumbPath := strings.TrimSuffix(filePath, ext) + ".jpg"
 		fileID = AddThumbnailToFileId(fileID, thumbnail, thumbPath)
 	}
-	emitFileMessage(callback.info, FileTypeVideo, filePath, fileID, captionWithMentionNames(video.GetCaption(), video.GetContextInfo(), callback.info), isSync)
+	emitFileMessageResult(callback.info, FileTypeVideo, filePath, fileID, captionWithMentionNames(video.GetCaption(), video.GetContextInfo(), callback.info), isSync, localSendID)
 	return true
 }
 
 func emitAudioMessage(callback *messageCallback, messageID string, audio *waE2E.AudioMessage, isSync bool) bool {
+	return emitAudioMessageWithLocalSendID(callback, messageID, audio, isSync, 0)
+}
+
+func emitAudioMessageWithLocalSendID(callback *messageCallback, messageID string, audio *waE2E.AudioMessage, isSync bool, localSendID uint64) bool {
 	if audio == nil {
 		LOG_ERROR("AudioMessage is nil")
 		return false
@@ -166,21 +186,33 @@ func emitAudioMessage(callback *messageCallback, messageID string, audio *waE2E.
 	ext := ExtensionByType(audio.GetMimetype(), ".ogg")
 	filePath := fmt.Sprintf("audios/%s%s", messageID, ext)
 	fileID := DownloadableMessageToFileId(clientSnapshot, audio, filePath)
-	emitFileMessage(callback.info, FileTypeAudio, filePath, fileID, "", isSync)
+	emitFileMessageResult(callback.info, FileTypeAudio, filePath, fileID, "", isSync, localSendID)
 	return true
 }
 
 func emitDocumentMessage(callback *messageCallback, messageID string, document *waE2E.DocumentMessage, isSync bool) bool {
+	return emitDocumentMessageWithLocalSendID(callback, messageID, document, isSync, 0)
+}
+
+func emitDocumentMessageWithLocalSendID(callback *messageCallback, messageID string, document *waE2E.DocumentMessage, isSync bool, localSendID uint64) bool {
 	if document == nil {
 		LOG_ERROR("DocumentMessage is nil")
 		return false
 	}
 	callback.setQuoteIDFromContext(document.GetContextInfo())
 	clientSnapshot := lifecycleState.clientSnapshot()
-	filePath := fmt.Sprintf("docs/%s-%s", messageID, *document.FileName)
+	filePath := fmt.Sprintf("docs/%s-%s", messageID, document.GetFileName())
 	fileID := DownloadableMessageToFileId(clientSnapshot, document, filePath)
-	emitFileMessage(callback.info, FileTypeDocument, filePath, fileID, captionWithMentionNames(document.GetCaption(), document.GetContextInfo(), callback.info), isSync)
+	emitFileMessageResult(callback.info, FileTypeDocument, filePath, fileID, captionWithMentionNames(document.GetCaption(), document.GetContextInfo(), callback.info), isSync, localSendID)
 	return true
+}
+
+func emitFileMessageResult(cinfo C.MessageInfo, kind uint8, filePath, fileID, caption string, isSync bool, localSendID uint64) {
+	if localSendID != 0 {
+		emitOptimisticFileMessage(cinfo, kind, filePath, fileID, caption, localSendID)
+		return
+	}
+	emitFileMessage(cinfo, kind, filePath, fileID, caption, isSync)
 }
 
 func captionWithMentionNames(caption string, contextInfo *waE2E.ContextInfo, cinfo C.MessageInfo) string {
@@ -199,6 +231,10 @@ func captionWithMentionNames(caption string, contextInfo *waE2E.ContextInfo, cin
 }
 
 func emitStickerMessage(callback *messageCallback, messageID string, sticker *waE2E.StickerMessage, isSync bool) bool {
+	return emitStickerMessageWithLocalSendID(callback, messageID, sticker, isSync, 0)
+}
+
+func emitStickerMessageWithLocalSendID(callback *messageCallback, messageID string, sticker *waE2E.StickerMessage, isSync bool, localSendID uint64) bool {
 	if sticker == nil {
 		LOG_ERROR("StickerMessage is nil")
 		return false
@@ -208,6 +244,6 @@ func emitStickerMessage(callback *messageCallback, messageID string, sticker *wa
 	ext := ExtensionByType(sticker.GetMimetype(), ".webp")
 	filePath := fmt.Sprintf("stickers/%s%s", messageID, ext)
 	fileID := DownloadableMessageToFileId(clientSnapshot, sticker, filePath)
-	emitFileMessage(callback.info, FileTypeSticker, filePath, fileID, "", isSync)
+	emitFileMessageResult(callback.info, FileTypeSticker, filePath, fileID, "", isSync, localSendID)
 	return true
 }
