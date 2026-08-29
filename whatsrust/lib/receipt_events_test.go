@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -159,7 +160,8 @@ func TestReceiptDispatchAndRustDecoderSupportEmptyMessageIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 	rustText := string(rustSource)
-	if !strings.Contains(rustText, "if receipt.count == 0 { &[] } else {") {
-		t.Fatal("Rust receipt decoder must avoid dereferencing the message ID pointer for empty arrays")
+	emptyMessageIDsGuard := regexp.MustCompile(`(?s)if\s+receipt\.count\s*==\s*0\s*\{\s*&\[\]\s*\}\s*else\s*\{\s*unsafe\s*\{\s*std::slice::from_raw_parts\(\s*receipt\.message_ids\s*,\s*receipt\.count\s+as\s+usize\s*\)\s*\}\s*\}`)
+	if !emptyMessageIDsGuard.MatchString(rustText) {
+		t.Fatal("Rust receipt decoder must guard empty message ID arrays before dereferencing their pointer")
 	}
 }
