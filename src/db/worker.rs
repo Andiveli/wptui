@@ -73,8 +73,43 @@ impl Worker {
 
     pub(super) fn stop(&mut self) {
         *self.stop_requested.lock().unwrap() = true;
-        if let Some(thread) = self.thread.take() {
-            thread.join().unwrap();
+        if let Some(thread) = self.thread.take()
+            && thread.join().is_err()
+        {
+            log::error!("Database writer worker terminated unexpectedly during shutdown");
         }
+    }
+}
+
+impl Drop for Worker {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Worker;
+
+    #[test]
+    fn dropping_worker_requests_shutdown() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let worker = Worker::new(&tempdir.path().join("worker.db"));
+        let stop_requested = worker.stop_requested.clone();
+
+        drop(worker);
+
+        assert!(*stop_requested.lock().unwrap());
+    }
+
+    #[test]
+    fn stopping_worker_twice_is_idempotent() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let mut worker = Worker::new(&tempdir.path().join("worker.db"));
+
+        worker.stop();
+        worker.stop();
+
+        assert!(*worker.stop_requested.lock().unwrap());
     }
 }
