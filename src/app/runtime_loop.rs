@@ -17,8 +17,8 @@ fn dispatch_app_event(
 ) -> bool {
     match event.family() {
         AppEventFamily::Send => app.handle_send_event(event),
+        AppEventFamily::ReadReceipt => app.handle_read_receipt_event(event),
         AppEventFamily::Updater
-        | AppEventFamily::ReadReceipt
         | AppEventFamily::MediaViewer
         | AppEventFamily::Avatar => app.handle_media_event(event, download_tx),
     }
@@ -218,6 +218,19 @@ mod tests {
         assert!(!dispatch_app_event(
             &mut app,
             AppEvent::OutboundSendFailed { local_send_id: 1 },
+            &download_tx,
+        ));
+    }
+
+    #[test]
+    fn read_receipt_events_route_to_the_read_receipt_handler() {
+        let mut app = TestApp::new();
+        app.read_receipts.set_enabled(true);
+        let (download_tx, _download_rx) = mpsc::channel();
+
+        assert!(!dispatch_app_event(
+            &mut app,
+            AppEvent::ReadReceiptRestored(Ok(Vec::new())),
             &download_tx,
         ));
     }
