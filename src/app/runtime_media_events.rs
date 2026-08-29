@@ -28,11 +28,11 @@ impl App<'_> {
                 self.update_notice = Some(version);
                 true
             }
-            AppEvent::OptimisticTextSent {
+            AppEvent::OutboundSendSucceeded {
                 local_send_id,
                 message,
             } => self.complete_text_send(local_send_id, message),
-            AppEvent::TextSendFailed { local_send_id } => self.fail_text_send(local_send_id),
+            AppEvent::OutboundSendFailed { local_send_id } => self.fail_text_send(local_send_id),
             AppEvent::ReadReceiptResult(key, status) => {
                 self.complete_read_receipt(&key, status);
                 false

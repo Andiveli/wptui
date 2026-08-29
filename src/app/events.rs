@@ -141,11 +141,11 @@ impl AttachmentViewerState {
 
 pub enum AppEvent {
     UpdateAvailable(String),
-    OptimisticTextSent {
+    OutboundSendSucceeded {
         local_send_id: u64,
         message: wr::Message,
     },
-    TextSendFailed {
+    OutboundSendFailed {
         local_send_id: u64,
     },
     ReadReceiptResult(ReceiptKey, ReceiptSendStatus),
@@ -190,16 +190,16 @@ impl fmt::Debug for AppEvent {
             AppEvent::UpdateAvailable(version) => {
                 f.debug_tuple("UpdateAvailable").field(version).finish()
             }
-            AppEvent::OptimisticTextSent {
+            AppEvent::OutboundSendSucceeded {
                 local_send_id,
                 message,
             } => f
-                .debug_struct("OptimisticTextSent")
+                .debug_struct("OutboundSendSucceeded")
                 .field("local_send_id", local_send_id)
                 .field("server_message_id", &message.info.id)
                 .finish(),
-            AppEvent::TextSendFailed { local_send_id } => f
-                .debug_struct("TextSendFailed")
+            AppEvent::OutboundSendFailed { local_send_id } => f
+                .debug_struct("OutboundSendFailed")
                 .field("local_send_id", local_send_id)
                 .finish(),
             AppEvent::ReadReceiptResult(key, status) => f

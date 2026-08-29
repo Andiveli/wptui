@@ -113,11 +113,20 @@ impl App<'_> {
                                 }
                             }
                         } else {
-                            self.record_phase(Phase::ComposerSubmitSend, |_app| {
-                                for message in messages {
-                                    wr::send_message(&chat, &message, quote.as_ref(), &mentions);
-                                }
+                            let accepted = self.record_phase(Phase::ComposerSubmitSend, |app| {
+                                app.stage_outbound_batch(
+                                    chat,
+                                    messages,
+                                    quote,
+                                    mentions,
+                                    mention_ranges,
+                                )
                             });
+                            if !accepted {
+                                if let Some(draft) = draft {
+                                    self.composer.restore_text_draft(draft);
+                                }
+                            }
                         }
                     }
                 }

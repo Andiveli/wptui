@@ -3,7 +3,7 @@ use std::{
     ops::Range,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc::{self, Receiver, SyncSender},
     },
 };
@@ -65,44 +65,108 @@ impl super::App<'_> {
         display_text: impl Into<Arc<str>>,
         display_mention_ranges: Vec<Range<usize>>,
     ) -> bool {
-        let Some(local_send_id) = self.allocate_local_send_id() else {
-            self.unavailable("Could not send message");
-            return false;
-        };
-        let request = TextSendRequest {
-            local_send_id,
+        self.stage_outbound_batch_with_display(
             chat,
-            content,
+            vec![content],
             quote,
             mentions,
             mention_ranges,
-            display_content: wr::MessageContent::Text(display_text.into()),
+            vec![wr::MessageContent::Text(display_text.into())],
+            vec![display_mention_ranges],
+        )
+    }
+
+    pub(crate) fn stage_outbound_batch(
+        &mut self,
+        chat: wr::JID,
+        contents: Vec<wr::MessageContent>,
+        quote: Option<wr::Message>,
+        mentions: Vec<wr::Mention>,
+        mention_ranges: Vec<Range<usize>>,
+    ) -> bool {
+        let display_contents = contents.clone();
+        let display_mention_ranges = vec![mention_ranges.clone(); contents.len()];
+        self.stage_outbound_batch_with_display(
+            chat,
+            contents,
+            quote,
+            mentions,
+            mention_ranges,
+            display_contents,
             display_mention_ranges,
+        )
+    }
+
+    fn stage_outbound_batch_with_display(
+        &mut self,
+        chat: wr::JID,
+        contents: Vec<wr::MessageContent>,
+        quote: Option<wr::Message>,
+        mentions: Vec<wr::Mention>,
+        mention_ranges: Vec<Range<usize>>,
+        display_contents: Vec<wr::MessageContent>,
+        display_mention_ranges: Vec<Vec<Range<usize>>>,
+    ) -> bool {
+        if contents.is_empty()
+            || contents.len() != display_contents.len()
+            || contents.len() != display_mention_ranges.len()
+        {
+            return false;
+        }
+        let Some(local_send_ids) = self.allocate_local_send_ids(contents.len()) else {
+            self.unavailable("Could not send message");
+            return false;
         };
-        self.pending_outgoing_text
-            .insert(local_send_id, request.clone());
-        if !self.optimistic_text_send_worker.enqueue(request) {
-            self.pending_outgoing_text.remove(&local_send_id);
+        let requests = local_send_ids
+            .into_iter()
+            .zip(contents)
+            .zip(display_contents.into_iter().zip(display_mention_ranges))
+            .map(|((local_send_id, content), (display_content, display_mention_ranges))| {
+                TextSendRequest {
+                    local_send_id,
+                    chat: chat.clone(),
+                    content,
+                    quote: quote.clone(),
+                    mentions: mentions.clone(),
+                    mention_ranges: mention_ranges.clone(),
+                    display_content,
+                    display_mention_ranges,
+                }
+            })
+            .collect::<Vec<_>>();
+        for request in &requests {
+            self.pending_outgoing_text
+                .insert(request.local_send_id, request.clone());
+        }
+        if !self.optimistic_text_send_worker.enqueue_batch(requests.clone()) {
+            for request in requests {
+                self.pending_outgoing_text.remove(&request.local_send_id);
+            }
             self.unavailable("Could not send message");
             return false;
         }
         true
     }
 
-    fn allocate_local_send_id(&mut self) -> Option<u64> {
+    fn allocate_local_send_ids(&mut self, count: usize) -> Option<Vec<u64>> {
+        let mut ids = Vec::with_capacity(count);
         let mut candidate = self.next_local_send_id;
         let attempts = self
             .pending_outgoing_text
             .len()
             .saturating_add(self.completed_text_send_ids.len())
-            .saturating_add(1);
+            .saturating_add(count);
         for _ in 0..attempts {
             if candidate != 0
                 && !self.pending_outgoing_text.contains_key(&candidate)
                 && !self.completed_text_send_ids.contains(&candidate)
+                && !ids.contains(&candidate)
             {
-                self.next_local_send_id = candidate.checked_add(1).unwrap_or(1);
-                return Some(candidate);
+                ids.push(candidate);
+                if ids.len() == count {
+                    self.next_local_send_id = candidate.checked_add(1).unwrap_or(1);
+                    return Some(ids);
+                }
             }
             candidate = candidate.checked_add(1).unwrap_or(1);
         }
@@ -188,7 +252,7 @@ impl super::App<'_> {
 }
 
 pub trait TextSendPort: Send {
-    fn send(&mut self, request: &TextSendRequest) -> bool;
+    fn send(&mut self, request: &TextSendRequest) -> Result<(), wr::OutboundSendFailure>;
 }
 
 #[derive(Clone, Default)]
@@ -208,12 +272,13 @@ pub struct Worker {
     tx: Option<SyncSender<Command>>,
     join: Option<JoinHandle<()>>,
     cancelled: CancellationGate,
+    queued: Arc<AtomicUsize>,
     #[allow(dead_code)]
     exited: Arc<AtomicBool>,
 }
 
 enum Command {
-    Send(TextSendRequest),
+    SendBatch(Vec<TextSendRequest>),
 }
 
 impl Worker {
@@ -221,21 +286,39 @@ impl Worker {
         let (tx, rx) = mpsc::sync_channel(MAX_QUEUED_TEXT_SENDS);
         let cancelled = CancellationGate::default();
         let exited = Arc::new(AtomicBool::new(false));
+        let queued = Arc::new(AtomicUsize::new(0));
         let worker_cancelled = cancelled.clone();
         let worker_exited = Arc::clone(&exited);
-        let join = thread::spawn(move || run(rx, app_tx, port, worker_cancelled, worker_exited));
+        let worker_queued = Arc::clone(&queued);
+        let join = thread::spawn(move || {
+            run(rx, app_tx, port, worker_cancelled, worker_queued, worker_exited)
+        });
         Self {
             tx: Some(tx),
             join: Some(join),
             cancelled,
+            queued,
             exited,
         }
     }
 
     pub fn enqueue(&self, request: TextSendRequest) -> bool {
-        self.tx
+        self.enqueue_batch(vec![request])
+    }
+
+    pub fn enqueue_batch(&self, requests: Vec<TextSendRequest>) -> bool {
+        let count = requests.len();
+        if count == 0 || count > MAX_QUEUED_TEXT_SENDS || !reserve_queue_slots(&self.queued, count) {
+            return false;
+        }
+        let queued = self
+            .tx
             .as_ref()
-            .is_some_and(|tx| tx.try_send(Command::Send(request)).is_ok())
+            .is_some_and(|tx| tx.try_send(Command::SendBatch(requests)).is_ok());
+        if !queued {
+            self.queued.fetch_sub(count, Ordering::AcqRel);
+        }
+        queued
     }
 
     #[cfg(test)]
@@ -257,33 +340,47 @@ impl Drop for Worker {
     }
 }
 
+fn reserve_queue_slots(queued: &AtomicUsize, count: usize) -> bool {
+    let mut current = queued.load(Ordering::Acquire);
+    loop {
+        let Some(next) = current.checked_add(count) else {
+            return false;
+        };
+        if next > MAX_QUEUED_TEXT_SENDS {
+            return false;
+        }
+        match queued.compare_exchange_weak(current, next, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) => return true,
+            Err(observed) => current = observed,
+        }
+    }
+}
+
 fn run(
     rx: Receiver<Command>,
     app_tx: mpsc::Sender<AppInput>,
     mut port: Box<dyn TextSendPort>,
     cancelled: CancellationGate,
+    queued: Arc<AtomicUsize>,
     exited: Arc<AtomicBool>,
 ) {
     while let Ok(command) = rx.recv() {
-        match command {
-            Command::Send(request) => {
-                if !cancelled.admit() {
-                    break;
-                }
-                let ok = port.send(&request);
-                if !cancelled.admit() {
-                    break;
-                }
-                if !ok {
-                    if app_tx
-                        .send(AppInput::App(AppEvent::TextSendFailed {
-                            local_send_id: request.local_send_id,
-                        }))
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
+        let Command::SendBatch(requests) = command;
+        queued.fetch_sub(requests.len(), Ordering::AcqRel);
+        for request in requests {
+            if !cancelled.admit() {
+                exited.store(true, Ordering::Release);
+                return;
+            }
+            if port.send(&request).is_err()
+                && app_tx
+                    .send(AppInput::App(AppEvent::OutboundSendFailed {
+                        local_send_id: request.local_send_id,
+                    }))
+                    .is_err()
+            {
+                exited.store(true, Ordering::Release);
+                return;
             }
         }
     }
@@ -293,14 +390,14 @@ fn run(
 pub struct WhatsAppTextSendPort;
 
 impl TextSendPort for WhatsAppTextSendPort {
-    fn send(&mut self, request: &TextSendRequest) -> bool {
-        wr::send_text_message(
+    fn send(&mut self, request: &TextSendRequest) -> Result<(), wr::OutboundSendFailure> {
+        wr::send_outbound_message(
             &request.chat,
             &request.content,
             request.quote.as_ref(),
             &request.mentions,
             request.local_send_id,
-        ) == wr::TextSendResult::Sent
+        )
     }
 }
 
@@ -314,9 +411,9 @@ mod tests {
 
     struct Port(Arc<Mutex<Vec<u64>>>);
     impl TextSendPort for Port {
-        fn send(&mut self, request: &TextSendRequest) -> bool {
+        fn send(&mut self, request: &TextSendRequest) -> Result<(), wr::OutboundSendFailure> {
             self.0.lock().unwrap().push(request.local_send_id);
-            false
+            Err(wr::OutboundSendFailure::TransportFailed)
         }
     }
 
@@ -326,7 +423,7 @@ mod tests {
         calls: Arc<std::sync::atomic::AtomicUsize>,
     }
     impl TextSendPort for BlockingPort {
-        fn send(&mut self, _: &TextSendRequest) -> bool {
+        fn send(&mut self, _: &TextSendRequest) -> Result<(), wr::OutboundSendFailure> {
             // Models the production Go port returning on its five-second context
             // deadline/cancellation contract; the fake release makes that return deterministic.
             self.calls.fetch_add(1, Ordering::Relaxed);
@@ -336,7 +433,7 @@ mod tests {
             while !*released {
                 released = wake.wait(released).unwrap();
             }
-            false
+            Err(wr::OutboundSendFailure::TransportFailed)
         }
     }
 
@@ -362,11 +459,11 @@ mod tests {
         assert!(worker.enqueue(request(2)));
         assert!(matches!(
             rx.recv_timeout(Duration::from_secs(1)).unwrap(),
-            AppInput::App(AppEvent::TextSendFailed { local_send_id: 1 })
+            AppInput::App(AppEvent::OutboundSendFailed { local_send_id: 1 })
         ));
         assert!(matches!(
             rx.recv_timeout(Duration::from_secs(1)).unwrap(),
-            AppInput::App(AppEvent::TextSendFailed { local_send_id: 2 })
+            AppInput::App(AppEvent::OutboundSendFailed { local_send_id: 2 })
         ));
         worker.shutdown();
         assert_eq!(*seen.lock().unwrap(), vec![1, 2]);
@@ -457,6 +554,65 @@ mod tests {
             app.action_notice,
             Some(ActionNotice::Unavailable("Could not send message".into()))
         );
+    }
+
+    #[test]
+    fn batch_admission_preserves_files_quote_mentions_and_order() {
+        let mut app = TestApp::new();
+        let chat: wr::JID = "chat@g.us".to_owned().into();
+        let quote = wr::Message {
+            info: wr::MessageInfo {
+                id: "quoted".into(),
+                chat: chat.clone(),
+                sender: chat.clone(),
+                mentions_self: false,
+                timestamp: 0,
+                is_from_me: false,
+                quote_id: None,
+                read_by: 0,
+                forwarding: Default::default(),
+            },
+            message: wr::MessageContent::Text("quoted".into()),
+        };
+        let mentions = vec![wr::Mention {
+            jid: "111@s.whatsapp.net".to_owned().into(),
+            numeric_user: "111".into(),
+        }];
+        let messages = vec![
+            wr::MessageContent::File(wr::FileContent {
+                kind: wr::FileKind::Image,
+                path: "first.png".into(),
+                file_id: "".into(),
+                caption: Some("@111 caption".into()),
+            }),
+            wr::MessageContent::File(wr::FileContent {
+                kind: wr::FileKind::Document,
+                path: "second.pdf".into(),
+                file_id: "".into(),
+                caption: None,
+            }),
+        ];
+
+        assert!(app.stage_outbound_batch(chat.clone(), messages, Some(quote), mentions.clone(), vec![0..4]));
+        let pending = app.pending_messages_for_chat(&chat);
+        assert_eq!(pending.len(), 2);
+        assert!(matches!(
+            &pending[0].message,
+            wr::MessageContent::File(file)
+                if matches!(file.kind, wr::FileKind::Image)
+                    && file.path.as_ref() == "first.png"
+                    && file.caption.as_deref() == Some("@111 caption")
+        ));
+        assert!(matches!(
+            &pending[1].message,
+            wr::MessageContent::File(file)
+                if matches!(file.kind, wr::FileKind::Document)
+                    && file.path.as_ref() == "second.pdf"
+                    && file.caption.is_none()
+        ));
+        let staged = app.pending_outgoing_text.values().collect::<Vec<_>>();
+        assert!(staged.iter().all(|request| request.quote.is_some()));
+        assert!(staged.iter().all(|request| request.mentions == mentions));
     }
 
     #[test]

@@ -236,7 +236,7 @@ impl RuntimeDiagnostics {
             AppInput::Message { .. } => 2,
             AppInput::App(event) => match event {
                 AppEvent::UpdateAvailable(_) => 3,
-                AppEvent::OptimisticTextSent { .. } | AppEvent::TextSendFailed { .. } => 5,
+                AppEvent::OutboundSendSucceeded { .. } | AppEvent::OutboundSendFailed { .. } => 5,
                 AppEvent::ContactAvatar(_)
                 | AppEvent::ContactAvatarRefreshed { .. }
                 | AppEvent::DownloadFile(_, _)
