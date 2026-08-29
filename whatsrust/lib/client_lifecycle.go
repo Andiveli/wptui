@@ -28,11 +28,6 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// client remains package-owned until the remaining bridge callers migrate to
-// clientSnapshot. Publication and reset are centralized in lifecycleState so
-// the migrated callers observe one synchronized lifecycle boundary.
-var client *whatsmeow.Client
-
 type logoutReservation struct {
 	client     *whatsmeow.Client
 	generation uint64
@@ -41,6 +36,7 @@ type logoutReservation struct {
 
 type clientLifecycleState struct {
 	mu                   sync.Mutex
+	client               *whatsmeow.Client
 	qrChan               <-chan whatsmeow.QRChannelItem
 	handlersRegistered   bool
 	registrationDone     chan struct{}
@@ -58,13 +54,13 @@ var lifecycleState clientLifecycleState
 func (state *clientLifecycleState) clientSnapshot() *whatsmeow.Client {
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	return client
+	return state.client
 }
 
 func (state *clientLifecycleState) publishClient(newClient *whatsmeow.Client) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	client = newClient
+	state.client = newClient
 }
 
 func (state *clientLifecycleState) reset() {
@@ -83,18 +79,51 @@ func (state *clientLifecycleState) reset() {
 		<-done
 		state.mu.Lock()
 	}
-	client = nil
+	state.client = nil
 	state.qrChan = nil
 	state.handlersRegistered = false
 	state.resetInProgress = false
 	state.mu.Unlock()
 }
 
+// retire detaches the current client before waiting for active lifecycle work.
+// Detaching under the lifecycle lock makes repeated retirement safe: exactly one
+// caller receives a client to disconnect.
+func (state *clientLifecycleState) retire(disconnect func(*whatsmeow.Client)) {
+	state.mu.Lock()
+	retiredClient := state.client
+	if retiredClient == nil {
+		state.mu.Unlock()
+		return
+	}
+	state.client = nil
+	state.resetInProgress = true
+	state.logoutGeneration++
+	for state.logoutDone != nil {
+		done := state.logoutDone
+		state.mu.Unlock()
+		<-done
+		state.mu.Lock()
+	}
+	for state.registrationDone != nil {
+		done := state.registrationDone
+		state.mu.Unlock()
+		<-done
+		state.mu.Lock()
+	}
+	state.qrChan = nil
+	state.handlersRegistered = false
+	state.resetInProgress = false
+	state.mu.Unlock()
+
+	disconnect(retiredClient)
+}
+
 func (state *clientLifecycleState) beginLogout() (logoutReservation, bool) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	reservation := logoutReservation{client: client}
+	reservation := logoutReservation{client: state.client}
 	if reservation.client == nil || state.logoutDone != nil || state.logoutCallbackActive || state.resetInProgress {
 		return reservation, false
 	}
@@ -162,7 +191,9 @@ func (state *clientLifecycleState) registerEventHandlers(register func()) {
 
 //export C_NewClient
 func C_NewClient(dbPath *C.char) {
-	lifecycleState.reset()
+	lifecycleState.retire(func(retiredClient *whatsmeow.Client) {
+		retiredClient.Disconnect()
+	})
 	clearAuthenticatedPushNameCache()
 	rawPresenceProbe.reset(os.Getenv("WPTUI_PRESENCE_DEBUG") == "1")
 	requestFullHistorySync()

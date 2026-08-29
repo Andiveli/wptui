@@ -45,8 +45,8 @@ func TestMessageCallbackMetadataFromPreservesCallbackFields(t *testing.T) {
 func TestMessageCallbackCarriesSemanticSelfMentionForPNAndLID(t *testing.T) {
 	pn := types.NewJID("123", types.DefaultUserServer)
 	lid := types.NewJID("456", types.HiddenUserServer)
-	previousClient := client
-	client = &whatsmeow.Client{Store: &store.Device{
+	previousClient := lifecycleState.clientSnapshot()
+	client := &whatsmeow.Client{Store: &store.Device{
 		ID:  &pn,
 		LID: lid,
 		LIDs: participantIdentityLIDStore{
@@ -54,7 +54,8 @@ func TestMessageCallbackCarriesSemanticSelfMentionForPNAndLID(t *testing.T) {
 			lidByPN: map[types.JID]types.JID{pn: lid},
 		},
 	}}
-	t.Cleanup(func() { client = previousClient })
+	lifecycleState.publishClient(client)
+	t.Cleanup(func() { lifecycleState.publishClient(previousClient) })
 
 	message := &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
 		ContextInfo: &waE2E.ContextInfo{MentionedJID: []string{lid.String()}},
@@ -74,8 +75,8 @@ func TestMessageCallbackCarriesSemanticSelfMentionForPNAndLID(t *testing.T) {
 func TestMessageCallbackSelfMentionIdentityVariantsFailClosed(t *testing.T) {
 	pn := types.NewJID("123", types.DefaultUserServer)
 	lid := types.NewJID("456", types.HiddenUserServer)
-	previousClient := client
-	client = &whatsmeow.Client{Store: &store.Device{
+	previousClient := lifecycleState.clientSnapshot()
+	client := &whatsmeow.Client{Store: &store.Device{
 		ID:  &pn,
 		LID: lid,
 		LIDs: participantIdentityLIDStore{
@@ -83,7 +84,8 @@ func TestMessageCallbackSelfMentionIdentityVariantsFailClosed(t *testing.T) {
 			lidByPN: map[types.JID]types.JID{pn: lid},
 		},
 	}}
-	t.Cleanup(func() { client = previousClient })
+	lifecycleState.publishClient(client)
+	t.Cleanup(func() { lifecycleState.publishClient(previousClient) })
 
 	tests := []struct {
 		name      string
@@ -157,19 +159,20 @@ func TestMessageCallbackCloseNilIsSafe(t *testing.T) {
 }
 
 func TestSelfMentionUsesAuthenticatedPushNameLearnedFromOwnCallback(t *testing.T) {
-	previousClient := client
+	previousClient := lifecycleState.clientSnapshot()
 	t.Cleanup(func() {
-		client = previousClient
+		lifecycleState.publishClient(previousClient)
 		clearAuthenticatedPushNameCache()
 	})
 
 	pn := types.NewJID("593995682425", types.DefaultUserServer)
-	client = whatsmeow.NewClient(&store.Device{
+	client := whatsmeow.NewClient(&store.Device{
 		ID: &pn,
 		Contacts: mentionDirectContactStore{direct: map[types.JID]types.ContactInfo{
 			pn: {FullName: "+593 99 568 2425", FirstName: "+593 99 568 2425"},
 		}},
 	}, nil)
+	lifecycleState.publishClient(client)
 
 	callback := beginMessageCallback(types.MessageInfo{
 		MessageSource: types.MessageSource{Sender: pn, IsFromMe: true},
@@ -186,15 +189,16 @@ func TestSelfMentionUsesAuthenticatedPushNameLearnedFromOwnCallback(t *testing.T
 }
 
 func TestOtherUsersPushNameNeverContaminatesAuthenticatedSelfCache(t *testing.T) {
-	previousClient := client
+	previousClient := lifecycleState.clientSnapshot()
 	t.Cleanup(func() {
-		client = previousClient
+		lifecycleState.publishClient(previousClient)
 		clearAuthenticatedPushNameCache()
 	})
 
 	self := types.NewJID("593995682425", types.DefaultUserServer)
 	bryan := types.NewJID("15551234567", types.DefaultUserServer)
-	client = whatsmeow.NewClient(&store.Device{ID: &self}, nil)
+	client := whatsmeow.NewClient(&store.Device{ID: &self}, nil)
+	lifecycleState.publishClient(client)
 
 	callback := beginMessageCallback(types.MessageInfo{
 		MessageSource: types.MessageSource{Sender: bryan, IsFromMe: false},
@@ -213,14 +217,15 @@ func TestOtherUsersPushNameNeverContaminatesAuthenticatedSelfCache(t *testing.T)
 }
 
 func TestAuthenticatedPushNameCacheIsolatedByAccountIdentity(t *testing.T) {
-	previousClient := client
+	previousClient := lifecycleState.clientSnapshot()
 	t.Cleanup(func() {
-		client = previousClient
+		lifecycleState.publishClient(previousClient)
 		clearAuthenticatedPushNameCache()
 	})
 
 	first := types.NewJID("111", types.DefaultUserServer)
-	client = whatsmeow.NewClient(&store.Device{ID: &first}, nil)
+	client := whatsmeow.NewClient(&store.Device{ID: &first}, nil)
+	lifecycleState.publishClient(client)
 	callback := beginMessageCallback(types.MessageInfo{
 		MessageSource: types.MessageSource{Sender: first, IsFromMe: true},
 		PushName:      "First Account",
@@ -229,6 +234,7 @@ func TestAuthenticatedPushNameCacheIsolatedByAccountIdentity(t *testing.T) {
 
 	second := types.NewJID("222", types.DefaultUserServer)
 	client = whatsmeow.NewClient(&store.Device{ID: &second}, nil)
+	lifecycleState.publishClient(client)
 	if got := selfDisplayName(context.Background(), client); got != "" {
 		t.Fatalf("push name from previous account leaked into current account: %q", got)
 	}

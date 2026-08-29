@@ -140,7 +140,7 @@ func TestClientLifecycleRegistrationPanicCanRetry(t *testing.T) {
 
 func TestClientLifecycleResetClearsRegistrationAndQR(t *testing.T) {
 	qr := make(chan whatsmeow.QRChannelItem)
-	previous := client
+	previous := lifecycleState.clientSnapshot()
 	t.Cleanup(func() { lifecycleState.publishClient(previous) })
 	testClient := &whatsmeow.Client{}
 	state := clientLifecycleState{
@@ -162,8 +162,41 @@ func TestClientLifecycleResetClearsRegistrationAndQR(t *testing.T) {
 	}
 }
 
+func TestClientLifecycleRetireClearsClientAndDisconnectsOnce(t *testing.T) {
+	var state clientLifecycleState
+	retired := &whatsmeow.Client{}
+	state.publishClient(retired)
+	disconnects := 0
+
+	state.retire(func(client *whatsmeow.Client) {
+		if client != retired {
+			t.Fatalf("retired client = %p, want %p", client, retired)
+		}
+		disconnects++
+	})
+	state.retire(func(*whatsmeow.Client) { disconnects++ })
+
+	if got := state.clientSnapshot(); got != nil {
+		t.Fatalf("client after retirement = %p, want nil", got)
+	}
+	if disconnects != 1 {
+		t.Fatalf("disconnects = %d, want one", disconnects)
+	}
+}
+
+func TestClientLifecycleRetireNilClientDoesNotDisconnect(t *testing.T) {
+	var state clientLifecycleState
+	disconnects := 0
+
+	state.retire(func(*whatsmeow.Client) { disconnects++ })
+
+	if disconnects != 0 {
+		t.Fatalf("disconnects = %d, want zero", disconnects)
+	}
+}
+
 func TestClientLifecycleClientSnapshotUsesLifecycleLock(t *testing.T) {
-	previous := client
+	previous := lifecycleState.clientSnapshot()
 	t.Cleanup(func() { lifecycleState.publishClient(previous) })
 	want := &whatsmeow.Client{}
 	lifecycleState.publishClient(want)
@@ -175,7 +208,7 @@ func TestClientLifecycleClientSnapshotUsesLifecycleLock(t *testing.T) {
 
 func TestClientLifecyclePublicationIsSynchronized(t *testing.T) {
 	var state clientLifecycleState
-	previous := client
+	previous := lifecycleState.clientSnapshot()
 	t.Cleanup(func() { lifecycleState.publishClient(previous) })
 	first, second := &whatsmeow.Client{}, &whatsmeow.Client{}
 	state.publishClient(first)
@@ -201,7 +234,7 @@ func TestClientLifecyclePublicationIsSynchronized(t *testing.T) {
 
 func TestClientLifecycleOperationKeepsOneSnapshot(t *testing.T) {
 	var state clientLifecycleState
-	previous := client
+	previous := lifecycleState.clientSnapshot()
 	t.Cleanup(func() { lifecycleState.publishClient(previous) })
 	first, second := &whatsmeow.Client{}, &whatsmeow.Client{}
 	state.publishClient(first)
@@ -225,7 +258,7 @@ func TestClientLifecycleOperationKeepsOneSnapshot(t *testing.T) {
 
 func TestClientLifecycleReconnectPublishesReplacementSnapshot(t *testing.T) {
 	var state clientLifecycleState
-	previous := client
+	previous := lifecycleState.clientSnapshot()
 	t.Cleanup(func() { lifecycleState.publishClient(previous) })
 	first, second := &whatsmeow.Client{}, &whatsmeow.Client{}
 
@@ -320,7 +353,7 @@ func TestLogoutStoreDeleteUsesBoundedContext(t *testing.T) {
 }
 func TestClientLifecycleAllowsOnlyOneLogoutInFlight(t *testing.T) {
 	var state clientLifecycleState
-	previous := client
+	previous := lifecycleState.clientSnapshot()
 	t.Cleanup(func() { state.publishClient(previous) })
 	firstClient := &whatsmeow.Client{}
 	state.publishClient(firstClient)
@@ -367,7 +400,7 @@ func waitForLifecycleCondition(t *testing.T, state *clientLifecycleState, condit
 }
 func TestClientLifecycleResetWaitsForLogoutAndSuppressesStaleResult(t *testing.T) {
 	var state clientLifecycleState
-	previous := client
+	previous := lifecycleState.clientSnapshot()
 	t.Cleanup(func() { state.publishClient(previous) })
 	clientSnapshot := &whatsmeow.Client{}
 	state.publishClient(clientSnapshot)
@@ -420,7 +453,7 @@ func TestClientLifecycleResetWaitsForLogoutAndSuppressesStaleResult(t *testing.T
 }
 func TestClientLifecycleLogoutCompletionClearsBeforeSynchronousCallback(t *testing.T) {
 	var state clientLifecycleState
-	previous := client
+	previous := lifecycleState.clientSnapshot()
 	t.Cleanup(func() { state.publishClient(previous) })
 	clientSnapshot := &whatsmeow.Client{}
 	state.publishClient(clientSnapshot)

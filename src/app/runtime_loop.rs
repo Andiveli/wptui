@@ -30,6 +30,21 @@ fn refresh_composer_viewport_width(app: &mut App<'_>, terminal_session: &mut Ter
     app.set_composer_viewport_width(width);
 }
 
+#[derive(Debug, PartialEq)]
+enum TerminalInitializationFailureTeardown {
+    StopReadReceiptWorker,
+    Disconnect,
+    FinalizeDiagnostics,
+}
+
+fn finish_terminal_initialization_failure(
+    mut teardown: impl FnMut(TerminalInitializationFailureTeardown),
+) {
+    teardown(TerminalInitializationFailureTeardown::StopReadReceiptWorker);
+    teardown(TerminalInitializationFailureTeardown::Disconnect);
+    teardown(TerminalInitializationFailureTeardown::FinalizeDiagnostics);
+}
+
 /// Owns the terminal runtime: input pumping, event dispatch, redraws, and shutdown.
 ///
 /// Bootstrap stays in `App::run`; this phase consumes the already-created download
@@ -43,8 +58,15 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
             let _ = app
                 .message_action_diagnostics
                 .write_report(std::io::stderr());
-            app.shutdown_read_receipt_worker();
-            app.finalize_runtime_diagnostics();
+            finish_terminal_initialization_failure(|step| match step {
+                TerminalInitializationFailureTeardown::StopReadReceiptWorker => {
+                    app.shutdown_read_receipt_worker();
+                }
+                TerminalInitializationFailureTeardown::Disconnect => wr::disconnect(),
+                TerminalInitializationFailureTeardown::FinalizeDiagnostics => {
+                    app.finalize_runtime_diagnostics();
+                }
+            });
             return;
         }
     };
@@ -156,6 +178,22 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
 mod tests {
     use super::*;
     use crate::app::test_support::TestApp;
+
+    #[test]
+    fn terminal_initialization_failure_stops_worker_disconnects_once_and_finalizes() {
+        let mut events = Vec::new();
+
+        finish_terminal_initialization_failure(|step| events.push(step));
+
+        assert_eq!(
+            events,
+            [
+                TerminalInitializationFailureTeardown::StopReadReceiptWorker,
+                TerminalInitializationFailureTeardown::Disconnect,
+                TerminalInitializationFailureTeardown::FinalizeDiagnostics,
+            ]
+        );
+    }
 
     #[test]
     fn hidden_log_panel_suppresses_only_go_log_draws() {

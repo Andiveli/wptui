@@ -12,7 +12,7 @@ func TestDownloadFileReturnsFailureWhenClientIsUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	previous := client
+	previous := lifecycleState.clientSnapshot()
 	t.Cleanup(func() { lifecycleState.publishClient(previous) })
 	lifecycleState.publishClient(nil)
 

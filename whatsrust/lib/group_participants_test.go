@@ -114,14 +114,15 @@ func TestDeduplicateGroupParticipantsUsesExplicitAliasesOnly(t *testing.T) {
 }
 
 func TestGroupParticipantNamePrefersSelfLocalNameThenPushNameThenNumeric(t *testing.T) {
-	previousClient := client
-	t.Cleanup(func() { client = previousClient })
+	previousClient := lifecycleState.clientSnapshot()
+	t.Cleanup(func() { lifecycleState.publishClient(previousClient) })
 
 	self := types.NewJID("123", types.DefaultUserServer)
-	client = &whatsmeow.Client{Store: &store.Device{
+	client := &whatsmeow.Client{Store: &store.Device{
 		ID:       &self,
 		PushName: "Connected Profile",
 	}}
+	lifecycleState.publishClient(client)
 	participant := types.GroupParticipant{JID: self, DisplayName: "Other Display"}
 
 	for name, tt := range map[string]struct {
@@ -162,11 +163,12 @@ func TestGroupParticipantNamePrefersSelfLocalNameThenPushNameThenNumeric(t *test
 }
 
 func TestGroupParticipantPickerExcludesSelfAndRetainsAllOtherMembers(t *testing.T) {
-	previousClient := client
-	t.Cleanup(func() { client = previousClient })
+	previousClient := lifecycleState.clientSnapshot()
+	t.Cleanup(func() { lifecycleState.publishClient(previousClient) })
 
 	self := types.NewJID("123", types.DefaultUserServer)
-	client = &whatsmeow.Client{Store: &store.Device{ID: &self}}
+	client := &whatsmeow.Client{Store: &store.Device{ID: &self}}
+	lifecycleState.publishClient(client)
 	participants := []types.GroupParticipant{
 		{JID: self},
 		{JID: types.NewJID("456", types.DefaultUserServer)},

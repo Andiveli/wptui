@@ -72,13 +72,13 @@ func TestNormalAndOptimisticSendRoutesPreserveWireAndQuoteParity(t *testing.T) {
 }
 
 func TestNormalAndOptimisticProductionRoutesHaveWireAndCallbackParity(t *testing.T) {
-	previousClient := client
+	previousClient := lifecycleState.clientSnapshot()
 	previousSend := requestSendMessage
 	previousNormal := normalMessageCallback
 	previousOptimistic := optimisticTextSentCallback
 	previousObserve := observeTextCallback
 	t.Cleanup(func() {
-		client = previousClient
+		lifecycleState.publishClient(previousClient)
 		requestSendMessage = previousSend
 		normalMessageCallback = previousNormal
 		optimisticTextSentCallback = previousOptimistic
@@ -89,7 +89,7 @@ func TestNormalAndOptimisticProductionRoutesHaveWireAndCallbackParity(t *testing
 	otherPN := types.NewJID("222", types.DefaultUserServer)
 	otherLID := types.NewJID("222", types.HiddenUserServer)
 	selfLID := types.NewJID("444", types.HiddenUserServer)
-	client = &whatsmeow.Client{Store: &store.Device{
+	lifecycleState.publishClient(&whatsmeow.Client{Store: &store.Device{
 		ID:  &self,
 		LID: selfLID,
 		Contacts: parityContactStore{contacts: map[types.JID]types.ContactInfo{
@@ -100,7 +100,7 @@ func TestNormalAndOptimisticProductionRoutesHaveWireAndCallbackParity(t *testing
 			pnByLID: map[types.JID]types.JID{otherLID: otherPN, selfLID: self},
 			lidByPN: map[types.JID]types.JID{otherPN: otherLID, self: selfLID},
 		},
-	}}
+	}})
 	request := textSendRequest{
 		messageType:   MessageTypeText,
 		chat:          types.NewJID("999", types.DefaultUserServer),

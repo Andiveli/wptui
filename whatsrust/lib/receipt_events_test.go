@@ -59,9 +59,10 @@ func receiptTestClient(pn types.JID) *whatsmeow.Client {
 func TestReceiptChatCanonicalizationMatchesMessageIdentity(t *testing.T) {
 	pn := types.NewJID("15551234567", types.DefaultUserServer)
 	lid := types.NewJID("alice", types.HiddenUserServer)
-	previous := client
-	client = receiptTestClient(pn)
-	defer func() { client = previous }()
+	previous := lifecycleState.clientSnapshot()
+	client := receiptTestClient(pn)
+	lifecycleState.publishClient(client)
+	defer func() { lifecycleState.publishClient(previous) }()
 
 	messageInfo := normalizeMessageInfo(types.MessageInfo{MessageSource: types.MessageSource{Chat: lid, Sender: lid}})
 	receipt, ok := receiptEventFromEventWithClient(client, &events.Receipt{

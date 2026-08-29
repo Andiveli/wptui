@@ -76,8 +76,8 @@ type messageCallback struct {
 
 func beginMessageCallback(info types.MessageInfo, msg *waE2E.Message, rawSource []byte) *messageCallback {
 	messageCallbackMu.Lock()
-	rememberAuthenticatedPushName(info)
 	clientSnapshot := lifecycleState.clientSnapshot()
+	rememberAuthenticatedPushNameWithClient(clientSnapshot, info)
 	callback := &messageCallback{locked: true}
 	if len(rawSource) > 0 {
 		callback.forwardData = C.CBytes(rawSource)
