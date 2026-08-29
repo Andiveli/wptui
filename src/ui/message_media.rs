@@ -29,6 +29,10 @@ fn content_height(file: &wr::FileContent) -> usize {
     }
 }
 
+fn should_request_download(message_id: &wr::MessageId) -> bool {
+    !App::is_pending_message_id(message_id)
+}
+
 fn caption_lines(
     caption: Option<&str>,
     mention_ranges: &[std::ops::Range<usize>],
@@ -75,12 +79,14 @@ pub fn render_file(
                 alignment,
             )
             .render(media_area, buf);
-            app.tx
-                .send(AppInput::App(AppEvent::DownloadFile(
-                    message_id.clone(),
-                    data.file_id.clone(),
-                )))
-                .unwrap();
+            if should_request_download(message_id) {
+                app.tx
+                    .send(AppInput::App(AppEvent::DownloadFile(
+                        message_id.clone(),
+                        data.file_id.clone(),
+                    )))
+                    .unwrap();
+            }
         }
         Some(Metadata::File(meta)) => match meta {
             FileMeta::Downloaded => {
@@ -198,7 +204,7 @@ pub fn render_file(
 
 #[cfg(test)]
 mod tests {
-    use super::{MessageTextMode, caption_lines, preview_height};
+    use super::{MessageTextMode, caption_lines, preview_height, should_request_download};
     use ratatui::{
         Terminal,
         backend::TestBackend,
@@ -224,6 +230,12 @@ mod tests {
         terminal
             .backend()
             .assert_buffer_lines(["abc ", "גבא ", "123 "]);
+    }
+
+    #[test]
+    fn pending_local_media_does_not_request_download() {
+        assert!(!should_request_download(&"local-send-42".into()));
+        assert!(should_request_download(&"server-message".into()));
     }
 
     #[test]
