@@ -102,12 +102,16 @@ fn edit_action_ids_deduplicate_on_restart() {
             .collect::<Vec<_>>(),
         ["edit-first", "edit-later"]
     );
-    assert!(
-        actions.iter().all(|action| matches!(
-            &action.kind,
-            MessageActionKind::Edit { replacement } if replacement.is_empty()
-        )),
-        "edit actions persist without replacement bodies"
+    assert_eq!(
+        actions
+            .iter()
+            .map(|action| match &action.kind {
+                MessageActionKind::Edit { replacement } => replacement.as_ref(),
+                MessageActionKind::Delete => unreachable!(),
+            })
+            .collect::<Vec<_>>(),
+        ["first", "second"],
+        "pending edits retain their replacement bodies until their target materializes"
     );
     restarted.stop();
 }
@@ -349,7 +353,7 @@ fn persisted_replacement_is_migrated_and_not_exposed() {
         .unwrap()
         .query_row([], |row| row.get(0))
         .unwrap();
-    assert_eq!(replacement_columns, 0);
+    assert_eq!(replacement_columns, 1);
     database.stop();
 }
 
@@ -616,4 +620,171 @@ fn protobuf_forward_sources_for_text_and_files_persist_across_restart_and_are_in
     assert_eq!(whatsrust::forward_source(&text.info), None);
     assert_eq!(whatsrust::forward_source(&file.info), None);
     after_delete.stop();
+}
+
+#[test]
+fn pending_edit_projects_when_its_target_arrives_after_restart() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("pending-edit.db");
+    let chat = JID::from("chat@example.test".to_owned());
+    let sender = JID::from("sender@example.test".to_owned());
+    let mut database = DatabaseHandler::new(&path);
+    database.init();
+    assert_eq!(
+        database.record_message_action(&action(
+            "pending-edit",
+            "target",
+            MessageActionKind::Edit {
+                replacement: "after-arrival".into(),
+            },
+            2,
+            1,
+        )),
+        MessageActionPersistence::Inserted
+    );
+    database.stop();
+
+    let mut restarted = DatabaseHandler::new(&path);
+    restarted.init();
+    assert!(matches!(
+        &restarted.get_message_actions()[0].kind,
+        MessageActionKind::Edit { replacement } if replacement.as_ref() == "after-arrival"
+    ));
+    restarted.add_message(&text_message("target", &chat, &sender, "before", 1));
+    restarted.stop();
+
+    let mut reloaded = DatabaseHandler::new(&path);
+    reloaded.init();
+    let messages = reloaded.get_messages();
+    assert!(matches!(
+        &messages[0].message,
+        MessageContent::Text(body) if body.as_ref() == "after-arrival"
+    ));
+    assert!(matches!(
+        &reloaded.get_message_actions()[0].kind,
+        MessageActionKind::Edit { replacement } if replacement.is_empty()
+    ));
+    reloaded.stop();
+}
+
+#[test]
+fn newer_materialized_edit_wins_when_an_older_edit_arrives_late() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("ordered-edits.db");
+    let chat = JID::from("chat@example.test".to_owned());
+    let sender = JID::from("sender@example.test".to_owned());
+    let mut writer = DatabaseHandler::new(&path);
+    writer.init();
+    writer.add_message(&text_message("target", &chat, &sender, "before", 1));
+    writer.stop();
+
+    let mut actions = DatabaseHandler::new(&path);
+    actions.init();
+    actions.record_message_action(&action(
+        "newer",
+        "target",
+        MessageActionKind::Edit {
+            replacement: "newer body".into(),
+        },
+        3,
+        1,
+    ));
+    actions.record_message_action(&action(
+        "older",
+        "target",
+        MessageActionKind::Edit {
+            replacement: "older body".into(),
+        },
+        2,
+        1,
+    ));
+    assert!(matches!(
+        &actions.get_messages()[0].message,
+        MessageContent::Text(body) if body.as_ref() == "newer body"
+    ));
+    assert!(actions.get_message_actions().iter().all(|action| matches!(
+        &action.kind,
+        MessageActionKind::Edit { replacement } if replacement.is_empty()
+    )));
+    actions.stop();
+}
+
+#[test]
+fn additive_migration_adds_a_nullable_pending_replacement_column() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("additive-migration.db");
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "CREATE TABLE message_actions (
+                action_id TEXT PRIMARY KEY,
+                target_message_id TEXT NOT NULL,
+                chat_jid TEXT NOT NULL,
+                sender_jid TEXT NOT NULL,
+                kind INTEGER NOT NULL,
+                occurred_at INTEGER NOT NULL,
+                arrival_order INTEGER NOT NULL
+            );",
+        )
+        .unwrap();
+    drop(connection);
+
+    let mut database = DatabaseHandler::new(&path);
+    database.init();
+    database.stop();
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    let replacement_type: String = connection
+        .prepare("SELECT type FROM pragma_table_info('message_actions') WHERE name = 'replacement'")
+        .unwrap()
+        .query_row([], |row| row.get(0))
+        .unwrap();
+    assert_eq!(replacement_type, "TEXT");
+}
+
+#[test]
+fn separate_connection_edit_projects_target_and_materializes_action_atomically() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("separate-connection.db");
+    let chat = JID::from("chat@example.test".to_owned());
+    let sender = JID::from("sender@example.test".to_owned());
+    let mut target_writer = DatabaseHandler::new(&path);
+    target_writer.init();
+    target_writer.add_message(&text_message("target", &chat, &sender, "before", 1));
+    target_writer.stop();
+
+    let mut action_writer = DatabaseHandler::new(&path);
+    action_writer.init();
+    assert_eq!(
+        action_writer.record_message_action(&action(
+            "separate-edit",
+            "target",
+            MessageActionKind::Edit {
+                replacement: "projected".into(),
+            },
+            2,
+            1,
+        )),
+        MessageActionPersistence::Inserted
+    );
+    assert!(matches!(
+        &action_writer.get_messages()[0].message,
+        MessageContent::Text(body) if body.as_ref() == "projected"
+    ));
+    assert!(matches!(
+        &action_writer.get_message_actions()[0].kind,
+        MessageActionKind::Edit { replacement } if replacement.is_empty()
+    ));
+    action_writer.stop();
+
+    let mut reader = DatabaseHandler::new(&path);
+    reader.init();
+    assert!(matches!(
+        &reader.get_messages()[0].message,
+        MessageContent::Text(body) if body.as_ref() == "projected"
+    ));
+    assert!(matches!(
+        &reader.get_message_actions()[0].kind,
+        MessageActionKind::Edit { replacement } if replacement.is_empty()
+    ));
+    reader.stop();
 }

@@ -46,6 +46,7 @@ pub(crate) fn prepare(db: &Connection) {
             chat_jid TEXT NOT NULL,
             sender_jid TEXT NOT NULL,
             kind INTEGER NOT NULL,
+            replacement TEXT,
             occurred_at INTEGER NOT NULL,
             arrival_order INTEGER NOT NULL
         )",
@@ -74,6 +75,7 @@ pub(crate) fn prepare_legacy_forwarding_schema(db: &Connection) {
 /// Creates the complete message schema and applies its legacy migrations.
 /// Callers hold the process-wide database write lock.
 pub(crate) fn initialize(db: &Connection, deleted_message_text: &str) {
+    prepare(db);
     db.execute(
         "CREATE TABLE IF NOT EXISTS chats (jid TEXT PRIMARY KEY)",
         [],
@@ -129,7 +131,7 @@ pub(crate) fn initialize(db: &Connection, deleted_message_text: &str) {
     )
     .unwrap();
     prepare_legacy_message_schema(db);
-    migrate_message_action_columns(db, deleted_message_text);
+    ensure_message_action_replacement_column(db, deleted_message_text);
 }
 
 fn ensure_read_receipt_schema(db: &Connection) -> rusqlite::Result<()> {
@@ -192,9 +194,10 @@ fn ensure_mention_columns(db: &Connection) {
     }
 }
 
-/// Migrates legacy action replacement bodies into message rows, then removes
-/// the obsolete action column. The caller holds the database write lock.
-fn migrate_message_action_columns(db: &Connection, deleted_message_text: &str) {
+/// Adds the pending edit payload column for legacy databases, then projects
+/// existing replacement bodies into materialized message rows. The caller holds
+/// the database write lock.
+fn ensure_message_action_replacement_column(db: &Connection, deleted_message_text: &str) {
     let has_replacement = db
         .prepare(
             "SELECT COUNT(*) FROM pragma_table_info('message_actions') WHERE name = 'replacement'",
@@ -204,6 +207,11 @@ fn migrate_message_action_columns(db: &Connection, deleted_message_text: &str) {
         .unwrap()
         > 0;
     if !has_replacement {
+        db.execute(
+            "ALTER TABLE message_actions ADD COLUMN replacement TEXT",
+            [],
+        )
+        .unwrap();
         return;
     }
     let mut effective_bodies = HashMap::new();
@@ -229,11 +237,20 @@ fn migrate_message_action_columns(db: &Connection, deleted_message_text: &str) {
     }
     for (target, body) in &effective_bodies {
         if !deleted_targets.contains(target) {
-            db.execute(
-                "UPDATE text_messages SET message = ?1 WHERE id = ?2",
-                rusqlite::params![body, target],
-            )
-            .unwrap();
+            if db
+                .execute(
+                    "UPDATE text_messages SET message = ?1 WHERE id = ?2",
+                    rusqlite::params![body, target],
+                )
+                .unwrap()
+                == 1
+            {
+                db.execute(
+                    "UPDATE message_actions SET replacement = NULL WHERE target_message_id = ?1 AND kind = 0",
+                    rusqlite::params![target],
+                )
+                .unwrap();
+            }
         }
     }
     for target in deleted_targets {
@@ -248,8 +265,6 @@ fn migrate_message_action_columns(db: &Connection, deleted_message_text: &str) {
         )
         .unwrap();
     }
-    db.execute("ALTER TABLE message_actions DROP COLUMN replacement", [])
-        .unwrap();
 }
 
 #[cfg(test)]
@@ -289,7 +304,6 @@ mod tests {
             "CREATE TABLE text_messages (id TEXT PRIMARY KEY, chat_jid TEXT, sender_jid TEXT, timestamp INTEGER, quote_id TEXT, is_from_me INTEGER, read INTEGER, message TEXT);
              CREATE TABLE file_messages (id TEXT PRIMARY KEY, chat_jid TEXT, sender_jid TEXT, timestamp INTEGER, quote_id TEXT, is_from_me INTEGER, read INTEGER, kind INTEGER, path TEXT, file_id TEXT, caption TEXT);
              INSERT INTO text_messages VALUES ('target', 'chat', 'sender', 1, 'quote', 0, 0, 'old');
-             ALTER TABLE message_actions ADD COLUMN replacement TEXT;
              INSERT INTO message_actions (action_id, target_message_id, chat_jid, sender_jid, kind, replacement, occurred_at, arrival_order) VALUES ('edit-1', 'target', 'chat', 'sender', 0, 'first', 1, 1);
              INSERT INTO message_actions (action_id, target_message_id, chat_jid, sender_jid, kind, replacement, occurred_at, arrival_order) VALUES ('edit-2', 'target', 'chat', 'sender', 0, 'last', 2, 1);
              INSERT INTO message_actions (action_id, target_message_id, chat_jid, sender_jid, kind, replacement, occurred_at, arrival_order) VALUES ('delete-1', 'target', 'chat', 'sender', 1, NULL, 3, 1);",
@@ -328,6 +342,6 @@ mod tests {
             .unwrap(),
             "0,0,1"
         );
-        assert!(!columns(&db, "message_actions").contains(&"replacement".into()));
+        assert!(columns(&db, "message_actions").contains(&"replacement".into()));
     }
 }

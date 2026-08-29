@@ -75,8 +75,8 @@ impl DatabaseHandler {
 
     /// Inserts once by the protocol action ID. A duplicate arriving from
     /// live delivery or history sync is ignored.
-    pub fn record_message_action(&self, action: &MessageAction) -> MessageActionPersistence {
-        action_repository::record(&self.db, action)
+    pub fn record_message_action(&mut self, action: &MessageAction) -> MessageActionPersistence {
+        action_repository::record(&mut self.db, action)
     }
 
     /// Atomically confirms one pending local action with its server action ID.

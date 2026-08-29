@@ -186,7 +186,7 @@ pub(super) fn persist(db: &mut Connection, messages: Vec<wr::Message>) {
     let mut source_stmt = tx.prepare("INSERT OR REPLACE INTO forward_sources (id, chat_jid, sender_jid, source) VALUES (?, ?, ?, ?)").unwrap();
     for message in messages {
         let mut msg = message;
-        if tx
+        let deleted = tx
             .query_row(
                 "SELECT 1 FROM message_actions WHERE target_message_id = ?1 AND kind = 1 LIMIT 1",
                 rusqlite::params![msg.info.id],
@@ -194,11 +194,27 @@ pub(super) fn persist(db: &mut Connection, messages: Vec<wr::Message>) {
             )
             .optional()
             .unwrap()
-            .is_some()
-        {
+            .is_some();
+        if deleted {
             msg.message = wr::MessageContent::Text(DELETED_MESSAGE_TEXT.into());
             msg.info.quote_id = None;
             msg.info.forwarding = Default::default();
+        }
+        let pending_edit = (!deleted)
+            .then(|| {
+                tx.query_row(
+                    "SELECT action_id, replacement FROM message_actions WHERE target_message_id = ?1 ORDER BY occurred_at DESC, arrival_order DESC, action_id DESC LIMIT 1",
+                    rusqlite::params![msg.info.id],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+                )
+                .optional()
+            })
+            .transpose()
+            .unwrap()
+            .flatten()
+            .and_then(|(action_id, replacement)| replacement.map(|replacement| (action_id, replacement)));
+        if let Some((_, replacement)) = &pending_edit {
+            msg.message = wr::MessageContent::Text(replacement.clone().into());
         }
         match &msg.message {
             wr::MessageContent::Text(text) => text_stmt
@@ -253,6 +269,13 @@ pub(super) fn persist(db: &mut Connection, messages: Vec<wr::Message>) {
                 ])
                 .unwrap(),
         };
+        if pending_edit.is_some() {
+            tx.execute(
+                "UPDATE message_actions SET replacement = NULL WHERE target_message_id = ?1 AND kind = 0",
+                rusqlite::params![msg.info.id],
+            )
+            .unwrap();
+        }
         if let Some(source) = wr::forward_source(&msg.info) {
             source_stmt
                 .execute(rusqlite::params![
