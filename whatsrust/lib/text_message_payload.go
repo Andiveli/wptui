@@ -29,11 +29,11 @@ import "C"
 import "unsafe"
 
 type textCallbackOutput struct {
-	localSendID uint64
-	text        string
-	ranges      []mentionRange
+	localSendID  uint64
+	text         string
+	ranges       []mentionRange
 	mentionsSelf bool
-	quoteID     string
+	quoteID      string
 }
 
 var observeTextCallback = func(textCallbackOutput) {}

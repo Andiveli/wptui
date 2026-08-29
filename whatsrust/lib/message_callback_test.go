@@ -138,6 +138,22 @@ func TestHandleMessageQuotedTextUsesOwnedCallbackQuoteID(t *testing.T) {
 	}
 }
 
+func TestHandleOptimisticTextSentDeliversFilePayloadWithLocalSendID(t *testing.T) {
+	previousObserve := observeOptimisticFileCallback
+	t.Cleanup(func() { observeOptimisticFileCallback = previousObserve })
+
+	var output fileCallbackOutput
+	observeOptimisticFileCallback = func(got fileCallbackOutput) { output = got }
+	caption := "caption"
+	HandleOptimisticTextSent(42, types.MessageInfo{ID: "message-id"}, &waE2E.Message{
+		ImageMessage: &waE2E.ImageMessage{Caption: &caption},
+	})
+
+	if output.localSendID != 42 || output.kind != FileTypeImage || output.caption != caption {
+		t.Fatalf("optimistic file callback = %#v", output)
+	}
+}
+
 func TestMessageCallbackCloseReleasesAllCallbackStateExactlyOnce(t *testing.T) {
 	callback := beginMessageCallback(types.MessageInfo{PushName: "profile"}, &waE2E.Message{}, []byte("forwarded"))
 	callback.setQuoteID("quoted-message")

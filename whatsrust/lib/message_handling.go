@@ -85,8 +85,10 @@ func HandleOptimisticTextSent(localSendID uint64, info types.MessageInfo, msg *w
 	if msg.ExtendedTextMessage != nil {
 		ext := msg.GetExtendedTextMessage()
 		contextInfo := ext.GetContextInfo()
-		if id := contextInfo.GetStanzaID(); id != "" {
-			callback.info.quoteID = C.CString(id)
+		if contextInfo != nil {
+			if id := contextInfo.GetStanzaID(); id != "" {
+				callback.info.quoteID = C.CString(id)
+			}
 		}
 		text := replaceMessageMentionNames(info.Chat, ext.GetText(), contextInfo)
 		emitOptimisticTextMessage(callback.info, text, localSendID)
@@ -94,6 +96,26 @@ func HandleOptimisticTextSent(localSendID uint64, info types.MessageInfo, msg *w
 	}
 	if msg.Conversation != nil {
 		emitOptimisticTextMessage(callback.info, msg.GetConversation(), localSendID)
+		return
+	}
+	if image := msg.GetImageMessage(); image != nil {
+		emitOptimisticFileMessage(callback.info, FileTypeImage, "", "", image.GetCaption(), localSendID)
+		return
+	}
+	if video := msg.GetVideoMessage(); video != nil {
+		emitOptimisticFileMessage(callback.info, FileTypeVideo, "", "", video.GetCaption(), localSendID)
+		return
+	}
+	if audio := msg.GetAudioMessage(); audio != nil {
+		emitOptimisticFileMessage(callback.info, FileTypeAudio, "", "", "", localSendID)
+		return
+	}
+	if document := msg.GetDocumentMessage(); document != nil {
+		emitOptimisticFileMessage(callback.info, FileTypeDocument, "", "", document.GetCaption(), localSendID)
+		return
+	}
+	if msg.GetStickerMessage() != nil {
+		emitOptimisticFileMessage(callback.info, FileTypeSticker, "", "", "", localSendID)
 	}
 }
 

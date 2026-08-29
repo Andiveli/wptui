@@ -24,6 +24,7 @@ typedef struct {
 	} FileMessage;
 
 extern void callMessageHandler(MessageHandler hdl, bool isSync, const Message* data);
+extern void callOptimisticTextSentHandler(OptimisticTextSentHandler hdl, uint64_t localSendID, const Message* data);
 */
 import "C"
 
@@ -44,7 +45,23 @@ func fileMessageCaption(caption string) *C.char {
 	return C.CString(caption)
 }
 
+type fileCallbackOutput struct {
+	localSendID uint64
+	kind        uint8
+	caption     string
+}
+
+var observeOptimisticFileCallback = func(fileCallbackOutput) {}
+
 func emitFileMessage(cinfo C.MessageInfo, kind uint8, filePath, fileID, caption string, isSync bool) {
+	emitFileMessageWithLocalSendID(cinfo, kind, filePath, fileID, caption, isSync, 0)
+}
+
+func emitOptimisticFileMessage(cinfo C.MessageInfo, kind uint8, filePath, fileID, caption string, localSendID uint64) {
+	emitFileMessageWithLocalSendID(cinfo, kind, filePath, fileID, caption, false, localSendID)
+}
+
+func emitFileMessageWithLocalSendID(cinfo C.MessageInfo, kind uint8, filePath, fileID, caption string, isSync bool, localSendID uint64) {
 	cfileID := C.CString(fileID)
 	defer C.free(unsafe.Pointer(cfileID))
 
@@ -77,7 +94,16 @@ func emitFileMessage(cinfo C.MessageInfo, kind uint8, filePath, fileID, caption 
 		messageType: C.uint8_t(MessageTypeFile),
 		message:     unsafe.Pointer(content),
 	}
-	C.callMessageHandler(messageHandler, C.bool(isSync), &message)
+	if localSendID != 0 {
+		observeOptimisticFileCallback(fileCallbackOutput{localSendID: localSendID, kind: kind, caption: caption})
+		if optimisticTextSentHandler.callback != nil {
+			C.callOptimisticTextSentHandler(optimisticTextSentHandler, C.uint64_t(localSendID), &message)
+		}
+		return
+	}
+	if messageHandler.callback != nil {
+		C.callMessageHandler(messageHandler, C.bool(isSync), &message)
+	}
 }
 
 func buildFileMessageMentionRanges(ranges []mentionRange) (unsafe.Pointer, *C.MentionRange, C.uintptr_t) {

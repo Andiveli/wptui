@@ -25,6 +25,7 @@ import "C"
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 	"unsafe"
@@ -63,6 +64,16 @@ type textSendRequest struct {
 }
 
 const optimisticTextSendTimeout = 5 * time.Second
+
+const (
+	outboundSendSent uint8 = iota
+	outboundSendInvalidRequest
+	outboundSendClientUnavailable
+	outboundSendPreparationFailed
+	outboundSendTimedOut
+	outboundSendCancelled
+	outboundSendTransportFailed
+)
 
 func optimisticTextSendContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(parent, timeout)
@@ -228,19 +239,24 @@ func quotedMessageFromContent(messageType C.uint8_t, messageContent unsafe.Point
 
 //export C_SendMessage
 func C_SendMessage(cjid C.JID, messageType C.uint8_t, messageContent unsafe.Pointer, quoteId *C.char, quoteSender C.JID, quoteChat C.JID, quoteMessageType C.uint8_t, quoteMessageContent unsafe.Pointer) {
-	request, ok := textSendRequestFromC(cjid, messageType, messageContent, quoteId, quoteSender, quoteChat, quoteMessageType, quoteMessageContent, 0)
-	if ok {
-		_ = sendNormalTextRequest(request)
+	status := C_SendOutboundMessage(cjid, messageType, messageContent, quoteId, quoteSender, quoteChat, quoteMessageType, quoteMessageContent, 0)
+	if status != C.uint8_t(outboundSendSent) {
+		LOG_WARN("message send failed with status %d", status)
 	}
 }
 
 //export C_SendTextMessage
 func C_SendTextMessage(cjid C.JID, messageContent unsafe.Pointer, quoteId *C.char, quoteSender C.JID, quoteChat C.JID, quoteMessageType C.uint8_t, quoteMessageContent unsafe.Pointer, localSendID C.uint64_t) C.uint8_t {
-	request, ok := textSendRequestFromC(cjid, C.uint8_t(MessageTypeText), messageContent, quoteId, quoteSender, quoteChat, quoteMessageType, quoteMessageContent, uint64(localSendID))
+	return C_SendOutboundMessage(cjid, C.uint8_t(MessageTypeText), messageContent, quoteId, quoteSender, quoteChat, quoteMessageType, quoteMessageContent, localSendID)
+}
+
+//export C_SendOutboundMessage
+func C_SendOutboundMessage(cjid C.JID, messageType C.uint8_t, messageContent unsafe.Pointer, quoteID *C.char, quoteSender C.JID, quoteChat C.JID, quoteMessageType C.uint8_t, quoteMessageContent unsafe.Pointer, localSendID C.uint64_t) C.uint8_t {
+	request, ok := textSendRequestFromC(cjid, messageType, messageContent, quoteID, quoteSender, quoteChat, quoteMessageType, quoteMessageContent, uint64(localSendID))
 	if !ok {
-		return 1
+		return C.uint8_t(outboundSendInvalidRequest)
 	}
-	return C.uint8_t(sendOptimisticTextRequest(request))
+	return C.uint8_t(sendOutboundRequest(request))
 }
 
 func textSendRequestFromC(cjid C.JID, messageType C.uint8_t, messageContent unsafe.Pointer, quoteID *C.char, quoteSender C.JID, quoteChat C.JID, quoteMessageType C.uint8_t, quoteMessageContent unsafe.Pointer, localSendID uint64) (textSendRequest, bool) {
@@ -282,39 +298,40 @@ func textSendRequestFromC(cjid C.JID, messageType C.uint8_t, messageContent unsa
 
 func sendNormalTextRequest(request textSendRequest) uint8 {
 	request.localSendID = 0
-	return sendTextRequest(request)
+	return sendOutboundRequest(request)
 }
 
 func sendOptimisticTextRequest(request textSendRequest) uint8 {
-	if request.localSendID == 0 {
-		return sendNormalTextRequest(request)
-	}
-	return sendTextRequest(request)
+	return sendOutboundRequest(request)
 }
 
-func sendTextRequest(request textSendRequest) uint8 {
+func sendOutboundRequest(request textSendRequest) uint8 {
+	ctx, cancel := optimisticTextSendContext(context.Background(), optimisticTextSendTimeout)
+	defer cancel()
+	return sendOutboundRequestWithContext(ctx, request)
+}
+
+func sendOutboundRequestWithContext(sendContext context.Context, request textSendRequest) uint8 {
 	clientSnapshot := lifecycleState.clientSnapshot()
 	if clientSnapshot == nil || clientSnapshot.Store == nil || clientSnapshot.Store.ID == nil {
-		LOG_WARN("message send rejected: client or message is unavailable")
-		return 1
+		LOG_WARN("message send rejected: client is unavailable")
+		return outboundSendClientUnavailable
 	}
 	contextInfo := &waE2E.ContextInfo{}
 	if request.quote != nil {
 		contextInfo = quotedContextInfo(request.quote.stanzaID, request.quote.participant, request.quote.remoteJID)
 		contextInfo.QuotedMessage = request.quote.content
 	}
-	message := contentToWaE2EMessage(request.messageType, request.text, normalizeMentionedJIDs(request.mentionedJIDs), request.fileKind, request.filePath, request.caption, contextInfo, clientSnapshot.Upload)
-
-	sendContext := context.Background()
-	if request.localSendID != 0 {
-		var cancel context.CancelFunc
-		sendContext, cancel = optimisticTextSendContext(sendContext, optimisticTextSendTimeout)
-		defer cancel()
+	message, err := buildOutboundMessage(sendContext, request, contextInfo, clientSnapshot.Upload)
+	if err != nil {
+		LOG_WARN("message preparation failed: %v", err)
+		return contextStatus(err, outboundSendPreparationFailed)
 	}
+
 	sendResponse, err := requestSendMessage(clientSnapshot, sendContext, request.chat, message)
 	if err != nil {
 		LOG_WARN("message send failed: %v", err)
-		return 1
+		return contextStatus(err, outboundSendTransportFailed)
 	}
 
 	messageInfo := types.MessageInfo{
@@ -328,5 +345,24 @@ func sendTextRequest(request textSendRequest) uint8 {
 	} else {
 		normalMessageCallback(messageInfo, message, false)
 	}
-	return 0
+	return outboundSendSent
+}
+
+func buildOutboundMessage(ctx context.Context, request textSendRequest, contextInfo *waE2E.ContextInfo, upload uploadMediaFunc) (*waE2E.Message, error) {
+	setMentionedJIDsFromStrings(contextInfo, normalizeMentionedJIDs(request.mentionedJIDs))
+	if request.messageType == MessageTypeText {
+		return &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: &request.text, ContextInfo: contextInfo}}, nil
+	}
+	return buildFileMessage(ctx, request.fileKind, request.filePath, request.caption, contextInfo, upload)
+}
+
+func contextStatus(err error, fallback uint8) uint8 {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return outboundSendTimedOut
+	case errors.Is(err, context.Canceled):
+		return outboundSendCancelled
+	default:
+		return fallback
+	}
 }

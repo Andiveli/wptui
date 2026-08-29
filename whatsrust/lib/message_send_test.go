@@ -10,6 +10,8 @@ import (
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/store"
+	"go.mau.fi/whatsmeow/types"
 )
 
 func TestOutboundWirePayloadCarriesTextMentionMetadata(t *testing.T) {
@@ -116,7 +118,7 @@ func TestMessageSendKeepsExportedBridgeContractInDedicatedOrchestration(t *testi
 	for _, fragment := range []string{
 		"//export C_SendMessage",
 		"func C_SendMessage(cjid C.JID",
-		"sendNormalTextRequest(request)",
+		"C_SendOutboundMessage(cjid, messageType",
 		"normalMessageCallback(messageInfo, message, false)",
 	} {
 		if !strings.Contains(string(source), fragment) {
@@ -133,7 +135,8 @@ func TestOptimisticTextSendUsesRequestScopedCallbackInsteadOfGenericLocalState(t
 	text := string(source)
 	for _, fragment := range []string{
 		"//export C_SendTextMessage",
-		"sendOptimisticTextRequest(request)",
+		"//export C_SendOutboundMessage",
+		"return C_SendOutboundMessage(cjid, C.uint8_t(MessageTypeText)",
 		"request.localSendID != 0",
 		"optimisticTextSentCallback(request.localSendID, messageInfo, message)",
 		"requestSendMessage(clientSnapshot, sendContext, request.chat, message)",
@@ -168,6 +171,148 @@ func TestOptimisticTextSendContextHonorsCancellation(t *testing.T) {
 	if err := ctx.Err(); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled context error = %v, want context canceled", err)
 	}
+}
+
+func TestOutboundSendStatusContractIsStable(t *testing.T) {
+	if outboundSendSent != 0 || outboundSendInvalidRequest != 1 || outboundSendClientUnavailable != 2 || outboundSendPreparationFailed != 3 || outboundSendTimedOut != 4 || outboundSendCancelled != 5 || outboundSendTransportFailed != 6 {
+		t.Fatalf("unexpected outbound status mapping: %d %d %d %d %d %d %d", outboundSendSent, outboundSendInvalidRequest, outboundSendClientUnavailable, outboundSendPreparationFailed, outboundSendTimedOut, outboundSendCancelled, outboundSendTransportFailed)
+	}
+}
+
+func TestUnifiedOutboundSendMapsPreparationAndTransportOutcomes(t *testing.T) {
+	previousClient := lifecycleState.clientSnapshot()
+	previousSend := requestSendMessage
+	t.Cleanup(func() {
+		lifecycleState.publishClient(previousClient)
+		requestSendMessage = previousSend
+	})
+
+	self := types.NewJID("self", types.DefaultUserServer)
+	client := &whatsmeow.Client{Store: &store.Device{ID: &self}}
+	lifecycleState.publishClient(client)
+	request := textSendRequest{messageType: MessageTypeText, chat: types.NewJID("chat", types.DefaultUserServer), text: "hello"}
+
+	requestSendMessage = func(_ *whatsmeow.Client, _ context.Context, _ types.JID, _ *waE2E.Message) (whatsmeow.SendResponse, error) {
+		return whatsmeow.SendResponse{}, errors.New("transport")
+	}
+	if got := sendOutboundRequest(request); got != outboundSendTransportFailed {
+		t.Fatalf("transport status = %d, want %d", got, outboundSendTransportFailed)
+	}
+
+	request.messageType = MessageTypeFile
+	request.fileKind = FileTypeImage
+	request.filePath = "missing-file"
+	if got := sendOutboundRequest(request); got != outboundSendPreparationFailed {
+		t.Fatalf("preparation status = %d, want %d", got, outboundSendPreparationFailed)
+	}
+}
+
+func TestUnifiedOutboundSendBoundsPreparationAndTransport(t *testing.T) {
+	previousClient := lifecycleState.clientSnapshot()
+	previousSend := requestSendMessage
+	previousCallback := normalMessageCallback
+	t.Cleanup(func() {
+		lifecycleState.publishClient(previousClient)
+		requestSendMessage = previousSend
+		normalMessageCallback = previousCallback
+	})
+
+	file, err := os.CreateTemp(t.TempDir(), "outbound-image.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString("image"); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	preparationContext, cancel := optimisticTextSendContext(context.Background(), optimisticTextSendTimeout)
+	defer cancel()
+	uploadBounded := false
+	fileRequest := textSendRequest{messageType: MessageTypeFile, fileKind: FileTypeImage, filePath: file.Name()}
+	if _, err := buildOutboundMessage(preparationContext, fileRequest, &waE2E.ContextInfo{}, func(ctx context.Context, _ []byte, _ whatsmeow.MediaType) (whatsmeow.UploadResponse, error) {
+		_, uploadBounded = ctx.Deadline()
+		return whatsmeow.UploadResponse{URL: "https://example.test/image", DirectPath: "/image"}, nil
+	}); err != nil || !uploadBounded {
+		t.Fatalf("file preparation error/deadline = %v/%v, want nil/true", err, uploadBounded)
+	}
+
+	self := types.NewJID("self", types.DefaultUserServer)
+	lifecycleState.publishClient(&whatsmeow.Client{Store: &store.Device{ID: &self}})
+	requestSendMessage = func(_ *whatsmeow.Client, ctx context.Context, _ types.JID, _ *waE2E.Message) (whatsmeow.SendResponse, error) {
+		if _, ok := ctx.Deadline(); !ok {
+			t.Fatal("transport did not receive the outbound deadline")
+		}
+		return whatsmeow.SendResponse{ID: "sent"}, nil
+	}
+	normalMessageCallback = func(types.MessageInfo, *waE2E.Message, bool) {}
+	request := textSendRequest{messageType: MessageTypeText, chat: types.NewJID("chat", types.DefaultUserServer), text: "hello"}
+	if got := sendOutboundRequest(request); got != outboundSendSent {
+		t.Fatalf("text send status = %d, want %d", got, outboundSendSent)
+	}
+}
+
+func TestUnifiedOutboundSendReportsSuccessWithStableStatus(t *testing.T) {
+	previousClient := lifecycleState.clientSnapshot()
+	previousSend := requestSendMessage
+	previousCallback := normalMessageCallback
+	t.Cleanup(func() {
+		lifecycleState.publishClient(previousClient)
+		requestSendMessage = previousSend
+		normalMessageCallback = previousCallback
+	})
+
+	self := types.NewJID("self", types.DefaultUserServer)
+	lifecycleState.publishClient(&whatsmeow.Client{Store: &store.Device{ID: &self}})
+	requestSendMessage = func(_ *whatsmeow.Client, _ context.Context, _ types.JID, _ *waE2E.Message) (whatsmeow.SendResponse, error) {
+		return whatsmeow.SendResponse{ID: "sent"}, nil
+	}
+	called := false
+	normalMessageCallback = func(types.MessageInfo, *waE2E.Message, bool) { called = true }
+	request := textSendRequest{messageType: MessageTypeText, chat: types.NewJID("chat", types.DefaultUserServer), text: "hello"}
+	if got := sendOutboundRequest(request); got != outboundSendSent || !called {
+		t.Fatalf("success status/callback = %d/%v, want %d/true", got, called, outboundSendSent)
+	}
+}
+
+func TestUnifiedOutboundSendMapsUnavailableAndContextErrors(t *testing.T) {
+	previousClient := lifecycleState.clientSnapshot()
+	previousSend := requestSendMessage
+	t.Cleanup(func() {
+		lifecycleState.publishClient(previousClient)
+		requestSendMessage = previousSend
+	})
+
+	request := textSendRequest{messageType: MessageTypeText, chat: types.NewJID("chat", types.DefaultUserServer), text: "hello"}
+	lifecycleState.publishClient(nil)
+	if got := sendOutboundRequest(request); got != outboundSendClientUnavailable {
+		t.Fatalf("unavailable status = %d, want %d", got, outboundSendClientUnavailable)
+	}
+
+	self := types.NewJID("self", types.DefaultUserServer)
+	client := &whatsmeow.Client{Store: &store.Device{ID: &self}}
+	lifecycleState.publishClient(client)
+	requestSendMessage = func(_ *whatsmeow.Client, ctx context.Context, _ types.JID, _ *waE2E.Message) (whatsmeow.SendResponse, error) {
+		return whatsmeow.SendResponse{}, ctx.Err()
+	}
+	if got := sendOutboundRequestWithContext(contextWithError(context.DeadlineExceeded), request); got != outboundSendTimedOut {
+		t.Fatalf("timeout status = %d, want %d", got, outboundSendTimedOut)
+	}
+	if got := sendOutboundRequestWithContext(contextWithError(context.Canceled), request); got != outboundSendCancelled {
+		t.Fatalf("cancelled status = %d, want %d", got, outboundSendCancelled)
+	}
+}
+
+type errorContext struct {
+	context.Context
+	err error
+}
+
+func (ctx errorContext) Err() error { return ctx.err }
+
+func contextWithError(err error) context.Context {
+	return errorContext{Context: context.Background(), err: err}
 }
 
 func TestOutboundSendCallersUseLifecycleClientSnapshots(t *testing.T) {
