@@ -18,7 +18,7 @@ use crate::ui::message_list::{IMAGE_HEIGHT, IMAGE_WIDTH, VIDEO_HEIGHT, VIDEO_WID
 type DownloadSender = Sender<(wr::MessageId, wr::FileId)>;
 
 impl App<'_> {
-    pub(crate) fn handle_media_event(
+    pub(crate) fn handle_media_viewer_event(
         &mut self,
         event: AppEvent,
         download_tx: &DownloadSender,
@@ -218,7 +218,7 @@ impl App<'_> {
                 true
             }
             _ => unreachable!(
-                "runtime_loop must route only MediaViewer events to handle_media_event"
+                "runtime_loop must route only MediaViewer events to handle_media_viewer_event"
             ),
         }
     }
