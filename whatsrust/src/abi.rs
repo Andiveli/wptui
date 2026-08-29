@@ -26,18 +26,9 @@ unsafe extern "C" {
     pub(super) fn C_TestEmitPresenceEventsConcurrently(from: *const c_char, count: u32);
     pub(super) fn C_NewClient(db_path: *const c_char);
     pub(super) fn C_Connect(qr_cb: CQrCallback, data: *mut c_void);
-    pub(super) fn C_SendMessage(
+    pub(super) fn C_SendOutboundMessage(
         jid: CJID,
         message_type: u8,
-        message_content: *const c_void,
-        quote_id: *const c_char,
-        quote_sender: CJID,
-        quote_chat: CJID,
-        quote_message_type: u8,
-        quote_message_content: *const c_void,
-    );
-    pub(super) fn C_SendTextMessage(
-        jid: CJID,
         message_content: *const c_void,
         quote_id: *const c_char,
         quote_sender: CJID,

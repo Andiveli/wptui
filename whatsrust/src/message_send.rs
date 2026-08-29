@@ -170,60 +170,15 @@ pub fn forward_message(source: &Message, destinations: &[JID]) -> ForwardReport 
     }
 }
 
-pub fn send_message(
-    jid: &JID,
-    content: &MessageContent,
-    quoted_message: Option<&Message>,
-    mentions: &[Mention],
-) {
-    let jid_c = CJIDOwner::from(jid);
-    let (msg_type, content_ptr, _holder) = build_content_for_ffi(content, mentions);
-    let (_quote_id_owner, quote_id, quote_sender_owner, quote_chat_owner) =
-        quote_to_ffi(quoted_message);
-    let quote_sender = quote_sender_owner
-        .as_ref()
-        .map_or(std::ptr::null(), CJIDOwner::as_ptr);
-    let quote_chat = quote_chat_owner
-        .as_ref()
-        .map_or(std::ptr::null(), CJIDOwner::as_ptr);
-    let quote_content = quoted_message.map(|message| build_content_for_ffi(&message.message, &[]));
-    let (quote_message_type, quote_message_content) = quote_content
-        .as_ref()
-        .map_or((0, std::ptr::null()), |(message_type, pointer, _)| {
-            (*message_type, *pointer)
-        });
-    unsafe {
-        crate::abi::C_SendMessage(
-            jid_c.as_ptr(),
-            msg_type,
-            content_ptr,
-            quote_id,
-            quote_sender,
-            quote_chat,
-            quote_message_type,
-            quote_message_content,
-        )
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TextSendResult {
-    Sent,
-    Failed,
-}
-
-pub fn send_text_message(
+pub fn send_outbound_message(
     jid: &JID,
     content: &MessageContent,
     quoted_message: Option<&Message>,
     mentions: &[Mention],
     local_send_id: u64,
-) -> TextSendResult {
-    let MessageContent::Text(_) = content else {
-        return TextSendResult::Failed;
-    };
+) -> Result<(), OutboundSendFailure> {
     let jid_c = CJIDOwner::from(jid);
-    let (_message_type, content_ptr, _holder) = build_content_for_ffi(content, mentions);
+    let (message_type, content_ptr, _holder) = build_content_for_ffi(content, mentions);
     let (_quote_id_owner, quote_id, quote_sender_owner, quote_chat_owner) =
         quote_to_ffi(quoted_message);
     let quote_sender = quote_sender_owner
@@ -239,8 +194,9 @@ pub fn send_text_message(
             (*message_type, *pointer)
         });
     let status = unsafe {
-        crate::abi::C_SendTextMessage(
+        crate::abi::C_SendOutboundMessage(
             jid_c.as_ptr(),
+            message_type,
             content_ptr,
             quote_id,
             quote_sender,
@@ -250,10 +206,61 @@ pub fn send_text_message(
             local_send_id,
         )
     };
-    if status == 0 {
-        TextSendResult::Sent
-    } else {
-        TextSendResult::Failed
+    outbound_send_result(status)
+}
+
+pub fn send_message(
+    jid: &JID,
+    content: &MessageContent,
+    quoted_message: Option<&Message>,
+    mentions: &[Mention],
+) -> Result<(), OutboundSendFailure> {
+    send_outbound_message(jid, content, quoted_message, mentions, 0)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TextSendResult {
+    Sent,
+    Failed,
+}
+
+pub fn send_text_message(
+    jid: &JID,
+    content: &MessageContent,
+    quoted_message: Option<&Message>,
+    mentions: &[Mention],
+    local_send_id: u64,
+) -> TextSendResult {
+    if !matches!(content, MessageContent::Text(_)) {
+        return TextSendResult::Failed;
+    }
+    match send_outbound_message(jid, content, quoted_message, mentions, local_send_id) {
+        Ok(()) => TextSendResult::Sent,
+        Err(_) => TextSendResult::Failed,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OutboundSendFailure {
+    InvalidRequest,
+    ClientUnavailable,
+    PreparationFailed,
+    TimedOut,
+    Cancelled,
+    TransportFailed,
+    InvalidBridgeResult,
+}
+
+fn outbound_send_result(status: u8) -> Result<(), OutboundSendFailure> {
+    match status {
+        0 => Ok(()),
+        1 => Err(OutboundSendFailure::InvalidRequest),
+        2 => Err(OutboundSendFailure::ClientUnavailable),
+        3 => Err(OutboundSendFailure::PreparationFailed),
+        4 => Err(OutboundSendFailure::TimedOut),
+        5 => Err(OutboundSendFailure::Cancelled),
+        6 => Err(OutboundSendFailure::TransportFailed),
+        _ => Err(OutboundSendFailure::InvalidBridgeResult),
     }
 }
 #[cfg(test)]
@@ -338,6 +345,33 @@ mod tests {
         };
         assert_eq!(pointers.len(), 1);
         assert_eq!(file.mentioned_count, 1);
+    }
+
+    #[test]
+    fn outbound_send_statuses_preserve_the_frozen_go_abi() {
+        assert_eq!(outbound_send_result(0), Ok(()));
+        assert_eq!(
+            outbound_send_result(1),
+            Err(OutboundSendFailure::InvalidRequest)
+        );
+        assert_eq!(
+            outbound_send_result(2),
+            Err(OutboundSendFailure::ClientUnavailable)
+        );
+        assert_eq!(
+            outbound_send_result(3),
+            Err(OutboundSendFailure::PreparationFailed)
+        );
+        assert_eq!(outbound_send_result(4), Err(OutboundSendFailure::TimedOut));
+        assert_eq!(outbound_send_result(5), Err(OutboundSendFailure::Cancelled));
+        assert_eq!(
+            outbound_send_result(6),
+            Err(OutboundSendFailure::TransportFailed)
+        );
+        assert_eq!(
+            outbound_send_result(u8::MAX),
+            Err(OutboundSendFailure::InvalidBridgeResult)
+        );
     }
 }
 use strum::FromRepr;

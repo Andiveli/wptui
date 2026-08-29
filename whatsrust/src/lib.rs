@@ -26,7 +26,8 @@ pub use events::set_event_handler;
 pub use lifecycle::{connect, disconnect, logout, new_client, pair_phone};
 pub use media::{download_file, get_community_profile_picture, get_profile_picture};
 pub use message_send::{
-    ForwardFailure, ForwardReport, TextSendResult, forward_message, send_message, send_text_message,
+    ForwardFailure, ForwardReport, OutboundSendFailure, TextSendResult, forward_message,
+    send_message, send_outbound_message, send_text_message,
 };
 pub(crate) use models::file_kind_discriminant;
 pub use models::{
