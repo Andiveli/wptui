@@ -30,7 +30,7 @@ pub(crate) fn run(app: &mut App<'_>, phone: Option<String>) {
     wr::new_client(app.whatsmeow_db.to_str().unwrap());
     register_runtime_callbacks(app.tx.clone(), app.message_action_diagnostics.clone());
 
-    let download_tx = spawn_download_worker(app.media_path.to_owned(), app.tx.clone());
+    let download_worker = spawn_download_worker(app.media_path.to_owned(), app.tx.clone());
 
     info!("Connecting to WhatsApp Web");
     // thread::spawn(|| {
@@ -43,5 +43,5 @@ pub(crate) fn run(app: &mut App<'_>, phone: Option<String>) {
     });
     // });
     info!("Connected, initializing terminal UI");
-    crate::app::runtime_loop::run(app, download_tx);
+    crate::app::runtime_loop::run(app, download_worker);
 }

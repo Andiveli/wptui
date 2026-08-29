@@ -4,6 +4,7 @@ use log::error;
 use whatsrust as wr;
 
 use crate::app::App;
+use crate::app::download_worker::Worker as DownloadWorker;
 use crate::app::events::{AppEvent, AppEventFamily, AppInput, DrawSource};
 use crate::app::terminal_session::TerminalSession;
 use crate::ui;
@@ -42,6 +43,7 @@ fn refresh_composer_viewport_width(app: &mut App<'_>, terminal_session: &mut Ter
 
 #[derive(Debug, PartialEq)]
 enum TerminalInitializationFailureTeardown {
+    StopDownloadWorker,
     StopReadReceiptWorker,
     Disconnect,
     FinalizeDiagnostics,
@@ -50,6 +52,7 @@ enum TerminalInitializationFailureTeardown {
 fn finish_terminal_initialization_failure(
     mut teardown: impl FnMut(TerminalInitializationFailureTeardown),
 ) {
+    teardown(TerminalInitializationFailureTeardown::StopDownloadWorker);
     teardown(TerminalInitializationFailureTeardown::StopReadReceiptWorker);
     teardown(TerminalInitializationFailureTeardown::Disconnect);
     teardown(TerminalInitializationFailureTeardown::FinalizeDiagnostics);
@@ -57,9 +60,10 @@ fn finish_terminal_initialization_failure(
 
 /// Owns the terminal runtime: input pumping, event dispatch, redraws, and shutdown.
 ///
-/// Bootstrap stays in `App::run`; this phase consumes the already-created download
-/// sender and delegates each event family to its focused runtime owner.
-pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
+/// Bootstrap stays in `App::run`; this phase owns the already-created download
+/// worker and delegates each event family to its focused runtime owner.
+pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
+    let download_tx = download_worker.sender();
     let mut terminal_session = match TerminalSession::try_new() {
         Ok(session) => session,
         Err(e) => {
@@ -69,6 +73,9 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
                 .message_action_diagnostics
                 .write_report(std::io::stderr());
             finish_terminal_initialization_failure(|step| match step {
+                TerminalInitializationFailureTeardown::StopDownloadWorker => {
+                    download_worker.shutdown();
+                }
                 TerminalInitializationFailureTeardown::StopReadReceiptWorker => {
                     app.shutdown_read_receipt_worker();
                 }
@@ -91,6 +98,7 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
         .draw(|frame| ui::draw(frame, app))
     {
         error!("Failed to draw terminal UI: {error}");
+        download_worker.shutdown();
         app.shutdown_read_receipt_worker();
         terminal_session.stop_input_reader(&mut app.input_reader);
         terminal_session.restore();
@@ -124,7 +132,17 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
         }
         let should_draw = match msg {
             Ok(AppInput::App(event)) => dispatch_app_event(app, event, &download_tx),
-            Ok(AppInput::WhatsApp(event)) => app.handle_whatsapp_event(event),
+            Ok(AppInput::WhatsApp(event)) => {
+                if matches!(
+                    &event,
+                    wr::Event::LogoutResult(
+                        wr::LogoutStatus::LoggedOut | wr::LogoutStatus::NotLoggedIn
+                    )
+                ) {
+                    download_worker.shutdown();
+                }
+                app.handle_whatsapp_event(event)
+            }
             Ok(AppInput::Message { message, is_sync }) => app.process_message(message, is_sync),
             Ok(AppInput::Presence(update)) => app.handle_presence_update(update),
             Ok(AppInput::Terminal(event)) => {
@@ -169,6 +187,7 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
         }
     }
 
+    download_worker.shutdown();
     app.shutdown_read_receipt_worker();
     terminal_session.stop_input_reader(&mut app.input_reader);
     terminal_session.restore();
@@ -199,6 +218,7 @@ mod tests {
         assert_eq!(
             events,
             [
+                TerminalInitializationFailureTeardown::StopDownloadWorker,
                 TerminalInitializationFailureTeardown::StopReadReceiptWorker,
                 TerminalInitializationFailureTeardown::Disconnect,
                 TerminalInitializationFailureTeardown::FinalizeDiagnostics,
