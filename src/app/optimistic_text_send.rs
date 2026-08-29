@@ -121,24 +121,29 @@ impl super::App<'_> {
             .into_iter()
             .zip(contents)
             .zip(display_contents.into_iter().zip(display_mention_ranges))
-            .map(|((local_send_id, content), (display_content, display_mention_ranges))| {
-                TextSendRequest {
-                    local_send_id,
-                    chat: chat.clone(),
-                    content,
-                    quote: quote.clone(),
-                    mentions: mentions.clone(),
-                    mention_ranges: mention_ranges.clone(),
-                    display_content,
-                    display_mention_ranges,
-                }
-            })
+            .map(
+                |((local_send_id, content), (display_content, display_mention_ranges))| {
+                    TextSendRequest {
+                        local_send_id,
+                        chat: chat.clone(),
+                        content,
+                        quote: quote.clone(),
+                        mentions: mentions.clone(),
+                        mention_ranges: mention_ranges.clone(),
+                        display_content,
+                        display_mention_ranges,
+                    }
+                },
+            )
             .collect::<Vec<_>>();
         for request in &requests {
             self.pending_outgoing_text
                 .insert(request.local_send_id, request.clone());
         }
-        if !self.optimistic_text_send_worker.enqueue_batch(requests.clone()) {
+        if !self
+            .optimistic_text_send_worker
+            .enqueue_batch(requests.clone())
+        {
             for request in requests {
                 self.pending_outgoing_text.remove(&request.local_send_id);
             }
@@ -291,7 +296,14 @@ impl Worker {
         let worker_exited = Arc::clone(&exited);
         let worker_queued = Arc::clone(&queued);
         let join = thread::spawn(move || {
-            run(rx, app_tx, port, worker_cancelled, worker_queued, worker_exited)
+            run(
+                rx,
+                app_tx,
+                port,
+                worker_cancelled,
+                worker_queued,
+                worker_exited,
+            )
         });
         Self {
             tx: Some(tx),
@@ -308,7 +320,8 @@ impl Worker {
 
     pub fn enqueue_batch(&self, requests: Vec<TextSendRequest>) -> bool {
         let count = requests.len();
-        if count == 0 || count > MAX_QUEUED_TEXT_SENDS || !reserve_queue_slots(&self.queued, count) {
+        if count == 0 || count > MAX_QUEUED_TEXT_SENDS || !reserve_queue_slots(&self.queued, count)
+        {
             return false;
         }
         let queued = self
@@ -593,7 +606,13 @@ mod tests {
             }),
         ];
 
-        assert!(app.stage_outbound_batch(chat.clone(), messages, Some(quote), mentions.clone(), vec![0..4]));
+        assert!(app.stage_outbound_batch(
+            chat.clone(),
+            messages,
+            Some(quote),
+            mentions.clone(),
+            vec![0..4]
+        ));
         let pending = app.pending_messages_for_chat(&chat);
         assert_eq!(pending.len(), 2);
         assert!(matches!(

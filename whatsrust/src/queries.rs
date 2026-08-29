@@ -4,12 +4,12 @@ use std::sync::Arc;
 use super::{
     ChatSettings, CommunitiesError, CommunityInfo, GroupInfo, GroupInfoError, GroupParticipant, JID,
 };
-use crate::models::CJIDOwner;
 use crate::abi::{
     C_FreeCommunities, C_FreeContacts, C_FreeGroupParticipants, C_FreeResolveDmChatId,
     C_GetChatSettings, C_GetCommunities, C_GetContacts, C_GetGroupInfo, C_GetGroupParticipants,
     C_ResolveDmChatId, CContactEntry, CGetContactsResult,
 };
+use crate::models::CJIDOwner;
 
 /// Returns all contacts and groups as (JID, display name). Includes LID aliases for contacts.
 fn contact_entries(result: &CGetContactsResult) -> &[CContactEntry] {

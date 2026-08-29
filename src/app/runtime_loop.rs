@@ -10,11 +10,7 @@ use crate::ui;
 
 type DownloadSender = Sender<(wr::MessageId, wr::FileId)>;
 
-fn dispatch_app_event(
-    app: &mut App<'_>,
-    event: AppEvent,
-    download_tx: &DownloadSender,
-) -> bool {
+fn dispatch_app_event(app: &mut App<'_>, event: AppEvent, download_tx: &DownloadSender) -> bool {
     match event.family() {
         AppEventFamily::Send => app.handle_send_event(event),
         AppEventFamily::ReadReceipt => app.handle_read_receipt_event(event),
@@ -250,47 +246,47 @@ mod tests {
 
     #[test]
     fn stale_media_viewer_requests_route_without_spawning_work() {
-            let mut app = TestApp::new();
-            let current = crate::app::events::ViewerPreviewKey::new("current.jpg", 20, 10);
-            app.viewer_preview = Some(crate::app::events::ViewerPreviewState::Loading(
-                current.clone(),
-            ));
-            let (download_tx, _download_rx) = mpsc::channel();
+        let mut app = TestApp::new();
+        let current = crate::app::events::ViewerPreviewKey::new("current.jpg", 20, 10);
+        app.viewer_preview = Some(crate::app::events::ViewerPreviewState::Loading(
+            current.clone(),
+        ));
+        let (download_tx, _download_rx) = mpsc::channel();
 
-            assert!(!dispatch_app_event(
-                &mut app,
-                AppEvent::LoadViewerPreview(crate::app::events::ViewerPreviewKey::new(
-                    "stale.jpg",
-                    20,
-                    10,
-                )),
-                &download_tx,
-            ));
-            assert_eq!(app.viewer_preview.as_ref().unwrap().key(), &current);
-        }
+        assert!(!dispatch_app_event(
+            &mut app,
+            AppEvent::LoadViewerPreview(crate::app::events::ViewerPreviewKey::new(
+                "stale.jpg",
+                20,
+                10,
+            )),
+            &download_tx,
+        ));
+        assert_eq!(app.viewer_preview.as_ref().unwrap().key(), &current);
+    }
 
-        #[test]
-        fn stale_media_viewer_results_route_without_mutating_preview_state() {
-            let mut app = TestApp::new();
-            let current = crate::app::events::ViewerPreviewKey::new("current.jpg", 20, 10);
-            app.viewer_preview = Some(crate::app::events::ViewerPreviewState::Loading(
-                current.clone(),
-            ));
-            let (download_tx, _download_rx) = mpsc::channel();
+    #[test]
+    fn stale_media_viewer_results_route_without_mutating_preview_state() {
+        let mut app = TestApp::new();
+        let current = crate::app::events::ViewerPreviewKey::new("current.jpg", 20, 10);
+        app.viewer_preview = Some(crate::app::events::ViewerPreviewState::Loading(
+            current.clone(),
+        ));
+        let (download_tx, _download_rx) = mpsc::channel();
 
-            assert!(!dispatch_app_event(
-                &mut app,
-                AppEvent::SetViewerPreview(
-                    crate::app::events::ViewerPreviewKey::new("stale.jpg", 20, 10),
-                    None,
-                ),
-                &download_tx,
-            ));
-            assert_eq!(app.viewer_preview.as_ref().unwrap().key(), &current);
-        }
+        assert!(!dispatch_app_event(
+            &mut app,
+            AppEvent::SetViewerPreview(
+                crate::app::events::ViewerPreviewKey::new("stale.jpg", 20, 10),
+                None,
+            ),
+            &download_tx,
+        ));
+        assert_eq!(app.viewer_preview.as_ref().unwrap().key(), &current);
+    }
 
-        #[test]
-        fn hidden_log_panel_suppresses_only_go_log_draws() {
+    #[test]
+    fn hidden_log_panel_suppresses_only_go_log_draws() {
         let mut app = TestApp::new();
         app.show_logs = false;
 

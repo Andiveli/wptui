@@ -1,5 +1,5 @@
-use crate::app::events::AppEvent;
 use crate::app::App;
+use crate::app::events::AppEvent;
 
 impl App<'_> {
     pub(crate) fn handle_read_receipt_event(&mut self, event: AppEvent) -> bool {
@@ -39,7 +39,9 @@ impl App<'_> {
                 }
                 false
             }
-            _ => unreachable!("runtime_loop must route only ReadReceipt events to handle_read_receipt_event"),
+            _ => unreachable!(
+                "runtime_loop must route only ReadReceipt events to handle_read_receipt_event"
+            ),
         }
     }
 }
@@ -80,9 +82,11 @@ mod tests {
         let mut app = TestApp::new();
         app.read_receipts.set_enabled(true);
 
-        assert!(!app.handle_read_receipt_event(AppEvent::ReadReceiptRestored(Ok(vec![
-            candidate("restored"),
-        ]))));
+        assert!(
+            !app.handle_read_receipt_event(AppEvent::ReadReceiptRestored(Ok(vec![candidate(
+                "restored"
+            ),])))
+        );
         assert_eq!(app.read_receipts.pending_len(), 1);
     }
 
@@ -91,10 +95,15 @@ mod tests {
         let mut app = TestApp::new();
         app.read_receipts.set_enabled(true);
 
-        assert!(!app.handle_read_receipt_event(AppEvent::ReadReceiptRestored(Err(
-            RepositoryError::Busy,
-        ))));
-        assert_eq!(app.read_receipts.durability_error(), Some(RepositoryError::Busy));
+        assert!(
+            !app.handle_read_receipt_event(AppEvent::ReadReceiptRestored(Err(
+                RepositoryError::Busy,
+            )))
+        );
+        assert_eq!(
+            app.read_receipts.durability_error(),
+            Some(RepositoryError::Busy)
+        );
     }
 
     #[test]
@@ -102,10 +111,12 @@ mod tests {
         let mut app = TestApp::new();
         app.read_receipts.set_enabled(true);
 
-        assert!(!app.handle_read_receipt_event(AppEvent::ReadReceiptPersisted(
-            candidate("persisted"),
-            crate::app::read_receipts::PersistResult::Saved,
-        )));
+        assert!(
+            !app.handle_read_receipt_event(AppEvent::ReadReceiptPersisted(
+                candidate("persisted"),
+                crate::app::read_receipts::PersistResult::Saved,
+            ))
+        );
         assert_eq!(app.read_receipts.pending_len(), 1);
     }
 
@@ -118,7 +129,9 @@ mod tests {
         let now = app.now();
         app.read_receipts.restore_candidates(vec![candidate], now);
 
-        assert!(!app.handle_read_receipt_event(AppEvent::ReadReceiptCompleted(key.clone(), Ok(()))));
+        assert!(
+            !app.handle_read_receipt_event(AppEvent::ReadReceiptCompleted(key.clone(), Ok(())))
+        );
         assert!(app.read_receipts.is_sent(&key));
         assert_eq!(app.read_receipts.pending_len(), 0);
         assert!(!app.read_receipts.restore_load_allowed(app.now()));

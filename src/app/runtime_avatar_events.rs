@@ -1,5 +1,5 @@
-use crate::app::events::AppEvent;
 use crate::app::App;
+use crate::app::events::AppEvent;
 
 impl App<'_> {
     pub(crate) fn handle_avatar_event(&mut self, event: AppEvent) -> bool {
@@ -28,10 +28,12 @@ mod tests {
     fn contact_avatar_result_preserves_apply_redraw_boolean() {
         let mut app = TestApp::new();
 
-        assert!(!app.handle_avatar_event(AppEvent::ContactAvatar(AvatarResult::Failed {
-            generation: 0,
-            target: target(),
-        })));
+        assert!(
+            !app.handle_avatar_event(AppEvent::ContactAvatar(AvatarResult::Failed {
+                generation: 0,
+                target: target(),
+            }))
+        );
     }
 
     #[test]

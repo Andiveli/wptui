@@ -1,5 +1,5 @@
-use crate::app::events::AppEvent;
 use crate::app::App;
+use crate::app::events::AppEvent;
 
 impl App<'_> {
     pub(crate) fn handle_send_event(&mut self, event: AppEvent) -> bool {

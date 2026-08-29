@@ -32,7 +32,9 @@ impl App<'_> {
             | AppEvent::ReadReceiptPersisted(..)
             | AppEvent::ReadReceiptCompleted(..)
             | AppEvent::ReadReceiptRejected(..) => {
-                unreachable!("runtime_loop must route ReadReceipt events to handle_read_receipt_event")
+                unreachable!(
+                    "runtime_loop must route ReadReceipt events to handle_read_receipt_event"
+                )
             }
             AppEvent::SetFilePreview(message_id, file_path, img) => {
                 self.cache_file_preview(message_id.clone(), file_path, img);
