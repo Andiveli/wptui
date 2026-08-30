@@ -24,60 +24,12 @@ typedef struct {
 import "C"
 
 import (
-	"context"
-	"errors"
 	"fmt"
-	"time"
 	"unsafe"
 
-	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 )
-
-type sendMessageRequest func(*whatsmeow.Client, context.Context, types.JID, *waE2E.Message) (whatsmeow.SendResponse, error)
-
-var requestSendMessage sendMessageRequest = func(client *whatsmeow.Client, ctx context.Context, jid types.JID, message *waE2E.Message) (whatsmeow.SendResponse, error) {
-	return client.SendMessage(ctx, jid, message)
-}
-
-var normalMessageCallback = HandleMessage
-var optimisticTextSentCallback = HandleOptimisticTextSent
-
-type textSendQuote struct {
-	stanzaID    string
-	participant string
-	remoteJID   string
-	content     *waE2E.Message
-}
-
-type textSendRequest struct {
-	messageType   uint8
-	chat          types.JID
-	text          string
-	mentionedJIDs []string
-	fileKind      uint8
-	filePath      string
-	caption       *string
-	quote         *textSendQuote
-	localSendID   uint64
-}
-
-const optimisticTextSendTimeout = 5 * time.Second
-
-const (
-	outboundSendSent uint8 = iota
-	outboundSendInvalidRequest
-	outboundSendClientUnavailable
-	outboundSendPreparationFailed
-	outboundSendTimedOut
-	outboundSendCancelled
-	outboundSendTransportFailed
-)
-
-func optimisticTextSendContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(parent, timeout)
-}
 
 // ContentToWaE2EMessage converts the public FFI payload into a WhatsApp
 // message. File construction remains delegated to the injectable builder.
@@ -99,7 +51,6 @@ func ContentToWaE2EMessage(messageType C.uint8_t, messageContent unsafe.Pointer,
 			contextInfo,
 			clientSnapshot.Upload,
 		)
-
 	case C.uint8_t(MessageTypeFile):
 		fileMsg := (*C.SendFileMessage)(messageContent)
 		kind := uint8(fileMsg.kind)
@@ -119,45 +70,14 @@ func ContentToWaE2EMessage(messageType C.uint8_t, messageContent unsafe.Pointer,
 			contextInfo,
 			clientSnapshot.Upload,
 		)
-
 	default:
 		panic(fmt.Sprintf("Unsupported message type: %d", messageType))
 	}
 }
 
-func contentToWaE2EMessage(
-	messageType uint8,
-	text string,
-	mentioned []string,
-	fileKind uint8,
-	filePath string,
-	caption *string,
-	contextInfo *waE2E.ContextInfo,
-	upload uploadMediaFunc,
-) *waE2E.Message {
-	setMentionedJIDsFromStrings(contextInfo, mentioned)
-	if messageType == MessageTypeText {
-		return &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
-			Text:        &text,
-			ContextInfo: contextInfo,
-		}}
-	}
-	message, err := buildFileMessage(context.Background(), fileKind, filePath, caption, contextInfo, upload)
-	if err != nil {
-		panic(err)
-	}
-	return message
-}
-
 func setMentionedJIDs(contextInfo *waE2E.ContextInfo, ptr *C.JID, count C.uintptr_t) {
 	if contextInfo != nil {
 		setMentionedJIDsFromStrings(contextInfo, mentionedJIDs(ptr, count))
-	}
-}
-
-func setMentionedJIDsFromStrings(contextInfo *waE2E.ContextInfo, mentioned []string) {
-	if contextInfo != nil {
-		contextInfo.MentionedJID = mentioned
 	}
 }
 
@@ -176,46 +96,6 @@ func mentionedJIDs(ptr *C.JID, count C.uintptr_t) []string {
 		}
 	}
 	return normalizeMentionedJIDs(result)
-}
-
-func normalizeMentionedJIDs(mentioned []string) []string {
-	result := make([]string, 0, len(mentioned))
-	for _, value := range mentioned {
-		parsed, err := types.ParseJID(value)
-		if err == nil && !parsed.IsEmpty() {
-			result = append(result, parsed.ToNonAD().String())
-		}
-	}
-	return result
-}
-
-func quotedContextInfo(id, sender, chat string) *waE2E.ContextInfo {
-	return &waE2E.ContextInfo{StanzaID: &id, Participant: &sender, RemoteJID: &chat}
-}
-
-func quotedTextMessage(text string) *waE2E.Message {
-	return &waE2E.Message{Conversation: &text}
-}
-
-func quotedFileMessage(kind uint8, caption string) *waE2E.Message {
-	var captionPtr *string
-	if caption != "" {
-		captionPtr = &caption
-	}
-	switch kind {
-	case FileTypeImage:
-		return &waE2E.Message{ImageMessage: &waE2E.ImageMessage{Caption: captionPtr}}
-	case FileTypeVideo:
-		return &waE2E.Message{VideoMessage: &waE2E.VideoMessage{Caption: captionPtr}}
-	case FileTypeAudio:
-		return &waE2E.Message{AudioMessage: &waE2E.AudioMessage{}}
-	case FileTypeDocument:
-		return &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{Caption: captionPtr}}
-	case FileTypeSticker:
-		return &waE2E.Message{StickerMessage: &waE2E.StickerMessage{}}
-	default:
-		return nil
-	}
 }
 
 func quotedMessageFromContent(messageType C.uint8_t, messageContent unsafe.Pointer) *waE2E.Message {
@@ -263,11 +143,7 @@ func textSendRequestFromC(cjid C.JID, messageType C.uint8_t, messageContent unsa
 	if cjid == nil || messageContent == nil {
 		return textSendRequest{}, false
 	}
-	request := textSendRequest{
-		messageType: uint8(messageType),
-		chat:        cToJid(cjid),
-		localSendID: localSendID,
-	}
+	request := textSendRequest{messageType: uint8(messageType), chat: cToJid(cjid), localSendID: localSendID}
 	switch messageType {
 	case C.uint8_t(MessageTypeText):
 		textMessage := (*C.SendTextMessage)(messageContent)
@@ -287,10 +163,8 @@ func textSendRequestFromC(cjid C.JID, messageType C.uint8_t, messageContent unsa
 	}
 	if quoteID != nil {
 		request.quote = &textSendQuote{
-			stanzaID:    C.GoString(quoteID),
-			participant: C.GoString(quoteSender),
-			remoteJID:   C.GoString(quoteChat),
-			content:     quotedMessageFromContent(quoteMessageType, quoteMessageContent),
+			stanzaID: C.GoString(quoteID), participant: C.GoString(quoteSender), remoteJID: C.GoString(quoteChat),
+			content: quotedMessageFromContent(quoteMessageType, quoteMessageContent),
 		}
 	}
 	return request, true
@@ -303,66 +177,4 @@ func sendNormalTextRequest(request textSendRequest) uint8 {
 
 func sendOptimisticTextRequest(request textSendRequest) uint8 {
 	return sendOutboundRequest(request)
-}
-
-func sendOutboundRequest(request textSendRequest) uint8 {
-	ctx, cancel := optimisticTextSendContext(context.Background(), optimisticTextSendTimeout)
-	defer cancel()
-	return sendOutboundRequestWithContext(ctx, request)
-}
-
-func sendOutboundRequestWithContext(sendContext context.Context, request textSendRequest) uint8 {
-	clientSnapshot := lifecycleState.clientSnapshot()
-	if clientSnapshot == nil || clientSnapshot.Store == nil || clientSnapshot.Store.ID == nil {
-		LOG_WARN("message send rejected: client is unavailable")
-		return outboundSendClientUnavailable
-	}
-	contextInfo := &waE2E.ContextInfo{}
-	if request.quote != nil {
-		contextInfo = quotedContextInfo(request.quote.stanzaID, request.quote.participant, request.quote.remoteJID)
-		contextInfo.QuotedMessage = request.quote.content
-	}
-	message, err := buildOutboundMessage(sendContext, request, contextInfo, clientSnapshot.Upload)
-	if err != nil {
-		LOG_WARN("message preparation failed: %v", err)
-		return contextStatus(err, outboundSendPreparationFailed)
-	}
-
-	sendResponse, err := requestSendMessage(clientSnapshot, sendContext, request.chat, message)
-	if err != nil {
-		LOG_WARN("message send failed: %v", err)
-		return contextStatus(err, outboundSendTransportFailed)
-	}
-
-	messageInfo := types.MessageInfo{
-		MessageSource: types.MessageSource{Chat: request.chat, Sender: *clientSnapshot.Store.ID, IsFromMe: true},
-		ID:            sendResponse.ID,
-		Timestamp:     sendResponse.Timestamp,
-	}
-	LOG_INFO("Message sent: %s %s", messageInfo.ID, messageInfo.Chat)
-	if request.localSendID != 0 {
-		optimisticTextSentCallback(request.localSendID, messageInfo, message)
-	} else {
-		normalMessageCallback(messageInfo, message, false)
-	}
-	return outboundSendSent
-}
-
-func buildOutboundMessage(ctx context.Context, request textSendRequest, contextInfo *waE2E.ContextInfo, upload uploadMediaFunc) (*waE2E.Message, error) {
-	setMentionedJIDsFromStrings(contextInfo, normalizeMentionedJIDs(request.mentionedJIDs))
-	if request.messageType == MessageTypeText {
-		return &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: &request.text, ContextInfo: contextInfo}}, nil
-	}
-	return buildFileMessage(ctx, request.fileKind, request.filePath, request.caption, contextInfo, upload)
-}
-
-func contextStatus(err error, fallback uint8) uint8 {
-	switch {
-	case errors.Is(err, context.DeadlineExceeded):
-		return outboundSendTimedOut
-	case errors.Is(err, context.Canceled):
-		return outboundSendCancelled
-	default:
-		return fallback
-	}
 }

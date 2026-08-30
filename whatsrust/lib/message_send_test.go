@@ -110,36 +110,79 @@ func TestQuotedContextInfoPreservesOriginalAttribution(t *testing.T) {
 	}
 }
 
-func TestMessageSendKeepsExportedBridgeContractInDedicatedOrchestration(t *testing.T) {
-	source, err := os.ReadFile("message_send.go")
-	if err != nil {
-		t.Fatal(err)
+func TestMessageSendSeparatesOutboundResponsibilities(t *testing.T) {
+	tests := []struct {
+		name      string
+		file      string
+		fragments []string
+	}{
+		{
+			name: "C ABI decoding and exported bridge stay together",
+			file: "message_send.go",
+			fragments: []string{
+				"//export C_SendMessage",
+				"func C_SendMessage(cjid C.JID",
+				"//export C_SendTextMessage",
+				"func C_SendTextMessage(cjid C.JID",
+				"//export C_SendOutboundMessage",
+				"func C_SendOutboundMessage(cjid C.JID",
+				"C_SendOutboundMessage(cjid, messageType",
+				"func textSendRequestFromC(",
+			},
+		},
+		{
+			name: "message construction and upload are isolated",
+			file: "message_send_build.go",
+			fragments: []string{
+				"func buildOutboundMessage(",
+				"func contentToWaE2EMessage(",
+				"buildFileMessage(",
+			},
+		},
+		{
+			name: "transport and status mapping are isolated",
+			file: "message_send_transport.go",
+			fragments: []string{
+				"func sendOutboundRequestWithContext(",
+				"requestSendMessage(clientSnapshot, sendContext, request.chat, message)",
+				"func contextStatus(",
+			},
+		},
+		{
+			name: "callbacks are isolated",
+			file: "message_send_callback.go",
+			fragments: []string{
+				"func emitOutboundCallback(",
+				"optimisticTextSentCallback(request.localSendID, messageInfo, message)",
+				"normalMessageCallback(messageInfo, message, false)",
+			},
+		},
 	}
-	for _, fragment := range []string{
-		"//export C_SendMessage",
-		"func C_SendMessage(cjid C.JID",
-		"C_SendOutboundMessage(cjid, messageType",
-		"normalMessageCallback(messageInfo, message, false)",
-	} {
-		if !strings.Contains(string(source), fragment) {
-			t.Fatalf("message send orchestration missing %q", fragment)
-		}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			source, err := os.ReadFile(tt.file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, fragment := range tt.fragments {
+				if !strings.Contains(string(source), fragment) {
+					t.Fatalf("%s missing %q", tt.file, fragment)
+				}
+			}
+		})
 	}
 }
 
 func TestOptimisticTextSendUsesRequestScopedCallbackInsteadOfGenericLocalState(t *testing.T) {
-	source, err := os.ReadFile("message_send.go")
+	source, err := os.ReadFile("message_send_callback.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(source)
 	for _, fragment := range []string{
-		"//export C_SendTextMessage",
-		"//export C_SendOutboundMessage",
-		"return C_SendOutboundMessage(cjid, C.uint8_t(MessageTypeText)",
 		"request.localSendID != 0",
 		"optimisticTextSentCallback(request.localSendID, messageInfo, message)",
-		"requestSendMessage(clientSnapshot, sendContext, request.chat, message)",
 	} {
 		if !strings.Contains(text, fragment) {
 			t.Fatalf("optimistic text send missing request-scoped fragment %q", fragment)
