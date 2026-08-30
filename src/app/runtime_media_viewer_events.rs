@@ -1,13 +1,13 @@
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
-use std::thread;
 
 use ratatui::layout::Size;
 use ratatui_image::{Resize, ResizeEncodeRender};
 use whatsrust as wr;
 
 use crate::app::events::{AppEvent, AppInput, ViewerPreviewState, ViewerStatus};
+use crate::app::media_jobs::MediaJobOwner;
 use crate::app::media_support::{
     apply_video_play_marker, generate_video_thumbnail, has_decent_video_thumbnail,
 };
@@ -22,6 +22,7 @@ impl App<'_> {
         &mut self,
         event: AppEvent,
         download_tx: &DownloadSender,
+        media_jobs: &mut MediaJobOwner,
     ) -> bool {
         match event {
             AppEvent::OutboundSendSucceeded { .. } | AppEvent::OutboundSendFailed { .. } => {
@@ -56,7 +57,7 @@ impl App<'_> {
                     let tx = self.tx.clone();
                     let media_path = self.media_path.clone();
                     let picker = Arc::clone(&self.picker);
-                    thread::spawn(move || {
+                    media_jobs.spawn(move |permit| {
                         let protocol = MediaRoot::new(&media_path)
                             .and_then(|root| {
                                 root.media_file(Path::new(key.preview_path().as_ref()))
@@ -73,7 +74,10 @@ impl App<'_> {
                                 );
                                 protocol
                             });
-                        let _ = tx.send(AppInput::App(AppEvent::SetViewerPreview(key, protocol)));
+                        permit.send(
+                            &tx,
+                            AppInput::App(AppEvent::SetViewerPreview(key, protocol)),
+                        );
                     });
                     false
                 }
@@ -112,7 +116,7 @@ impl App<'_> {
                         _ => None,
                     };
                     if let Some(file) = file {
-                        thread::spawn(move || {
+                        media_jobs.spawn(move |permit| {
                             let preview_path = match file.kind {
                                 wr::FileKind::Video => {
                                     let video_rel = Path::new(file.path.as_ref());
@@ -146,24 +150,30 @@ impl App<'_> {
                                     &Resize::Scale(None),
                                     Size::new(preview_width as u16, preview_height as u16),
                                 );
-                                tx.send(AppInput::App(AppEvent::SetFilePreview(
-                                    message_id.clone(),
-                                    file.path.clone(),
-                                    img,
-                                )))
-                                .unwrap();
+                                permit.send(
+                                    &tx,
+                                    AppInput::App(AppEvent::SetFilePreview(
+                                        message_id.clone(),
+                                        file.path.clone(),
+                                        img,
+                                    )),
+                                );
                             } else if matches!(file.kind, wr::FileKind::Video) {
-                                tx.send(AppInput::App(AppEvent::SetFileState(
-                                    message_id.clone(),
-                                    FileMeta::Loaded,
-                                )))
-                                .unwrap();
+                                permit.send(
+                                    &tx,
+                                    AppInput::App(AppEvent::SetFileState(
+                                        message_id.clone(),
+                                        FileMeta::Loaded,
+                                    )),
+                                );
                             } else {
-                                tx.send(AppInput::App(AppEvent::SetFileState(
-                                    message_id.clone(),
-                                    FileMeta::LoadFailed,
-                                )))
-                                .unwrap();
+                                permit.send(
+                                    &tx,
+                                    AppInput::App(AppEvent::SetFileState(
+                                        message_id.clone(),
+                                        FileMeta::LoadFailed,
+                                    )),
+                                );
                             }
                         });
                     } else {
@@ -189,7 +199,7 @@ impl App<'_> {
                     self.metadata.get(&message_id),
                     Some(Metadata::File(FileMeta::Downloaded | FileMeta::Loaded))
                 ) {
-                    self.spawn_audio_duration_probe_if_missing(&message_id);
+                    self.spawn_audio_duration_probe_if_missing(&message_id, media_jobs);
                 }
                 true
             }

@@ -6,18 +6,26 @@ use whatsrust as wr;
 use crate::app::App;
 use crate::app::download_worker::Worker as DownloadWorker;
 use crate::app::events::{AppEvent, AppEventFamily, AppInput, DrawSource};
+use crate::app::media_jobs::MediaJobOwner;
 use crate::app::terminal_session::TerminalSession;
 use crate::ui;
 
 type DownloadSender = Sender<(wr::MessageId, wr::FileId)>;
 
-fn dispatch_app_event(app: &mut App<'_>, event: AppEvent, download_tx: &DownloadSender) -> bool {
+fn dispatch_app_event(
+    app: &mut App<'_>,
+    event: AppEvent,
+    download_tx: &DownloadSender,
+    media_jobs: &mut MediaJobOwner,
+) -> bool {
     match event.family() {
         AppEventFamily::Send => app.handle_send_event(event),
         AppEventFamily::ReadReceipt => app.handle_read_receipt_event(event),
         AppEventFamily::Avatar => app.handle_avatar_event(event),
         AppEventFamily::Updater => app.handle_updater_event(event),
-        AppEventFamily::MediaViewer => app.handle_media_viewer_event(event, download_tx),
+        AppEventFamily::MediaViewer => {
+            app.handle_media_viewer_event(event, download_tx, media_jobs)
+        }
     }
 }
 
@@ -88,6 +96,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
         }
     };
 
+    let mut media_jobs = MediaJobOwner::new();
     terminal_session.start_input_reader(&mut app.input_reader, app.tx.clone());
 
     app.sync_selected_presence();
@@ -99,6 +108,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
     {
         error!("Failed to draw terminal UI: {error}");
         app.shutdown_avatar_runtime();
+        media_jobs.shutdown();
         download_worker.shutdown();
         app.shutdown_read_receipt_worker();
         terminal_session.stop_input_reader(&mut app.input_reader);
@@ -135,7 +145,9 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
             app.runtime_diagnostics.record_input(input);
         }
         let should_draw = match msg {
-            Ok(AppInput::App(event)) => dispatch_app_event(app, event, &download_tx),
+            Ok(AppInput::App(event)) => {
+                dispatch_app_event(app, event, &download_tx, &mut media_jobs)
+            }
             Ok(AppInput::WhatsApp(event)) => {
                 if matches!(
                     &event,
@@ -143,6 +155,9 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
                         wr::LogoutStatus::LoggedOut | wr::LogoutStatus::NotLoggedIn
                     )
                 ) {
+                    // This is terminal shutdown, not ordinary event handling: no job
+                    // may access or publish into the media directory while logout clears it.
+                    media_jobs.shutdown();
                     download_worker.shutdown();
                 }
                 app.handle_whatsapp_event(event)
@@ -195,6 +210,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
     }
 
     app.shutdown_avatar_runtime();
+    media_jobs.shutdown();
     download_worker.shutdown();
     app.shutdown_read_receipt_worker();
     terminal_session.stop_input_reader(&mut app.input_reader);
@@ -238,11 +254,13 @@ mod tests {
     fn send_events_route_to_the_send_handler() {
         let mut app = TestApp::new();
         let (download_tx, _download_rx) = mpsc::channel();
+        let mut media_jobs = MediaJobOwner::new();
 
         assert!(!dispatch_app_event(
             &mut app,
             AppEvent::OutboundSendFailed { local_send_id: 1 },
             &download_tx,
+            &mut media_jobs,
         ));
     }
 
@@ -251,11 +269,13 @@ mod tests {
         let mut app = TestApp::new();
         app.read_receipts.set_enabled(true);
         let (download_tx, _download_rx) = mpsc::channel();
+        let mut media_jobs = MediaJobOwner::new();
 
         assert!(!dispatch_app_event(
             &mut app,
             AppEvent::ReadReceiptRestored(Ok(Vec::new())),
             &download_tx,
+            &mut media_jobs,
         ));
     }
 
@@ -263,11 +283,13 @@ mod tests {
     fn updater_events_route_to_the_updater_handler() {
         let mut app = TestApp::new();
         let (download_tx, _download_rx) = mpsc::channel();
+        let mut media_jobs = MediaJobOwner::new();
 
         assert!(dispatch_app_event(
             &mut app,
             AppEvent::UpdateAvailable("1.2.3".to_owned()),
             &download_tx,
+            &mut media_jobs,
         ));
         assert_eq!(app.update_notice.as_deref(), Some("1.2.3"));
     }
@@ -280,6 +302,7 @@ mod tests {
             current.clone(),
         ));
         let (download_tx, _download_rx) = mpsc::channel();
+        let mut media_jobs = MediaJobOwner::new();
 
         assert!(!dispatch_app_event(
             &mut app,
@@ -289,6 +312,7 @@ mod tests {
                 10,
             )),
             &download_tx,
+            &mut media_jobs,
         ));
         assert_eq!(app.viewer_preview.as_ref().unwrap().key(), &current);
     }
@@ -301,6 +325,7 @@ mod tests {
             current.clone(),
         ));
         let (download_tx, _download_rx) = mpsc::channel();
+        let mut media_jobs = MediaJobOwner::new();
 
         assert!(!dispatch_app_event(
             &mut app,
@@ -309,6 +334,7 @@ mod tests {
                 None,
             ),
             &download_tx,
+            &mut media_jobs,
         ));
         assert_eq!(app.viewer_preview.as_ref().unwrap().key(), &current);
     }

@@ -1,10 +1,10 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::thread;
 
 use ratatui_image::protocol::StatefulProtocol;
 use whatsrust as wr;
 
+use super::media_jobs::MediaJobOwner;
 use super::media_support::probe_audio_duration;
 use super::{App, AppEvent, AppInput, FileMeta, Metadata};
 
@@ -57,10 +57,13 @@ impl App<'_> {
         }
     }
 
-    /// Spawns a background probe for the audio duration of `message_id` once
-    /// its file is on disk. No-op for non-audio messages and for paths that
-    /// already have a cached duration.
-    pub(crate) fn spawn_audio_duration_probe_if_missing(&self, message_id: &wr::MessageId) {
+    /// Starts a managed background probe once an audio file is on disk. The job
+    /// permit prevents a late result from reaching a shutting-down runtime.
+    pub(crate) fn spawn_audio_duration_probe_if_missing(
+        &self,
+        message_id: &wr::MessageId,
+        media_jobs: &mut MediaJobOwner,
+    ) {
         let Some(file) = (match self
             .messages
             .get(message_id)
@@ -79,15 +82,13 @@ impl App<'_> {
         let tx = self.tx.clone();
         let media_path = self.media_path.to_owned();
         let message_id = message_id.clone();
-        thread::spawn(move || {
+        media_jobs.spawn(move |permit| {
             let absolute = media_path.join(file.path.as_ref());
             let duration = probe_audio_duration(&absolute);
-            tx.send(AppInput::App(AppEvent::SetAudioDuration(
-                message_id.clone(),
-                file.path,
-                duration,
-            )))
-            .unwrap();
+            permit.send(
+                &tx,
+                AppInput::App(AppEvent::SetAudioDuration(message_id, file.path, duration)),
+            );
         });
     }
 }

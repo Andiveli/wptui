@@ -38,6 +38,7 @@ pub mod lifecycle_settings_dispatch;
 pub mod log_toggle;
 pub mod logout;
 pub mod media_cache;
+pub mod media_jobs;
 pub mod media_support;
 pub mod message_action_diagnostics;
 pub mod message_actions;
