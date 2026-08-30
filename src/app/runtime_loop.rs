@@ -53,6 +53,7 @@ fn refresh_composer_viewport_width(app: &mut App<'_>, terminal_session: &mut Ter
 enum TerminalInitializationFailureTeardown {
     StopDownloadWorker,
     StopReadReceiptWorker,
+    StopReadSyncWorker,
     Disconnect,
     FinalizeDiagnostics,
 }
@@ -62,6 +63,7 @@ fn finish_terminal_initialization_failure(
 ) {
     teardown(TerminalInitializationFailureTeardown::StopDownloadWorker);
     teardown(TerminalInitializationFailureTeardown::StopReadReceiptWorker);
+    teardown(TerminalInitializationFailureTeardown::StopReadSyncWorker);
     teardown(TerminalInitializationFailureTeardown::Disconnect);
     teardown(TerminalInitializationFailureTeardown::FinalizeDiagnostics);
 }
@@ -87,6 +89,9 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
                 TerminalInitializationFailureTeardown::StopReadReceiptWorker => {
                     app.shutdown_read_receipt_worker();
                 }
+                TerminalInitializationFailureTeardown::StopReadSyncWorker => {
+                    app.shutdown_read_sync_worker();
+                }
                 TerminalInitializationFailureTeardown::Disconnect => wr::disconnect(),
                 TerminalInitializationFailureTeardown::FinalizeDiagnostics => {
                     app.finalize_runtime_diagnostics();
@@ -111,6 +116,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
         media_jobs.shutdown();
         download_worker.shutdown();
         app.shutdown_read_receipt_worker();
+        app.shutdown_read_sync_worker();
         terminal_session.stop_input_reader(&mut app.input_reader);
         terminal_session.restore();
         wr::disconnect();
@@ -159,6 +165,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
                     // may access or publish into the media directory while logout clears it.
                     media_jobs.shutdown();
                     download_worker.shutdown();
+                    app.shutdown_read_sync_worker();
                 }
                 app.handle_whatsapp_event(event)
             }
@@ -213,6 +220,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
     media_jobs.shutdown();
     download_worker.shutdown();
     app.shutdown_read_receipt_worker();
+    app.shutdown_read_sync_worker();
     terminal_session.stop_input_reader(&mut app.input_reader);
     terminal_session.restore();
     app.set_read_receipt_readiness(crate::app::read_receipts::Readiness::Disconnected);
@@ -244,6 +252,7 @@ mod tests {
             [
                 TerminalInitializationFailureTeardown::StopDownloadWorker,
                 TerminalInitializationFailureTeardown::StopReadReceiptWorker,
+                TerminalInitializationFailureTeardown::StopReadSyncWorker,
                 TerminalInitializationFailureTeardown::Disconnect,
                 TerminalInitializationFailureTeardown::FinalizeDiagnostics,
             ]

@@ -237,6 +237,7 @@ pub struct App<'a> {
     pub viewer_zoom: u16,
     pub read_receipts: ReadReceiptCoordinator,
     pub read_receipt_worker: read_receipts::worker::Worker,
+    pub read_sync_worker: wr::ReadSyncWorker,
     pub optimistic_text_send_worker: optimistic_text_send::Worker,
     pub pending_outgoing_text: HashMap<u64, optimistic_text_send::TextSendRequest>,
     pub completed_text_send_ids: VecDeque<u64>,

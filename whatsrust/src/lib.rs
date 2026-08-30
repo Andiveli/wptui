@@ -42,7 +42,7 @@ pub use queries::{
     get_chat_settings, get_communities, get_contacts, get_group_info, get_group_participants,
     resolve_dm_chat,
 };
-pub use read_sync::{MarkAsReadError, mark_as_read, sync_chat_read};
+pub use read_sync::{MarkAsReadError, ReadSyncWorker, mark_as_read, sync_chat_read};
 pub use registrations::{
     set_log_handler, set_message_handler, set_optimistic_text_sent_handler, set_presence_handler,
 };

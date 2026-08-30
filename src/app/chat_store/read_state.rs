@@ -68,14 +68,16 @@ impl App<'_> {
             if !unchanged && !Self::is_status_chat(chat) {
                 if let Some(message) = self.messages.get(&message_id) {
                     let participant = Self::is_group_chat(chat).then_some(&message.info.sender);
-                    wr::sync_chat_read(
+                    scheduled = self.read_sync_worker.schedule(
                         chat,
                         &message.info.id,
                         timestamp,
                         message.info.is_from_me,
                         participant,
                     );
-                    scheduled = true;
+                    if !scheduled {
+                        log::warn!("chat read sync skipped: worker queue unavailable");
+                    }
                 }
             }
         }
@@ -83,6 +85,10 @@ impl App<'_> {
             self.invalidate_chat_list();
         }
         scheduled
+    }
+
+    pub(crate) fn shutdown_read_sync_worker(&mut self) {
+        self.read_sync_worker.shutdown();
     }
 
     pub fn pending_new_messages(&self, chat: &wr::JID) -> usize {

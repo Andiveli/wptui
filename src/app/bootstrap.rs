@@ -159,6 +159,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
                 ),
             ),
         ),
+        read_sync_worker: wr::ReadSyncWorker::new(),
         optimistic_text_send_worker: crate::app::optimistic_text_send::Worker::new(
             tx.clone(),
             Box::new(crate::app::optimistic_text_send::WhatsAppTextSendPort),
