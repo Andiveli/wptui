@@ -59,7 +59,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         render_section_rail(frame, app, area);
     }
     if app.rail_on_logout {
-        app.contact_avatars.clear_window();
         if let Some(area) = areas.chat_list {
             render_structural_placeholder(frame, app, area);
         }
@@ -69,12 +68,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             app.record_phase(Phase::ContactsChatProjectionRows, |app| {
                 render_contacts(frame, app, area)
             });
-        } else {
-            app.contact_avatars.clear_window();
         }
         render_chats(frame, app, areas.conversation);
     } else if app.selected_section == Section::Status {
-        app.contact_avatars.clear_window();
         if let Some(area) = areas.chat_list {
             render_status_contacts(frame, app, area);
         }
@@ -93,7 +89,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         }
         render_chats(frame, app, areas.conversation);
     } else {
-        app.contact_avatars.clear_window();
         if let Some(area) = areas.chat_list {
             render_structural_placeholder(frame, app, area);
         }

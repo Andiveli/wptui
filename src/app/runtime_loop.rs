@@ -98,6 +98,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
         .draw(|frame| ui::draw(frame, app))
     {
         error!("Failed to draw terminal UI: {error}");
+        app.shutdown_avatar_runtime();
         download_worker.shutdown();
         app.shutdown_read_receipt_worker();
         terminal_session.stop_input_reader(&mut app.input_reader);
@@ -112,6 +113,9 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
     app.runtime_diagnostics.record_should_draw();
     if let Some(started) = initial_draw_started {
         app.runtime_diagnostics.record_draw_finished(started);
+    }
+    if let Ok(area) = terminal_session.terminal_mut().size() {
+        app.schedule_avatar_viewport(area.into());
     }
     app.dispatch_read_receipts();
 
@@ -179,6 +183,9 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
             if let Some(started) = started {
                 app.runtime_diagnostics.record_draw_finished(started);
             }
+            if let Ok(area) = terminal_session.terminal_mut().size() {
+                app.schedule_avatar_viewport(area.into());
+            }
         }
         app.dispatch_read_receipts();
 
@@ -187,6 +194,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
         }
     }
 
+    app.shutdown_avatar_runtime();
     download_worker.shutdown();
     app.shutdown_read_receipt_worker();
     terminal_session.stop_input_reader(&mut app.input_reader);

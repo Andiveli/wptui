@@ -23,6 +23,8 @@ use common::TestApp;
 
 const UI_SOURCE: &str = include_str!("../src/ui.rs");
 const CONTACTS_SOURCE: &str = include_str!("../src/ui/contacts.rs");
+const COMMUNITIES_SOURCE: &str = include_str!("../src/ui/communities.rs");
+const AVATAR_RUNTIME_SOURCE: &str = include_str!("../src/app/runtime_avatar_events.rs");
 
 #[test]
 fn initials_are_deterministic_for_names_and_unicode() {
@@ -282,27 +284,31 @@ fn avatar_requests_are_selected_first_then_visible_then_overscan() {
 }
 
 #[test]
-fn contacts_module_owns_orchestration_and_preserves_draw_guards() {
+fn avatar_runtime_owns_scheduling_while_ui_renderers_only_plan_and_paint() {
     for symbol in [
         "render_contacts",
         "visible_contact_rows",
-        "prioritized_avatar_requests",
-        "app.contact_avatars.schedule",
         "AVATAR_WIDTH",
         "AVATAR_HEIGHT",
         "protocol_mut",
     ] {
-        assert!(CONTACTS_SOURCE.contains(symbol), "contacts owns {symbol}");
+        assert!(
+            CONTACTS_SOURCE.contains(symbol),
+            "contacts renders {symbol}"
+        );
         assert_eq!(UI_SOURCE.matches(&format!("fn {symbol}")).count(), 0);
     }
     assert!(CONTACTS_SOURCE.contains("if avatar_area.width == AVATAR_WIDTH"));
     assert!(CONTACTS_SOURCE.contains("&& avatar_area.height == AVATAR_HEIGHT"));
-    assert!(UI_SOURCE.contains("app.contact_avatars.clear_window();"));
+    assert!(!CONTACTS_SOURCE.contains("contact_avatars.schedule"));
+    assert!(!COMMUNITIES_SOURCE.contains("contact_avatars.schedule"));
+    assert!(!UI_SOURCE.contains("contact_avatars.clear_window"));
+    assert!(AVATAR_RUNTIME_SOURCE.contains("schedule_avatar_viewport"));
     assert!(!CONTACTS_SOURCE.contains("pub fn"));
 }
 
 #[test]
-fn hidden_chats_clear_avatar_window_before_rendering_without_invalid_placement() {
+fn hidden_chats_clear_avatar_window_in_runtime_before_pure_rendering() {
     let mut app = TestApp::new();
     app.selected_section = Section::Chats;
     app.pane_visibility = PaneVisibility {
@@ -322,7 +328,8 @@ fn hidden_chats_clear_avatar_window_before_rendering_without_invalid_placement()
             .any(|cell| cell.symbol() == "C")
     );
     assert!(UI_SOURCE.contains("if let Some(area) = areas.chat_list"));
-    assert!(UI_SOURCE.contains("else {\n            app.contact_avatars.clear_window();"));
+    assert!(AVATAR_RUNTIME_SOURCE.contains("schedule_avatar_viewport"));
+    assert!(AVATAR_RUNTIME_SOURCE.contains("Vec::new()"));
 }
 
 #[test]
