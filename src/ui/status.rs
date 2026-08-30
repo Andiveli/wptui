@@ -1,6 +1,6 @@
 use super::status_list::{StatusList, StatusListItem};
-use crate::app::App;
 use crate::app::actions::FocusPane;
+use crate::app::{App, read_receipts::VisibilityPlan};
 use crate::ui::message_list::render_status_messages_with_plan;
 use ratatui::{
     Frame,
@@ -43,6 +43,7 @@ pub(super) fn render_statuses_with_plan(
     frame: &mut Frame,
     app: &mut App,
     media_render_plan: &mut crate::app::events::MediaRenderPlan,
+    visibility_plan: &mut VisibilityPlan,
     area: Rect,
 ) {
     let title = app
@@ -67,7 +68,7 @@ pub(super) fn render_statuses_with_plan(
         );
         return;
     }
-    render_status_messages_with_plan(frame, app, media_render_plan, content_area);
+    render_status_messages_with_plan(frame, app, media_render_plan, visibility_plan, content_area);
 }
 
 #[cfg(test)]
@@ -76,6 +77,7 @@ mod tests {
     use whatsrust as wr;
 
     use super::render_statuses_with_plan;
+    use crate::app::read_receipts::VisibilityPlan;
     use crate::app::status_projection::STATUS_BROADCAST_CHAT;
     use crate::app::test_support::TestApp;
 
@@ -112,6 +114,7 @@ mod tests {
         );
         let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
         let mut media_render_plan = crate::app::events::MediaRenderPlan::default();
+        let mut visibility_plan = VisibilityPlan::default();
 
         terminal
             .draw(|frame| {
@@ -119,6 +122,7 @@ mod tests {
                     frame,
                     &mut app,
                     &mut media_render_plan,
+                    &mut visibility_plan,
                     Rect::new(0, 0, 40, 12),
                 )
             })

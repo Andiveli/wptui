@@ -1,5 +1,6 @@
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use whatsrust::{JID, Message, MessageContent, MessageInfo};
+use wp_tui::app::read_receipts::VisibilityPlan;
 use wp_tui::{app::events::MediaRenderPlan, ui::render_chats_with_plan};
 
 mod common;
@@ -15,10 +16,12 @@ fn chat_panel_shows_andiveli_logo_when_no_chat_is_open() {
     terminal
         .draw(|frame| {
             let mut media_render_plan = MediaRenderPlan::default();
+            let mut visibility_plan = VisibilityPlan::default();
             render_chats_with_plan(
                 frame,
                 &mut app,
                 &mut media_render_plan,
+                &mut visibility_plan,
                 Rect::new(0, 0, 60, 30),
             )
         })
@@ -52,10 +55,12 @@ fn logo_hidden_once_a_chat_is_opened() {
     terminal
         .draw(|frame| {
             let mut media_render_plan = MediaRenderPlan::default();
+            let mut visibility_plan = VisibilityPlan::default();
             render_chats_with_plan(
                 frame,
                 &mut app,
                 &mut media_render_plan,
+                &mut visibility_plan,
                 Rect::new(0, 0, 60, 30),
             )
         })
@@ -107,10 +112,12 @@ fn opened_chat_with_no_unread_messages_renders_without_panicking() {
     terminal
         .draw(|frame| {
             let mut media_render_plan = MediaRenderPlan::default();
+            let mut visibility_plan = VisibilityPlan::default();
             render_chats_with_plan(
                 frame,
                 &mut app,
                 &mut media_render_plan,
+                &mut visibility_plan,
                 Rect::new(0, 0, 60, 30),
             )
         })

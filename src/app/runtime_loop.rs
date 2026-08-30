@@ -174,9 +174,10 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
     refresh_composer_viewport_width(app, &mut terminal_session);
     let initial_draw_started = app.runtime_diagnostics.draw_started();
     let mut media_render_plan = MediaRenderPlan::default();
+    let mut visibility_plan = crate::app::read_receipts::VisibilityPlan::default();
     let draw_result = terminal_session
         .terminal_mut()
-        .draw(|frame| ui::draw_with_plan(frame, app, &mut media_render_plan));
+        .draw(|frame| ui::draw_with_plan(frame, app, &mut media_render_plan, &mut visibility_plan));
     if let Err(error) = &draw_result {
         error!("Failed to draw terminal UI: {error}");
         app.shutdown_avatar_runtime();
@@ -204,6 +205,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
         &download_tx,
         &mut media_jobs,
     );
+    app.apply_visibility_plan(visibility_plan);
     if let Ok(area) = terminal_session.terminal_mut().size() {
         app.schedule_avatar_viewport(area.into());
     }
@@ -269,9 +271,10 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
             app.runtime_diagnostics.record_should_draw();
             let started = app.runtime_diagnostics.draw_started();
             let mut media_render_plan = MediaRenderPlan::default();
-            let draw_result = terminal_session
-                .terminal_mut()
-                .draw(|frame| ui::draw_with_plan(frame, app, &mut media_render_plan));
+            let mut visibility_plan = crate::app::read_receipts::VisibilityPlan::default();
+            let draw_result = terminal_session.terminal_mut().draw(|frame| {
+                ui::draw_with_plan(frame, app, &mut media_render_plan, &mut visibility_plan)
+            });
             if let Err(error) = &draw_result {
                 error!("Failed to draw terminal UI: {error}");
                 app.set_read_receipt_readiness(crate::app::read_receipts::Readiness::Disconnected);
@@ -287,6 +290,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
                 &download_tx,
                 &mut media_jobs,
             );
+            app.apply_visibility_plan(visibility_plan);
             if let Ok(area) = terminal_session.terminal_mut().size() {
                 app.schedule_avatar_viewport(area.into());
             }

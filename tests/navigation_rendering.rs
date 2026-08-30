@@ -1,4 +1,5 @@
 use std::fs;
+use wp_tui::app::read_receipts::VisibilityPlan;
 
 use ratatui::{Terminal, backend::TestBackend};
 use whatsrust as wr;
@@ -80,7 +81,13 @@ fn navigation_renders_labels_logs_logout_and_placeholders() {
     terminal
         .draw(|frame| {
             let mut media_render_plan = MediaRenderPlan::default();
-            ui::draw_with_plan(frame, &mut app, &mut media_render_plan)
+            let mut visibility_plan = VisibilityPlan::default();
+            ui::draw_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                &mut visibility_plan,
+            )
         })
         .unwrap();
     let rendered = rows(&terminal).join("\n");
@@ -100,7 +107,13 @@ fn navigation_renders_labels_logs_logout_and_placeholders() {
     terminal
         .draw(|frame| {
             let mut media_render_plan = MediaRenderPlan::default();
-            ui::draw_with_plan(frame, &mut app, &mut media_render_plan)
+            let mut visibility_plan = VisibilityPlan::default();
+            ui::draw_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                &mut visibility_plan,
+            )
         })
         .unwrap();
     assert!(
@@ -118,7 +131,13 @@ fn navigation_is_safe_in_a_narrow_frame() {
     terminal
         .draw(|frame| {
             let mut media_render_plan = MediaRenderPlan::default();
-            ui::draw_with_plan(frame, &mut app, &mut media_render_plan)
+            let mut visibility_plan = VisibilityPlan::default();
+            ui::draw_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                &mut visibility_plan,
+            )
         })
         .unwrap();
     assert!(rows(&terminal).join("\n").contains("Sections"));
@@ -160,7 +179,13 @@ fn runtime_overlay_layering_keeps_logs_and_branch_below_final_file_picker() {
     terminal
         .draw(|frame| {
             let mut media_render_plan = MediaRenderPlan::default();
-            ui::draw_with_plan(frame, &mut app, &mut media_render_plan)
+            let mut visibility_plan = VisibilityPlan::default();
+            ui::draw_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                &mut visibility_plan,
+            )
         })
         .unwrap();
     let rendered = rows(&terminal).join("\n");

@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use wp_tui::app::read_receipts::VisibilityPlan;
 
 use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Color};
 use whatsrust::{FileContent, FileKind, JID, Message, MessageContent, MessageInfo};
@@ -387,10 +388,12 @@ fn render_buffer(app: &mut App<'_>, width: u16, height: u16) -> ratatui::buffer:
     terminal
         .draw(|frame| {
             let mut media_render_plan = MediaRenderPlan::default();
+            let mut visibility_plan = VisibilityPlan::default();
             render_messages_with_plan(
                 frame,
                 app,
                 &mut media_render_plan,
+                &mut visibility_plan,
                 Rect::new(0, 0, width, height),
             );
         })

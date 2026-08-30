@@ -8,6 +8,7 @@ use ratatui::{
 use whatsrust::{self as wr, FileKind};
 
 use crate::app::events::MediaRenderPlan;
+use crate::app::read_receipts::VisibilityPlan;
 use crate::app::runtime_diagnostics::MessageListCounts;
 use crate::app::{App, FileMeta, Metadata};
 
@@ -28,6 +29,7 @@ pub(super) fn render(
     start_index: usize,
     mut y: isize,
     counts: &mut MessageListCounts,
+    visibility_plan: &mut VisibilityPlan,
     text_mode: MessageTextMode,
     media_render_plan: &mut MediaRenderPlan,
 ) -> Option<ViewportAnchor> {
@@ -71,7 +73,7 @@ pub(super) fn render(
             counts.visible_rows = counts.visible_rows.saturating_add(1);
             counts.receipt_candidates = counts.receipt_candidates.saturating_add(1);
             viewport_anchor.get_or_insert((i, y));
-            app.observe_visible_message(&item, true);
+            visibility_plan.record_visible_message(&item);
             let too_low = top < list_area.top() as isize;
             let too_high = bottom > list_area.bottom() as isize;
 

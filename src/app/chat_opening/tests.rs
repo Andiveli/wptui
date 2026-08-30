@@ -1,4 +1,5 @@
 use super::App;
+use crate::app::read_receipts::VisibilityPlan;
 use crate::app::test_support::TestApp;
 use ratatui::{Terminal, backend::TestBackend};
 use whatsrust as wr;
@@ -38,9 +39,15 @@ fn opening_chat_with_restored_cursor_renders_unread_messages() {
 
     let mut terminal = Terminal::new(TestBackend::new(80, 10)).unwrap();
     let mut media_render_plan = crate::app::events::MediaRenderPlan::default();
+    let mut visibility_plan = VisibilityPlan::default();
     terminal
         .draw(|frame| {
-            crate::ui::draw_with_plan(frame, &mut app, &mut media_render_plan);
+            crate::ui::draw_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                &mut visibility_plan,
+            );
         })
         .unwrap();
     assert_eq!(

@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
+use wp_tui::app::read_receipts::VisibilityPlan;
 
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
@@ -209,10 +210,12 @@ fn share_picker_sorts_by_activity_and_keeps_navigation_visible_in_small_viewport
     terminal
         .draw(|frame| {
             let mut media_render_plan = MediaRenderPlan::default();
+            let mut visibility_plan = VisibilityPlan::default();
             render_chats_with_plan(
                 frame,
                 &mut app,
                 &mut media_render_plan,
+                &mut visibility_plan,
                 Rect::new(0, 0, 30, 7),
             )
         })
@@ -271,10 +274,12 @@ fn forwarding_failure_notices_are_concise_and_typed() {
         terminal
             .draw(|frame| {
                 let mut media_render_plan = MediaRenderPlan::default();
+                let mut visibility_plan = VisibilityPlan::default();
                 render_chats_with_plan(
                     frame,
                     &mut app,
                     &mut media_render_plan,
+                    &mut visibility_plan,
                     Rect::new(0, 0, 80, 12),
                 )
             })

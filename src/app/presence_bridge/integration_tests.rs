@@ -1,4 +1,5 @@
 use super::super::presence::PresenceMarker;
+use super::super::read_receipts::VisibilityPlan;
 use super::super::test_support::{FixedClock, RecordingNotifier, TestApp};
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use whatsrust as wr;
@@ -19,12 +20,14 @@ fn injected_clock_reaches_presence_and_ui_marker_path() {
 
     let mut terminal = Terminal::new(TestBackend::new(40, 8)).unwrap();
     let mut media_render_plan = crate::app::events::MediaRenderPlan::default();
+    let mut visibility_plan = VisibilityPlan::default();
     terminal
         .draw(|frame| {
             crate::ui::render_chats_with_plan(
                 frame,
                 &mut app,
                 &mut media_render_plan,
+                &mut visibility_plan,
                 Rect::new(0, 0, 40, 8),
             )
         })

@@ -1,6 +1,7 @@
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use tempfile::tempdir;
 use whatsrust::{FileContent, FileKind, ForwardingInfo, JID, Message, MessageContent, MessageInfo};
+use wp_tui::app::read_receipts::VisibilityPlan;
 use wp_tui::app::{App, events::MediaRenderPlan};
 use wp_tui::db::DatabaseHandler;
 use wp_tui::ui::message_list::{AuthorGroupContext, message_height, render_messages_with_plan};
@@ -181,10 +182,12 @@ fn rendered_rows(message: Message) -> String {
     terminal
         .draw(|frame| {
             let mut media_render_plan = MediaRenderPlan::default();
+            let mut visibility_plan = VisibilityPlan::default();
             render_messages_with_plan(
                 frame,
                 &mut app,
                 &mut media_render_plan,
+                &mut visibility_plan,
                 Rect::new(0, 0, 40, 8),
             );
         })

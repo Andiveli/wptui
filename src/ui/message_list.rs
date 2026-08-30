@@ -13,6 +13,7 @@ use whatsrust as wr;
 
 use crate::app::App;
 use crate::app::events::MediaRenderPlan;
+use crate::app::read_receipts::VisibilityPlan;
 
 #[path = "message_formatting.rs"]
 mod message_formatting;
@@ -800,6 +801,7 @@ pub fn render_messages_with_plan(
     frame: &mut Frame,
     app: &mut App,
     media_render_plan: &mut MediaRenderPlan,
+    visibility_plan: &mut VisibilityPlan,
     area: Rect,
 ) -> Option<()> {
     crate::crash_diagnostics::breadcrumb("first-message-render", "start");
@@ -869,6 +871,7 @@ pub fn render_messages_with_plan(
         sequence_rebuilt,
         author_groups_built,
         unread_count,
+        visibility_plan,
         MessageTextMode::Chat,
         media_render_plan,
     );
@@ -1000,6 +1003,7 @@ pub fn render_status_messages_with_plan(
     frame: &mut Frame,
     app: &mut App,
     media_render_plan: &mut MediaRenderPlan,
+    visibility_plan: &mut VisibilityPlan,
     area: Rect,
 ) {
     let Some(contact) = app.open_status_contact() else {
@@ -1033,6 +1037,7 @@ pub fn render_status_messages_with_plan(
         true,
         items.len() as u64,
         0,
+        visibility_plan,
         MessageTextMode::Status,
         media_render_plan,
     );
@@ -1049,6 +1054,7 @@ fn render_message_items(
     sequence_rebuilt: bool,
     author_groups_built: u64,
     unread_count: usize,
+    visibility_plan: &mut VisibilityPlan,
     text_mode: MessageTextMode,
     media_render_plan: &mut MediaRenderPlan,
 ) -> Option<()> {
@@ -1107,6 +1113,7 @@ fn render_message_items(
         start_index,
         y,
         &mut viewport_counts,
+        visibility_plan,
         text_mode,
         media_render_plan,
     );

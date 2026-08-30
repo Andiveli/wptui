@@ -22,6 +22,7 @@ pub(crate) use layout::{
 use crate::app::App;
 use crate::app::actions::{ConversationMode, FocusPane, Section};
 use crate::app::events::{ViewerPreviewKey, ViewerPreviewState, ViewerStatus};
+use crate::app::read_receipts::VisibilityPlan;
 use crate::app::runtime_diagnostics::Phase;
 use crate::keybindings::canonical_shortcuts;
 use contacts::render_contacts;
@@ -41,10 +42,12 @@ use ratatui_image::{Resize, StatefulImage};
 use status::{render_status_contacts, render_statuses_with_plan};
 use whatsrust as wr;
 
+/// Draws one frame and records deferred media and visibility effects for the runtime.
 pub fn draw_with_plan(
     frame: &mut Frame,
     app: &mut App,
     media_render_plan: &mut crate::app::events::MediaRenderPlan,
+    visibility_plan: &mut VisibilityPlan,
 ) {
     let content_area = if app.show_logs {
         let [content_area, logs_area] =
@@ -71,12 +74,24 @@ pub fn draw_with_plan(
                 render_contacts(frame, app, area)
             });
         }
-        render_chats_with_plan(frame, app, media_render_plan, areas.conversation);
+        render_chats_with_plan(
+            frame,
+            app,
+            media_render_plan,
+            visibility_plan,
+            areas.conversation,
+        );
     } else if app.selected_section == Section::Status {
         if let Some(area) = areas.chat_list {
             render_status_contacts(frame, app, area);
         }
-        render_statuses_with_plan(frame, app, media_render_plan, areas.conversation);
+        render_statuses_with_plan(
+            frame,
+            app,
+            media_render_plan,
+            visibility_plan,
+            areas.conversation,
+        );
     } else if app.selected_section == Section::Communities {
         if let Some(area) = areas.chat_list {
             if app.community_detail.is_some() {
@@ -89,7 +104,13 @@ pub fn draw_with_plan(
                 });
             }
         }
-        render_chats_with_plan(frame, app, media_render_plan, areas.conversation);
+        render_chats_with_plan(
+            frame,
+            app,
+            media_render_plan,
+            visibility_plan,
+            areas.conversation,
+        );
     } else {
         if let Some(area) = areas.chat_list {
             render_structural_placeholder(frame, app, area);
@@ -284,6 +305,7 @@ pub fn render_chats_with_plan(
     frame: &mut Frame,
     app: &mut App,
     media_render_plan: &mut crate::app::events::MediaRenderPlan,
+    visibility_plan: &mut VisibilityPlan,
     area: Rect,
 ) {
     // Outer block wrapping messages + composer, like Concord's panel_block_owned
@@ -451,7 +473,7 @@ pub fn render_chats_with_plan(
         render_chat_empty_state(frame, app, chat_area);
     } else {
         app.record_phase(Phase::MessageListRenderLayout, |app| {
-            render_messages_with_plan(frame, app, media_render_plan, chat_area)
+            render_messages_with_plan(frame, app, media_render_plan, visibility_plan, chat_area)
         });
     }
 

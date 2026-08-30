@@ -1,5 +1,6 @@
 use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Color};
 use whatsrust::JID;
+use wp_tui::app::read_receipts::VisibilityPlan;
 use wp_tui::{
     app::{
         App,
@@ -29,7 +30,13 @@ fn draw_top_row(width: u16, setup: impl FnOnce(&mut App)) -> String {
     terminal
         .draw(|frame| {
             let mut media_render_plan = MediaRenderPlan::default();
-            ui::draw_with_plan(frame, &mut app, &mut media_render_plan)
+            let mut visibility_plan = VisibilityPlan::default();
+            ui::draw_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                &mut visibility_plan,
+            )
         })
         .expect("chat should render");
 
@@ -67,7 +74,13 @@ fn conversation_presence_marker_precedes_name_with_expected_colors() {
     terminal
         .draw(|frame| {
             let mut media_render_plan = MediaRenderPlan::default();
-            ui::draw_with_plan(frame, &mut app, &mut media_render_plan)
+            let mut visibility_plan = VisibilityPlan::default();
+            ui::draw_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                &mut visibility_plan,
+            )
         })
         .expect("chat should render");
     let row = &terminal.backend().buffer().content()[..30];
@@ -81,7 +94,13 @@ fn conversation_presence_marker_precedes_name_with_expected_colors() {
     terminal
         .draw(|frame| {
             let mut media_render_plan = MediaRenderPlan::default();
-            ui::draw_with_plan(frame, &mut app, &mut media_render_plan)
+            let mut visibility_plan = VisibilityPlan::default();
+            ui::draw_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                &mut visibility_plan,
+            )
         })
         .unwrap();
     let row = &terminal.backend().buffer().content()[..30];
@@ -107,7 +126,13 @@ fn group_conversation_presence_is_empty_circle() {
     terminal
         .draw(|frame| {
             let mut media_render_plan = MediaRenderPlan::default();
-            ui::draw_with_plan(frame, &mut app, &mut media_render_plan)
+            let mut visibility_plan = VisibilityPlan::default();
+            ui::draw_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                &mut visibility_plan,
+            )
         })
         .unwrap();
     let row = terminal.backend().buffer().content()[..30]
@@ -206,7 +231,13 @@ fn composer_renders_wrapped_text_without_inserting_a_newline() {
     terminal
         .draw(|frame| {
             let mut media_render_plan = MediaRenderPlan::default();
-            ui::draw_with_plan(frame, &mut app, &mut media_render_plan)
+            let mut visibility_plan = VisibilityPlan::default();
+            ui::draw_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                &mut visibility_plan,
+            )
         })
         .expect("chat should render");
 
@@ -247,7 +278,13 @@ fn composer_renders_a_word_on_the_same_row_as_its_cursor() {
     terminal
         .draw(|frame| {
             let mut media_render_plan = MediaRenderPlan::default();
-            ui::draw_with_plan(frame, &mut app, &mut media_render_plan)
+            let mut visibility_plan = VisibilityPlan::default();
+            ui::draw_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                &mut visibility_plan,
+            )
         })
         .expect("chat should render");
 
@@ -296,7 +333,13 @@ fn composer_scrolls_to_keep_the_selected_cursor_row_visible() {
     terminal
         .draw(|frame| {
             let mut media_render_plan = MediaRenderPlan::default();
-            ui::draw_with_plan(frame, &mut app, &mut media_render_plan)
+            let mut visibility_plan = VisibilityPlan::default();
+            ui::draw_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                &mut visibility_plan,
+            )
         })
         .expect("chat should render");
 
@@ -405,7 +448,13 @@ fn structural_placeholders_do_not_render_chat_or_contact_content() {
         terminal
             .draw(|frame| {
                 let mut media_render_plan = MediaRenderPlan::default();
-                ui::draw_with_plan(frame, &mut app, &mut media_render_plan)
+                let mut visibility_plan = VisibilityPlan::default();
+                ui::draw_with_plan(
+                    frame,
+                    &mut app,
+                    &mut media_render_plan,
+                    &mut visibility_plan,
+                )
             })
             .expect("placeholder should render");
 

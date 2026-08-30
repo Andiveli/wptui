@@ -113,6 +113,7 @@ mod tests {
     use crate::app::Chat;
     use crate::app::contact_avatars::{AvatarResult, AvatarTarget};
     use crate::app::events::{AppEvent, MediaRenderPlan};
+    use crate::app::read_receipts::VisibilityPlan;
     use crate::app::test_support::TestApp;
     use crate::ui;
     use ratatui::{Terminal, backend::TestBackend, layout::Rect};
@@ -138,9 +139,17 @@ mod tests {
         }
         let mut terminal = Terminal::new(TestBackend::new(80, 10)).unwrap();
         let mut media_render_plan = MediaRenderPlan::default();
+        let mut visibility_plan = VisibilityPlan::default();
 
         terminal
-            .draw(|frame| ui::draw_with_plan(frame, &mut test_app.app, &mut media_render_plan))
+            .draw(|frame| {
+                ui::draw_with_plan(
+                    frame,
+                    &mut test_app.app,
+                    &mut media_render_plan,
+                    &mut visibility_plan,
+                )
+            })
             .unwrap();
         test_app
             .app
@@ -152,7 +161,14 @@ mod tests {
 
         test_app.app.chat_list_state.select(Some(8));
         terminal
-            .draw(|frame| ui::draw_with_plan(frame, &mut test_app.app, &mut media_render_plan))
+            .draw(|frame| {
+                ui::draw_with_plan(
+                    frame,
+                    &mut test_app.app,
+                    &mut media_render_plan,
+                    &mut visibility_plan,
+                )
+            })
             .unwrap();
         test_app
             .app

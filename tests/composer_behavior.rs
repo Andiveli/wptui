@@ -7,6 +7,7 @@ use wp_tui::app::actions::{AppAction, ConversationMode};
 use wp_tui::app::composer::Composer;
 use wp_tui::app::events::MediaRenderPlan;
 use wp_tui::app::inputs::composer_action_for_editing_key;
+use wp_tui::app::read_receipts::VisibilityPlan;
 use wp_tui::input_key::{Key, KeyCode, KeyModifiers};
 use wp_tui::ui::{composer_mention_picker_area, conversation_areas, render_chats_with_plan};
 mod common;
@@ -211,10 +212,12 @@ fn mention_picker_renders_as_a_floating_overlay_above_the_composer() {
     terminal
         .draw(|frame| {
             let mut media_render_plan = MediaRenderPlan::default();
+            let mut visibility_plan = VisibilityPlan::default();
             render_chats_with_plan(
                 frame,
                 &mut app,
                 &mut media_render_plan,
+                &mut visibility_plan,
                 Rect::new(0, 0, 80, 20),
             )
         })
@@ -284,10 +287,12 @@ fn admin_only_group_blocks_input_actions_and_renders_message() {
     terminal
         .draw(|frame| {
             let mut media_render_plan = MediaRenderPlan::default();
+            let mut visibility_plan = VisibilityPlan::default();
             render_chats_with_plan(
                 frame,
                 &mut app,
                 &mut media_render_plan,
+                &mut visibility_plan,
                 Rect::new(0, 0, 80, 12),
             )
         })

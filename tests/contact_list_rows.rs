@@ -8,6 +8,7 @@ use ratatui::{
 };
 use whatsrust::{JID, Message, MessageContent, MessageInfo};
 use wp_tui::app::contact_avatars::prioritized_avatar_requests;
+use wp_tui::app::read_receipts::VisibilityPlan;
 use wp_tui::app::{
     Chat, CommunityNode,
     actions::{PaneVisibility, Section},
@@ -172,7 +173,13 @@ fn search_list_renders_the_same_two_row_item_and_preserves_its_selection() {
     terminal
         .draw(|frame| {
             let mut media_render_plan = MediaRenderPlan::default();
-            ui::draw_with_plan(frame, &mut app, &mut media_render_plan)
+            let mut visibility_plan = VisibilityPlan::default();
+            ui::draw_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                &mut visibility_plan,
+            )
         })
         .expect("search contacts should render");
     let rows = terminal
@@ -225,7 +232,13 @@ fn chats_render_one_aggregated_community_row_and_one_normal_chat_row() {
     terminal
         .draw(|frame| {
             let mut media_render_plan = MediaRenderPlan::default();
-            ui::draw_with_plan(frame, &mut app, &mut media_render_plan)
+            let mut visibility_plan = VisibilityPlan::default();
+            ui::draw_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                &mut visibility_plan,
+            )
         })
         .unwrap();
     let rendered = terminal
@@ -260,7 +273,13 @@ fn visible_chats_preserve_search_geometry_and_selected_contact_rendering() {
     terminal
         .draw(|frame| {
             let mut media_render_plan = MediaRenderPlan::default();
-            ui::draw_with_plan(frame, &mut app, &mut media_render_plan)
+            let mut visibility_plan = VisibilityPlan::default();
+            ui::draw_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                &mut visibility_plan,
+            )
         })
         .unwrap();
     let rows = terminal
@@ -335,7 +354,13 @@ fn hidden_chats_clear_avatar_window_in_runtime_before_pure_rendering() {
     terminal
         .draw(|frame| {
             let mut media_render_plan = MediaRenderPlan::default();
-            ui::draw_with_plan(frame, &mut app, &mut media_render_plan)
+            let mut visibility_plan = VisibilityPlan::default();
+            ui::draw_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                &mut visibility_plan,
+            )
         })
         .unwrap();
     assert!(

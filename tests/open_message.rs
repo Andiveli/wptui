@@ -5,6 +5,7 @@ use std::rc::Rc;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use wp_tui::app::read_receipts::VisibilityPlan;
 use wp_tui::app::{
     actions::{ActionNotice, AppAction, UrlOpener},
     events::MediaRenderPlan,
@@ -221,7 +222,13 @@ fn picker_renders_the_selected_url_and_navigation_hint() {
     terminal
         .draw(|frame| {
             let mut media_render_plan = MediaRenderPlan::default();
-            wp_tui::ui::draw_with_plan(frame, &mut app, &mut media_render_plan)
+            let mut visibility_plan = VisibilityPlan::default();
+            wp_tui::ui::draw_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                &mut visibility_plan,
+            )
         })
         .unwrap();
 
