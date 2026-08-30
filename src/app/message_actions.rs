@@ -34,6 +34,34 @@ pub struct MessageStatus {
     pub deleted: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum MessageActionPersistenceIntent {
+    Record,
+    Reconcile { local_action_id: Arc<str> },
+}
+
+#[derive(Clone, Debug)]
+struct MessageActionDiagnostic {
+    base_exists: bool,
+    persistence: MessageActionPersistence,
+    reconciliation_attempted: bool,
+    action_count: usize,
+    projection: &'static str,
+}
+
+#[derive(Clone, Debug)]
+struct MessageActionProjection {
+    actions: Option<Vec<MessageAction>>,
+    message: Option<wr::Message>,
+    media_files: Vec<PathBuf>,
+    remove_metadata: bool,
+    invalidate_image_cache: bool,
+    invalidate_message_height: bool,
+    invalidate_chat_list: bool,
+    writeback: Option<wr::Message>,
+    diagnostic: Option<MessageActionDiagnostic>,
+}
+
 fn status_for_actions(actions: &[MessageAction]) -> MessageStatus {
     MessageStatus {
         edited: actions
@@ -56,68 +84,185 @@ fn sorted_actions(mut actions: Vec<MessageAction>) -> Vec<MessageAction> {
     actions
 }
 
+fn persistence_intent_for(pending_local: Option<Arc<str>>) -> MessageActionPersistenceIntent {
+    match pending_local {
+        Some(local_action_id) => MessageActionPersistenceIntent::Reconcile { local_action_id },
+        None => MessageActionPersistenceIntent::Record,
+    }
+}
+
+fn project_message_action(
+    current: Option<&wr::Message>,
+    current_actions: &[MessageAction],
+    action: &MessageAction,
+    pending_local: Option<Arc<str>>,
+    persistence: MessageActionPersistence,
+) -> MessageActionProjection {
+    let base_exists = current.is_some();
+    let reconciliation_attempted = pending_local.is_some();
+    if matches!(persistence, MessageActionPersistence::DuplicateActionID) {
+        return MessageActionProjection {
+            actions: None,
+            message: None,
+            media_files: Vec::new(),
+            remove_metadata: false,
+            invalidate_image_cache: false,
+            invalidate_message_height: false,
+            invalidate_chat_list: false,
+            writeback: None,
+            diagnostic: None,
+        };
+    }
+
+    let mut actions = current_actions.to_vec();
+    match persistence {
+        MessageActionPersistence::Inserted => actions.push(action.clone()),
+        MessageActionPersistence::Reconciled => {
+            let local_action_id = pending_local.expect("reconciliation requires local action");
+            actions.retain(|existing| existing.action_id != local_action_id);
+            actions.push(action.clone());
+        }
+        MessageActionPersistence::DuplicateActionID => unreachable!(),
+    }
+    if matches!(action.kind, MessageActionKind::Delete) {
+        actions.retain(|existing| matches!(existing.kind, MessageActionKind::Delete));
+    }
+
+    let (message, media_files, remove_metadata, invalidate_image_cache, projection) =
+        project_message(current, &actions);
+    let action_count = actions.len();
+    let writeback = message.clone();
+    MessageActionProjection {
+        actions: Some(actions),
+        message,
+        media_files,
+        remove_metadata,
+        invalidate_image_cache,
+        invalidate_message_height: base_exists,
+        invalidate_chat_list: true,
+        writeback,
+        diagnostic: Some(MessageActionDiagnostic {
+            base_exists,
+            persistence,
+            reconciliation_attempted,
+            action_count,
+            projection,
+        }),
+    }
+}
+
+fn project_message(
+    current: Option<&wr::Message>,
+    actions: &[MessageAction],
+) -> (Option<wr::Message>, Vec<PathBuf>, bool, bool, &'static str) {
+    let Some(current) = current else {
+        return (None, Vec::new(), false, false, "unchanged");
+    };
+    let mut projected = current.clone();
+    if status_for_actions(actions).deleted {
+        let media_files = match &projected.message {
+            wr::MessageContent::File(file) => vec![PathBuf::from(file.path.as_ref())],
+            _ => Vec::new(),
+        };
+        projected.message = wr::MessageContent::Text(DELETED_MESSAGE_TEXT.into());
+        projected.info.quote_id = None;
+        projected.info.forwarding = Default::default();
+        (Some(projected), media_files, true, true, "refreshed")
+    } else {
+        if let wr::MessageContent::Text(body) = &mut projected.message {
+            for action in sorted_actions(actions.to_vec()) {
+                if let MessageActionKind::Edit { replacement } = action.kind
+                    && !replacement.is_empty()
+                {
+                    *body = replacement;
+                }
+            }
+        }
+        (Some(projected), Vec::new(), false, false, "refreshed")
+    }
+}
+
 impl App<'_> {
     pub fn apply_message_action(&mut self, action: MessageAction) {
         let target = action.target_message_id.clone();
-        let base_exists = self.messages.contains_key(&target);
         let pending_local = self.pending_local_action_for(&action);
-        let reconciliation_attempted = pending_local.is_some();
-        let persistence = if let Some(local_action_id) = pending_local.as_deref() {
-            self.db_handler
-                .reconcile_message_action(local_action_id, &action)
-        } else {
-            self.db_handler.record_message_action(&action)
+        let persistence_intent = persistence_intent_for(pending_local.clone());
+        let persistence = match persistence_intent {
+            MessageActionPersistenceIntent::Record => {
+                self.db_handler.record_message_action(&action)
+            }
+            MessageActionPersistenceIntent::Reconcile {
+                ref local_action_id,
+            } => self
+                .db_handler
+                .reconcile_message_action(local_action_id, &action),
         };
-        match persistence {
-            MessageActionPersistence::Inserted => {
-                self.message_actions
-                    .entry(target.clone())
-                    .or_default()
-                    .push(action.clone());
-            }
-            MessageActionPersistence::Reconciled => {
-                let local_action_id = pending_local
-                    .as_ref()
-                    .expect("reconciliation requires local action");
-                let actions = self.message_actions.entry(target.clone()).or_default();
-                actions.retain(|existing| existing.action_id.as_ref() != local_action_id.as_ref());
-                actions.push(action.clone());
-            }
-            MessageActionPersistence::DuplicateActionID => {}
+        let projection = project_message_action(
+            self.messages.get(&target),
+            self.message_actions.get(&target).map_or(&[], Vec::as_slice),
+            &action,
+            pending_local,
+            persistence,
+        );
+        self.execute_message_action_projection(&target, projection, &action);
+    }
+
+    fn execute_message_action_projection(
+        &mut self,
+        target: &wr::MessageId,
+        projection: MessageActionProjection,
+        action: &MessageAction,
+    ) {
+        if let Some(actions) = projection.actions {
+            self.message_actions.insert(target.clone(), actions);
         }
-        if matches!(action.kind, MessageActionKind::Delete)
-            && !matches!(persistence, MessageActionPersistence::DuplicateActionID)
-        {
-            self.message_actions
-                .entry(target.clone())
-                .and_modify(|actions| {
-                    actions.retain(|existing| matches!(existing.kind, MessageActionKind::Delete))
-                });
+        if !projection.media_files.is_empty() {
+            remove_owned_media_files(&self.media_path, &projection.media_files);
         }
-        let projection = (!matches!(persistence, MessageActionPersistence::DuplicateActionID))
-            .then(|| self.refresh_message_projection(&target))
-            .flatten()
-            .unwrap_or("unchanged");
-        if !matches!(persistence, MessageActionPersistence::DuplicateActionID) {
+        if let Some(message) = projection.message {
+            if projection.remove_metadata {
+                self.metadata.remove(target);
+            }
+            if projection.invalidate_image_cache {
+                self.image_cache.remove(target);
+            }
+            self.messages.insert(target.clone(), message);
+        }
+        if projection.invalidate_message_height {
+            self.message_height_cache.invalidate(target);
+        }
+        if let Some(message) = projection.writeback.as_ref() {
+            self.db_handler.add_message(message);
+        }
+        if projection.invalidate_chat_list {
             self.invalidate_chat_list();
         }
-        let action_count = self.message_actions.get(&target).map_or(0, Vec::len);
-        let kind = match &action.kind {
-            MessageActionKind::Edit { .. } => "edit",
-            MessageActionKind::Delete => "delete",
-        };
-        self.message_action_diagnostics.record(|| {
-            format!(
-                "source=rust kind={kind} action_id={} target_id={} base_exists={base_exists} persistence={persistence:?} reconciliation={} action_count={action_count} projection={projection}",
-                identifier_for_log(&action.action_id),
-                identifier_for_log(&target),
-                if reconciliation_attempted { "attempted" } else { "none" },
-            )
-        });
-        info!(
-            "message action action_id={} target_id={} base_exists={} persistence={:?} action_count={}",
-            action.action_id, target, base_exists, persistence, action_count
-        );
+        if let Some(diagnostic) = projection.diagnostic {
+            let kind = match &action.kind {
+                MessageActionKind::Edit { .. } => "edit",
+                MessageActionKind::Delete => "delete",
+            };
+            self.message_action_diagnostics.record(|| {
+                format!(
+                    "source=rust kind={kind} action_id={} target_id={} base_exists={} persistence={:?} reconciliation={} action_count={} projection={}",
+                    identifier_for_log(&action.action_id),
+                    identifier_for_log(target),
+                    diagnostic.base_exists,
+                    diagnostic.persistence,
+                    if diagnostic.reconciliation_attempted { "attempted" } else { "none" },
+                    diagnostic.action_count,
+                    diagnostic.projection,
+                )
+            });
+            info!(
+                "message action action_id={} target_id={} base_exists={} persistence={:?} action_count={}",
+                action.action_id,
+                target,
+                diagnostic.base_exists,
+                diagnostic.persistence,
+                diagnostic.action_count
+            );
+        }
     }
 
     pub(crate) fn record_local_message_edit(
@@ -213,38 +358,31 @@ impl App<'_> {
         &mut self,
         id: &wr::MessageId,
     ) -> Option<&'static str> {
-        let Some(current) = self.messages.get(id).cloned() else {
-            return None;
-        };
-        let mut projected = current;
-        if self.message_status(id).deleted {
-            if let wr::MessageContent::File(file) = &projected.message {
-                remove_owned_media_files(&self.media_path, &[PathBuf::from(file.path.as_ref())]);
-            }
-            projected.message = wr::MessageContent::Text(DELETED_MESSAGE_TEXT.into());
-            projected.info.quote_id = None;
-            projected.info.forwarding = Default::default();
-            self.metadata.remove(id);
-            self.image_cache.remove(id);
-        } else if let wr::MessageContent::Text(body) = &mut projected.message {
-            for action in self.sorted_message_actions(id) {
-                if let MessageActionKind::Edit { replacement } = action.kind
-                    && !replacement.is_empty()
-                {
-                    *body = replacement;
-                }
-            }
+        let (message, media_files, remove_metadata, invalidate_image_cache, projection) =
+            project_message(
+                self.messages.get(id),
+                self.message_actions.get(id).map_or(&[], Vec::as_slice),
+            );
+        let message = message?;
+        if !media_files.is_empty() {
+            remove_owned_media_files(&self.media_path, &media_files);
         }
-        self.messages.insert(id.clone(), projected.clone());
+        if remove_metadata {
+            self.metadata.remove(id);
+        }
+        if invalidate_image_cache {
+            self.image_cache.remove(id);
+        }
+        self.messages.insert(id.clone(), message.clone());
         self.message_height_cache.invalidate(id);
         if self
             .message_actions
             .get(id)
             .is_some_and(|actions| !actions.is_empty())
         {
-            self.db_handler.add_message(&projected);
+            self.db_handler.add_message(&message);
         }
-        Some("refreshed")
+        Some(projection)
     }
 
     pub fn follow_selected_reference(&mut self) -> bool {
