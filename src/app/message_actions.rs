@@ -318,6 +318,7 @@ impl App<'_> {
             .unwrap_or_default()
     }
 
+    #[cfg(test)]
     pub(crate) fn sorted_message_actions(&self, message_id: &wr::MessageId) -> Vec<MessageAction> {
         sorted_actions(
             self.message_actions
