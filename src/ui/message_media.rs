@@ -7,7 +7,7 @@ use ratatui::{
 use ratatui_image::StatefulImage;
 use whatsrust::{self as wr, FileKind};
 
-use crate::app::events::{AppEvent, AppInput};
+use crate::app::events::MediaRenderEffect;
 use crate::app::{App, FileMeta, Metadata};
 
 use super::MessageTextMode;
@@ -53,6 +53,7 @@ pub fn render_file(
     data: &wr::FileContent,
     status: Option<StatusLabel>,
     app: &mut App,
+    media_render_plan: &mut crate::app::events::MediaRenderPlan,
     content_area: Rect,
     render_image: bool,
     alignment: Alignment,
@@ -80,12 +81,10 @@ pub fn render_file(
             )
             .render(media_area, buf);
             if should_request_download(message_id) {
-                app.tx
-                    .send(AppInput::App(AppEvent::DownloadFile(
-                        message_id.clone(),
-                        data.file_id.clone(),
-                    )))
-                    .unwrap();
+                media_render_plan.append(MediaRenderEffect::DownloadFile(
+                    message_id.clone(),
+                    data.file_id.clone(),
+                ));
             }
         }
         Some(Metadata::File(meta)) => match meta {
@@ -106,9 +105,8 @@ pub fn render_file(
                     app.metadata.get(message_id),
                     Some(Metadata::File(FileMeta::Loading))
                 ) {
-                    app.tx
-                        .send(AppInput::App(AppEvent::LoadFilePreview(message_id.clone())))
-                        .unwrap();
+                    media_render_plan
+                        .append(MediaRenderEffect::LoadFilePreview(message_id.clone()));
                 }
             }
             FileMeta::Downloading => super::media_paragraph(
@@ -208,9 +206,13 @@ mod tests {
     use ratatui::{
         Terminal,
         backend::TestBackend,
+        buffer::Buffer,
+        layout::{Alignment, Rect},
         widgets::{Paragraph, Widget},
     };
-    use whatsrust::FileKind;
+    use whatsrust::{FileContent, FileKind};
+
+    use crate::app::test_support::TestApp;
 
     #[test]
     fn caption_cells_use_visual_lines_after_logical_wrapping() {
@@ -248,5 +250,37 @@ mod tests {
             preview_height(&FileKind::Image),
             super::super::message_layout::IMAGE_HEIGHT
         );
+    }
+
+    #[test]
+    fn rendering_media_does_not_dispatch_runtime_effects() {
+        let mut app = TestApp::new();
+        let mut buf = Buffer::empty(Rect::new(0, 0, 20, 8));
+        let mut media_plan = crate::app::events::MediaRenderPlan::default();
+        let file = FileContent {
+            kind: FileKind::Image,
+            path: "image.png".into(),
+            ..Default::default()
+        };
+
+        super::render_file(
+            &mut buf,
+            &"server-message".into(),
+            &file,
+            None,
+            &mut app,
+            &mut media_plan,
+            Rect::new(0, 0, 20, 8),
+            true,
+            Alignment::Left,
+            MessageTextMode::Chat,
+        );
+
+        assert!(app.rx.try_recv().is_err());
+        assert!(matches!(
+            media_plan.into_effects().as_slice(),
+            [crate::app::events::MediaRenderEffect::DownloadFile(message_id, _)]
+                if message_id == &"server-message".into()
+        ));
     }
 }

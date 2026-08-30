@@ -4,8 +4,10 @@ use chrono::{Local, TimeZone};
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use whatsrust::{FileContent, FileKind, JID, Message, MessageContent, MessageInfo};
 use wp_tui::{
-    app::{App, FileMeta, Metadata},
-    ui::message_list::{AUTHOR_GROUP_MAX_GAP, IMAGE_HEIGHT, render_messages, starts_author_group},
+    app::{App, FileMeta, Metadata, events::MediaRenderPlan},
+    ui::message_list::{
+        AUTHOR_GROUP_MAX_GAP, IMAGE_HEIGHT, render_messages_with_plan, starts_author_group,
+    },
 };
 mod common;
 use common::TestApp;
@@ -479,7 +481,13 @@ fn render_rows(app: &mut App<'_>, width: u16, height: u16) -> Vec<String> {
     let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
     terminal
         .draw(|frame| {
-            render_messages(frame, app, Rect::new(0, 0, width, height));
+            let mut media_render_plan = MediaRenderPlan::default();
+            render_messages_with_plan(
+                frame,
+                app,
+                &mut media_render_plan,
+                Rect::new(0, 0, width, height),
+            );
         })
         .expect("messages should render");
     let buffer = terminal.backend().buffer();

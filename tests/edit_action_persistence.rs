@@ -5,8 +5,8 @@ use whatsrust::{
 };
 use wp_tui::db::{DatabaseHandler, MessageActionPersistence};
 use wp_tui::{
-    app::{MessageAction, MessageActionKind},
-    ui::message_list::render_messages,
+    app::{MessageAction, MessageActionKind, events::MediaRenderPlan},
+    ui::message_list::render_messages_with_plan,
 };
 mod common;
 use common::TestApp;
@@ -200,7 +200,13 @@ fn edited_messages_retain_only_current_content_across_edits_and_reload() {
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
         .draw(|frame| {
-            render_messages(frame, &mut app, Rect::new(0, 0, 40, 8));
+            let mut media_render_plan = MediaRenderPlan::default();
+            render_messages_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                Rect::new(0, 0, 40, 8),
+            );
         })
         .unwrap();
     let buffer = terminal.backend().buffer().clone();

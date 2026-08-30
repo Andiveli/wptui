@@ -90,6 +90,13 @@ pub fn viewer_preview_request(
     }
 }
 
+pub(crate) fn viewer_preview_needs_load(
+    state: &Option<ViewerPreviewState>,
+    key: &ViewerPreviewKey,
+) -> bool {
+    state.as_ref().is_none_or(|current| current.key() != key)
+}
+
 #[derive(Clone, Debug)]
 pub struct ViewerAttachment {
     pub message_id: wr::MessageId,
@@ -136,6 +143,32 @@ impl AttachmentViewerState {
             self.path = active.path.clone();
             self.status = active.status.clone();
         }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum MediaRenderEffect {
+    DownloadFile(wr::MessageId, wr::FileId),
+    LoadFilePreview(wr::MessageId),
+    LoadViewerPreview(ViewerPreviewKey),
+}
+
+#[derive(Default)]
+pub struct MediaRenderPlan {
+    effects: Vec<MediaRenderEffect>,
+}
+
+impl MediaRenderPlan {
+    pub fn is_empty(&self) -> bool {
+        self.effects.is_empty()
+    }
+
+    pub(crate) fn append(&mut self, effect: MediaRenderEffect) {
+        self.effects.push(effect);
+    }
+
+    pub(crate) fn into_effects(self) -> Vec<MediaRenderEffect> {
+        self.effects
     }
 }
 

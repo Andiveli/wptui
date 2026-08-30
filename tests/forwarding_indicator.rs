@@ -1,9 +1,9 @@
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use tempfile::tempdir;
 use whatsrust::{FileContent, FileKind, ForwardingInfo, JID, Message, MessageContent, MessageInfo};
-use wp_tui::app::App;
+use wp_tui::app::{App, events::MediaRenderPlan};
 use wp_tui::db::DatabaseHandler;
-use wp_tui::ui::message_list::{AuthorGroupContext, message_height, render_messages};
+use wp_tui::ui::message_list::{AuthorGroupContext, message_height, render_messages_with_plan};
 mod common;
 use common::TestApp;
 
@@ -180,7 +180,13 @@ fn rendered_rows(message: Message) -> String {
     let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
     terminal
         .draw(|frame| {
-            render_messages(frame, &mut app, Rect::new(0, 0, 40, 8));
+            let mut media_render_plan = MediaRenderPlan::default();
+            render_messages_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                Rect::new(0, 0, 40, 8),
+            );
         })
         .expect("message should render");
     let buffer = terminal.backend().buffer();

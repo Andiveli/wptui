@@ -3,8 +3,8 @@ use std::sync::Arc;
 use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Color};
 use whatsrust::{FileContent, FileKind, JID, Message, MessageContent, MessageInfo};
 use wp_tui::{
-    app::{App, FileMeta, MessageAction, MessageActionKind, Metadata},
-    ui::message_list::{AuthorGroupContext, message_height, render_messages},
+    app::{App, FileMeta, MessageAction, MessageActionKind, Metadata, events::MediaRenderPlan},
+    ui::message_list::{AuthorGroupContext, message_height, render_messages_with_plan},
 };
 mod common;
 use common::TestApp;
@@ -386,7 +386,13 @@ fn render_buffer(app: &mut App<'_>, width: u16, height: u16) -> ratatui::buffer:
     let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
     terminal
         .draw(|frame| {
-            render_messages(frame, app, Rect::new(0, 0, width, height));
+            let mut media_render_plan = MediaRenderPlan::default();
+            render_messages_with_plan(
+                frame,
+                app,
+                &mut media_render_plan,
+                Rect::new(0, 0, width, height),
+            );
         })
         .expect("messages should render");
     terminal.backend().buffer().clone()

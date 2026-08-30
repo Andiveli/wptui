@@ -7,6 +7,7 @@ use ratatui::{
 };
 use whatsrust::{self as wr, FileKind};
 
+use crate::app::events::MediaRenderPlan;
 use crate::app::runtime_diagnostics::MessageListCounts;
 use crate::app::{App, FileMeta, Metadata};
 
@@ -28,6 +29,7 @@ pub(super) fn render(
     mut y: isize,
     counts: &mut MessageListCounts,
     text_mode: MessageTextMode,
+    media_render_plan: &mut MediaRenderPlan,
 ) -> Option<ViewportAnchor> {
     let divider_after = unread_count.checked_sub(1);
     let mut viewport_anchor = None;
@@ -112,6 +114,7 @@ pub(super) fn render(
                     author_group,
                     app,
                     item_area,
+                    media_render_plan,
                     render_image,
                     text_mode,
                 );
@@ -191,6 +194,7 @@ pub(super) fn render(
                     author_group,
                     app,
                     item_area,
+                    media_render_plan,
                     true,
                     text_mode,
                 );

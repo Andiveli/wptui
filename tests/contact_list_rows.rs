@@ -11,6 +11,7 @@ use wp_tui::app::contact_avatars::prioritized_avatar_requests;
 use wp_tui::app::{
     Chat, CommunityNode,
     actions::{PaneVisibility, Section},
+    events::MediaRenderPlan,
 };
 use wp_tui::ui::{
     self,
@@ -169,7 +170,10 @@ fn search_list_renders_the_same_two_row_item_and_preserves_its_selection() {
     let backend = TestBackend::new(100, 10);
     let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
     terminal
-        .draw(|frame| ui::draw(frame, &mut app))
+        .draw(|frame| {
+            let mut media_render_plan = MediaRenderPlan::default();
+            ui::draw_with_plan(frame, &mut app, &mut media_render_plan)
+        })
         .expect("search contacts should render");
     let rows = terminal
         .backend()
@@ -218,7 +222,12 @@ fn chats_render_one_aggregated_community_row_and_one_normal_chat_row() {
     }];
 
     let mut terminal = Terminal::new(TestBackend::new(100, 10)).unwrap();
-    terminal.draw(|frame| ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| {
+            let mut media_render_plan = MediaRenderPlan::default();
+            ui::draw_with_plan(frame, &mut app, &mut media_render_plan)
+        })
+        .unwrap();
     let rendered = terminal
         .backend()
         .buffer()
@@ -248,7 +257,12 @@ fn visible_chats_preserve_search_geometry_and_selected_contact_rendering() {
     app.chat_list_state.select(Some(0));
 
     let mut terminal = Terminal::new(TestBackend::new(100, 10)).unwrap();
-    terminal.draw(|frame| ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| {
+            let mut media_render_plan = MediaRenderPlan::default();
+            ui::draw_with_plan(frame, &mut app, &mut media_render_plan)
+        })
+        .unwrap();
     let rows = terminal
         .backend()
         .buffer()
@@ -318,7 +332,12 @@ fn hidden_chats_clear_avatar_window_in_runtime_before_pure_rendering() {
     app.sorted_chats = vec![JID::from("hidden@example.test".to_owned())];
 
     let mut terminal = Terminal::new(TestBackend::new(24, 8)).unwrap();
-    terminal.draw(|frame| ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| {
+            let mut media_render_plan = MediaRenderPlan::default();
+            ui::draw_with_plan(frame, &mut app, &mut media_render_plan)
+        })
+        .unwrap();
     assert!(
         terminal
             .backend()

@@ -37,9 +37,10 @@ fn opening_chat_with_restored_cursor_renders_unread_messages() {
     app.open_chat_by_jid(chat);
 
     let mut terminal = Terminal::new(TestBackend::new(80, 10)).unwrap();
+    let mut media_render_plan = crate::app::events::MediaRenderPlan::default();
     terminal
         .draw(|frame| {
-            crate::ui::draw(frame, &mut app);
+            crate::ui::draw_with_plan(frame, &mut app, &mut media_render_plan);
         })
         .unwrap();
     assert_eq!(

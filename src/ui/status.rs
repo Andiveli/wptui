@@ -1,7 +1,7 @@
 use super::status_list::{StatusList, StatusListItem};
 use crate::app::App;
 use crate::app::actions::FocusPane;
-use crate::ui::message_list::render_status_messages;
+use crate::ui::message_list::render_status_messages_with_plan;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -39,7 +39,12 @@ pub(super) fn render_status_contacts(frame: &mut Frame, app: &mut App, area: Rec
     );
 }
 
-pub(super) fn render_statuses(frame: &mut Frame, app: &mut App, area: Rect) {
+pub(super) fn render_statuses_with_plan(
+    frame: &mut Frame,
+    app: &mut App,
+    media_render_plan: &mut crate::app::events::MediaRenderPlan,
+    area: Rect,
+) {
     let title = app
         .open_status_contact()
         .map(|contact| app.contact_name(&contact).to_string())
@@ -62,5 +67,66 @@ pub(super) fn render_statuses(frame: &mut Frame, app: &mut App, area: Rect) {
         );
         return;
     }
-    render_status_messages(frame, app, content_area);
+    render_status_messages_with_plan(frame, app, media_render_plan, content_area);
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::{Terminal, backend::TestBackend, layout::Rect};
+    use whatsrust as wr;
+
+    use super::render_statuses_with_plan;
+    use crate::app::status_projection::STATUS_BROADCAST_CHAT;
+    use crate::app::test_support::TestApp;
+
+    #[test]
+    fn status_media_is_collected_for_post_draw_dispatch() {
+        let mut app = TestApp::new();
+        let contact: wr::JID = "status@example.test".to_owned().into();
+        let message_id: wr::MessageId = "status-media".into();
+        app.open_status_contact = Some(contact.clone());
+        app.messages.insert(
+            message_id.clone(),
+            wr::Message {
+                info: wr::MessageInfo {
+                    id: message_id.clone(),
+                    chat: STATUS_BROADCAST_CHAT.to_owned().into(),
+                    sender: contact,
+                    mentions_self: false,
+                    timestamp: 1,
+                    is_from_me: false,
+                    quote_id: None,
+                    read_by: 0,
+                    forwarding: Default::default(),
+                },
+                message: wr::MessageContent::File(wr::FileContent {
+                    kind: wr::FileKind::Image,
+                    path: "status.png".into(),
+                    ..Default::default()
+                }),
+            },
+        );
+        app.chat_messages.insert(
+            STATUS_BROADCAST_CHAT.to_owned().into(),
+            vec![message_id.clone()],
+        );
+        let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+        let mut media_render_plan = crate::app::events::MediaRenderPlan::default();
+
+        terminal
+            .draw(|frame| {
+                render_statuses_with_plan(
+                    frame,
+                    &mut app,
+                    &mut media_render_plan,
+                    Rect::new(0, 0, 40, 12),
+                )
+            })
+            .unwrap();
+
+        assert!(matches!(
+            media_render_plan.into_effects().as_slice(),
+            [crate::app::events::MediaRenderEffect::DownloadFile(id, _)] if id == &message_id
+        ));
+    }
 }

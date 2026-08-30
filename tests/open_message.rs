@@ -5,7 +5,10 @@ use std::rc::Rc;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use wp_tui::app::actions::{ActionNotice, AppAction, UrlOpener};
+use wp_tui::app::{
+    actions::{ActionNotice, AppAction, UrlOpener},
+    events::MediaRenderPlan,
+};
 use wp_tui::url::{extract_openable_urls, url_launch_plan};
 mod common;
 use common::TestApp;
@@ -216,7 +219,10 @@ fn picker_renders_the_selected_url_and_navigation_hint() {
     let mut terminal = Terminal::new(backend).unwrap();
 
     terminal
-        .draw(|frame| wp_tui::ui::draw(frame, &mut app))
+        .draw(|frame| {
+            let mut media_render_plan = MediaRenderPlan::default();
+            wp_tui::ui::draw_with_plan(frame, &mut app, &mut media_render_plan)
+        })
         .unwrap();
 
     let rendered = terminal

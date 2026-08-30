@@ -5,9 +5,10 @@ use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use wp_tui::app::actions::ComposerAction;
 use wp_tui::app::actions::{AppAction, ConversationMode};
 use wp_tui::app::composer::Composer;
+use wp_tui::app::events::MediaRenderPlan;
 use wp_tui::app::inputs::composer_action_for_editing_key;
 use wp_tui::input_key::{Key, KeyCode, KeyModifiers};
-use wp_tui::ui::{composer_mention_picker_area, conversation_areas, render_chats};
+use wp_tui::ui::{composer_mention_picker_area, conversation_areas, render_chats_with_plan};
 mod common;
 use common::TestApp;
 
@@ -208,7 +209,15 @@ fn mention_picker_renders_as_a_floating_overlay_above_the_composer() {
 
     let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
     terminal
-        .draw(|frame| render_chats(frame, &mut app, Rect::new(0, 0, 80, 20)))
+        .draw(|frame| {
+            let mut media_render_plan = MediaRenderPlan::default();
+            render_chats_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                Rect::new(0, 0, 80, 20),
+            )
+        })
         .unwrap();
     let rows = terminal
         .backend()
@@ -273,7 +282,15 @@ fn admin_only_group_blocks_input_actions_and_renders_message() {
 
     let mut terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
     terminal
-        .draw(|frame| render_chats(frame, &mut app, Rect::new(0, 0, 80, 12)))
+        .draw(|frame| {
+            let mut media_render_plan = MediaRenderPlan::default();
+            render_chats_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                Rect::new(0, 0, 80, 12),
+            )
+        })
         .unwrap();
     let rendered = terminal
         .backend()

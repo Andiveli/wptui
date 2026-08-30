@@ -1,6 +1,6 @@
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use whatsrust::{JID, Message, MessageContent, MessageInfo};
-use wp_tui::ui::render_chats;
+use wp_tui::{app::events::MediaRenderPlan, ui::render_chats_with_plan};
 
 mod common;
 use common::TestApp;
@@ -13,7 +13,15 @@ fn chat_panel_shows_andiveli_logo_when_no_chat_is_open() {
     let backend = TestBackend::new(60, 30);
     let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
     terminal
-        .draw(|frame| render_chats(frame, &mut app, Rect::new(0, 0, 60, 30)))
+        .draw(|frame| {
+            let mut media_render_plan = MediaRenderPlan::default();
+            render_chats_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                Rect::new(0, 0, 60, 30),
+            )
+        })
         .expect("chat panel should render");
 
     let buffer = terminal.backend().buffer();
@@ -42,7 +50,15 @@ fn logo_hidden_once_a_chat_is_opened() {
     let backend = TestBackend::new(60, 30);
     let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
     terminal
-        .draw(|frame| render_chats(frame, &mut app, Rect::new(0, 0, 60, 30)))
+        .draw(|frame| {
+            let mut media_render_plan = MediaRenderPlan::default();
+            render_chats_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                Rect::new(0, 0, 60, 30),
+            )
+        })
         .expect("chat panel should render");
 
     let buffer = terminal.backend().buffer();
@@ -89,7 +105,15 @@ fn opened_chat_with_no_unread_messages_renders_without_panicking() {
     let backend = TestBackend::new(60, 30);
     let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
     terminal
-        .draw(|frame| render_chats(frame, &mut app, Rect::new(0, 0, 60, 30)))
+        .draw(|frame| {
+            let mut media_render_plan = MediaRenderPlan::default();
+            render_chats_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                Rect::new(0, 0, 60, 30),
+            )
+        })
         .expect("opened chat with no unread messages should render");
 
     let buffer = terminal.backend().buffer();

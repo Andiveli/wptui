@@ -5,7 +5,10 @@ use whatsrust as wr;
 
 use crate::app::App;
 use crate::app::download_worker::Worker as DownloadWorker;
-use crate::app::events::{AppEvent, AppEventFamily, AppInput, DrawSource};
+use crate::app::events::{
+    AppEvent, AppEventFamily, AppInput, DrawSource, MediaRenderEffect, MediaRenderPlan,
+    viewer_preview_request,
+};
 use crate::app::media_jobs::MediaJobOwner;
 use crate::app::terminal_session::TerminalSession;
 use crate::ui;
@@ -26,6 +29,69 @@ fn dispatch_app_event(
         AppEventFamily::MediaViewer => {
             app.handle_media_viewer_event(event, download_tx, media_jobs)
         }
+    }
+}
+
+fn same_media_render_effect(left: &MediaRenderEffect, right: &MediaRenderEffect) -> bool {
+    match (left, right) {
+        (
+            MediaRenderEffect::DownloadFile(left_id, _),
+            MediaRenderEffect::DownloadFile(right_id, _),
+        )
+        | (
+            MediaRenderEffect::LoadFilePreview(left_id),
+            MediaRenderEffect::LoadFilePreview(right_id),
+        ) => left_id == right_id,
+        (
+            MediaRenderEffect::LoadViewerPreview(left_key),
+            MediaRenderEffect::LoadViewerPreview(right_key),
+        ) => left_key == right_key,
+        _ => false,
+    }
+}
+
+fn dispatch_media_render_plan_after_draw<T, E>(
+    app: &mut App<'_>,
+    draw_result: Result<T, E>,
+    plan: MediaRenderPlan,
+    download_tx: &DownloadSender,
+    media_jobs: &mut MediaJobOwner,
+) {
+    if draw_result.is_ok() {
+        dispatch_media_render_plan(app, plan, download_tx, media_jobs);
+    }
+}
+
+fn dispatch_media_render_plan(
+    app: &mut App<'_>,
+    plan: MediaRenderPlan,
+    download_tx: &DownloadSender,
+    media_jobs: &mut MediaJobOwner,
+) {
+    let mut dispatched = Vec::new();
+    for effect in plan.into_effects() {
+        if dispatched
+            .iter()
+            .any(|previous| same_media_render_effect(previous, &effect))
+        {
+            continue;
+        }
+        let event = match &effect {
+            MediaRenderEffect::DownloadFile(message_id, file_id) => {
+                AppEvent::DownloadFile(message_id.clone(), file_id.clone())
+            }
+            MediaRenderEffect::LoadFilePreview(message_id) => {
+                AppEvent::LoadFilePreview(message_id.clone())
+            }
+            MediaRenderEffect::LoadViewerPreview(key) => {
+                let Some(key) = viewer_preview_request(&mut app.viewer_preview, key.clone()) else {
+                    continue;
+                };
+                AppEvent::LoadViewerPreview(key)
+            }
+        };
+        dispatched.push(effect);
+        dispatch_app_event(app, event, download_tx, media_jobs);
     }
 }
 
@@ -107,10 +173,11 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
     app.sync_selected_presence();
     refresh_composer_viewport_width(app, &mut terminal_session);
     let initial_draw_started = app.runtime_diagnostics.draw_started();
-    if let Err(error) = terminal_session
+    let mut media_render_plan = MediaRenderPlan::default();
+    let draw_result = terminal_session
         .terminal_mut()
-        .draw(|frame| ui::draw(frame, app))
-    {
+        .draw(|frame| ui::draw_with_plan(frame, app, &mut media_render_plan));
+    if let Err(error) = &draw_result {
         error!("Failed to draw terminal UI: {error}");
         app.shutdown_avatar_runtime();
         media_jobs.shutdown();
@@ -130,6 +197,13 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
     if let Some(started) = initial_draw_started {
         app.runtime_diagnostics.record_draw_finished(started);
     }
+    dispatch_media_render_plan_after_draw(
+        app,
+        draw_result,
+        media_render_plan,
+        &download_tx,
+        &mut media_jobs,
+    );
     if let Ok(area) = terminal_session.terminal_mut().size() {
         app.schedule_avatar_viewport(area.into());
     }
@@ -194,10 +268,11 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
         if should_draw {
             app.runtime_diagnostics.record_should_draw();
             let started = app.runtime_diagnostics.draw_started();
-            if let Err(error) = terminal_session
+            let mut media_render_plan = MediaRenderPlan::default();
+            let draw_result = terminal_session
                 .terminal_mut()
-                .draw(|frame| ui::draw(frame, app))
-            {
+                .draw(|frame| ui::draw_with_plan(frame, app, &mut media_render_plan));
+            if let Err(error) = &draw_result {
                 error!("Failed to draw terminal UI: {error}");
                 app.set_read_receipt_readiness(crate::app::read_receipts::Readiness::Disconnected);
                 break;
@@ -205,6 +280,13 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
             if let Some(started) = started {
                 app.runtime_diagnostics.record_draw_finished(started);
             }
+            dispatch_media_render_plan_after_draw(
+                app,
+                draw_result,
+                media_render_plan,
+                &download_tx,
+                &mut media_jobs,
+            );
             if let Ok(area) = terminal_session.terminal_mut().size() {
                 app.schedule_avatar_viewport(area.into());
             }
@@ -375,5 +457,59 @@ mod tests {
             .map(|source| should_draw_for_source(&app, source));
 
         assert_eq!(results, [false, true, false]);
+    }
+
+    #[test]
+    fn dispatching_duplicate_download_effects_submits_one_download() {
+        let mut app = TestApp::new();
+        let (download_tx, download_rx) = mpsc::channel();
+        let mut media_jobs = MediaJobOwner::new();
+        let message_id: wr::MessageId = "duplicate-media".into();
+        let file_id: wr::FileId = "file-id".into();
+        let mut plan = MediaRenderPlan::default();
+        plan.append(MediaRenderEffect::DownloadFile(
+            message_id.clone(),
+            file_id.clone(),
+        ));
+        plan.append(MediaRenderEffect::DownloadFile(message_id, file_id));
+
+        dispatch_media_render_plan(&mut app, plan, &download_tx, &mut media_jobs);
+
+        assert_eq!(download_rx.try_iter().count(), 1);
+    }
+
+    #[test]
+    fn failed_media_render_attempt_leaves_viewer_unchanged_until_a_successful_plan_dispatches() {
+        let mut app = TestApp::new();
+        let (download_tx, _) = mpsc::channel();
+        let mut media_jobs = MediaJobOwner::new();
+        let key = crate::app::events::ViewerPreviewKey::new("media.png", 20, 8);
+        let mut failed_plan = MediaRenderPlan::default();
+        failed_plan.append(MediaRenderEffect::LoadViewerPreview(key.clone()));
+
+        dispatch_media_render_plan_after_draw(
+            &mut app,
+            Err::<(), _>(()),
+            failed_plan,
+            &download_tx,
+            &mut media_jobs,
+        );
+        assert!(app.viewer_preview.is_none());
+
+        let mut successful_plan = MediaRenderPlan::default();
+        successful_plan.append(MediaRenderEffect::LoadViewerPreview(key.clone()));
+        dispatch_media_render_plan_after_draw(
+            &mut app,
+            Ok::<(), ()>(()),
+            successful_plan,
+            &download_tx,
+            &mut media_jobs,
+        );
+
+        assert!(matches!(
+            app.viewer_preview,
+            Some(crate::app::events::ViewerPreviewState::Loading(ref actual_key))
+                if actual_key == &key
+        ));
     }
 }

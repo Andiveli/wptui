@@ -4,7 +4,7 @@ use ratatui::{Terminal, backend::TestBackend};
 use whatsrust as wr;
 use wp_tui::{
     app::actions::{FocusPane, Section},
-    app::events::{AttachmentViewerState, ViewerAttachment, ViewerStatus},
+    app::events::{AttachmentViewerState, MediaRenderPlan, ViewerAttachment, ViewerStatus},
     file_picker::FilePickerState,
     ui,
 };
@@ -77,7 +77,12 @@ fn navigation_renders_labels_logs_logout_and_placeholders() {
     app.show_logs = true;
 
     let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
-    terminal.draw(|frame| ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| {
+            let mut media_render_plan = MediaRenderPlan::default();
+            ui::draw_with_plan(frame, &mut app, &mut media_render_plan)
+        })
+        .unwrap();
     let rendered = rows(&terminal).join("\n");
     for expected in [
         "Sections",
@@ -92,7 +97,12 @@ fn navigation_renders_labels_logs_logout_and_placeholders() {
 
     app.rail_on_logout = true;
     app.show_logs = false;
-    terminal.draw(|frame| ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| {
+            let mut media_render_plan = MediaRenderPlan::default();
+            ui::draw_with_plan(frame, &mut app, &mut media_render_plan)
+        })
+        .unwrap();
     assert!(
         rows(&terminal)
             .join("\n")
@@ -105,7 +115,12 @@ fn navigation_is_safe_in_a_narrow_frame() {
     let mut app = TestApp::new();
     app.selected_section = Section::Communities;
     let mut terminal = Terminal::new(TestBackend::new(24, 8)).unwrap();
-    terminal.draw(|frame| ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| {
+            let mut media_render_plan = MediaRenderPlan::default();
+            ui::draw_with_plan(frame, &mut app, &mut media_render_plan)
+        })
+        .unwrap();
     assert!(rows(&terminal).join("\n").contains("Sections"));
 }
 
@@ -142,7 +157,12 @@ fn runtime_overlay_layering_keeps_logs_and_branch_below_final_file_picker() {
     app.file_picker = Some(FilePickerState::open(directory.path()).unwrap());
 
     let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
-    terminal.draw(|frame| ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| {
+            let mut media_render_plan = MediaRenderPlan::default();
+            ui::draw_with_plan(frame, &mut app, &mut media_render_plan)
+        })
+        .unwrap();
     let rendered = rows(&terminal).join("\n");
 
     assert!(

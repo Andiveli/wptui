@@ -12,6 +12,7 @@ use ratatui::{
 use whatsrust as wr;
 
 use crate::app::App;
+use crate::app::events::MediaRenderPlan;
 
 #[path = "message_formatting.rs"]
 mod message_formatting;
@@ -222,6 +223,7 @@ mod layout_contract_tests {
 
     use super::MessageTextMode;
     use super::message_list_state::ViewportAnchor;
+    use crate::app::events::MediaRenderPlan;
 
     #[test]
     fn rendered_cells_receive_visual_text_once() {
@@ -360,6 +362,7 @@ mod layout_contract_tests {
         };
         let backend = TestBackend::new(40, 8);
         let mut terminal = Terminal::new(backend).unwrap();
+        let mut media_render_plan = MediaRenderPlan::default();
         terminal
             .draw(|frame| {
                 super::render_message(
@@ -369,6 +372,7 @@ mod layout_contract_tests {
                     super::AuthorGroupContext::STARTS_GROUP,
                     &mut test_app,
                     Rect::new(0, 0, 40, 8),
+                    &mut media_render_plan,
                     false,
                     MessageTextMode::Chat,
                 );
@@ -402,6 +406,7 @@ mod layout_contract_tests {
         };
         let backend = TestBackend::new(60, 4);
         let mut terminal = Terminal::new(backend).unwrap();
+        let mut media_render_plan = MediaRenderPlan::default();
         terminal
             .draw(|frame| {
                 super::render_message(
@@ -411,6 +416,7 @@ mod layout_contract_tests {
                     super::AuthorGroupContext::STARTS_GROUP,
                     &mut test_app,
                     Rect::new(0, 0, 60, 4),
+                    &mut media_render_plan,
                     false,
                     MessageTextMode::Chat,
                 );
@@ -482,6 +488,7 @@ mod layout_contract_tests {
             .collect::<Vec<_>>();
         let backend = TestBackend::new(24, 8);
         let mut terminal = Terminal::new(backend).unwrap();
+        let mut media_render_plan = MediaRenderPlan::default();
         terminal
             .draw(|frame| {
                 frame.buffer_mut().set_string(
@@ -494,6 +501,7 @@ mod layout_contract_tests {
                     super::render_pending_tail(
                         frame,
                         &mut test_app,
+                        &mut media_render_plan,
                         Rect::new(0, 3, 24, 5),
                         &items,
                     ),
@@ -522,9 +530,16 @@ mod layout_contract_tests {
 
         let narrow = TestBackend::new(12, 3);
         let mut narrow_terminal = Terminal::new(narrow).unwrap();
+        let mut narrow_media_render_plan = MediaRenderPlan::default();
         narrow_terminal
             .draw(|frame| {
-                super::render_pending_tail(frame, &mut test_app, Rect::new(0, 0, 12, 3), &items);
+                super::render_pending_tail(
+                    frame,
+                    &mut test_app,
+                    &mut narrow_media_render_plan,
+                    Rect::new(0, 0, 12, 3),
+                    &items,
+                );
             })
             .unwrap();
         assert_eq!(test_app.message_list_state, state_before);
@@ -610,6 +625,7 @@ fn render_message(
     author_group: AuthorGroupContext,
     app: &mut App,
     area: Rect,
+    media_render_plan: &mut MediaRenderPlan,
     render_image: bool,
     text_mode: MessageTextMode,
 ) {
@@ -752,6 +768,7 @@ fn render_message(
                 data,
                 status,
                 app,
+                media_render_plan,
                 content_area,
                 render_image,
                 alignment,
@@ -779,7 +796,12 @@ fn render_message(
     }
 }
 
-pub fn render_messages(frame: &mut Frame, app: &mut App, area: Rect) -> Option<()> {
+pub fn render_messages_with_plan(
+    frame: &mut Frame,
+    app: &mut App,
+    media_render_plan: &mut MediaRenderPlan,
+    area: Rect,
+) -> Option<()> {
     crate::crash_diagnostics::breadcrumb("first-message-render", "start");
     let chat_jid = app.open_chat()?;
     if area.is_empty() {
@@ -848,9 +870,16 @@ pub fn render_messages(frame: &mut Frame, app: &mut App, area: Rect) -> Option<(
         author_groups_built,
         unread_count,
         MessageTextMode::Chat,
+        media_render_plan,
     );
     let pending_started = app.message_list_phase_started();
-    let pending_rows_rendered = render_pending_tail(frame, app, optimistic_area, &optimistic_items);
+    let pending_rows_rendered = render_pending_tail(
+        frame,
+        app,
+        media_render_plan,
+        optimistic_area,
+        &optimistic_items,
+    );
     app.record_message_list_counts(crate::app::runtime_diagnostics::MessageListCounts {
         pending_rows_rendered: pending_rows_rendered as u64,
         ..Default::default()
@@ -906,6 +935,7 @@ fn pending_tail_height(app: &mut App, items: &[wr::Message], width: usize) -> u1
 fn render_pending_tail(
     frame: &mut Frame,
     app: &mut App,
+    media_render_plan: &mut MediaRenderPlan,
     area: Rect,
     items: &[wr::Message],
 ) -> usize {
@@ -954,6 +984,7 @@ fn render_pending_tail(
             groups[index],
             app,
             Rect::new(area.x, y, area.width, render_height),
+            media_render_plan,
             false,
             MessageTextMode::Chat,
         );
@@ -965,7 +996,12 @@ fn render_pending_tail(
 
 /// Read-only statuses of the opened status contact, rendered with the
 /// same machinery as chats (media previews, timestamps, sender header).
-pub fn render_status_messages(frame: &mut Frame, app: &mut App, area: Rect) {
+pub fn render_status_messages_with_plan(
+    frame: &mut Frame,
+    app: &mut App,
+    media_render_plan: &mut MediaRenderPlan,
+    area: Rect,
+) {
     let Some(contact) = app.open_status_contact() else {
         return;
     };
@@ -998,6 +1034,7 @@ pub fn render_status_messages(frame: &mut Frame, app: &mut App, area: Rect) {
         items.len() as u64,
         0,
         MessageTextMode::Status,
+        media_render_plan,
     );
 }
 
@@ -1013,6 +1050,7 @@ fn render_message_items(
     author_groups_built: u64,
     unread_count: usize,
     text_mode: MessageTextMode,
+    media_render_plan: &mut MediaRenderPlan,
 ) -> Option<()> {
     let list_area = area;
     if list_area.is_empty() {
@@ -1070,6 +1108,7 @@ fn render_message_items(
         y,
         &mut viewport_counts,
         text_mode,
+        media_render_plan,
     );
     app.record_message_list_counts(crate::app::runtime_diagnostics::MessageListCounts {
         visible_rows: viewport_counts.visible_rows,
