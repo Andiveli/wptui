@@ -100,11 +100,16 @@ impl App<'_> {
     }
 
     pub(crate) fn get_contacts(&mut self) {
+        self.apply_contact_refresh(wr::get_contacts());
+    }
+
+    pub(crate) fn apply_contact_refresh(&mut self, contacts: Vec<(wr::JID, Arc<str>)>) {
         let mut changed = false;
-        for (jid, name) in wr::get_contacts() {
+        for (jid, name) in contacts {
             changed |= self.contacts.get(&jid) != Some(&name);
             self.contacts.insert(jid.clone(), name.clone());
-            self.db_handler.add_contact(&jid, name.as_ref());
+            self.contact_write
+                .persist(super::PersistContact { jid, name });
         }
         if changed {
             self.invalidate_chat_list();

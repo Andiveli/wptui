@@ -79,6 +79,22 @@ const HYDRATION_DIRECT_READS: [&str; 4] = [
     "db_handler.get_messages",
     "db_handler.get_reactions",
 ];
+const CONTACT_WRITER_FACTORIES: [(&str, &str); 5] = [
+    ("src/app/bootstrap.rs", "SqliteContactWriter::new(&db_path)"),
+    (
+        "src/app/test_support.rs",
+        "SqliteContactWriter::new(&db_path)",
+    ),
+    ("tests/common/mod.rs", "SqliteContactWriter::new(path)"),
+    (
+        "tests/message_actions.rs",
+        "SqliteContactWriter::new(&db_path)",
+    ),
+    (
+        "tests/media_cleanup.rs",
+        "SqliteContactWriter::new(&db_path)",
+    ),
+];
 
 #[test]
 fn command_launch_executor_is_constructed_only_by_app_bootstrap() {
@@ -297,6 +313,73 @@ fn reaction_persistence_stays_at_its_port_and_path_adapter_boundaries() {
         .iter()
         .all(|token| !adapter.contains(token))
     );
+}
+
+#[test]
+fn contact_persistence_routes_through_the_port_and_keeps_a_path_only_adapter() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let hydration: String = fs::read_to_string(root.join("src/app/chat_store/hydration.rs"))
+        .unwrap()
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    let adapter = fs::read_to_string(root.join("src/db/contact_writer.rs")).unwrap();
+    assert!(!hydration.contains("db_handler.add_contact"));
+    assert!(
+        hydration.contains("contact_write")
+            && hydration.contains(".persist(")
+            && hydration.contains("PersistContact{jid,name}")
+    );
+    assert!(hydration.contains("wr::get_contacts()"));
+    assert!(
+        adapter.contains("db_path: PathBuf") && adapter.contains("open_database(&self.db_path)")
+    );
+    assert!(adapter.contains("chat_store::add_contact"));
+    assert!(!adapter.contains("whatsrust") && !adapter.contains("get_contacts"));
+    assert!(
+        [
+            "Worker",
+            "QueueHandle",
+            "ChatStoreWritePort",
+            "thread",
+            "Connection"
+        ]
+        .iter()
+        .all(|token| !adapter.contains(token))
+    );
+}
+
+#[test]
+fn contact_writer_construction_stays_at_matching_database_factories() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let allowed: Vec<_> = CONTACT_WRITER_FACTORIES
+        .iter()
+        .map(|(path, _)| root.join(path))
+        .collect();
+    for path in rust_sources(&root.join("src"))
+        .into_iter()
+        .chain(rust_sources(&root.join("tests")))
+    {
+        assert!(
+            allowed.contains(&path)
+                || path == root.join("tests/architecture_boundaries.rs")
+                || path == root.join("tests/contact_persistence.rs")
+                || !fs::read_to_string(&path)
+                    .unwrap()
+                    .contains("SqliteContactWriter::new")
+        );
+    }
+    for (path, construction) in CONTACT_WRITER_FACTORIES {
+        let compact: String = fs::read_to_string(root.join(path))
+            .unwrap()
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect();
+        assert!(
+            compact.contains(construction),
+            "{path} must use its database path"
+        );
+    }
 }
 
 #[test]

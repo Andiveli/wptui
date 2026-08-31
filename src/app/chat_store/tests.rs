@@ -1,6 +1,27 @@
 use super::hydration_port::{ChatStoreHydration, ChatStoreHydrationPort};
 use super::*;
 use crate::app::{Chat, test_support::TestApp};
+use std::{
+    panic::AssertUnwindSafe,
+    sync::{Arc, Mutex},
+};
+
+#[derive(Clone, Default)]
+struct RecordingContactWriter(Arc<Mutex<Vec<PersistContact>>>);
+
+impl ContactWritePort for RecordingContactWriter {
+    fn persist(&self, command: PersistContact) {
+        self.0.lock().unwrap().push(command);
+    }
+}
+
+struct PanickingContactWriter;
+
+impl ContactWritePort for PanickingContactWriter {
+    fn persist(&self, _: PersistContact) {
+        panic!("persistence failed");
+    }
+}
 
 struct FakeChatStoreHydrationPort {
     chat: Chat,
@@ -22,6 +43,60 @@ impl ChatStoreHydrationPort for FakeChatStoreHydrationPort {
             )],
         }
     }
+}
+
+#[test]
+fn contact_refresh_updates_memory_and_persists_ordered_commands() {
+    let mut app = TestApp::new();
+    let writer = RecordingContactWriter::default();
+    app.contact_write = Box::new(writer.clone());
+    let first = wr::JID::from("first@example.test".to_owned());
+    let second = wr::JID::from("second@example.test".to_owned());
+
+    app.apply_contact_refresh(vec![
+        (first.clone(), "First".into()),
+        (second.clone(), "Second".into()),
+    ]);
+
+    assert_eq!(app.contacts[&first].as_ref(), "First");
+    assert_eq!(app.contacts[&second].as_ref(), "Second");
+    let commands = writer.0.lock().unwrap();
+    assert_eq!(commands.len(), 2);
+    assert_eq!(commands[0].jid, first);
+    assert_eq!(commands[0].name.as_ref(), "First");
+    assert_eq!(commands[1].jid, second);
+    assert_eq!(commands[1].name.as_ref(), "Second");
+}
+
+#[test]
+fn contact_refresh_persists_raw_names_but_displays_canonical_names() {
+    let mut app = TestApp::new();
+    let writer = RecordingContactWriter::default();
+    app.contact_write = Box::new(writer.clone());
+    let jid = wr::JID::from("alice@example.test".to_owned());
+
+    app.apply_contact_refresh(vec![(jid.clone(), "  ~ Alice  ".into())]);
+
+    assert_eq!(app.contacts[&jid].as_ref(), "  ~ Alice  ");
+    assert_eq!(app.contact_name(&jid).as_ref(), "Alice");
+    assert_eq!(writer.0.lock().unwrap()[0].name.as_ref(), "  ~ Alice  ");
+}
+
+#[test]
+fn contact_refresh_keeps_stale_contacts_and_updates_memory_before_persistence() {
+    let mut app = TestApp::new();
+    let stale = wr::JID::from("stale@example.test".to_owned());
+    let fresh = wr::JID::from("fresh@example.test".to_owned());
+    app.contacts.insert(stale.clone(), "Stale".into());
+    app.contact_write = Box::new(PanickingContactWriter);
+
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        app.apply_contact_refresh(vec![(fresh.clone(), "Fresh".into())]);
+    }));
+
+    assert!(result.is_err());
+    assert_eq!(app.contacts[&fresh].as_ref(), "Fresh");
+    assert_eq!(app.contacts[&stale].as_ref(), "Stale");
 }
 
 fn message(chat: &wr::JID, id: &str, timestamp: i64) -> wr::Message {

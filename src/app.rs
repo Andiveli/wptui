@@ -88,7 +88,7 @@ use crate::app::actions::{
 };
 pub use crate::app::chat_projection::{ChatRow, ContactRow};
 use crate::app::chat_store::{
-    hydration_port::ChatStoreHydrationPort, write_port::ChatStoreWritePort,
+    ContactWritePort, hydration_port::ChatStoreHydrationPort, write_port::ChatStoreWritePort,
 };
 pub use crate::app::community_hierarchy::{CommunityNavigationRow, CommunityNode};
 use crate::app::composer::Composer;
@@ -150,6 +150,7 @@ pub struct App<'a> {
     pub db_handler: DatabaseHandler,
     pub(crate) chat_store_hydration: Box<dyn ChatStoreHydrationPort>,
     pub(crate) chat_store_write: Box<dyn ChatStoreWritePort>,
+    pub(crate) contact_write: Box<dyn ContactWritePort>,
     pub(crate) message_reaction_write: Box<dyn MessageReactionWritePort>,
     pub media_path: PathBuf,
     pub whatsmeow_db: PathBuf,
@@ -326,6 +327,10 @@ impl App<'_> {
 
     pub fn set_chat_store_write(&mut self, port: Box<dyn ChatStoreWritePort>) {
         self.chat_store_write = port;
+    }
+
+    pub fn set_contact_write(&mut self, port: Box<dyn ContactWritePort>) {
+        self.contact_write = port;
     }
 
     pub fn set_message_reaction_write(&mut self, port: Box<dyn MessageReactionWritePort>) {

@@ -18,6 +18,8 @@ mod chat_store_hydration;
 mod chat_store_writer;
 #[path = "db/connection.rs"]
 mod connection;
+#[path = "db/contact_writer.rs"]
+mod contact_writer;
 #[path = "db/cursor_repository.rs"]
 mod cursor_repository;
 #[path = "db/message_store.rs"]
@@ -38,6 +40,7 @@ pub use chat_store_writer::SqliteChatStoreWriter;
 pub(crate) use connection::{
     DATABASE_WRITE_LOCK, open_database, try_open_database, with_database_write_lock,
 };
+pub use contact_writer::SqliteContactWriter;
 pub use reaction_writer::SqliteMessageReactionWriter;
 
 pub struct DatabaseHandler {

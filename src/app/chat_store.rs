@@ -1,9 +1,12 @@
+pub mod contact_write_port;
 mod hydration;
 pub mod hydration_port;
 mod read_state;
 mod receipts;
 mod storage;
 pub mod write_port;
+
+pub use contact_write_port::{ContactWritePort, PersistContact};
 
 use whatsrust as wr;
 

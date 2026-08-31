@@ -86,6 +86,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         db_handler,
         chat_store_hydration: Box::new(crate::db::SqliteChatStoreHydration::new(&db_path)),
         chat_store_write,
+        contact_write: Box::new(crate::db::SqliteContactWriter::new(&db_path)),
         message_reaction_write: Box::new(crate::db::SqliteMessageReactionWriter::new(&db_path)),
         media_path: data_dir.join("media"),
         whatsmeow_db: data_dir.join("whatsmeow.db"),
