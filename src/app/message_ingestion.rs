@@ -10,8 +10,12 @@ use whatsrust as wr;
 
 impl App<'_> {
     pub fn apply_reaction(&mut self, target: &wr::MessageId, participant: wr::JID, text: Arc<str>) {
-        self.db_handler
-            .record_reaction(target, participant.clone(), text.clone());
+        self.message_reaction_write
+            .record(crate::app::message_reactions::RecordMessageReaction {
+                message_id: target.clone(),
+                participant: participant.clone(),
+                emoji: text.clone(),
+            });
         if text.is_empty() {
             if let Some(reactions) = self.reactions.get_mut(target) {
                 reactions.remove(&participant);

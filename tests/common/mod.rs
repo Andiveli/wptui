@@ -13,7 +13,7 @@ use std::path::Path;
 
 use tempfile::TempDir;
 use wp_tui::app::App;
-use wp_tui::db::{DatabaseHandler, SqliteChatStoreHydration};
+use wp_tui::db::{DatabaseHandler, SqliteChatStoreHydration, SqliteMessageReactionWriter};
 
 pub struct TestApp {
     app: App<'static>,
@@ -38,6 +38,7 @@ impl TestApp {
         app.db_handler.init();
         let db_handler = DatabaseHandler::new(path);
         app.set_chat_store_write(Box::new(db_handler.chat_store_writer()));
+        app.set_message_reaction_write(Box::new(SqliteMessageReactionWriter::new(path)));
         std::mem::replace(&mut app.db_handler, db_handler).stop();
         app.set_chat_store_hydration(Box::new(SqliteChatStoreHydration::new(path)));
         app.db_handler.init();

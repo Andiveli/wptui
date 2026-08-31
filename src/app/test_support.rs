@@ -1,5 +1,5 @@
 use super::{App, Clock, NotificationProjection, Notifier};
-use crate::db::{DatabaseHandler, SqliteChatStoreHydration};
+use crate::db::{DatabaseHandler, SqliteChatStoreHydration, SqliteMessageReactionWriter};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use whatsrust as wr;
@@ -70,6 +70,7 @@ impl TestApp {
         let db_path = path.join("app.db");
         let db_handler = DatabaseHandler::new(&db_path);
         app.chat_store_write = Box::new(db_handler.chat_store_writer());
+        app.set_message_reaction_write(Box::new(SqliteMessageReactionWriter::new(&db_path)));
         std::mem::replace(&mut app.db_handler, db_handler).stop();
         app.chat_store_hydration = Box::new(SqliteChatStoreHydration::new(&db_path));
         app.db_handler.init();

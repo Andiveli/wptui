@@ -47,6 +47,7 @@ pub mod message_interactions;
 pub mod message_menu;
 pub mod message_navigation;
 pub mod message_opening;
+pub mod message_reactions;
 pub mod navigation_conversation_dispatch;
 pub mod notifications;
 pub mod optimistic_text_send;
@@ -99,6 +100,7 @@ use crate::app::message_action_diagnostics::MessageActionDiagnostics;
 pub use crate::app::message_actions::{
     DELETED_MESSAGE_TEXT, MessageAction, MessageActionKind, MessageStatus,
 };
+pub use crate::app::message_reactions::{MessageReactionWritePort, RecordMessageReaction};
 pub use crate::app::notifications::{
     Clock, NotificationProjection, Notifier, NotifyRustNotifier, SystemClock, now_or, unix_now,
 };
@@ -148,6 +150,7 @@ pub struct App<'a> {
     pub db_handler: DatabaseHandler,
     pub(crate) chat_store_hydration: Box<dyn ChatStoreHydrationPort>,
     pub(crate) chat_store_write: Box<dyn ChatStoreWritePort>,
+    pub(crate) message_reaction_write: Box<dyn MessageReactionWritePort>,
     pub media_path: PathBuf,
     pub whatsmeow_db: PathBuf,
     pub clock: Box<dyn Clock>,
@@ -323,6 +326,10 @@ impl App<'_> {
 
     pub fn set_chat_store_write(&mut self, port: Box<dyn ChatStoreWritePort>) {
         self.chat_store_write = port;
+    }
+
+    pub fn set_message_reaction_write(&mut self, port: Box<dyn MessageReactionWritePort>) {
+        self.message_reaction_write = port;
     }
 
     pub(crate) fn toggle_composer_direction(&mut self) {

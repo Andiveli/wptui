@@ -51,6 +51,28 @@ const CHAT_STORE_WRITER_SOURCES: [&str; 7] = [
     "tests/media_cleanup.rs",
 ];
 const WRITER_TOKENS: [&str; 2] = ["SqliteChatStoreWriter", "chat_store_writer()"];
+const REACTION_WRITER_FACTORIES: [(&str, &str); 5] = [
+    (
+        "src/app/bootstrap.rs",
+        "SqliteMessageReactionWriter::new(&db_path)",
+    ),
+    (
+        "src/app/test_support.rs",
+        "SqliteMessageReactionWriter::new(&db_path)",
+    ),
+    (
+        "tests/common/mod.rs",
+        "SqliteMessageReactionWriter::new(path)",
+    ),
+    (
+        "tests/message_actions.rs",
+        "SqliteMessageReactionWriter::new(&db_path)",
+    ),
+    (
+        "tests/media_cleanup.rs",
+        "SqliteMessageReactionWriter::new(&db_path)",
+    ),
+];
 const HYDRATION_DIRECT_READS: [&str; 4] = [
     "db_handler.get_chats",
     "db_handler.get_contacts",
@@ -217,13 +239,77 @@ fn chat_store_writer_stays_at_its_adapter_boundary() {
 }
 
 #[test]
+fn reaction_persistence_stays_at_its_port_and_path_adapter_boundaries() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let ingestion = fs::read_to_string(root.join("src/app/message_ingestion.rs")).unwrap();
+    let ingestion_compact: String = ingestion
+        .chars()
+        .filter(|char| !char.is_whitespace())
+        .collect();
+    assert!(!ingestion_compact.contains("db_handler.record_reaction"));
+    assert!(
+        ingestion_compact.contains("message_reaction_write.record(")
+            && ingestion_compact.contains("RecordMessageReaction")
+    );
+
+    let allowed: Vec<_> = REACTION_WRITER_FACTORIES
+        .iter()
+        .map(|(path, _)| root.join(path))
+        .collect();
+    for path in rust_sources(&root.join("src"))
+        .into_iter()
+        .chain(rust_sources(&root.join("tests")))
+    {
+        if path != root.join("tests/architecture_boundaries.rs") && !allowed.contains(&path) {
+            assert!(
+                !fs::read_to_string(&path)
+                    .unwrap()
+                    .contains("SqliteMessageReactionWriter::new")
+            );
+        }
+    }
+    for (path, construction) in REACTION_WRITER_FACTORIES {
+        let source = fs::read_to_string(root.join(path)).unwrap();
+        let compact: String = source
+            .chars()
+            .filter(|char| !char.is_whitespace())
+            .collect();
+        assert!(
+            compact.contains(construction),
+            "{path} must construct SqliteMessageReactionWriter with its factory database path"
+        );
+    }
+
+    let adapter = fs::read_to_string(root.join("src/db/reaction_writer.rs")).unwrap();
+    assert!(
+        adapter.contains("db_path: PathBuf")
+            && adapter.contains("open_database(&self.db_path)")
+            && adapter.contains("reaction_repository::record")
+    );
+    assert!(
+        [
+            "Worker",
+            "QueueHandle",
+            "ChatStoreWritePort",
+            "thread::spawn",
+            "Connection"
+        ]
+        .iter()
+        .all(|token| !adapter.contains(token))
+    );
+}
+
+#[test]
 fn hydration_modules_do_not_write_chat_store_data() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     for module in HYDRATION_MODULES {
         let source = fs::read_to_string(root.join(module)).unwrap();
         assert!(
-            !source.contains("chat_store_write") && !source.contains("PersistChatMessage"),
-            "{module} must not write chat-store data"
+            !source.contains("chat_store_write")
+                && !source.contains("PersistChatMessage")
+                && !source.contains("message_reaction_write")
+                && !source.contains("RecordMessageReaction"),
+            "{module} must not write chat-store or reaction data"
         );
     }
 }

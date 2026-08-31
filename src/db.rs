@@ -24,6 +24,8 @@ mod cursor_repository;
 mod message_store;
 #[path = "db/reaction_repository.rs"]
 mod reaction_repository;
+#[path = "db/reaction_writer.rs"]
+mod reaction_writer;
 #[path = "db/retention.rs"]
 mod retention;
 #[path = "schema.rs"]
@@ -36,6 +38,7 @@ pub use chat_store_writer::SqliteChatStoreWriter;
 pub(crate) use connection::{
     DATABASE_WRITE_LOCK, open_database, try_open_database, with_database_write_lock,
 };
+pub use reaction_writer::SqliteMessageReactionWriter;
 
 pub struct DatabaseHandler {
     db: Connection,

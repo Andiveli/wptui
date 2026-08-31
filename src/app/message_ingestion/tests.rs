@@ -1,7 +1,11 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    panic::{AssertUnwindSafe, catch_unwind},
+    sync::{Arc, Mutex},
+};
 
 use super::super::{
-    Chat, STATUS_BROADCAST_CHAT, chat_store::write_port::ChatStoreWritePort, test_support::TestApp,
+    Chat, MessageReactionWritePort, RecordMessageReaction, STATUS_BROADCAST_CHAT,
+    chat_store::write_port::ChatStoreWritePort, test_support::TestApp,
 };
 use whatsrust as wr;
 
@@ -15,6 +19,24 @@ impl ChatStoreWritePort for RecordingChatStoreWritePort {
             .lock()
             .unwrap()
             .push((command.chat, command.message));
+    }
+}
+
+struct RecordingMessageReactionWritePort {
+    recorded: Arc<Mutex<Vec<RecordMessageReaction>>>,
+}
+
+impl MessageReactionWritePort for RecordingMessageReactionWritePort {
+    fn record(&self, command: RecordMessageReaction) {
+        self.recorded.lock().unwrap().push(command);
+    }
+}
+
+struct PanickingMessageReactionWritePort;
+
+impl MessageReactionWritePort for PanickingMessageReactionWritePort {
+    fn record(&self, _: RecordMessageReaction) {
+        panic!("reaction persistence failed");
     }
 }
 
@@ -169,6 +191,75 @@ fn sync_message_refreshes_a_primed_chat_view_once_even_when_chat_timestamp_is_ze
         })
     );
     assert_eq!(app.chat_list_revision, after);
+}
+
+#[test]
+fn reactions_are_persisted_before_replacing_the_in_memory_value() {
+    let mut app = TestApp::new();
+    let message_id: wr::MessageId = "reaction-message".into();
+    let participant = wr::JID::from("participant@s.whatsapp.net".to_owned());
+    let recorded = Arc::new(Mutex::new(Vec::new()));
+    app.message_reaction_write = Box::new(RecordingMessageReactionWritePort {
+        recorded: recorded.clone(),
+    });
+
+    app.apply_reaction(&message_id, participant.clone(), Arc::from("👍"));
+    app.apply_reaction(&message_id, participant.clone(), Arc::from("❤️"));
+
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.len(), 2);
+    assert_eq!(recorded[0].message_id, message_id);
+    assert_eq!(recorded[0].participant, participant);
+    assert_eq!(recorded[0].emoji.as_ref(), "👍");
+    assert_eq!(recorded[1].message_id, message_id);
+    assert_eq!(recorded[1].participant, participant);
+    assert_eq!(recorded[1].emoji.as_ref(), "❤️");
+    drop(recorded);
+    assert_eq!(app.reactions[&message_id][&participant].as_ref(), "❤️");
+}
+
+#[test]
+fn reaction_removal_is_persisted_before_removing_the_in_memory_entry() {
+    let mut app = TestApp::new();
+    let message_id: wr::MessageId = "reaction-message".into();
+    let participant = wr::JID::from("participant@s.whatsapp.net".to_owned());
+    let recorded = Arc::new(Mutex::new(Vec::new()));
+    app.message_reaction_write = Box::new(RecordingMessageReactionWritePort {
+        recorded: recorded.clone(),
+    });
+    app.reactions
+        .entry(message_id.clone())
+        .or_default()
+        .insert(participant.clone(), Arc::from("👍"));
+
+    app.apply_reaction(&message_id, participant.clone(), Arc::from(""));
+
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0].message_id, message_id);
+    assert_eq!(recorded[0].participant, participant);
+    assert_eq!(recorded[0].emoji.as_ref(), "");
+    drop(recorded);
+    assert!(!app.reactions.contains_key(&message_id));
+}
+
+#[test]
+fn reaction_memory_is_unchanged_when_persistence_panics() {
+    let mut app = TestApp::new();
+    let message_id: wr::MessageId = "reaction-message".into();
+    let participant = wr::JID::from("participant@s.whatsapp.net".to_owned());
+    app.reactions
+        .entry(message_id.clone())
+        .or_default()
+        .insert(participant.clone(), Arc::from("👍"));
+    app.message_reaction_write = Box::new(PanickingMessageReactionWritePort);
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        app.apply_reaction(&message_id, participant.clone(), Arc::from("❤️"));
+    }));
+
+    assert!(result.is_err());
+    assert_eq!(app.reactions[&message_id][&participant].as_ref(), "👍");
 }
 
 #[test]
