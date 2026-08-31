@@ -10,28 +10,47 @@ const APPROVED_HYDRATION_CONSTRUCTION: &str =
     "Box::new(crate::db::SqliteChatStoreHydration::new(&db_path))";
 // This explicit allowlist covers every known test factory that replaces
 // `DatabaseHandler`; update it when adding another such factory.
-const TEST_DATABASE_FACTORY_ALLOWLIST: [(&str, &str, &str); 4] = [
+const TEST_DATABASE_FACTORY_ALLOWLIST: [(&str, &str, &str, &str); 4] = [
     (
         "src/app/test_support.rs",
         "DatabaseHandler::new(&db_path)",
         "SqliteChatStoreHydration::new(&db_path)",
+        "app.chat_store_write = Box::new(db_handler.chat_store_writer())",
     ),
     (
         "tests/common/mod.rs",
         "DatabaseHandler::new(path)",
         "SqliteChatStoreHydration::new(path)",
+        "app.set_chat_store_write(Box::new(db_handler.chat_store_writer()))",
     ),
     (
         "tests/message_actions.rs",
         "DatabaseHandler::new(&db_path)",
         "SqliteChatStoreHydration::new(&db_path)",
+        "app.set_chat_store_write(Box::new(db_handler.chat_store_writer()))",
     ),
     (
         "tests/media_cleanup.rs",
         "DatabaseHandler::new(&db_path)",
         "SqliteChatStoreHydration::new(&db_path)",
+        "app.set_chat_store_write(Box::new(db_handler.chat_store_writer()))",
     ),
 ];
+const HYDRATION_MODULES: [&str; 3] = [
+    "src/app/chat_store/hydration.rs",
+    "src/app/chat_store/hydration_port.rs",
+    "src/db/chat_store_hydration.rs",
+];
+const CHAT_STORE_WRITER_SOURCES: [&str; 7] = [
+    "src/db.rs",
+    "src/db/chat_store_writer.rs",
+    "src/app/bootstrap.rs",
+    "src/app/test_support.rs",
+    "tests/common/mod.rs",
+    "tests/message_actions.rs",
+    "tests/media_cleanup.rs",
+];
+const WRITER_TOKENS: [&str; 2] = ["SqliteChatStoreWriter", "chat_store_writer()"];
 const HYDRATION_DIRECT_READS: [&str; 4] = [
     "db_handler.get_chats",
     "db_handler.get_contacts",
@@ -91,7 +110,7 @@ fn hydration_uses_a_port_for_chat_store_reads() {
 fn allowlisted_database_handler_replacement_factories_use_matching_hydration_paths() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
 
-    for (relative_path, handler_construction, hydration_construction) in
+    for (relative_path, handler_construction, hydration_construction, writer_rebinding) in
         TEST_DATABASE_FACTORY_ALLOWLIST
     {
         let source_path = project_root.join(relative_path);
@@ -104,6 +123,10 @@ fn allowlisted_database_handler_replacement_factories_use_matching_hydration_pat
         assert!(
             source.contains(hydration_construction),
             "allowlisted factory {relative_path} must construct SqliteChatStoreHydration with the same requested database path"
+        );
+        assert!(
+            source.contains(writer_rebinding),
+            "allowlisted factory {relative_path} must rebind chat_store_write from its replacement DatabaseHandler"
         );
     }
 }
@@ -142,6 +165,65 @@ fn sqlite_chat_store_hydration_is_constructed_only_by_bootstrap_or_test_factorie
                 && !source.contains("SqliteChatStoreHydration {"),
             "{} must receive ChatStoreHydrationPort rather than construct SqliteChatStoreHydration",
             source_path.strip_prefix(project_root).unwrap().display(),
+        );
+    }
+}
+
+#[test]
+fn message_writes_use_the_port_and_chat_legacy_boundary_is_explicit() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let ingestion = fs::read_to_string(root.join("src/app/message_ingestion.rs")).unwrap();
+    assert!(!ingestion.contains("db_handler.add_message"));
+    assert!(ingestion.contains("app.chat_store_write") && ingestion.contains("PersistChatMessage"));
+    assert!(
+        !fs::read_to_string(root.join("src/app/chat_store/storage.rs"))
+            .unwrap()
+            .contains("db_handler.add_chat")
+    );
+    assert!(
+        fs::read_to_string(root.join("src/app/whatsapp_events.rs"))
+            .unwrap()
+            .contains("db_handler.add_chat")
+    );
+}
+
+#[test]
+fn chat_store_writer_stays_at_its_adapter_boundary() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let allowed: Vec<_> = CHAT_STORE_WRITER_SOURCES
+        .iter()
+        .map(|path| root.join(path))
+        .collect();
+    for path in rust_sources(&root.join("src"))
+        .into_iter()
+        .chain(rust_sources(&root.join("tests")))
+    {
+        if !allowed.contains(&path) && path != root.join("tests/architecture_boundaries.rs") {
+            assert!(
+                WRITER_TOKENS
+                    .iter()
+                    .all(|token| !fs::read_to_string(&path).unwrap().contains(token)),
+                "{} must not construct or request SqliteChatStoreWriter",
+                path.strip_prefix(root).unwrap().display()
+            );
+        }
+    }
+    let adapter = fs::read_to_string(root.join("src/db/chat_store_writer.rs")).unwrap();
+    assert!(
+        ["Connection", "Worker::new", "DatabaseHandler::new"]
+            .iter()
+            .all(|token| !adapter.contains(token))
+    );
+}
+
+#[test]
+fn hydration_modules_do_not_write_chat_store_data() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for module in HYDRATION_MODULES {
+        let source = fs::read_to_string(root.join(module)).unwrap();
+        assert!(
+            !source.contains("chat_store_write") && !source.contains("PersistChatMessage"),
+            "{module} must not write chat-store data"
         );
     }
 }

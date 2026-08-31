@@ -14,6 +14,8 @@ mod action_repository;
 mod chat_store;
 #[path = "db/chat_store_hydration.rs"]
 mod chat_store_hydration;
+#[path = "db/chat_store_writer.rs"]
+mod chat_store_writer;
 #[path = "db/connection.rs"]
 mod connection;
 #[path = "db/cursor_repository.rs"]
@@ -30,6 +32,7 @@ mod schema;
 mod worker;
 pub use action_repository::MessageActionPersistence;
 pub use chat_store_hydration::SqliteChatStoreHydration;
+pub use chat_store_writer::SqliteChatStoreWriter;
 pub(crate) use connection::{
     DATABASE_WRITE_LOCK, open_database, try_open_database, with_database_write_lock,
 };
@@ -52,6 +55,10 @@ impl DatabaseHandler {
 
     pub fn stop(&mut self) {
         self.worker.stop();
+    }
+
+    pub fn chat_store_writer(&self) -> SqliteChatStoreWriter {
+        SqliteChatStoreWriter::new(self.worker.queue())
     }
 
     pub fn add_message(&self, message: &wr::Message) {

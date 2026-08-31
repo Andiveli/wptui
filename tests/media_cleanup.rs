@@ -37,11 +37,9 @@ fn app_with_media(media: &Path) -> TestApp {
     let mut app = TestApp::new();
     app.media_path = media.to_owned();
     let db_path = media.join("app.db");
-    std::mem::replace(
-        &mut app.db_handler,
-        wp_tui::db::DatabaseHandler::new(&db_path),
-    )
-    .stop();
+    let db_handler = wp_tui::db::DatabaseHandler::new(&db_path);
+    app.set_chat_store_write(Box::new(db_handler.chat_store_writer()));
+    std::mem::replace(&mut app.db_handler, db_handler).stop();
     app.set_chat_store_hydration(Box::new(SqliteChatStoreHydration::new(&db_path)));
     app.db_handler.init();
     app

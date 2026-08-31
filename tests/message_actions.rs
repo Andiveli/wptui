@@ -723,7 +723,9 @@ fn owned_text_app(text: &str) -> TestApp {
 
 fn replace_database(app: &mut App<'_>, path: &std::path::Path) {
     let db_path = path.join("app.db");
-    std::mem::replace(&mut app.db_handler, DatabaseHandler::new(&db_path)).stop();
+    let db_handler = DatabaseHandler::new(&db_path);
+    app.set_chat_store_write(Box::new(db_handler.chat_store_writer()));
+    std::mem::replace(&mut app.db_handler, db_handler).stop();
     app.set_chat_store_hydration(Box::new(SqliteChatStoreHydration::new(&db_path)));
     app.db_handler.init();
 }

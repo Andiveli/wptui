@@ -68,7 +68,9 @@ impl TestApp {
         let mut app = App::with_data_dir(dir.path(), dir.path());
         app.db_handler.init();
         let db_path = path.join("app.db");
-        std::mem::replace(&mut app.db_handler, DatabaseHandler::new(&db_path)).stop();
+        let db_handler = DatabaseHandler::new(&db_path);
+        app.chat_store_write = Box::new(db_handler.chat_store_writer());
+        std::mem::replace(&mut app.db_handler, db_handler).stop();
         app.chat_store_hydration = Box::new(SqliteChatStoreHydration::new(&db_path));
         app.db_handler.init();
         Self { app, _dir: dir }

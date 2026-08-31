@@ -1,7 +1,22 @@
 use std::sync::{Arc, Mutex};
 
-use super::super::{Chat, STATUS_BROADCAST_CHAT, test_support::TestApp};
+use super::super::{
+    Chat, STATUS_BROADCAST_CHAT, chat_store::write_port::ChatStoreWritePort, test_support::TestApp,
+};
 use whatsrust as wr;
+
+struct RecordingChatStoreWritePort {
+    persisted: Arc<Mutex<Vec<(Chat, wr::Message)>>>,
+}
+
+impl ChatStoreWritePort for RecordingChatStoreWritePort {
+    fn persist(&self, command: super::super::chat_store::write_port::PersistChatMessage) {
+        self.persisted
+            .lock()
+            .unwrap()
+            .push((command.chat, command.message));
+    }
+}
 
 fn message(chat: &wr::JID, id: &str, timestamp: i64) -> wr::Message {
     wr::Message {
@@ -91,6 +106,25 @@ fn live_incoming_messages_update_persistent_timeline_state() {
     own.info.is_from_me = true;
     app.process_message_with_lookup(own, false, |_| Default::default());
     assert_eq!(app.pending_new_messages(&chat), 0);
+}
+
+#[test]
+fn live_inbound_message_persists_owned_chat_and_message_after_updating_memory() {
+    let mut app = TestApp::new();
+    let chat = wr::JID::from("chat@g.us".to_owned());
+    let persisted = Arc::new(Mutex::new(Vec::new()));
+    app.chat_store_write = Box::new(RecordingChatStoreWritePort {
+        persisted: persisted.clone(),
+    });
+
+    app.process_message_with_lookup(message(&chat, "live", 6), false, |_| Default::default());
+
+    assert_eq!(app.chats[&chat].last_message_time, Some(6));
+    let persisted = persisted.lock().unwrap();
+    assert_eq!(persisted.len(), 1);
+    assert_eq!(persisted[0].0.jid, chat);
+    assert_eq!(persisted[0].0.last_message_time, Some(6));
+    assert_eq!(persisted[0].1.info.id.as_ref(), "live");
 }
 
 #[test]

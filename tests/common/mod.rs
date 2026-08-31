@@ -36,7 +36,9 @@ impl TestApp {
         let dir = tempfile::tempdir().unwrap();
         let mut app: App<'static> = App::with_data_dir(dir.path(), dir.path());
         app.db_handler.init();
-        std::mem::replace(&mut app.db_handler, DatabaseHandler::new(path)).stop();
+        let db_handler = DatabaseHandler::new(path);
+        app.set_chat_store_write(Box::new(db_handler.chat_store_writer()));
+        std::mem::replace(&mut app.db_handler, db_handler).stop();
         app.set_chat_store_hydration(Box::new(SqliteChatStoreHydration::new(path)));
         app.db_handler.init();
         Self { app, _dir: dir }

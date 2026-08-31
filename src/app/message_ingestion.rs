@@ -43,7 +43,7 @@ impl App<'_> {
                 app.handle_notification_with_lookup(&message, lookup);
             }
 
-            app.db_handler.add_message(&message);
+            let message_for_persistence = message.clone();
             if is_sync {
                 let chat = message.info.chat.clone();
                 app.with_chat_list_mutation(|app| {
@@ -56,6 +56,16 @@ impl App<'_> {
             } else {
                 app.add_message(message);
             }
+            let chat = app
+                .chats
+                .get(&message_for_persistence.info.chat)
+                .expect("message ingestion creates its chat")
+                .clone();
+            app.chat_store_write
+                .persist(crate::app::chat_store::write_port::PersistChatMessage {
+                    chat,
+                    message: message_for_persistence,
+                });
 
             let chat_jid = app.get_selected_chat();
             app.sort_chats();

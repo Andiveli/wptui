@@ -72,10 +72,8 @@ impl App<'_> {
         if let Some(existing_chat) = self.chats.get_mut(&chat.jid) {
             let before = existing_chat.last_message_time;
             callback(existing_chat);
-            self.db_handler.add_chat(existing_chat);
             before != existing_chat.last_message_time
         } else {
-            self.db_handler.add_chat(&chat);
             self.chats.insert(chat.jid.clone(), chat);
             true
         }

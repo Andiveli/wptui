@@ -3,6 +3,7 @@ pub mod hydration_port;
 mod read_state;
 mod receipts;
 mod storage;
+pub mod write_port;
 
 use whatsrust as wr;
 
