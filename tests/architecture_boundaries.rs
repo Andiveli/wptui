@@ -397,6 +397,98 @@ fn hydration_modules_do_not_write_chat_store_data() {
     }
 }
 
+#[test]
+fn status_cursor_stays_behind_its_port_and_path_adapter_boundary() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for (path, call) in [
+        ("src/app/chat_store/hydration.rs", "status_cursor.load()"),
+        ("src/app/status_projection.rs", "status_cursor.store("),
+        ("src/app/chat_store/receipts.rs", "status_cursor.store("),
+    ] {
+        let source = fs::read_to_string(root.join(path)).unwrap();
+        assert!(source.contains(call), "{path} must use StatusCursorPort");
+    }
+    for path in rust_sources(&root.join("src/app")) {
+        let source = fs::read_to_string(&path).unwrap();
+        assert!(
+            !source.contains("db_handler.status_last_seen")
+                && !source.contains("db_handler.set_status_last_seen"),
+            "{} must not bypass StatusCursorPort",
+            path.display()
+        );
+    }
+    let allowed = [
+        ("src/app/bootstrap.rs", "SqliteStatusCursor::new(&db_path)"),
+        (
+            "src/app/test_support.rs",
+            "SqliteStatusCursor::new(&db_path)",
+        ),
+        ("tests/common/mod.rs", "SqliteStatusCursor::new(path)"),
+        (
+            "tests/message_actions.rs",
+            "SqliteStatusCursor::new(&db_path)",
+        ),
+        (
+            "tests/media_cleanup.rs",
+            "SqliteStatusCursor::new(&db_path)",
+        ),
+        (
+            "tests/status_cursor_persistence.rs",
+            "SqliteStatusCursor::new(&path)",
+        ),
+    ];
+    for path in rust_sources(&root.join("src"))
+        .into_iter()
+        .chain(rust_sources(&root.join("tests")))
+    {
+        assert!(
+            allowed
+                .iter()
+                .any(|(allowed, _)| path == root.join(allowed))
+                || path == root.join("src/db/status_cursor.rs")
+                || path == root.join("tests/architecture_boundaries.rs")
+                || !fs::read_to_string(&path)
+                    .unwrap()
+                    .contains("SqliteStatusCursor::new")
+        );
+    }
+    for (path, construction) in allowed {
+        let compact: String = fs::read_to_string(root.join(path))
+            .unwrap()
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect();
+        assert!(
+            compact.contains(construction),
+            "{path} must use its database path"
+        );
+    }
+    let adapter = fs::read_to_string(root.join("src/db/status_cursor.rs")).unwrap();
+    assert!(
+        adapter.contains("db_path: PathBuf")
+            && adapter.contains("try_open_database(&self.db_path)")
+            && adapter.contains("cursor_repository::")
+    );
+    assert!(
+        [
+            "Worker",
+            "QueueHandle",
+            "thread",
+            "PendingReceiptRepository",
+            "ChatStoreWritePort",
+            "Connection",
+            "DATABASE_WRITE_LOCK"
+        ]
+        .iter()
+        .all(|token| !adapter.contains(token))
+    );
+    assert!(
+        !fs::read_to_string(root.join("src/app/status_cursor.rs"))
+            .unwrap()
+            .contains("rusqlite")
+    );
+}
+
 fn rust_sources(directory: &Path) -> Vec<PathBuf> {
     let mut sources = Vec::new();
     collect_rust_sources(directory, &mut sources);

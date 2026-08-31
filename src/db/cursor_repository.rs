@@ -34,7 +34,7 @@ pub(super) fn read_cursors(db: &Connection) -> Vec<(wr::JID, wr::MessageId, i64)
         .collect()
 }
 
-pub(super) fn set_status_last_seen(
+pub(crate) fn set_status_last_seen(
     db: &Connection,
     contact: &wr::JID,
     timestamp: i64,
@@ -47,7 +47,7 @@ pub(super) fn set_status_last_seen(
     )
 }
 
-pub(super) fn status_last_seen(db: &Connection) -> Result<Vec<(wr::JID, i64)>, rusqlite::Error> {
+pub(crate) fn status_last_seen(db: &Connection) -> Result<Vec<(wr::JID, i64)>, rusqlite::Error> {
     let mut query = db.prepare("SELECT contact_jid, timestamp FROM status_read_cursors")?;
     query
         .query_map([], |row| Ok((row.get::<_, String>(0)?.into(), row.get(1)?)))?

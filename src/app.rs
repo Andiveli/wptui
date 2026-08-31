@@ -69,6 +69,7 @@ pub mod runtime_updater_events;
 pub mod share_picker;
 pub mod share_picker_input;
 pub mod status_actions;
+pub mod status_cursor;
 pub mod status_input;
 pub mod status_projection;
 pub mod terminal_input_translation;
@@ -109,6 +110,7 @@ use crate::app::presence::{PresenceDiagnostics, SelectedPresence};
 use crate::app::read_receipts::Coordinator as ReadReceiptCoordinator;
 use crate::app::runtime_diagnostics::{MessageListCounts, Phase, RuntimeDiagnostics};
 pub use crate::app::share_picker::SharePicker;
+pub use crate::app::status_cursor::{StatusCursorError, StatusCursorPort, StoreStatusCursor};
 pub use crate::app::status_projection::STATUS_BROADCAST_CHAT;
 use crate::db;
 use crate::file_picker::FilePickerState;
@@ -152,6 +154,7 @@ pub struct App<'a> {
     pub(crate) chat_store_write: Box<dyn ChatStoreWritePort>,
     pub(crate) contact_write: Box<dyn ContactWritePort>,
     pub(crate) message_reaction_write: Box<dyn MessageReactionWritePort>,
+    pub(crate) status_cursor: Box<dyn StatusCursorPort>,
     pub media_path: PathBuf,
     pub whatsmeow_db: PathBuf,
     pub clock: Box<dyn Clock>,
@@ -335,6 +338,10 @@ impl App<'_> {
 
     pub fn set_message_reaction_write(&mut self, port: Box<dyn MessageReactionWritePort>) {
         self.message_reaction_write = port;
+    }
+
+    pub fn set_status_cursor(&mut self, port: Box<dyn StatusCursorPort>) {
+        self.status_cursor = port;
     }
 
     pub(crate) fn toggle_composer_direction(&mut self) {

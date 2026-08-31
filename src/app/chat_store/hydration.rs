@@ -23,7 +23,7 @@ impl App<'_> {
             self.contacts.insert(jid, name);
         }
         let diagnostics = self.message_action_diagnostics.clone();
-        match self.db_handler.status_last_seen() {
+        match self.status_cursor.load() {
             Ok(cursors) => {
                 diagnostics.record_read_sync(|| {
                     format!(

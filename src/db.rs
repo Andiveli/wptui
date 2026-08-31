@@ -32,6 +32,8 @@ mod reaction_writer;
 mod retention;
 #[path = "schema.rs"]
 mod schema;
+#[path = "db/status_cursor.rs"]
+mod status_cursor;
 #[path = "db/worker.rs"]
 mod worker;
 pub use action_repository::MessageActionPersistence;
@@ -42,6 +44,7 @@ pub(crate) use connection::{
 };
 pub use contact_writer::SqliteContactWriter;
 pub use reaction_writer::SqliteMessageReactionWriter;
+pub use status_cursor::SqliteStatusCursor;
 
 pub struct DatabaseHandler {
     db: Connection,
@@ -140,18 +143,6 @@ impl DatabaseHandler {
 
     pub fn read_cursors(&self) -> Vec<(wr::JID, wr::MessageId, i64)> {
         cursor_repository::read_cursors(&self.db)
-    }
-
-    pub fn set_status_last_seen(
-        &self,
-        contact: &wr::JID,
-        timestamp: i64,
-    ) -> Result<usize, rusqlite::Error> {
-        cursor_repository::set_status_last_seen(&self.db, contact, timestamp)
-    }
-
-    pub fn status_last_seen(&self) -> Result<Vec<(wr::JID, i64)>, rusqlite::Error> {
-        cursor_repository::status_last_seen(&self.db)
     }
 }
 

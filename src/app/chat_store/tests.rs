@@ -1,6 +1,9 @@
 use super::hydration_port::{ChatStoreHydration, ChatStoreHydrationPort};
 use super::*;
-use crate::app::{Chat, test_support::TestApp};
+use crate::app::{
+    Chat,
+    test_support::{FakeStatusCursorPort, TestApp},
+};
 use std::{
     panic::AssertUnwindSafe,
     sync::{Arc, Mutex},
@@ -289,4 +292,26 @@ fn status_cursor_never_schedules_chat_app_state_sync() {
     app.add_message(message(&status, "status", 42));
 
     assert!(!app.mark_chat_read_at_latest(&status));
+}
+
+#[test]
+fn status_receipt_keeps_memory_unchanged_when_cursor_storage_fails() {
+    let mut app = TestApp::new();
+    let cursor = FakeStatusCursorPort::default();
+    *cursor.fails.lock().unwrap() = true;
+    app.status_cursor = Box::new(cursor.clone());
+    let status = wr::JID::from(super::super::STATUS_BROADCAST_CHAT.to_owned());
+    let alice = wr::JID::from("alice@s.whatsapp.net".to_owned());
+    let mut receipt = message(&status, "status", 42);
+    receipt.info.sender = alice.clone();
+    app.add_message(receipt);
+
+    app.apply_receipt(wr::ReceiptKind::Read, status, vec!["status".into()]);
+
+    let stored = cursor.stored.lock().unwrap();
+    assert_eq!(
+        (stored[0].contact.clone(), stored[0].timestamp),
+        (alice.clone(), 42)
+    );
+    assert!(!app.status_last_seen.contains_key(&alice));
 }

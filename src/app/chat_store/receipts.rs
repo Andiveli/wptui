@@ -1,4 +1,4 @@
-use super::super::App;
+use super::super::{App, StoreStatusCursor};
 use whatsrust as wr;
 
 impl App<'_> {
@@ -124,11 +124,17 @@ impl App<'_> {
                 if timestamp <= current {
                     continue;
                 }
-                if let Err(error) = self.db_handler.set_status_last_seen(&sender, timestamp) {
-                    log::error!("status receipt cursor write failed: {error}");
-                    continue;
+                match self.status_cursor.store(StoreStatusCursor {
+                    contact: sender.clone(),
+                    timestamp,
+                }) {
+                    Ok(()) => {
+                        self.status_last_seen.insert(sender, timestamp);
+                    }
+                    Err(error) => {
+                        log::error!("status receipt cursor write failed: {error}");
+                    }
                 }
-                self.status_last_seen.insert(sender, timestamp);
             }
             return;
         }

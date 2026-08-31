@@ -1,6 +1,10 @@
-use super::{App, Clock, NotificationProjection, Notifier};
+use super::{
+    App, Clock, NotificationProjection, Notifier, StatusCursorError, StatusCursorPort,
+    StoreStatusCursor,
+};
 use crate::db::{
     DatabaseHandler, SqliteChatStoreHydration, SqliteContactWriter, SqliteMessageReactionWriter,
+    SqliteStatusCursor,
 };
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -49,6 +53,28 @@ pub(crate) struct RecordingNotifier {
     pub(crate) notifications: Arc<Mutex<Vec<(String, String)>>>,
 }
 
+#[derive(Clone, Default)]
+pub(crate) struct FakeStatusCursorPort {
+    pub(crate) loaded: Arc<Mutex<Vec<(wr::JID, i64)>>>,
+    pub(crate) stored: Arc<Mutex<Vec<StoreStatusCursor>>>,
+    pub(crate) fails: Arc<Mutex<bool>>,
+}
+
+impl StatusCursorPort for FakeStatusCursorPort {
+    fn load(&self) -> Result<Vec<(wr::JID, i64)>, StatusCursorError> {
+        Ok(self.loaded.lock().unwrap().clone())
+    }
+
+    fn store(&self, command: StoreStatusCursor) -> Result<(), StatusCursorError> {
+        self.stored.lock().unwrap().push(command);
+        if *self.fails.lock().unwrap() {
+            Err(StatusCursorError("store failed".into()))
+        } else {
+            Ok(())
+        }
+    }
+}
+
 impl Notifier for RecordingNotifier {
     fn show(&self, notification: &NotificationProjection) -> Result<(), String> {
         self.notifications
@@ -74,6 +100,7 @@ impl TestApp {
         app.chat_store_write = Box::new(db_handler.chat_store_writer());
         app.set_contact_write(Box::new(SqliteContactWriter::new(&db_path)));
         app.set_message_reaction_write(Box::new(SqliteMessageReactionWriter::new(&db_path)));
+        app.set_status_cursor(Box::new(SqliteStatusCursor::new(&db_path)));
         std::mem::replace(&mut app.db_handler, db_handler).stop();
         app.chat_store_hydration = Box::new(SqliteChatStoreHydration::new(&db_path));
         app.db_handler.init();
