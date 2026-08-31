@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use tempfile::tempdir;
 use whatsrust::{FileContent, FileKind, JID, Message, MessageContent, MessageInfo};
 use wp_tui::app::{FileMeta, MessageAction, MessageActionKind, Metadata};
+use wp_tui::db::SqliteChatStoreHydration;
 mod common;
 use common::TestApp;
 
@@ -41,6 +42,7 @@ fn app_with_media(media: &Path) -> TestApp {
         wp_tui::db::DatabaseHandler::new(&db_path),
     )
     .stop();
+    app.set_chat_store_hydration(Box::new(SqliteChatStoreHydration::new(&db_path)));
     app.db_handler.init();
     app
 }

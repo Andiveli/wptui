@@ -1,5 +1,28 @@
+use super::hydration_port::{ChatStoreHydration, ChatStoreHydrationPort};
 use super::*;
-use crate::app::test_support::TestApp;
+use crate::app::{Chat, test_support::TestApp};
+
+struct FakeChatStoreHydrationPort {
+    chat: Chat,
+    contact: wr::JID,
+    message: wr::Message,
+    reaction_participant: wr::JID,
+}
+
+impl ChatStoreHydrationPort for FakeChatStoreHydrationPort {
+    fn load(&self) -> ChatStoreHydration {
+        ChatStoreHydration {
+            chats: vec![self.chat.clone()],
+            contacts: vec![(self.contact.clone(), "Persisted Contact".into())],
+            messages: vec![self.message.clone()],
+            reactions: vec![(
+                self.message.info.id.clone(),
+                self.reaction_participant.clone(),
+                "✨".into(),
+            )],
+        }
+    }
+}
 
 fn message(chat: &wr::JID, id: &str, timestamp: i64) -> wr::Message {
     wr::Message {
@@ -92,6 +115,43 @@ fn persisted_chat_cursor_survives_hydration_reload() {
 
     assert_eq!(app.timeline[&chat].last_read_message, Some(message_id));
     assert_eq!(app.timeline[&chat].last_read_at, Some(42));
+}
+
+#[test]
+fn hydration_port_populates_selected_persisted_projections_without_out_of_scope_state() {
+    let mut app = TestApp::new();
+    let chat_jid = wr::JID::from("hydrated-chat@example.test".to_owned());
+    let contact = wr::JID::from("persisted-contact@example.test".to_owned());
+    let reaction_participant = wr::JID::from("reactor@example.test".to_owned());
+    let hydrated_message = message(&chat_jid, "hydrated-message", 42);
+
+    app.chat_store_hydration = Box::new(FakeChatStoreHydrationPort {
+        chat: Chat {
+            jid: chat_jid.clone(),
+            last_message_time: Some(42),
+        },
+        contact: contact.clone(),
+        message: hydrated_message.clone(),
+        reaction_participant: reaction_participant.clone(),
+    });
+
+    app.load_data_from_db();
+
+    assert_eq!(app.chats[&chat_jid].last_message_time, Some(42));
+    assert_eq!(app.contacts[&contact].as_ref(), "Persisted Contact");
+    let loaded_message = &app.messages[&hydrated_message.info.id];
+    assert_eq!(loaded_message.info.id, hydrated_message.info.id);
+    assert_eq!(loaded_message.info.chat, hydrated_message.info.chat);
+    assert_eq!(
+        loaded_message.info.timestamp,
+        hydrated_message.info.timestamp
+    );
+    assert_eq!(
+        app.reactions[&wr::MessageId::from("hydrated-message")][&reaction_participant].as_ref(),
+        "✨"
+    );
+    assert!(app.message_actions.is_empty());
+    assert!(app.status_last_seen.is_empty());
 }
 
 #[test]

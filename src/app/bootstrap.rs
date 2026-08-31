@@ -79,8 +79,10 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
     let preferences_path = preferences::settings_path(data_dir);
     let composer_direction = preferences::load_composer_direction(&preferences_path);
 
+    let db_path = data_dir.join("whatsapp.db");
     App {
-        db_handler: DatabaseHandler::new(&data_dir.join("whatsapp.db")),
+        db_handler: DatabaseHandler::new(&db_path),
+        chat_store_hydration: Box::new(crate::db::SqliteChatStoreHydration::new(&db_path)),
         media_path: data_dir.join("media"),
         whatsmeow_db: data_dir.join("whatsmeow.db"),
         clock,

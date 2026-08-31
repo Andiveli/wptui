@@ -7,7 +7,7 @@ use wp_tui::app::MessageAction;
 use wp_tui::app::actions::{
     ActionNotice, AppAction, ConversationMode, MessageForwarder, MessageMenuAction,
 };
-use wp_tui::db::DatabaseHandler;
+use wp_tui::db::{DatabaseHandler, SqliteChatStoreHydration};
 use wp_tui::ui::message_list::reply_summary;
 mod common;
 use common::TestApp;
@@ -722,10 +722,8 @@ fn owned_text_app(text: &str) -> TestApp {
 }
 
 fn replace_database(app: &mut App<'_>, path: &std::path::Path) {
-    std::mem::replace(
-        &mut app.db_handler,
-        DatabaseHandler::new(&path.join("app.db")),
-    )
-    .stop();
+    let db_path = path.join("app.db");
+    std::mem::replace(&mut app.db_handler, DatabaseHandler::new(&db_path)).stop();
+    app.set_chat_store_hydration(Box::new(SqliteChatStoreHydration::new(&db_path)));
     app.db_handler.init();
 }

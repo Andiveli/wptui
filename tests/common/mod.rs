@@ -13,7 +13,7 @@ use std::path::Path;
 
 use tempfile::TempDir;
 use wp_tui::app::App;
-use wp_tui::db::DatabaseHandler;
+use wp_tui::db::{DatabaseHandler, SqliteChatStoreHydration};
 
 pub struct TestApp {
     app: App<'static>,
@@ -37,6 +37,7 @@ impl TestApp {
         let mut app: App<'static> = App::with_data_dir(dir.path(), dir.path());
         app.db_handler.init();
         std::mem::replace(&mut app.db_handler, DatabaseHandler::new(path)).stop();
+        app.set_chat_store_hydration(Box::new(SqliteChatStoreHydration::new(path)));
         app.db_handler.init();
         Self { app, _dir: dir }
     }

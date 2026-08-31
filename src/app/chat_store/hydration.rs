@@ -5,13 +5,21 @@ use whatsrust as wr;
 
 use super::App;
 
+use super::hydration_port::ChatStoreHydration;
+
 impl App<'_> {
     pub fn load_data_from_db(&mut self) {
         info!("Reading database");
-        for chat in self.db_handler.get_chats() {
+        let ChatStoreHydration {
+            chats,
+            contacts,
+            messages,
+            reactions,
+        } = self.chat_store_hydration.load();
+        for chat in chats {
             self.chats.insert(chat.jid.clone(), chat);
         }
-        for (jid, name) in self.db_handler.get_contacts() {
+        for (jid, name) in contacts {
             self.contacts.insert(jid, name);
         }
         let diagnostics = self.message_action_diagnostics.clone();
@@ -52,14 +60,14 @@ impl App<'_> {
                 .push(action);
         }
 
-        for message in self.db_handler.get_messages() {
+        for message in messages {
             self.add_message_without_sort(message);
         }
         let chat_ids = self.chat_messages.keys().cloned().collect::<Vec<_>>();
         for chat_id in chat_ids {
             self.sort_chat_messages(chat_id);
         }
-        for (message_id, participant, emoji) in self.db_handler.get_reactions() {
+        for (message_id, participant, emoji) in reactions {
             self.reactions
                 .entry(message_id)
                 .or_default()

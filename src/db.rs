@@ -12,6 +12,8 @@ use crate::app::{Chat, DELETED_MESSAGE_TEXT, MessageAction};
 mod action_repository;
 #[path = "db/chat_store.rs"]
 mod chat_store;
+#[path = "db/chat_store_hydration.rs"]
+mod chat_store_hydration;
 #[path = "db/connection.rs"]
 mod connection;
 #[path = "db/cursor_repository.rs"]
@@ -27,6 +29,7 @@ mod schema;
 #[path = "db/worker.rs"]
 mod worker;
 pub use action_repository::MessageActionPersistence;
+pub use chat_store_hydration::SqliteChatStoreHydration;
 pub(crate) use connection::{
     DATABASE_WRITE_LOCK, open_database, try_open_database, with_database_write_lock,
 };
