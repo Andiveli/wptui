@@ -137,8 +137,7 @@ impl App<'_> {
         };
         match crate::media::plan_media_launch(Some(&self.media_path), Some(&player), Some(path)) {
             Ok(Some(plan)) => {
-                match crate::media::execute_launch(&plan, &mut crate::media::CommandLaunchExecutor)
-                {
+                match crate::media::execute_launch(&plan, self.launch_executor.as_mut()) {
                     Ok(()) => {
                         self.action_notice =
                             Some(ActionNotice::Unavailable("Media player started".into()))

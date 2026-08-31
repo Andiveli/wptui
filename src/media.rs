@@ -144,7 +144,10 @@ pub fn command_spec(executable: &Path, arguments: &[PathBuf]) -> CommandSpec {
     }
 }
 
-pub fn execute_launch(plan: &LaunchPlan, executor: &mut impl LaunchExecutor) -> io::Result<()> {
+pub fn execute_launch(
+    plan: &LaunchPlan,
+    executor: &mut (impl LaunchExecutor + ?Sized),
+) -> io::Result<()> {
     executor.spawn(plan.executable(), plan.arguments())
 }
 

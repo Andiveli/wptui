@@ -146,6 +146,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         url_picker: None,
         file_picker: None,
         url_opener: Box::new(SystemUrlOpener),
+        launch_executor: Box::new(crate::media::CommandLaunchExecutor),
         attachment_viewer: None,
         viewer_preview: None,
         viewer_zoom: 100,

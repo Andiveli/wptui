@@ -232,6 +232,7 @@ pub struct App<'a> {
     pub url_picker: Option<(Vec<String>, usize)>,
     pub file_picker: Option<FilePickerState>,
     pub url_opener: Box<dyn UrlOpener>,
+    pub launch_executor: Box<dyn crate::media::LaunchExecutor>,
     pub attachment_viewer: Option<AttachmentViewerState>,
     pub viewer_preview: Option<ViewerPreviewState>,
     pub viewer_zoom: u16,
