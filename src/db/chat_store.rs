@@ -9,6 +9,11 @@ pub(super) fn persist(db: &mut Connection, chats: Vec<Chat>) {
     let tx = db
         .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .unwrap();
+    persist_in_transaction(&tx, chats);
+    tx.commit().unwrap();
+}
+
+pub(super) fn persist_in_transaction(tx: &rusqlite::Transaction<'_>, chats: Vec<Chat>) {
     let mut statement = tx
         .prepare("INSERT OR REPLACE INTO chats (jid) VALUES (?)")
         .unwrap();
@@ -16,7 +21,6 @@ pub(super) fn persist(db: &mut Connection, chats: Vec<Chat>) {
         statement.execute(rusqlite::params![&*chat.jid.0]).unwrap();
     }
     drop(statement);
-    tx.commit().unwrap();
 }
 
 pub(super) fn get_chats(db: &Connection) -> Vec<Chat> {
