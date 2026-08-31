@@ -47,7 +47,7 @@ impl App<'_> {
     fn confirm_logout(&mut self) {
         self.pending_logout = true;
         self.logout_in_progress = true;
-        logout_after_stopping_read_sync(|| self.shutdown_read_sync_worker(), wr::logout);
+        logout_after_stopping_read_sync(|| self.stop_read_sync_for_logout(), wr::logout);
     }
 
     pub(crate) fn handle_logout_result(&mut self, status: wr::LogoutStatus) -> bool {
@@ -59,12 +59,14 @@ impl App<'_> {
                 log::warn!(
                     "Logout: device was not unlinked on the phone; remove it manually in WhatsApp → Linked devices"
                 );
+                self.restore_read_sync_worker_after_logout_retry();
                 self.reset_logout_prompt();
                 self.unavailable(
                     "Logged out locally, but the device is still linked on the phone — remove it in WhatsApp (Settings → Linked devices), then log out again to finish",
                 );
             }
             wr::LogoutStatus::Failed => {
+                self.restore_read_sync_worker_after_logout_retry();
                 self.reset_logout_prompt();
                 self.unavailable("Could not log out");
             }
@@ -73,12 +75,28 @@ impl App<'_> {
     }
 
     pub(crate) fn finish_logout(&mut self) {
+        self.shutdown_read_sync_worker();
         self.reset_logout_prompt();
         self.db_handler.stop();
         wipe_sqlite_file(&self.whatsmeow_db);
         wipe_sqlite_file(&self.whatsmeow_db.with_file_name("whatsapp.db"));
         clear_media_dir(&self.media_path);
         self.should_quit = true;
+    }
+
+    fn stop_read_sync_for_logout(&mut self) {
+        self.shutdown_read_sync_worker();
+        self.read_sync_worker_stopped_for_logout = true;
+    }
+
+    fn restore_read_sync_worker_after_logout_retry(&mut self) -> bool {
+        if !self.read_sync_worker_stopped_for_logout {
+            return false;
+        }
+        debug_assert!(self.read_sync_worker.is_shutdown());
+        self.read_sync_worker = wr::ReadSyncWorker::new();
+        self.read_sync_worker_stopped_for_logout = false;
+        true
     }
 
     fn reset_logout_prompt(&mut self) {

@@ -238,6 +238,7 @@ pub struct App<'a> {
     pub read_receipts: ReadReceiptCoordinator,
     pub read_receipt_worker: read_receipts::worker::Worker,
     pub read_sync_worker: wr::ReadSyncWorker,
+    read_sync_worker_stopped_for_logout: bool,
     pub optimistic_text_send_worker: optimistic_text_send::Worker,
     pub pending_outgoing_text: HashMap<u64, optimistic_text_send::TextSendRequest>,
     pub completed_text_send_ids: VecDeque<u64>,

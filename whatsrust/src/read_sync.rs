@@ -155,6 +155,10 @@ impl ReadSyncWorker {
         })
     }
 
+    pub fn is_shutdown(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+
     /// Cancels queued calls and joins after the currently bounded bridge call returns.
     pub fn shutdown(&mut self) {
         if self.join.is_none() {
