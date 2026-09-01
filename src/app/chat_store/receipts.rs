@@ -1,4 +1,5 @@
 use super::super::{App, StoreChatReadCursor, StoreStatusCursor};
+use super::write_port::PersistMessage;
 use whatsrust as wr;
 
 impl App<'_> {
@@ -35,7 +36,9 @@ impl App<'_> {
                         .get_mut(&message_id)
                         .expect("message was validated");
                     message.info.read_by = message.info.read_by.saturating_add(1);
-                    self.db_handler.add_message(message);
+                    let message = message.clone();
+                    self.chat_store_write
+                        .persist_message(PersistMessage { message });
                     self.record_receipt_classification(kind, &chat, &message_id, "peer_read");
                 } else {
                     linked_device_reads.push(message_id.clone());

@@ -226,6 +226,28 @@ fn message_writes_use_the_port_and_chat_legacy_boundary_is_explicit() {
 }
 
 #[test]
+fn receipt_message_writeback_uses_the_chat_store_port_only() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let receipts: String = fs::read_to_string(root.join("src/app/chat_store/receipts.rs"))
+        .unwrap()
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    assert!(!receipts.contains("db_handler.add_message"));
+    assert!(receipts.contains("chat_store_write.persist_message("));
+    assert!(
+        fs::read_to_string(root.join("src/app/message_actions.rs"))
+            .unwrap()
+            .contains("db_handler.add_message")
+    );
+    assert!(
+        fs::read_to_string(root.join("src/app/whatsapp_events.rs"))
+            .unwrap()
+            .contains("Event::Chat")
+    );
+}
+
+#[test]
 fn chat_store_writer_stays_at_its_adapter_boundary() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let allowed: Vec<_> = CHAT_STORE_WRITER_SOURCES
@@ -236,7 +258,10 @@ fn chat_store_writer_stays_at_its_adapter_boundary() {
         .into_iter()
         .chain(rust_sources(&root.join("tests")))
     {
-        if !allowed.contains(&path) && path != root.join("tests/architecture_boundaries.rs") {
+        if !allowed.contains(&path)
+            && path != root.join("tests/architecture_boundaries.rs")
+            && path != root.join("tests/receipt_message_persistence.rs")
+        {
             assert!(
                 WRITER_TOKENS
                     .iter()

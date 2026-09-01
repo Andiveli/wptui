@@ -1,4 +1,4 @@
-use crate::app::chat_store::write_port::{ChatStoreWritePort, PersistChatMessage};
+use crate::app::chat_store::write_port::{ChatStoreWritePort, PersistChatMessage, PersistMessage};
 
 use super::worker::QueueHandle;
 
@@ -15,5 +15,9 @@ impl SqliteChatStoreWriter {
 impl ChatStoreWritePort for SqliteChatStoreWriter {
     fn persist(&self, command: PersistChatMessage) {
         self.queue.queue_chat_message(command.chat, command.message);
+    }
+
+    fn persist_message(&self, command: PersistMessage) {
+        self.queue.queue_message(command.message);
     }
 }

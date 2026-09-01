@@ -5,7 +5,8 @@ use std::{
 
 use super::super::{
     Chat, MessageReactionWritePort, RecordMessageReaction, STATUS_BROADCAST_CHAT,
-    chat_store::write_port::ChatStoreWritePort, test_support::TestApp,
+    chat_store::write_port::{ChatStoreWritePort, PersistMessage},
+    test_support::{FakeChatReadCursorPort, TestApp},
 };
 use whatsrust as wr;
 
@@ -19,6 +20,17 @@ impl ChatStoreWritePort for RecordingChatStoreWritePort {
             .lock()
             .unwrap()
             .push((command.chat, command.message));
+    }
+
+    fn persist_message(&self, command: PersistMessage) {
+        let message = command.message;
+        self.persisted.lock().unwrap().push((
+            Chat {
+                jid: message.info.chat.clone(),
+                last_message_time: Some(message.info.timestamp),
+            },
+            message,
+        ));
     }
 }
 
@@ -147,6 +159,33 @@ fn live_inbound_message_persists_owned_chat_and_message_after_updating_memory() 
     assert_eq!(persisted[0].0.jid, chat);
     assert_eq!(persisted[0].0.last_message_time, Some(6));
     assert_eq!(persisted[0].1.info.id.as_ref(), "live");
+}
+
+#[test]
+fn outgoing_read_receipts_persist_each_increment_without_a_chat_cursor() {
+    let mut app = TestApp::new();
+    let chat = wr::JID::from("chat@g.us".to_owned());
+    let persisted = Arc::new(Mutex::new(Vec::new()));
+    let cursor = FakeChatReadCursorPort::default();
+    app.chat_store_write = Box::new(RecordingChatStoreWritePort {
+        persisted: persisted.clone(),
+    });
+    app.chat_read_cursor = Box::new(cursor.clone());
+    let mut sent = message(&chat, "sent", 6);
+    sent.info.is_from_me = true;
+    app.add_message(sent);
+    cursor.stored.lock().unwrap().clear();
+
+    for expected_read_by in [1, 2] {
+        app.apply_receipt(wr::ReceiptKind::Read, chat.clone(), vec!["sent".into()]);
+        assert_eq!(app.messages["sent"].info.read_by, expected_read_by);
+        assert_eq!(persisted.lock().unwrap().len(), expected_read_by as usize);
+    }
+
+    let persisted = persisted.lock().unwrap();
+    assert_eq!(persisted[0].1.info.read_by, 1);
+    assert_eq!(persisted[1].1.info.read_by, 2);
+    assert!(cursor.stored.lock().unwrap().is_empty());
 }
 
 #[test]
