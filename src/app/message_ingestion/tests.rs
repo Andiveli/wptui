@@ -5,7 +5,7 @@ use std::{
 
 use super::super::{
     Chat, MessageReactionWritePort, RecordMessageReaction, STATUS_BROADCAST_CHAT,
-    chat_store::write_port::{ChatStoreWritePort, PersistMessage},
+    chat_store::write_port::{ChatStoreWritePort, PersistChat, PersistMessage},
     test_support::{FakeChatReadCursorPort, TestApp},
 };
 use whatsrust as wr;
@@ -21,6 +21,8 @@ impl ChatStoreWritePort for RecordingChatStoreWritePort {
             .unwrap()
             .push((command.chat, command.message));
     }
+
+    fn persist_chat(&self, _: PersistChat) {}
 
     fn persist_message(&self, command: PersistMessage) {
         let message = command.message;

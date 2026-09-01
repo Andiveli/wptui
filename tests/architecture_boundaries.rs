@@ -208,20 +208,18 @@ fn sqlite_chat_store_hydration_is_constructed_only_by_bootstrap_or_test_factorie
 }
 
 #[test]
-fn message_writes_use_the_port_and_chat_legacy_boundary_is_explicit() {
+fn message_and_chat_writes_use_the_port_while_legacy_actions_remain_compatible() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let ingestion = fs::read_to_string(root.join("src/app/message_ingestion.rs")).unwrap();
+    let events = fs::read_to_string(root.join("src/app/whatsapp_events.rs")).unwrap();
     assert!(!ingestion.contains("db_handler.add_message"));
     assert!(ingestion.contains("app.chat_store_write") && ingestion.contains("PersistChatMessage"));
+    assert!(!events.contains("db_handler.add_chat"));
+    assert!(events.contains("chat_store_write.persist_chat("));
     assert!(
-        !fs::read_to_string(root.join("src/app/chat_store/storage.rs"))
+        fs::read_to_string(root.join("src/db.rs"))
             .unwrap()
-            .contains("db_handler.add_chat")
-    );
-    assert!(
-        fs::read_to_string(root.join("src/app/whatsapp_events.rs"))
-            .unwrap()
-            .contains("db_handler.add_chat")
+            .contains("pub fn add_chat")
     );
 }
 
@@ -261,6 +259,7 @@ fn chat_store_writer_stays_at_its_adapter_boundary() {
         if !allowed.contains(&path)
             && path != root.join("tests/architecture_boundaries.rs")
             && path != root.join("tests/receipt_message_persistence.rs")
+            && path != root.join("tests/chat_event_persistence.rs")
         {
             assert!(
                 WRITER_TOKENS

@@ -1,6 +1,34 @@
 use super::*;
-use crate::app::test_support::{FakeChatReadCursorPort, FakeStatusCursorPort, TestApp, message};
-use std::{panic::AssertUnwindSafe, sync::Arc};
+use crate::app::{
+    chat_store::write_port::{ChatStoreWritePort, PersistChat, PersistChatMessage, PersistMessage},
+    test_support::{FakeChatReadCursorPort, FakeStatusCursorPort, TestApp, message},
+};
+use std::{
+    panic::AssertUnwindSafe,
+    sync::{Arc, Mutex},
+};
+
+struct RecordingChatStoreWritePort(Arc<Mutex<Vec<Chat>>>);
+
+impl ChatStoreWritePort for RecordingChatStoreWritePort {
+    fn persist(&self, _: PersistChatMessage) {}
+
+    fn persist_chat(&self, command: PersistChat) {
+        self.0.lock().unwrap().push(command.chat);
+    }
+
+    fn persist_message(&self, _: PersistMessage) {}
+}
+
+struct PanickingChatStoreWritePort;
+
+impl ChatStoreWritePort for PanickingChatStoreWritePort {
+    fn persist(&self, _: PersistChatMessage) {}
+    fn persist_chat(&self, _: PersistChat) {
+        panic!("chat persistence failed")
+    }
+    fn persist_message(&self, _: PersistMessage) {}
+}
 
 fn status_message(sender: &wr::JID, id: &str, timestamp: i64) -> wr::Message {
     let mut message = message(&wr::JID::from("status@broadcast".to_owned()), id, timestamp);
@@ -17,20 +45,46 @@ fn sync_progress_event_updates_history_progress() {
 }
 
 #[test]
-fn chat_event_keeps_empty_chat_and_updates_newer_timestamp() {
+fn chat_event_updates_memory_and_persists_each_current_canonical_chat() {
     let mut app = TestApp::new();
     let jid = wr::JID::from("chat@example.test".to_owned());
+    let persisted = Arc::new(Mutex::new(Vec::new()));
+    app.chat_store_write = Box::new(RecordingChatStoreWritePort(persisted.clone()));
 
-    assert!(app.handle_whatsapp_event(wr::Event::Chat {
-        jid: jid.clone(),
-        last_message_time: 0,
-    }));
-    assert_eq!(app.chats[&jid].last_message_time, None);
+    for timestamp in [0, 12, 7, 12] {
+        assert!(app.handle_whatsapp_event(wr::Event::Chat {
+            jid: jid.clone(),
+            last_message_time: timestamp,
+        }));
+    }
 
-    app.handle_whatsapp_event(wr::Event::Chat {
-        jid: jid.clone(),
-        last_message_time: 12,
-    });
+    assert_eq!(app.chats[&jid].last_message_time, Some(12));
+    assert_eq!(
+        persisted
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|chat| chat.last_message_time)
+            .collect::<Vec<_>>(),
+        [None, Some(12), Some(12), Some(12)]
+    );
+}
+
+#[test]
+fn chat_event_updates_memory_before_persistence_panics() {
+    let mut app = TestApp::new();
+    let jid = wr::JID::from("chat@example.test".to_owned());
+    app.chat_store_write = Box::new(PanickingChatStoreWritePort);
+
+    assert!(
+        std::panic::catch_unwind(AssertUnwindSafe(|| {
+            app.handle_whatsapp_event(wr::Event::Chat {
+                jid: jid.clone(),
+                last_message_time: 12,
+            });
+        }))
+        .is_err()
+    );
     assert_eq!(app.chats[&jid].last_message_time, Some(12));
 }
 

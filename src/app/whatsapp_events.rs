@@ -1,4 +1,5 @@
 use super::{App, Chat, MessageAction, MessageActionKind};
+use crate::app::chat_store::write_port::PersistChat;
 use whatsrust as wr;
 
 pub(crate) fn handle(app: &mut App<'_>, event: wr::Event) -> bool {
@@ -28,11 +29,12 @@ pub(crate) fn handle(app: &mut App<'_>, event: wr::Event) -> bool {
                     }
                 },
             );
-            app.db_handler.add_chat(
-                app.chats
-                    .get(&chat_jid)
-                    .expect("chat event updates the in-memory chat store"),
-            );
+            let chat = app
+                .chats
+                .get(&chat_jid)
+                .expect("chat event updates the in-memory chat store")
+                .clone();
+            app.chat_store_write.persist_chat(PersistChat { chat });
             if changed {
                 app.invalidate_chat_list();
             }
