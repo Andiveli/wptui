@@ -1,9 +1,9 @@
-use super::super::App;
+use super::super::{App, StoreChatReadCursor};
 use whatsrust as wr;
 
 impl App<'_> {
     pub(super) fn restore_read_cursors(&mut self) {
-        for (chat, message_id, timestamp) in self.db_handler.read_cursors() {
+        for (chat, message_id, timestamp) in self.chat_read_cursor.load() {
             self.timeline.insert(
                 chat,
                 super::super::unread_messages::ChatTimelineState {
@@ -63,8 +63,11 @@ impl App<'_> {
         timeline.last_read_message = latest.clone();
         timeline.last_read_at = Some(timestamp);
         if let Some(message_id) = latest {
-            self.db_handler
-                .set_last_read_cursor(chat, Some(message_id.clone()), timestamp);
+            self.chat_read_cursor.store(StoreChatReadCursor {
+                chat: chat.clone(),
+                message_id: Some(message_id.clone()),
+                timestamp,
+            });
             if !unchanged && !Self::is_status_chat(chat) {
                 if let Some(message) = self.messages.get(&message_id) {
                     let participant = Self::is_group_chat(chat).then_some(&message.info.sender);
@@ -184,8 +187,11 @@ impl App<'_> {
         timeline.last_read_message = Some(message_id.clone());
         timeline.last_read_at = Some(timestamp);
         timeline.pending_new_messages = pending;
-        self.db_handler
-            .set_last_read_cursor(&chat, Some(message_id.clone()), timestamp);
+        self.chat_read_cursor.store(StoreChatReadCursor {
+            chat: chat.clone(),
+            message_id: Some(message_id.clone()),
+            timestamp,
+        });
         self.invalidate_chat_list();
         record("applied");
     }

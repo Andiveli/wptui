@@ -1,6 +1,6 @@
 use super::*;
-use crate::app::test_support::{TestApp, message};
-use std::sync::Arc;
+use crate::app::test_support::{FakeChatReadCursorPort, FakeStatusCursorPort, TestApp, message};
+use std::{panic::AssertUnwindSafe, sync::Arc};
 
 fn status_message(sender: &wr::JID, id: &str, timestamp: i64) -> wr::Message {
     let mut message = message(&wr::JID::from("status@broadcast".to_owned()), id, timestamp);
@@ -54,6 +54,8 @@ fn reaction_event_is_translated_into_reaction_projection() {
 fn remote_read_clears_only_the_covered_unread_range() {
     let mut app = TestApp::new();
     let chat = wr::JID::from("chat@example.test".to_owned());
+    let cursor = FakeChatReadCursorPort::default();
+    app.chat_read_cursor = Box::new(cursor.clone());
     for (id, timestamp) in [("first", 10), ("middle", 20), ("latest", 30)] {
         app.add_message(message(&chat, id, timestamp));
     }
@@ -74,6 +76,33 @@ fn remote_read_clears_only_the_covered_unread_range() {
         Some("middle")
     );
     assert_eq!(app.timeline[&chat].last_read_at, Some(20));
+    let stored = cursor.stored.lock().unwrap();
+    assert_eq!(
+        (&stored[0].chat, &stored[0].message_id, stored[0].timestamp),
+        (&chat, &Some("middle".into()), 20)
+    );
+}
+
+#[test]
+fn remote_read_mutates_timeline_before_cursor_storage_panics() {
+    let mut app = TestApp::new();
+    let chat = wr::JID::from("chat@example.test".to_owned());
+    app.add_message(message(&chat, "read", 20));
+    let cursor = FakeChatReadCursorPort::default();
+    *cursor.panic_on_store.lock().unwrap() = true;
+    app.chat_read_cursor = Box::new(cursor);
+
+    assert!(
+        std::panic::catch_unwind(AssertUnwindSafe(|| {
+            app.apply_remote_chat_read(chat.clone(), "read".into(), true, 20, false, None);
+        }))
+        .is_err()
+    );
+    assert_eq!(
+        app.timeline[&chat].last_read_message.as_deref(),
+        Some("read")
+    );
+    assert_eq!(app.pending_new_messages(&chat), 0);
 }
 
 #[test]
@@ -230,6 +259,10 @@ fn ordinary_read_of_outgoing_message_updates_peer_read_state() {
 fn ordinary_read_of_incoming_message_advances_local_cursor_and_preserves_later_unread() {
     let mut app = TestApp::new();
     let chat = wr::JID::from("chat@example.test".to_owned());
+    let cursor = FakeChatReadCursorPort::default();
+    let status_cursor = FakeStatusCursorPort::default();
+    app.chat_read_cursor = Box::new(cursor.clone());
+    app.status_cursor = Box::new(status_cursor.clone());
     for (id, timestamp) in [("old", 10), ("read", 20), ("later", 30)] {
         app.add_message(message(&chat, id, timestamp));
     }
@@ -247,6 +280,12 @@ fn ordinary_read_of_incoming_message_advances_local_cursor_and_preserves_later_u
     assert_eq!(app.timeline[&chat].last_read_at, Some(20));
     assert_eq!(app.pending_new_messages(&chat), 1);
     assert_eq!(app.messages["read"].info.read_by, 0);
+    let stored = cursor.stored.lock().unwrap();
+    assert_eq!(
+        (&stored[0].chat, &stored[0].message_id, stored[0].timestamp),
+        (&chat, &Some("read".into()), 20)
+    );
+    assert!(status_cursor.stored.lock().unwrap().is_empty());
 }
 
 #[test]

@@ -1,10 +1,10 @@
 use super::{
-    App, Clock, NotificationProjection, Notifier, StatusCursorError, StatusCursorPort,
-    StoreStatusCursor,
+    App, ChatReadCursorPort, Clock, NotificationProjection, Notifier, StatusCursorError,
+    StatusCursorPort, StoreChatReadCursor, StoreStatusCursor,
 };
 use crate::db::{
-    DatabaseHandler, SqliteChatStoreHydration, SqliteContactWriter, SqliteMessageReactionWriter,
-    SqliteStatusCursor,
+    DatabaseHandler, SqliteChatReadCursor, SqliteChatStoreHydration, SqliteContactWriter,
+    SqliteMessageReactionWriter, SqliteStatusCursor,
 };
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -75,6 +75,27 @@ impl StatusCursorPort for FakeStatusCursorPort {
     }
 }
 
+#[derive(Clone, Default)]
+pub(crate) struct FakeChatReadCursorPort {
+    pub(crate) loaded: Arc<Mutex<Vec<(wr::JID, wr::MessageId, i64)>>>,
+    pub(crate) stored: Arc<Mutex<Vec<StoreChatReadCursor>>>,
+    pub(crate) panic_on_store: Arc<Mutex<bool>>,
+}
+
+impl ChatReadCursorPort for FakeChatReadCursorPort {
+    fn load(&self) -> Vec<(wr::JID, wr::MessageId, i64)> {
+        self.loaded.lock().unwrap().clone()
+    }
+
+    fn store(&self, command: StoreChatReadCursor) {
+        self.stored.lock().unwrap().push(command);
+        assert!(
+            !*self.panic_on_store.lock().unwrap(),
+            "cursor storage failed"
+        );
+    }
+}
+
 impl Notifier for RecordingNotifier {
     fn show(&self, notification: &NotificationProjection) -> Result<(), String> {
         self.notifications
@@ -100,6 +121,7 @@ impl TestApp {
         app.chat_store_write = Box::new(db_handler.chat_store_writer());
         app.set_contact_write(Box::new(SqliteContactWriter::new(&db_path)));
         app.set_message_reaction_write(Box::new(SqliteMessageReactionWriter::new(&db_path)));
+        app.set_chat_read_cursor(Box::new(SqliteChatReadCursor::new(&db_path)));
         app.set_status_cursor(Box::new(SqliteStatusCursor::new(&db_path)));
         std::mem::replace(&mut app.db_handler, db_handler).stop();
         app.chat_store_hydration = Box::new(SqliteChatStoreHydration::new(&db_path));

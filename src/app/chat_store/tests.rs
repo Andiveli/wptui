@@ -2,7 +2,7 @@ use super::hydration_port::{ChatStoreHydration, ChatStoreHydrationPort};
 use super::*;
 use crate::app::{
     Chat,
-    test_support::{FakeStatusCursorPort, TestApp},
+    test_support::{FakeChatReadCursorPort, FakeStatusCursorPort, TestApp},
 };
 use std::{
     panic::AssertUnwindSafe,
@@ -153,23 +153,23 @@ fn read_state_policy_owns_read_transitions_and_cursor_restoration() {
         assert!(read_state.contains(method));
         assert!(!chat_store.contains(method));
     }
-    assert!(read_state.contains("db_handler.read_cursors"));
-    assert!(!hydration.contains("db_handler.read_cursors"));
+    assert!(read_state.contains("chat_read_cursor.load"));
     assert!(hydration.contains("self.restore_read_cursors()"));
 }
 
 #[test]
 fn persisted_chat_cursor_restores_into_read_state() {
-    let directory = tempfile::tempdir().unwrap();
+    let mut app = TestApp::new();
     let chat = wr::JID::from("chat@example.test".to_owned());
     let message_id = wr::MessageId::from("read-message");
-    {
-        let app = TestApp::with_database(directory.path());
-        app.db_handler
-            .set_last_read_cursor(&chat, Some(message_id.clone()), 42);
-    }
+    let cursor = FakeChatReadCursorPort::default();
+    cursor
+        .loaded
+        .lock()
+        .unwrap()
+        .push((chat.clone(), message_id.clone(), 42));
+    app.chat_read_cursor = Box::new(cursor);
 
-    let mut app = TestApp::with_database(directory.path());
     app.restore_read_cursors();
 
     assert_eq!(app.timeline[&chat].last_read_message, Some(message_id));
@@ -279,9 +279,17 @@ fn newer_same_id_echo_cannot_downgrade_ownership() {
 fn chat_cursor_sync_schedules_only_on_a_cursor_transition() {
     let mut app = TestApp::new();
     let chat = wr::JID::from("chat@g.us".to_owned());
+    let cursor = FakeChatReadCursorPort::default();
+    app.chat_read_cursor = Box::new(cursor.clone());
     app.add_message(message(&chat, "latest", 42));
 
     assert!(app.mark_chat_read_at_latest(&chat));
+    let stored = cursor.stored.lock().unwrap();
+    assert_eq!(
+        (&stored[0].chat, &stored[0].message_id, stored[0].timestamp),
+        (&chat, &Some("latest".into()), 42)
+    );
+    drop(stored);
     assert_eq!(app.mark_chat_read_at_latest(&chat), false);
 }
 

@@ -489,6 +489,119 @@ fn status_cursor_stays_behind_its_port_and_path_adapter_boundary() {
     );
 }
 
+#[test]
+fn chat_read_cursor_stays_behind_its_port_and_path_adapter_boundary() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for path in rust_sources(&root.join("src/app")) {
+        let source = fs::read_to_string(&path).unwrap();
+        assert!(
+            !source.contains("db_handler.read_cursors")
+                && !source.contains("db_handler.set_last_read_cursor"),
+            "{} must not bypass ChatReadCursorPort",
+            path.display()
+        );
+    }
+    for (path, calls) in [
+        (
+            "src/app/chat_store/read_state.rs",
+            ["chat_read_cursor.load()", "chat_read_cursor.store("],
+        ),
+        (
+            "src/app/chat_store/receipts.rs",
+            ["chat_read_cursor.store(", "StoreChatReadCursor"],
+        ),
+    ] {
+        let source = fs::read_to_string(root.join(path)).unwrap();
+        assert!(
+            calls.iter().all(|call| source.contains(call)),
+            "{path} must use ChatReadCursorPort"
+        );
+    }
+    let allowed = [
+        (
+            "src/app/bootstrap.rs",
+            "SqliteChatReadCursor::new(&db_path)",
+        ),
+        (
+            "src/app/test_support.rs",
+            "SqliteChatReadCursor::new(&db_path)",
+        ),
+        ("tests/common/mod.rs", "SqliteChatReadCursor::new(path)"),
+        (
+            "tests/message_actions.rs",
+            "SqliteChatReadCursor::new(&db_path)",
+        ),
+        (
+            "tests/media_cleanup.rs",
+            "SqliteChatReadCursor::new(&db_path)",
+        ),
+        (
+            "tests/chat_cursor_persistence.rs",
+            "SqliteChatReadCursor::new(&path)",
+        ),
+    ];
+    for path in rust_sources(&root.join("src"))
+        .into_iter()
+        .chain(rust_sources(&root.join("tests")))
+    {
+        assert!(
+            allowed
+                .iter()
+                .any(|(allowed, _)| path == root.join(allowed))
+                || path == root.join("src/db/chat_read_cursor.rs")
+                || path == root.join("tests/architecture_boundaries.rs")
+                || !fs::read_to_string(&path)
+                    .unwrap()
+                    .contains("SqliteChatReadCursor::new")
+        );
+    }
+    for (path, construction) in allowed {
+        let compact: String = fs::read_to_string(root.join(path))
+            .unwrap()
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect();
+        assert!(
+            compact.contains(construction),
+            "{path} must use its database path"
+        );
+    }
+    let adapter = fs::read_to_string(root.join("src/db/chat_read_cursor.rs")).unwrap();
+    let adapter_compact: String = adapter
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    assert!(
+        adapter_compact.contains("pubstructSqliteChatReadCursor{db_path:PathBuf,}")
+            && adapter
+                .match_indices("open_database(&self.db_path)")
+                .count()
+                == 2
+            && adapter.contains("cursor_repository::")
+    );
+    assert!(
+        [
+            "Connection",
+            "Worker",
+            "QueueHandle",
+            "thread",
+            "ReadSyncWorker",
+            "PendingReceiptRepository",
+            "DATABASE_WRITE_LOCK"
+        ]
+        .iter()
+        .all(|token| !adapter.contains(token))
+    );
+    let port = fs::read_to_string(root.join("src/app/chat_store/read_cursor_port.rs")).unwrap();
+    assert!(!port.contains("rusqlite") && !port.contains("db"));
+    let handler: String = fs::read_to_string(root.join("src/db.rs"))
+        .unwrap()
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    assert!(handler.contains("pubfnset_last_read_cursor(&self,chat:&wr::JID,message_id:Option<wr::MessageId>,timestamp:i64,)") && handler.contains("pubfnread_cursors(&self)->Vec<(wr::JID,wr::MessageId,i64)>"));
+}
+
 fn rust_sources(directory: &Path) -> Vec<PathBuf> {
     let mut sources = Vec::new();
     collect_rust_sources(directory, &mut sources);

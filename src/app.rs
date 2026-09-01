@@ -88,6 +88,7 @@ use crate::app::actions::{
     WhatsAppMessageReactor, WhatsAppMessageRevoker,
 };
 pub use crate::app::chat_projection::{ChatRow, ContactRow};
+pub use crate::app::chat_store::{ChatReadCursorPort, StoreChatReadCursor};
 use crate::app::chat_store::{
     ContactWritePort, hydration_port::ChatStoreHydrationPort, write_port::ChatStoreWritePort,
 };
@@ -154,6 +155,7 @@ pub struct App<'a> {
     pub(crate) chat_store_write: Box<dyn ChatStoreWritePort>,
     pub(crate) contact_write: Box<dyn ContactWritePort>,
     pub(crate) message_reaction_write: Box<dyn MessageReactionWritePort>,
+    pub(crate) chat_read_cursor: Box<dyn ChatReadCursorPort>,
     pub(crate) status_cursor: Box<dyn StatusCursorPort>,
     pub media_path: PathBuf,
     pub whatsmeow_db: PathBuf,
@@ -338,6 +340,10 @@ impl App<'_> {
 
     pub fn set_message_reaction_write(&mut self, port: Box<dyn MessageReactionWritePort>) {
         self.message_reaction_write = port;
+    }
+
+    pub fn set_chat_read_cursor(&mut self, port: Box<dyn ChatReadCursorPort>) {
+        self.chat_read_cursor = port;
     }
 
     pub fn set_status_cursor(&mut self, port: Box<dyn StatusCursorPort>) {

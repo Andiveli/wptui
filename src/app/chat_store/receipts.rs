@@ -1,4 +1,4 @@
-use super::super::{App, StoreStatusCursor};
+use super::super::{App, StoreChatReadCursor, StoreStatusCursor};
 use whatsrust as wr;
 
 impl App<'_> {
@@ -174,8 +174,11 @@ impl App<'_> {
         timeline.last_read_message = Some(target_id.clone());
         timeline.last_read_at = Some(target_timestamp);
         timeline.pending_new_messages = pending;
-        self.db_handler
-            .set_last_read_cursor(&chat, Some(target_id), target_timestamp);
+        self.chat_read_cursor.store(StoreChatReadCursor {
+            chat: chat.clone(),
+            message_id: Some(target_id),
+            timestamp: target_timestamp,
+        });
         self.invalidate_chat_list();
         self.record_receipt_classification(
             kind,

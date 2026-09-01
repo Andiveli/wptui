@@ -10,6 +10,8 @@ use crate::app::{Chat, DELETED_MESSAGE_TEXT, MessageAction};
 
 #[path = "db/action_repository.rs"]
 mod action_repository;
+#[path = "db/chat_read_cursor.rs"]
+mod chat_read_cursor;
 #[path = "db/chat_store.rs"]
 mod chat_store;
 #[path = "db/chat_store_hydration.rs"]
@@ -37,6 +39,7 @@ mod status_cursor;
 #[path = "db/worker.rs"]
 mod worker;
 pub use action_repository::MessageActionPersistence;
+pub use chat_read_cursor::SqliteChatReadCursor;
 pub use chat_store_hydration::SqliteChatStoreHydration;
 pub use chat_store_writer::SqliteChatStoreWriter;
 pub(crate) use connection::{
