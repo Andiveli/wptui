@@ -514,6 +514,119 @@ fn status_cursor_stays_behind_its_port_and_path_adapter_boundary() {
 }
 
 #[test]
+fn status_retention_stays_behind_a_path_only_port_adapter() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for path in rust_sources(&root.join("src/app")) {
+        assert!(
+            !fs::read_to_string(&path)
+                .unwrap()
+                .contains("db_handler.purge_expired_statuses"),
+            "{} must not bypass StatusRetentionPort",
+            path.strip_prefix(root).unwrap().display()
+        );
+    }
+
+    let startup = fs::read_to_string(root.join("src/app/runtime_startup.rs")).unwrap();
+    let startup_compact: String = startup.split_whitespace().collect();
+    assert!(
+        startup_compact.contains("status_retention.purge_expired_statuses"),
+        "runtime startup must purge expired statuses through StatusRetentionPort"
+    );
+    assert!(
+        startup.find("app.db_handler.init()").unwrap()
+            < startup.find("prepare_persisted_state(app)").unwrap(),
+        "DatabaseHandler initialization must precede persisted-state preparation"
+    );
+
+    let port = fs::read_to_string(root.join("src/app/status_retention.rs")).unwrap();
+    assert!(port.contains("pub trait StatusRetentionPort"));
+    assert!(
+        [
+            "rusqlite",
+            "remove_status_media_files",
+            "std::fs",
+            "fs::",
+            "MediaRoot"
+        ]
+        .iter()
+        .all(|token| !port.contains(token)),
+        "StatusRetentionPort must not depend on SQLite or media filesystem details"
+    );
+
+    let adapter = fs::read_to_string(root.join("src/db/status_retention.rs")).unwrap();
+    let adapter_compact: String = adapter.split_whitespace().collect();
+    assert!(adapter_compact.contains("pubstructSqliteStatusRetention{db_path:PathBuf,}"));
+    assert!(
+        adapter.contains("try_open_database(&self.db_path)")
+            && adapter.contains("retention::purge")
+    );
+    assert!(
+        [
+            "Worker",
+            "QueueHandle",
+            "thread",
+            "Connection",
+            "DatabaseHandler",
+            "DATABASE_WRITE_LOCK",
+            "remove_status_media_files",
+            "std::fs",
+            "fs::",
+            "File",
+            "MediaRoot",
+        ]
+        .iter()
+        .all(|token| !adapter.contains(token)),
+        "SqliteStatusRetention must remain a path-only adapter"
+    );
+
+    let allowed = [
+        ("src/app/bootstrap.rs", "&db_path"),
+        ("src/app/test_support.rs", "&db_path"),
+        ("tests/common/mod.rs", "path"),
+        ("tests/message_actions.rs", "&db_path"),
+        ("tests/media_cleanup.rs", "&db_path"),
+    ];
+    for path in rust_sources(&root.join("src"))
+        .into_iter()
+        .chain(rust_sources(&root.join("tests")))
+    {
+        assert!(
+            allowed
+                .iter()
+                .any(|(allowed, _)| path == root.join(allowed))
+                || path == root.join("tests/status_retention_port.rs")
+                || path == root.join("tests/architecture_boundaries.rs")
+                || !fs::read_to_string(&path)
+                    .unwrap()
+                    .contains("SqliteStatusRetention::new"),
+            "{} must receive StatusRetentionPort rather than construct SqliteStatusRetention",
+            path.strip_prefix(root).unwrap().display()
+        );
+    }
+    for (path, db_path) in allowed {
+        let compact: String = fs::read_to_string(root.join(path))
+            .unwrap()
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect();
+        assert!(
+            compact.contains(&format!("DatabaseHandler::new({db_path})"))
+                && compact.contains(&format!("SqliteStatusRetention::new({db_path})"))
+                && compact.matches("SqliteStatusRetention::new").count() == 1,
+            "{path} must construct StatusRetention exactly once with the DatabaseHandler path"
+        );
+    }
+    assert_eq!(
+        fs::read_to_string(root.join("tests/status_retention_port.rs"))
+            .unwrap()
+            .matches("SqliteStatusRetention::new")
+            .count(),
+        2,
+        "the adapter contract must cover one valid and one invalid database path"
+    );
+}
+
+#[test]
 fn chat_read_cursor_stays_behind_its_port_and_path_adapter_boundary() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     for path in rust_sources(&root.join("src/app")) {
