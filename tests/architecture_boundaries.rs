@@ -354,7 +354,15 @@ fn contact_persistence_routes_through_the_port_and_keeps_a_path_only_adapter() {
             && hydration.contains(".persist(")
             && hydration.contains("PersistContact{jid,name}")
     );
-    assert!(hydration.contains("wr::get_contacts()"));
+    for path in rust_sources(&root.join("src/app")) {
+        assert!(
+            !fs::read_to_string(path)
+                .unwrap()
+                .contains("wr::get_contacts()")
+        );
+    }
+    assert!(hydration.contains("contact_source.get_contacts()"));
+    assert!(hydration.contains("apply_contact_refresh("));
     assert!(
         adapter.contains("db_path: PathBuf") && adapter.contains("open_database(&self.db_path)")
     );
@@ -370,6 +378,45 @@ fn contact_persistence_routes_through_the_port_and_keeps_a_path_only_adapter() {
         ]
         .iter()
         .all(|token| !adapter.contains(token))
+    );
+    let source_adapter = fs::read_to_string(root.join("src/contact_source.rs")).unwrap();
+    assert!(source_adapter.contains("wr::get_contacts()"));
+    assert!(
+        [
+            "db",
+            "contact_write",
+            "Sqlite",
+            "Worker",
+            "session",
+            "action"
+        ]
+        .iter()
+        .all(|token| !source_adapter.contains(token))
+    );
+    let bootstrap = root.join("src/app/bootstrap.rs");
+    assert_eq!(
+        fs::read_to_string(&bootstrap)
+            .unwrap()
+            .matches("WhatsRustContactSource")
+            .count(),
+        1,
+        "bootstrap must construct the production contact source exactly once"
+    );
+    for path in rust_sources(&root.join("src")) {
+        assert!(
+            path == root.join("src/app/test_support.rs")
+                || path == root.join("src/app/chat_store/tests.rs")
+                || !fs::read_to_string(path)
+                    .unwrap()
+                    .contains("set_contact_source(Box::new(")
+        );
+    }
+    assert_eq!(
+        fs::read_to_string(root.join("src/app/test_support.rs"))
+            .unwrap()
+            .matches("set_contact_source(Box::new(FakeContactSource::default()))")
+            .count(),
+        3
     );
 }
 

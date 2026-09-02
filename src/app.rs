@@ -23,6 +23,7 @@ pub mod composer_input_mapping;
 pub mod composer_input_paste;
 pub mod composer_integration;
 pub mod contact_avatars;
+pub mod contact_source_port;
 pub mod contextual_actions;
 pub mod contextual_activation;
 pub mod contextual_routing;
@@ -96,6 +97,7 @@ use crate::app::chat_store::{
 pub use crate::app::community_hierarchy::{CommunityNavigationRow, CommunityNode};
 use crate::app::composer::Composer;
 use crate::app::contact_avatars::ContactAvatars;
+pub use crate::app::contact_source_port::ContactSourcePort;
 use crate::app::events::{AppEvent, AppInput, AttachmentViewerState, ViewerPreviewState};
 use crate::app::input_reader::InputReader;
 pub use crate::app::media_support::{remove_owned_media_files, remove_status_media_files};
@@ -158,6 +160,7 @@ pub struct App<'a> {
     pub(crate) chat_store_hydration: Box<dyn ChatStoreHydrationPort>,
     pub(crate) chat_store_write: Box<dyn ChatStoreWritePort>,
     pub(crate) contact_write: Box<dyn ContactWritePort>,
+    pub(crate) contact_source: Box<dyn ContactSourcePort>,
     pub(crate) message_reaction_write: Box<dyn MessageReactionWritePort>,
     pub(crate) chat_read_cursor: Box<dyn ChatReadCursorPort>,
     pub(crate) status_cursor: Box<dyn StatusCursorPort>,
@@ -341,6 +344,10 @@ impl App<'_> {
 
     pub fn set_contact_write(&mut self, port: Box<dyn ContactWritePort>) {
         self.contact_write = port;
+    }
+
+    pub fn set_contact_source(&mut self, port: Box<dyn ContactSourcePort>) {
+        self.contact_source = port;
     }
 
     pub fn set_message_reaction_write(&mut self, port: Box<dyn MessageReactionWritePort>) {

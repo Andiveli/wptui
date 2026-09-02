@@ -100,7 +100,8 @@ impl App<'_> {
     }
 
     pub(crate) fn get_contacts(&mut self) {
-        self.apply_contact_refresh(wr::get_contacts());
+        let contacts = self.contact_source.get_contacts();
+        self.apply_contact_refresh(contacts);
     }
 
     pub(crate) fn apply_contact_refresh(&mut self, contacts: Vec<(wr::JID, Arc<str>)>) {

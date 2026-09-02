@@ -1,7 +1,7 @@
 use super::{
-    App, ChatReadCursorPort, Clock, NotificationProjection, Notifier, PurgeExpiredStatuses,
-    PurgedExpiredStatuses, StatusCursorError, StatusCursorPort, StatusRetentionError,
-    StatusRetentionPort, StoreChatReadCursor, StoreStatusCursor,
+    App, ChatReadCursorPort, Clock, ContactSourcePort, NotificationProjection, Notifier,
+    PurgeExpiredStatuses, PurgedExpiredStatuses, StatusCursorError, StatusCursorPort,
+    StatusRetentionError, StatusRetentionPort, StoreChatReadCursor, StoreStatusCursor,
 };
 use crate::db::{
     DatabaseHandler, SqliteChatReadCursor, SqliteChatStoreHydration, SqliteContactWriter,
@@ -52,6 +52,19 @@ impl Clock for MutableClock {
 #[derive(Clone, Default)]
 pub(crate) struct RecordingNotifier {
     pub(crate) notifications: Arc<Mutex<Vec<(String, String)>>>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct FakeContactSource {
+    pub(crate) rows: Arc<Mutex<Vec<(wr::JID, Arc<str>)>>>,
+    pub(crate) calls: Arc<Mutex<usize>>,
+}
+
+impl ContactSourcePort for FakeContactSource {
+    fn get_contacts(&self) -> Vec<(wr::JID, Arc<str>)> {
+        *self.calls.lock().unwrap() += 1;
+        self.rows.lock().unwrap().clone()
+    }
 }
 
 #[derive(Clone, Default)]
@@ -132,7 +145,8 @@ impl Notifier for RecordingNotifier {
 impl TestApp {
     pub(crate) fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let app = App::with_data_dir(dir.path(), dir.path());
+        let mut app = App::with_data_dir(dir.path(), dir.path());
+        app.set_contact_source(Box::new(FakeContactSource::default()));
         app.db_handler.init();
         Self { app, _dir: dir }
     }
@@ -150,6 +164,7 @@ impl TestApp {
         app.set_status_retention(Box::new(SqliteStatusRetention::new(&db_path)));
         std::mem::replace(&mut app.db_handler, db_handler).stop();
         app.chat_store_hydration = Box::new(SqliteChatStoreHydration::new(&db_path));
+        app.set_contact_source(Box::new(FakeContactSource::default()));
         app.db_handler.init();
         Self { app, _dir: dir }
     }
@@ -160,12 +175,13 @@ impl TestApp {
         N: Notifier + 'static,
     {
         let dir = tempfile::tempdir().unwrap();
-        let app = App::with_data_dir_and_ports(
+        let mut app = App::with_data_dir_and_ports(
             dir.path(),
             dir.path(),
             Box::new(clock),
             Box::new(notifier),
         );
+        app.set_contact_source(Box::new(FakeContactSource::default()));
         app.db_handler.init();
         Self { app, _dir: dir }
     }

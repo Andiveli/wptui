@@ -2,7 +2,7 @@ use super::hydration_port::{ChatStoreHydration, ChatStoreHydrationPort};
 use super::*;
 use crate::app::{
     Chat,
-    test_support::{FakeChatReadCursorPort, FakeStatusCursorPort, TestApp},
+    test_support::{FakeChatReadCursorPort, FakeContactSource, FakeStatusCursorPort, TestApp},
 };
 use std::{
     panic::AssertUnwindSafe,
@@ -69,6 +69,41 @@ fn contact_refresh_updates_memory_and_persists_ordered_commands() {
     assert_eq!(commands[0].name.as_ref(), "First");
     assert_eq!(commands[1].jid, second);
     assert_eq!(commands[1].name.as_ref(), "Second");
+}
+
+#[test]
+fn get_contacts_queries_source_once_and_applies_persisted_rows() {
+    let mut app = TestApp::new();
+    let source = FakeContactSource::default();
+    let writer = RecordingContactWriter::default();
+    let jid = wr::JID::from("alice@example.test".to_owned());
+    source
+        .rows
+        .lock()
+        .unwrap()
+        .push((jid.clone(), "Alice".into()));
+    app.contact_write = Box::new(writer.clone());
+    app.set_contact_source(Box::new(source.clone()));
+
+    app.get_contacts();
+
+    assert_eq!(*source.calls.lock().unwrap(), 1);
+    assert_eq!(app.contacts[&jid].as_ref(), "Alice");
+    assert_eq!(writer.0.lock().unwrap()[0].jid, jid);
+}
+
+#[test]
+fn apply_contact_refresh_does_not_query_source() {
+    let mut app = TestApp::new();
+    let source = FakeContactSource::default();
+    app.set_contact_source(Box::new(source.clone()));
+
+    app.apply_contact_refresh(vec![(
+        "alice@example.test".to_owned().into(),
+        "Alice".into(),
+    )]);
+
+    assert_eq!(*source.calls.lock().unwrap(), 0);
 }
 
 #[test]
