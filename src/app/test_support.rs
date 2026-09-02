@@ -1,10 +1,11 @@
 use super::{
-    App, ChatReadCursorPort, Clock, NotificationProjection, Notifier, StatusCursorError,
-    StatusCursorPort, StoreChatReadCursor, StoreStatusCursor,
+    App, ChatReadCursorPort, Clock, NotificationProjection, Notifier, PurgeExpiredStatuses,
+    PurgedExpiredStatuses, StatusCursorError, StatusCursorPort, StatusRetentionError,
+    StatusRetentionPort, StoreChatReadCursor, StoreStatusCursor,
 };
 use crate::db::{
     DatabaseHandler, SqliteChatReadCursor, SqliteChatStoreHydration, SqliteContactWriter,
-    SqliteMessageReactionWriter, SqliteStatusCursor,
+    SqliteMessageReactionWriter, SqliteStatusCursor, SqliteStatusRetention,
 };
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -76,6 +77,29 @@ impl StatusCursorPort for FakeStatusCursorPort {
 }
 
 #[derive(Clone, Default)]
+pub(crate) struct FakeStatusRetentionPort {
+    pub(crate) commands: Arc<Mutex<Vec<PurgeExpiredStatuses>>>,
+    pub(crate) media_paths: Arc<Mutex<Vec<std::path::PathBuf>>>,
+    pub(crate) error: Arc<Mutex<Option<Arc<str>>>>,
+}
+
+impl StatusRetentionPort for FakeStatusRetentionPort {
+    fn purge_expired_statuses(
+        &self,
+        command: PurgeExpiredStatuses,
+    ) -> Result<PurgedExpiredStatuses, StatusRetentionError> {
+        self.commands.lock().unwrap().push(command);
+        if let Some(error) = self.error.lock().unwrap().clone() {
+            Err(StatusRetentionError(error))
+        } else {
+            Ok(PurgedExpiredStatuses {
+                media_paths: self.media_paths.lock().unwrap().clone(),
+            })
+        }
+    }
+}
+
+#[derive(Clone, Default)]
 pub(crate) struct FakeChatReadCursorPort {
     pub(crate) loaded: Arc<Mutex<Vec<(wr::JID, wr::MessageId, i64)>>>,
     pub(crate) stored: Arc<Mutex<Vec<StoreChatReadCursor>>>,
@@ -123,6 +147,7 @@ impl TestApp {
         app.set_message_reaction_write(Box::new(SqliteMessageReactionWriter::new(&db_path)));
         app.set_chat_read_cursor(Box::new(SqliteChatReadCursor::new(&db_path)));
         app.set_status_cursor(Box::new(SqliteStatusCursor::new(&db_path)));
+        app.set_status_retention(Box::new(SqliteStatusRetention::new(&db_path)));
         std::mem::replace(&mut app.db_handler, db_handler).stop();
         app.chat_store_hydration = Box::new(SqliteChatStoreHydration::new(&db_path));
         app.db_handler.init();

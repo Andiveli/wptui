@@ -9,7 +9,7 @@ use whatsrust::{FileContent, FileKind, JID, Message, MessageContent, MessageInfo
 use wp_tui::app::{FileMeta, MessageAction, MessageActionKind, Metadata};
 use wp_tui::db::{
     SqliteChatReadCursor, SqliteChatStoreHydration, SqliteContactWriter,
-    SqliteMessageReactionWriter, SqliteStatusCursor,
+    SqliteMessageReactionWriter, SqliteStatusCursor, SqliteStatusRetention,
 };
 mod common;
 use common::TestApp;
@@ -46,6 +46,7 @@ fn app_with_media(media: &Path) -> TestApp {
     app.set_message_reaction_write(Box::new(SqliteMessageReactionWriter::new(&db_path)));
     app.set_chat_read_cursor(Box::new(SqliteChatReadCursor::new(&db_path)));
     app.set_status_cursor(Box::new(SqliteStatusCursor::new(&db_path)));
+    app.set_status_retention(Box::new(SqliteStatusRetention::new(&db_path)));
     std::mem::replace(&mut app.db_handler, db_handler).stop();
     app.set_chat_store_hydration(Box::new(SqliteChatStoreHydration::new(&db_path)));
     app.db_handler.init();

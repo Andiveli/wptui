@@ -36,6 +36,8 @@ mod retention;
 mod schema;
 #[path = "db/status_cursor.rs"]
 mod status_cursor;
+#[path = "db/status_retention.rs"]
+mod status_retention;
 #[path = "db/worker.rs"]
 mod worker;
 pub use action_repository::MessageActionPersistence;
@@ -48,6 +50,7 @@ pub(crate) use connection::{
 pub use contact_writer::SqliteContactWriter;
 pub use reaction_writer::SqliteMessageReactionWriter;
 pub use status_cursor::SqliteStatusCursor;
+pub use status_retention::SqliteStatusRetention;
 
 pub struct DatabaseHandler {
     db: Connection,
@@ -154,6 +157,6 @@ impl DatabaseHandler {
     /// retention window. Returns the relative media paths of the purged
     /// file messages so the caller can remove them from disk.
     pub fn purge_expired_statuses(&mut self, now: i64) -> Vec<PathBuf> {
-        retention::purge(&mut self.db, now)
+        retention::purge(&mut self.db, now).unwrap()
     }
 }

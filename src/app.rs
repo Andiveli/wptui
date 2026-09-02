@@ -72,6 +72,7 @@ pub mod status_actions;
 pub mod status_cursor;
 pub mod status_input;
 pub mod status_projection;
+pub mod status_retention;
 pub mod terminal_input_translation;
 pub mod terminal_session;
 #[cfg(test)]
@@ -113,6 +114,9 @@ use crate::app::runtime_diagnostics::{MessageListCounts, Phase, RuntimeDiagnosti
 pub use crate::app::share_picker::SharePicker;
 pub use crate::app::status_cursor::{StatusCursorError, StatusCursorPort, StoreStatusCursor};
 pub use crate::app::status_projection::STATUS_BROADCAST_CHAT;
+pub use crate::app::status_retention::{
+    PurgeExpiredStatuses, PurgedExpiredStatuses, StatusRetentionError, StatusRetentionPort,
+};
 use crate::db;
 use crate::file_picker::FilePickerState;
 use crate::key_handler::KeybindHandler;
@@ -157,6 +161,7 @@ pub struct App<'a> {
     pub(crate) message_reaction_write: Box<dyn MessageReactionWritePort>,
     pub(crate) chat_read_cursor: Box<dyn ChatReadCursorPort>,
     pub(crate) status_cursor: Box<dyn StatusCursorPort>,
+    pub(crate) status_retention: Box<dyn StatusRetentionPort>,
     pub media_path: PathBuf,
     pub whatsmeow_db: PathBuf,
     pub clock: Box<dyn Clock>,
@@ -348,6 +353,10 @@ impl App<'_> {
 
     pub fn set_status_cursor(&mut self, port: Box<dyn StatusCursorPort>) {
         self.status_cursor = port;
+    }
+
+    pub fn set_status_retention(&mut self, port: Box<dyn StatusRetentionPort>) {
+        self.status_retention = port;
     }
 
     pub(crate) fn toggle_composer_direction(&mut self) {
