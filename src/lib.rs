@@ -1,5 +1,6 @@
 pub mod app;
 pub mod clipboard;
+pub mod community_query;
 pub mod contact_source;
 pub mod crash_diagnostics;
 pub mod db;

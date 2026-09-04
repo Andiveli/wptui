@@ -1,4 +1,4 @@
-use super::super::test_support::TestApp;
+use super::super::test_support::{FakeCommunityQuery, TestApp};
 use crate::app::Section;
 use whatsrust as wr;
 
@@ -16,12 +16,20 @@ fn community(name: &str, jid: &str, is_parent: bool) -> wr::CommunityInfo {
 }
 
 #[test]
-fn communities_load_after_readiness_event() {
+fn load_communities_queries_the_injected_port_once() {
     let mut app = TestApp::new();
-    app.refresh_communities(|| Ok(vec![community("Community", "root@g.us", true)]));
+    let query = FakeCommunityQuery::default();
+    query
+        .results
+        .lock()
+        .unwrap()
+        .push_back(Ok(vec![community("Community", "root@g.us", true)]));
+    app.set_community_query(Box::new(query.clone()));
 
+    app.load_communities();
+
+    assert_eq!(*query.calls.lock().unwrap(), 1);
     assert_eq!(app.communities.len(), 1);
-    assert!(!app.communities_unavailable);
 }
 
 #[test]

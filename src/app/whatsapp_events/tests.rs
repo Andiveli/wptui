@@ -1,7 +1,9 @@
 use super::*;
 use crate::app::{
     chat_store::write_port::{ChatStoreWritePort, PersistChat, PersistChatMessage, PersistMessage},
-    test_support::{FakeChatReadCursorPort, FakeStatusCursorPort, TestApp, message},
+    test_support::{
+        FakeChatReadCursorPort, FakeCommunityQuery, FakeStatusCursorPort, TestApp, message,
+    },
 };
 use std::{
     panic::AssertUnwindSafe,
@@ -42,6 +44,22 @@ fn sync_progress_event_updates_history_progress() {
 
     assert!(app.handle_whatsapp_event(wr::Event::SyncProgress(42)));
     assert_eq!(app.history_sync_percent, Some(42));
+}
+
+#[test]
+fn connection_and_sync_complete_each_query_communities_once() {
+    let mut app = TestApp::new();
+    let query = FakeCommunityQuery::default();
+    query.results.lock().unwrap().extend([
+        Err(wr::CommunitiesError::BridgeUnavailable),
+        Err(wr::CommunitiesError::BridgeUnavailable),
+    ]);
+    app.set_community_query(Box::new(query.clone()));
+
+    app.handle_whatsapp_event(wr::Event::Connected);
+    assert_eq!(*query.calls.lock().unwrap(), 1);
+    app.handle_whatsapp_event(wr::Event::AppStateSyncComplete);
+    assert_eq!(*query.calls.lock().unwrap(), 2);
 }
 
 #[test]

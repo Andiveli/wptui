@@ -786,6 +786,61 @@ fn chat_read_cursor_stays_behind_its_port_and_path_adapter_boundary() {
     assert!(handler.contains("pubfnset_last_read_cursor(&self,chat:&wr::JID,message_id:Option<wr::MessageId>,timestamp:i64,)") && handler.contains("pubfnread_cursors(&self)->Vec<(wr::JID,wr::MessageId,i64)>"));
 }
 
+#[test]
+fn communities_query_stays_at_its_port_and_root_adapter_boundaries() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for path in rust_sources(&root.join("src/app")) {
+        assert!(
+            !fs::read_to_string(&path)
+                .unwrap()
+                .contains("wr::get_communities"),
+            "{} must query communities through CommunityQueryPort",
+            path.strip_prefix(root).unwrap().display()
+        );
+    }
+
+    let adapters: Vec<_> = rust_sources(&root.join("src"))
+        .into_iter()
+        .filter(|path| {
+            fs::read_to_string(path)
+                .unwrap()
+                .contains("wr::get_communities")
+        })
+        .collect();
+    assert_eq!(
+        adapters.len(),
+        1,
+        "one root adapter must call wr::get_communities"
+    );
+    let adapter = &adapters[0];
+    assert!(
+        adapter
+            .parent()
+            .is_some_and(|parent| parent == root.join("src"))
+    );
+    let source = fs::read_to_string(adapter).unwrap();
+    assert!(
+        ["db", "persist", "action", "session", "DatabaseHandler"]
+            .iter()
+            .all(|token| !source.contains(token)),
+        "the community adapter must only bridge the WhatsRust query"
+    );
+
+    let bootstrap = fs::read_to_string(root.join("src/app/bootstrap.rs")).unwrap();
+    assert_eq!(bootstrap.matches("WhatsRustCommunityQuery").count(), 1);
+    for path in rust_sources(&root.join("src")) {
+        let source = fs::read_to_string(&path).unwrap();
+        if source.contains("set_community_query(Box::new") {
+            assert!(
+                path == root.join("src/app/test_support.rs")
+                    || path.file_name().is_some_and(|name| name == "tests.rs"),
+                "{} may not replace the production community query",
+                path.strip_prefix(root).unwrap().display()
+            );
+        }
+    }
+}
+
 fn rust_sources(directory: &Path) -> Vec<PathBuf> {
     let mut sources = Vec::new();
     collect_rust_sources(directory, &mut sources);

@@ -1,6 +1,6 @@
 use super::{
-    App, ChatReadCursorPort, Clock, ContactSourcePort, NotificationProjection, Notifier,
-    PurgeExpiredStatuses, PurgedExpiredStatuses, StatusCursorError, StatusCursorPort,
+    App, ChatReadCursorPort, Clock, CommunityQueryPort, ContactSourcePort, NotificationProjection,
+    Notifier, PurgeExpiredStatuses, PurgedExpiredStatuses, StatusCursorError, StatusCursorPort,
     StatusRetentionError, StatusRetentionPort, StoreChatReadCursor, StoreStatusCursor,
 };
 use crate::db::{
@@ -8,7 +8,10 @@ use crate::db::{
     SqliteMessageReactionWriter, SqliteStatusCursor, SqliteStatusRetention,
 };
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex},
+};
 use whatsrust as wr;
 pub(crate) struct TestApp {
     pub(crate) app: App<'static>,
@@ -64,6 +67,23 @@ impl ContactSourcePort for FakeContactSource {
     fn get_contacts(&self) -> Vec<(wr::JID, Arc<str>)> {
         *self.calls.lock().unwrap() += 1;
         self.rows.lock().unwrap().clone()
+    }
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct FakeCommunityQuery {
+    pub(crate) results: Arc<Mutex<VecDeque<Result<Vec<wr::CommunityInfo>, wr::CommunitiesError>>>>,
+    pub(crate) calls: Arc<Mutex<usize>>,
+}
+
+impl CommunityQueryPort for FakeCommunityQuery {
+    fn get_communities(&self) -> Result<Vec<wr::CommunityInfo>, wr::CommunitiesError> {
+        *self.calls.lock().unwrap() += 1;
+        self.results
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("community result must be configured")
     }
 }
 
@@ -142,14 +162,17 @@ impl Notifier for RecordingNotifier {
         Ok(())
     }
 }
+
 impl TestApp {
     pub(crate) fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let mut app = App::with_data_dir(dir.path(), dir.path());
         app.set_contact_source(Box::new(FakeContactSource::default()));
+        app.set_community_query(Box::new(FakeCommunityQuery::default()));
         app.db_handler.init();
         Self { app, _dir: dir }
     }
+
     pub(crate) fn with_database(path: &Path) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let mut app = App::with_data_dir(dir.path(), dir.path());
@@ -165,6 +188,7 @@ impl TestApp {
         std::mem::replace(&mut app.db_handler, db_handler).stop();
         app.chat_store_hydration = Box::new(SqliteChatStoreHydration::new(&db_path));
         app.set_contact_source(Box::new(FakeContactSource::default()));
+        app.set_community_query(Box::new(FakeCommunityQuery::default()));
         app.db_handler.init();
         Self { app, _dir: dir }
     }
@@ -182,15 +206,18 @@ impl TestApp {
             Box::new(notifier),
         );
         app.set_contact_source(Box::new(FakeContactSource::default()));
+        app.set_community_query(Box::new(FakeCommunityQuery::default()));
         app.db_handler.init();
         Self { app, _dir: dir }
     }
 }
+
 impl Drop for TestApp {
     fn drop(&mut self) {
         self.app.db_handler.stop();
     }
 }
+
 impl std::ops::Deref for TestApp {
     type Target = App<'static>;
 
@@ -198,11 +225,13 @@ impl std::ops::Deref for TestApp {
         &self.app
     }
 }
+
 impl std::ops::DerefMut for TestApp {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.app
     }
 }
+
 pub(crate) fn message(chat: &wr::JID, id: &str, timestamp: i64) -> wr::Message {
     wr::Message {
         info: wr::MessageInfo {
