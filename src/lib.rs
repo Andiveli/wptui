@@ -1,4 +1,5 @@
 pub mod app;
+pub mod chat_settings;
 pub mod clipboard;
 pub mod community_query;
 pub mod contact_source;

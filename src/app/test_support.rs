@@ -1,6 +1,6 @@
 use super::{
-    App, ChatReadCursorPort, Clock, CommunityQueryPort, ContactSourcePort, DmResolverPort,
-    NotificationProjection, Notifier, PurgeExpiredStatuses, PurgedExpiredStatuses,
+    App, ChatReadCursorPort, ChatSettingsQueryPort, Clock, CommunityQueryPort, ContactSourcePort,
+    DmResolverPort, NotificationProjection, Notifier, PurgeExpiredStatuses, PurgedExpiredStatuses,
     StatusCursorError, StatusCursorPort, StatusRetentionError, StatusRetentionPort,
     StoreChatReadCursor, StoreStatusCursor,
 };
@@ -90,6 +90,19 @@ impl DmResolverPort for FakeDmResolver {
     fn resolve_dm_chat(&self, sender: &wr::JID) -> Option<wr::JID> {
         self.calls.lock().unwrap().push(sender.clone());
         self.result.lock().unwrap().clone()
+    }
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct FakeChatSettingsQuery {
+    pub(crate) settings: Arc<Mutex<wr::ChatSettings>>,
+    pub(crate) jids: Arc<Mutex<Vec<wr::JID>>>,
+}
+
+impl ChatSettingsQueryPort for FakeChatSettingsQuery {
+    fn get_chat_settings(&self, jid: &wr::JID) -> wr::ChatSettings {
+        self.jids.lock().unwrap().push(jid.clone());
+        self.settings.lock().unwrap().clone()
     }
 }
 
@@ -191,6 +204,7 @@ impl TestApp {
         let dir = tempfile::tempdir().unwrap();
         let mut app = App::with_data_dir(dir.path(), dir.path());
         app.set_contact_source(Box::new(FakeContactSource::default()));
+        app.set_chat_settings_query(Box::new(FakeChatSettingsQuery::default()));
         app.set_community_query(Box::new(FakeCommunityQuery::default()));
         app.set_dm_resolver(Box::new(FakeDmResolver::default()));
         app.db_handler.init();
@@ -212,6 +226,7 @@ impl TestApp {
         std::mem::replace(&mut app.db_handler, db_handler).stop();
         app.chat_store_hydration = Box::new(SqliteChatStoreHydration::new(&db_path));
         app.set_contact_source(Box::new(FakeContactSource::default()));
+        app.set_chat_settings_query(Box::new(FakeChatSettingsQuery::default()));
         app.set_community_query(Box::new(FakeCommunityQuery::default()));
         app.set_dm_resolver(Box::new(FakeDmResolver::default()));
         app.db_handler.init();
@@ -231,6 +246,7 @@ impl TestApp {
             Box::new(notifier),
         );
         app.set_contact_source(Box::new(FakeContactSource::default()));
+        app.set_chat_settings_query(Box::new(FakeChatSettingsQuery::default()));
         app.set_community_query(Box::new(FakeCommunityQuery::default()));
         app.set_dm_resolver(Box::new(FakeDmResolver::default()));
         app.db_handler.init();

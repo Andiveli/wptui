@@ -33,7 +33,15 @@ impl App<'_> {
     }
 
     pub(crate) fn process_message(&mut self, message: wr::Message, is_sync: bool) -> bool {
-        self.process_message_with_lookup(message, is_sync, wr::get_chat_settings)
+        let mut chat_settings = (!is_sync && self.should_notify(&message)).then(|| {
+            self.chat_settings_query
+                .get_chat_settings(&message.info.chat)
+        });
+        self.process_message_with_lookup(message, is_sync, move |_| {
+            chat_settings
+                .take()
+                .expect("chat settings are queried only for eligible messages")
+        })
     }
 
     pub(crate) fn process_message_with_lookup(

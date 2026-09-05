@@ -15,6 +15,7 @@ pub mod chat_opening;
 pub mod chat_ordering;
 pub mod chat_projection;
 pub mod chat_search_input;
+pub mod chat_settings_query_port;
 pub mod chat_store;
 pub mod community_bridge;
 pub mod community_hierarchy;
@@ -92,6 +93,7 @@ use crate::app::actions::{
     WhatsAppMessageReactor, WhatsAppMessageRevoker,
 };
 pub use crate::app::chat_projection::{ChatRow, ContactRow};
+pub use crate::app::chat_settings_query_port::ChatSettingsQueryPort;
 pub use crate::app::chat_store::{ChatReadCursorPort, StoreChatReadCursor};
 use crate::app::chat_store::{
     ContactWritePort, hydration_port::ChatStoreHydrationPort, write_port::ChatStoreWritePort,
@@ -166,6 +168,7 @@ pub struct App<'a> {
     pub(crate) contact_write: Box<dyn ContactWritePort>,
     pub(crate) contact_source: Box<dyn ContactSourcePort>,
     pub(crate) community_query: Box<dyn CommunityQueryPort>,
+    pub(crate) chat_settings_query: Box<dyn ChatSettingsQueryPort>,
     pub(crate) dm_resolver: Box<dyn DmResolverPort>,
     pub(crate) message_reaction_write: Box<dyn MessageReactionWritePort>,
     pub(crate) chat_read_cursor: Box<dyn ChatReadCursorPort>,
@@ -359,6 +362,11 @@ impl App<'_> {
     #[cfg(test)]
     pub(crate) fn set_community_query(&mut self, port: Box<dyn CommunityQueryPort>) {
         self.community_query = port;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_chat_settings_query(&mut self, port: Box<dyn ChatSettingsQueryPort>) {
+        self.chat_settings_query = port;
     }
 
     #[cfg(test)]

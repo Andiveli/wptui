@@ -897,6 +897,46 @@ fn dm_resolution_stays_at_its_port_and_root_adapter_boundaries() {
     }
 }
 
+#[test]
+fn chat_settings_query_stays_at_its_port_and_root_adapter_boundaries() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let query = "wr::get_chat_settings";
+    for path in rust_sources(&root.join("src/app")) {
+        assert!(
+            !fs::read_to_string(&path).unwrap().contains(query),
+            "{} must query settings through ChatSettingsQueryPort",
+            path.strip_prefix(root).unwrap().display()
+        );
+    }
+    let adapters: Vec<_> = rust_sources(&root.join("src"))
+        .into_iter()
+        .filter(|path| fs::read_to_string(path).unwrap().contains(query))
+        .collect();
+    assert_eq!(adapters, vec![root.join("src/chat_settings.rs")]);
+    assert_eq!(
+        fs::read_to_string(&adapters[0])
+            .unwrap()
+            .matches(query)
+            .count(),
+        1
+    );
+    let bootstrap = fs::read_to_string(root.join("src/app/bootstrap.rs")).unwrap();
+    assert_eq!(bootstrap.matches("WhatsRustChatSettingsQuery").count(), 1);
+    for path in rust_sources(&root.join("src")) {
+        if fs::read_to_string(&path)
+            .unwrap()
+            .contains(".set_chat_settings_query(")
+        {
+            assert!(
+                path == root.join("src/app/test_support.rs")
+                    || path == root.join("src/app/message_ingestion/tests.rs"),
+                "{} may replace ChatSettingsQueryPort only in message-ingestion tests",
+                path.strip_prefix(root).unwrap().display()
+            );
+        }
+    }
+}
+
 fn rust_sources(directory: &Path) -> Vec<PathBuf> {
     let mut sources = Vec::new();
     collect_rust_sources(directory, &mut sources);

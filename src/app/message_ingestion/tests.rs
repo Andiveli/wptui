@@ -6,7 +6,9 @@ use std::{
 use super::super::{
     Chat, MessageReactionWritePort, RecordMessageReaction, STATUS_BROADCAST_CHAT,
     chat_store::write_port::{ChatStoreWritePort, PersistChat, PersistMessage},
-    test_support::{FakeChatReadCursorPort, TestApp},
+    test_support::{
+        FakeChatReadCursorPort, FakeChatSettingsQuery, FixedClock, RecordingNotifier, TestApp,
+    },
 };
 use whatsrust as wr;
 
@@ -96,6 +98,67 @@ fn notification_eligibility_and_ingestion_continuation_are_preserved() {
     );
     assert_eq!(*lookup_calls.lock().unwrap(), 1);
     assert!(app.messages.contains_key("ordinary"));
+}
+
+#[test]
+fn process_message_queries_the_port_once_then_notifies_and_persists() {
+    let chat = wr::JID::from("chat@g.us".to_owned());
+    let fake = FakeChatSettingsQuery::default();
+    let notifier = RecordingNotifier::default();
+    let mut app = TestApp::with_ports(FixedClock::new(1_000), notifier.clone());
+    let persisted = Arc::new(Mutex::new(Vec::new()));
+    app.chat_store_write = Box::new(RecordingChatStoreWritePort {
+        persisted: persisted.clone(),
+    });
+    app.set_chat_settings_query(Box::new(fake.clone()));
+    assert!(app.process_message(message(&chat, "live-port", 6), false));
+    assert_eq!(*fake.jids.lock().unwrap(), vec![chat]);
+    assert_eq!(persisted.lock().unwrap().len(), 1);
+    assert_eq!(notifier.notifications.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn process_message_skips_the_port_for_ineligible_paths() {
+    let chat = wr::JID::from("chat@g.us".to_owned());
+    let fake = FakeChatSettingsQuery::default();
+    let mut app = TestApp::new();
+    app.set_chat_settings_query(Box::new(fake.clone()));
+    assert!(!app.process_message(message(&chat, "sync", 1), true));
+    let mut own = message(&chat, "own", 2);
+    own.info.is_from_me = true;
+    app.process_message(own, false);
+    app.process_message(
+        message(
+            &wr::JID::from(STATUS_BROADCAST_CHAT.to_owned()),
+            "status",
+            3,
+        ),
+        false,
+    );
+    app.open_chat = Some(chat.clone());
+    app.process_message(message(&chat, "open", 4), false);
+    assert!(fake.jids.lock().unwrap().is_empty());
+}
+
+#[test]
+fn muted_port_settings_suppress_notification_without_skipping_persistence() {
+    let chat = wr::JID::from("chat@g.us".to_owned());
+    let fake = FakeChatSettingsQuery::default();
+    let notifier = RecordingNotifier::default();
+    let mut app = TestApp::with_ports(FixedClock::new(1_000), notifier.clone());
+    let persisted = Arc::new(Mutex::new(Vec::new()));
+    app.chat_store_write = Box::new(RecordingChatStoreWritePort {
+        persisted: persisted.clone(),
+    });
+    let mut settings = wr::ChatSettings::default();
+    settings.found = true;
+    settings.muted_until = 1_001;
+    *fake.settings.lock().unwrap() = settings;
+    app.set_chat_settings_query(Box::new(fake.clone()));
+    app.process_message(message(&chat, "muted", 6), false);
+    assert_eq!(*fake.jids.lock().unwrap(), vec![chat]);
+    assert!(notifier.notifications.lock().unwrap().is_empty());
+    assert_eq!(persisted.lock().unwrap().len(), 1);
 }
 
 #[test]
