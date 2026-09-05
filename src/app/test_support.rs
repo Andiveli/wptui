@@ -1,7 +1,8 @@
 use super::{
-    App, ChatReadCursorPort, Clock, CommunityQueryPort, ContactSourcePort, NotificationProjection,
-    Notifier, PurgeExpiredStatuses, PurgedExpiredStatuses, StatusCursorError, StatusCursorPort,
-    StatusRetentionError, StatusRetentionPort, StoreChatReadCursor, StoreStatusCursor,
+    App, ChatReadCursorPort, Clock, CommunityQueryPort, ContactSourcePort, DmResolverPort,
+    NotificationProjection, Notifier, PurgeExpiredStatuses, PurgedExpiredStatuses,
+    StatusCursorError, StatusCursorPort, StatusRetentionError, StatusRetentionPort,
+    StoreChatReadCursor, StoreStatusCursor,
 };
 use crate::db::{
     DatabaseHandler, SqliteChatReadCursor, SqliteChatStoreHydration, SqliteContactWriter,
@@ -67,6 +68,28 @@ impl ContactSourcePort for FakeContactSource {
     fn get_contacts(&self) -> Vec<(wr::JID, Arc<str>)> {
         *self.calls.lock().unwrap() += 1;
         self.rows.lock().unwrap().clone()
+    }
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct FakeDmResolver {
+    pub(crate) result: Arc<Mutex<Option<wr::JID>>>,
+    pub(crate) calls: Arc<Mutex<Vec<wr::JID>>>,
+}
+
+impl FakeDmResolver {
+    pub(crate) fn with_result(result: Option<wr::JID>) -> Self {
+        Self {
+            result: Arc::new(Mutex::new(result)),
+            calls: Default::default(),
+        }
+    }
+}
+
+impl DmResolverPort for FakeDmResolver {
+    fn resolve_dm_chat(&self, sender: &wr::JID) -> Option<wr::JID> {
+        self.calls.lock().unwrap().push(sender.clone());
+        self.result.lock().unwrap().clone()
     }
 }
 
@@ -169,6 +192,7 @@ impl TestApp {
         let mut app = App::with_data_dir(dir.path(), dir.path());
         app.set_contact_source(Box::new(FakeContactSource::default()));
         app.set_community_query(Box::new(FakeCommunityQuery::default()));
+        app.set_dm_resolver(Box::new(FakeDmResolver::default()));
         app.db_handler.init();
         Self { app, _dir: dir }
     }
@@ -189,6 +213,7 @@ impl TestApp {
         app.chat_store_hydration = Box::new(SqliteChatStoreHydration::new(&db_path));
         app.set_contact_source(Box::new(FakeContactSource::default()));
         app.set_community_query(Box::new(FakeCommunityQuery::default()));
+        app.set_dm_resolver(Box::new(FakeDmResolver::default()));
         app.db_handler.init();
         Self { app, _dir: dir }
     }
@@ -207,6 +232,7 @@ impl TestApp {
         );
         app.set_contact_source(Box::new(FakeContactSource::default()));
         app.set_community_query(Box::new(FakeCommunityQuery::default()));
+        app.set_dm_resolver(Box::new(FakeDmResolver::default()));
         app.db_handler.init();
         Self { app, _dir: dir }
     }

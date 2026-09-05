@@ -1,5 +1,4 @@
 use super::{App, ConversationMode, FocusPane, Section, actions::ActionNotice};
-use whatsrust as wr;
 
 #[cfg(test)]
 mod tests;
@@ -31,8 +30,8 @@ impl App<'_> {
         // Group participants can be a LID while the real direct chat lives
         // under its phone number; resolve so we open/send to the stored chat
         // instead of an empty LID-keyed thread.
-        let target = wr::resolve_dm_chat(&message.info.sender)
-            .unwrap_or_else(|| message.info.sender.clone());
+        let sender = message.info.sender.clone();
+        let target = self.dm_resolver.resolve_dm_chat(&sender).unwrap_or(sender);
         let name = self.contact_name(&target).to_string();
         self.open_chat_by_jid(target);
         self.selected_section = Section::Chats;

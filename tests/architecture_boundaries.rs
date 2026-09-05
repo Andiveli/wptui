@@ -841,6 +841,62 @@ fn communities_query_stays_at_its_port_and_root_adapter_boundaries() {
     }
 }
 
+#[test]
+fn dm_resolution_stays_at_its_port_and_root_adapter_boundaries() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for path in rust_sources(&root.join("src/app")) {
+        assert!(
+            !fs::read_to_string(&path)
+                .unwrap()
+                .contains("wr::resolve_dm_chat"),
+            "{} must use DmResolverPort",
+            path.strip_prefix(root).unwrap().display()
+        );
+    }
+    let adapters: Vec<_> = rust_sources(&root.join("src"))
+        .into_iter()
+        .filter(|path| {
+            fs::read_to_string(path)
+                .unwrap()
+                .contains("wr::resolve_dm_chat")
+        })
+        .collect();
+    assert_eq!(
+        adapters.len(),
+        1,
+        "one root adapter must resolve direct-message chats"
+    );
+    let adapter = &adapters[0];
+    assert!(
+        adapter.parent() == Some(root.join("src").as_path())
+            && ["db", "persist", "action", "session", "DatabaseHandler"]
+                .iter()
+                .all(|token| !fs::read_to_string(adapter).unwrap().contains(token)),
+        "the DM adapter must be root-level and only bridge WhatsRust resolution"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("src/app/bootstrap.rs"))
+            .unwrap()
+            .matches("WhatsRustDmResolver")
+            .count(),
+        1,
+        "bootstrap must construct the production DM resolver exactly once"
+    );
+    for path in rust_sources(&root.join("src")) {
+        if fs::read_to_string(&path)
+            .unwrap()
+            .contains(".set_dm_resolver(")
+        {
+            assert!(
+                path == root.join("src/app/test_support.rs")
+                    || path == root.join("src/app/private_reply/tests.rs"),
+                "{} may replace DmResolverPort only in private-reply tests",
+                path.strip_prefix(root).unwrap().display()
+            );
+        }
+    }
+}
+
 fn rust_sources(directory: &Path) -> Vec<PathBuf> {
     let mut sources = Vec::new();
     collect_rust_sources(directory, &mut sources);

@@ -28,6 +28,7 @@ pub mod contact_source_port;
 pub mod contextual_actions;
 pub mod contextual_activation;
 pub mod contextual_routing;
+pub mod dm_resolution_port;
 pub mod download_worker;
 pub mod events;
 pub mod file_picker_input;
@@ -100,6 +101,7 @@ pub use crate::app::community_query_port::CommunityQueryPort;
 use crate::app::composer::Composer;
 use crate::app::contact_avatars::ContactAvatars;
 pub use crate::app::contact_source_port::ContactSourcePort;
+pub use crate::app::dm_resolution_port::DmResolverPort;
 use crate::app::events::{AppEvent, AppInput, AttachmentViewerState, ViewerPreviewState};
 use crate::app::input_reader::InputReader;
 pub use crate::app::media_support::{remove_owned_media_files, remove_status_media_files};
@@ -164,6 +166,7 @@ pub struct App<'a> {
     pub(crate) contact_write: Box<dyn ContactWritePort>,
     pub(crate) contact_source: Box<dyn ContactSourcePort>,
     pub(crate) community_query: Box<dyn CommunityQueryPort>,
+    pub(crate) dm_resolver: Box<dyn DmResolverPort>,
     pub(crate) message_reaction_write: Box<dyn MessageReactionWritePort>,
     pub(crate) chat_read_cursor: Box<dyn ChatReadCursorPort>,
     pub(crate) status_cursor: Box<dyn StatusCursorPort>,
@@ -356,6 +359,11 @@ impl App<'_> {
     #[cfg(test)]
     pub(crate) fn set_community_query(&mut self, port: Box<dyn CommunityQueryPort>) {
         self.community_query = port;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_dm_resolver(&mut self, port: Box<dyn DmResolverPort>) {
+        self.dm_resolver = port;
     }
 
     pub fn set_message_reaction_write(&mut self, port: Box<dyn MessageReactionWritePort>) {
