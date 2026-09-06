@@ -14,6 +14,7 @@ pub mod input_key;
 pub mod key_handler;
 pub mod keybindings;
 pub mod media;
+pub mod presence_subscription;
 pub mod ui;
 pub mod updater;
 pub mod url;

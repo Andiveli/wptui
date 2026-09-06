@@ -61,6 +61,7 @@ pub mod optimistic_text_send;
 pub mod preferences;
 pub mod presence;
 pub mod presence_bridge;
+pub mod presence_subscription_port;
 pub mod private_reply;
 pub mod reaction_picker;
 pub mod read_receipts;
@@ -122,6 +123,7 @@ pub use crate::app::notifications::{
 };
 use crate::app::preferences::ComposerDirection;
 use crate::app::presence::{PresenceDiagnostics, SelectedPresence};
+pub use crate::app::presence_subscription_port::PresenceSubscriptionPort;
 use crate::app::read_receipts::Coordinator as ReadReceiptCoordinator;
 use crate::app::runtime_diagnostics::{MessageListCounts, Phase, RuntimeDiagnostics};
 pub use crate::app::share_picker::SharePicker;
@@ -240,6 +242,7 @@ pub struct App<'a> {
 
     pub history_sync_percent: Option<u8>,
     pub selected_presence: SelectedPresence,
+    pub(crate) presence_subscription: Box<dyn PresenceSubscriptionPort>,
     presence_diagnostics: PresenceDiagnostics,
 
     pub composer: Composer<'a>,
@@ -378,6 +381,11 @@ impl App<'_> {
 
     pub fn set_contact_source(&mut self, port: Box<dyn ContactSourcePort>) {
         self.contact_source = port;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_presence_subscription(&mut self, port: Box<dyn PresenceSubscriptionPort>) {
+        self.presence_subscription = port;
     }
 
     #[cfg(test)]

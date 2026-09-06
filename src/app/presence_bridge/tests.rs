@@ -1,9 +1,23 @@
 use super::super::presence::PresenceMarker;
+use super::super::presence_subscription_port::PresenceSubscriptionPort;
 use super::super::test_support::TestApp;
+use std::sync::{Arc, Mutex};
 use whatsrust as wr;
 
 fn jid(value: &str) -> wr::JID {
     value.to_owned().into()
+}
+
+struct Port {
+    calls: Arc<Mutex<Vec<wr::JID>>>,
+    result: wr::SubscribePresenceResult,
+}
+
+impl PresenceSubscriptionPort for Port {
+    fn subscribe(&self, jid: &wr::JID) -> wr::SubscribePresenceResult {
+        self.calls.lock().unwrap().push(jid.clone());
+        self.result
+    }
 }
 
 #[test]
@@ -49,6 +63,23 @@ fn presence_update_only_redraws_when_it_targets_selected_chat() {
         app.selected_presence.marker(Some(&selected), now),
         Some(PresenceMarker::Online)
     );
+}
+
+#[test]
+fn subscription_uses_the_injected_port_and_preserves_accepted_policy() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let mut app = TestApp::with_presence_subscription(Box::new(Port {
+        calls: Arc::clone(&calls),
+        result: wr::SubscribePresenceResult::Accepted,
+    }));
+    let selected = jid("123@s.whatsapp.net");
+    app.open_chat = Some(selected.clone());
+    app.mark_presence_ready();
+
+    app.sync_selected_presence();
+
+    assert_eq!(*calls.lock().unwrap(), vec![selected]);
+    assert_eq!(app.selected_presence.subscription_due(app.now()), None);
 }
 
 #[test]

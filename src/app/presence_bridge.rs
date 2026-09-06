@@ -55,7 +55,7 @@ impl App<'_> {
         self.presence_diagnostics
             .record(|| format!("presence subscription attempt: jid={diagnostic_jid}"));
         info!("Presence subscription attempt: jid={}", jid_for_log(&jid));
-        let result = wr::subscribe_presence(&jid);
+        let result = self.presence_subscription.subscribe(&jid);
         let retry_delay = self
             .selected_presence
             .subscription_result(&jid, result, now);

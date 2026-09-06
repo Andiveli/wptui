@@ -1026,6 +1026,55 @@ fn avatar_queries_stay_behind_a_shared_port_and_root_adapter() {
     assert!(app.contains("#[cfg(test)]\n    pub fn set_avatar_query("));
 }
 
+#[test]
+fn presence_subscriptions_stay_behind_the_port_and_root_adapter_boundaries() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let query = "wr::subscribe_presence";
+
+    for path in rust_sources(&root.join("src/app")) {
+        assert!(
+            !fs::read_to_string(&path).unwrap().contains(query),
+            "{} must subscribe through PresenceSubscriptionPort",
+            path.strip_prefix(root).unwrap().display()
+        );
+    }
+
+    let adapters: Vec<_> = rust_sources(&root.join("src"))
+        .into_iter()
+        .filter(|path| fs::read_to_string(path).unwrap().contains(query))
+        .collect();
+    assert_eq!(adapters, vec![root.join("src/presence_subscription.rs")]);
+
+    let adapter = fs::read_to_string(&adapters[0]).unwrap();
+    assert_eq!(adapter.matches(query).count(), 1);
+    assert!(
+        ["db", "persist", "action", "session", "DatabaseHandler"]
+            .iter()
+            .all(|token| !adapter.contains(token)),
+        "the presence subscription adapter must only bridge WhatsRust"
+    );
+
+    let bootstrap = fs::read_to_string(root.join("src/app/bootstrap.rs")).unwrap();
+    assert_eq!(
+        bootstrap.matches("WhatsRustPresenceSubscription").count(),
+        1
+    );
+
+    let app = fs::read_to_string(root.join("src/app.rs")).unwrap();
+    assert!(app.contains("#[cfg(test)]\n    pub(crate) fn set_presence_subscription"));
+    for path in rust_sources(&root.join("src")) {
+        let source = fs::read_to_string(&path).unwrap();
+        if source.contains(".set_presence_subscription(") {
+            assert_eq!(
+                path,
+                root.join("src/app/test_support.rs"),
+                "{} may replace PresenceSubscriptionPort only through TestApp",
+                path.strip_prefix(root).unwrap().display()
+            );
+        }
+    }
+}
+
 fn rust_sources(directory: &Path) -> Vec<PathBuf> {
     let mut sources = Vec::new();
     collect_rust_sources(directory, &mut sources);
