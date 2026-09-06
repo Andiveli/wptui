@@ -981,6 +981,51 @@ fn chat_settings_query_stays_at_its_port_and_root_adapter_boundaries() {
     }
 }
 
+#[test]
+fn avatar_queries_stay_behind_a_shared_port_and_root_adapter() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let queries = [
+        "wr::get_profile_picture",
+        "wr::get_community_profile_picture",
+    ];
+    for path in rust_sources(&root.join("src/app")) {
+        let source = fs::read_to_string(&path).unwrap();
+        assert!(queries.iter().all(|query| !source.contains(query)));
+    }
+    let adapters: Vec<_> = rust_sources(&root.join("src"))
+        .into_iter()
+        .filter(|path| {
+            let source = fs::read_to_string(path).unwrap();
+            queries.iter().any(|query| source.contains(query))
+        })
+        .collect();
+    assert_eq!(
+        adapters.len(),
+        1,
+        "one root adapter must own both avatar queries"
+    );
+    let adapter = &adapters[0];
+    let source = fs::read_to_string(adapter).unwrap();
+    assert!(adapter.parent() == Some(root.join("src").as_path()));
+    assert!(
+        queries
+            .iter()
+            .all(|query| source.matches(query).count() == 1)
+    );
+    assert!(
+        ["db", "persist", "action", "session", "DatabaseHandler"]
+            .iter()
+            .all(|token| !source.contains(token))
+    );
+
+    let bootstrap = fs::read_to_string(root.join("src/app/bootstrap.rs")).unwrap();
+    assert_eq!(bootstrap.matches("WhatsRustAvatarQuery").count(), 1);
+    let app = fs::read_to_string(root.join("src/app.rs")).unwrap();
+    assert!(app.contains("pub type SharedAvatarQueryPort = Arc<dyn AvatarQueryPort>"));
+    assert!(app.contains("pub trait AvatarQueryPort: Send + Sync + 'static"));
+    assert!(app.contains("#[cfg(test)]\n    pub fn set_avatar_query("));
+}
+
 fn rust_sources(directory: &Path) -> Vec<PathBuf> {
     let mut sources = Vec::new();
     collect_rust_sources(directory, &mut sources);

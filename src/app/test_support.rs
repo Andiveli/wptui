@@ -1,8 +1,9 @@
 use super::{
-    App, ChatReadCursorPort, ChatSettingsQueryPort, Clock, CommunityQueryPort, ContactSourcePort,
-    DmResolverPort, GroupInfoQueryPort, GroupParticipantsQueryPort, NotificationProjection,
-    Notifier, PurgeExpiredStatuses, PurgedExpiredStatuses, StatusCursorError, StatusCursorPort,
-    StatusRetentionError, StatusRetentionPort, StoreChatReadCursor, StoreStatusCursor,
+    App, AvatarQueryPort, ChatReadCursorPort, ChatSettingsQueryPort, Clock, CommunityQueryPort,
+    ContactSourcePort, DmResolverPort, GroupInfoQueryPort, GroupParticipantsQueryPort,
+    NotificationProjection, Notifier, PurgeExpiredStatuses, PurgedExpiredStatuses,
+    StatusCursorError, StatusCursorPort, StatusRetentionError, StatusRetentionPort,
+    StoreChatReadCursor, StoreStatusCursor,
 };
 use crate::db::{
     DatabaseHandler, SqliteChatReadCursor, SqliteChatStoreHydration, SqliteContactWriter,
@@ -97,6 +98,71 @@ impl DmResolverPort for FakeDmResolver {
 pub(crate) struct FakeChatSettingsQuery {
     pub(crate) settings: Arc<Mutex<wr::ChatSettings>>,
     pub(crate) jids: Arc<Mutex<Vec<wr::JID>>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum AvatarQueryCall {
+    Contact(wr::JID),
+    CommunityRoot(wr::JID),
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct FakeAvatarQuery {
+    pub(crate) contact_results:
+        Arc<Mutex<VecDeque<Result<wr::ProfilePictureAvailability, wr::ProfilePictureError>>>>,
+    pub(crate) community_results:
+        Arc<Mutex<VecDeque<Result<wr::ProfilePictureAvailability, wr::ProfilePictureError>>>>,
+    pub(crate) calls: Arc<Mutex<Vec<AvatarQueryCall>>>,
+}
+
+impl AvatarQueryPort for FakeAvatarQuery {
+    fn get_profile_picture(
+        &self,
+        jid: &wr::JID,
+    ) -> Result<wr::ProfilePictureAvailability, wr::ProfilePictureError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(AvatarQueryCall::Contact(jid.clone()));
+        self.contact_results
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("contact avatar result must be configured")
+    }
+
+    fn get_community_profile_picture(
+        &self,
+        jid: &wr::JID,
+    ) -> Result<wr::ProfilePictureAvailability, wr::ProfilePictureError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(AvatarQueryCall::CommunityRoot(jid.clone()));
+        self.community_results
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("community-root avatar result must be configured")
+    }
+}
+
+struct UnavailableAvatarQuery;
+
+impl AvatarQueryPort for UnavailableAvatarQuery {
+    fn get_profile_picture(
+        &self,
+        _: &wr::JID,
+    ) -> Result<wr::ProfilePictureAvailability, wr::ProfilePictureError> {
+        Ok(wr::ProfilePictureAvailability::Unavailable)
+    }
+
+    fn get_community_profile_picture(
+        &self,
+        _: &wr::JID,
+    ) -> Result<wr::ProfilePictureAvailability, wr::ProfilePictureError> {
+        Ok(wr::ProfilePictureAvailability::Unavailable)
+    }
 }
 
 impl ChatSettingsQueryPort for FakeChatSettingsQuery {
@@ -255,6 +321,7 @@ impl TestApp {
     pub(crate) fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let mut app = App::with_data_dir(dir.path(), dir.path());
+        app.set_avatar_query(Arc::new(UnavailableAvatarQuery));
         app.set_contact_source(Box::new(FakeContactSource::default()));
         app.set_chat_settings_query(Box::new(FakeChatSettingsQuery::default()));
         app.set_community_query(Box::new(FakeCommunityQuery::default()));
@@ -268,6 +335,7 @@ impl TestApp {
     pub(crate) fn with_database(path: &Path) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let mut app = App::with_data_dir(dir.path(), dir.path());
+        app.set_avatar_query(Arc::new(UnavailableAvatarQuery));
         app.db_handler.init();
         let db_path = path.join("app.db");
         let db_handler = DatabaseHandler::new(&db_path);
@@ -301,6 +369,7 @@ impl TestApp {
             Box::new(clock),
             Box::new(notifier),
         );
+        app.set_avatar_query(Arc::new(UnavailableAvatarQuery));
         app.set_contact_source(Box::new(FakeContactSource::default()));
         app.set_chat_settings_query(Box::new(FakeChatSettingsQuery::default()));
         app.set_community_query(Box::new(FakeCommunityQuery::default()));
@@ -314,6 +383,7 @@ impl TestApp {
 
 impl Drop for TestApp {
     fn drop(&mut self) {
+        self.app.shutdown_avatar_runtime();
         self.app.db_handler.stop();
     }
 }

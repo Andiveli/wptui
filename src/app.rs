@@ -9,6 +9,7 @@ use std::{
 pub mod action_dispatch;
 pub mod actions;
 pub mod attachment_viewer;
+pub mod avatar_query_port;
 pub mod bootstrap;
 pub mod chat_navigation;
 pub mod chat_opening;
@@ -144,6 +145,20 @@ use whatsrust as wr;
 use crate::ui::text_input::TextInput;
 
 pub const ADMIN_ONLY_GROUP_MESSAGE: &str = "Only group admins can send messages in this group.";
+
+pub trait AvatarQueryPort: Send + Sync + 'static {
+    fn get_profile_picture(
+        &self,
+        jid: &wr::JID,
+    ) -> Result<wr::ProfilePictureAvailability, wr::ProfilePictureError>;
+
+    fn get_community_profile_picture(
+        &self,
+        jid: &wr::JID,
+    ) -> Result<wr::ProfilePictureAvailability, wr::ProfilePictureError>;
+}
+
+pub type SharedAvatarQueryPort = Arc<dyn AvatarQueryPort>;
 
 #[derive(Clone, Debug)]
 pub struct Chat {
@@ -363,6 +378,11 @@ impl App<'_> {
 
     pub fn set_contact_source(&mut self, port: Box<dyn ContactSourcePort>) {
         self.contact_source = port;
+    }
+
+    #[cfg(test)]
+    pub fn set_avatar_query(&mut self, port: SharedAvatarQueryPort) {
+        self.contact_avatars.set_avatar_query(port);
     }
 
     #[cfg(test)]
