@@ -33,6 +33,8 @@ pub mod dm_resolution_port;
 pub mod download_worker;
 pub mod events;
 pub mod file_picker_input;
+pub mod group_info_query_port;
+pub mod group_participants_query_port;
 pub mod input_mapping;
 pub mod input_reader;
 pub mod input_router;
@@ -105,6 +107,8 @@ use crate::app::contact_avatars::ContactAvatars;
 pub use crate::app::contact_source_port::ContactSourcePort;
 pub use crate::app::dm_resolution_port::DmResolverPort;
 use crate::app::events::{AppEvent, AppInput, AttachmentViewerState, ViewerPreviewState};
+pub use crate::app::group_info_query_port::GroupInfoQueryPort;
+pub use crate::app::group_participants_query_port::GroupParticipantsQueryPort;
 use crate::app::input_reader::InputReader;
 pub use crate::app::media_support::{remove_owned_media_files, remove_status_media_files};
 use crate::app::message_action_diagnostics::MessageActionDiagnostics;
@@ -170,6 +174,8 @@ pub struct App<'a> {
     pub(crate) community_query: Box<dyn CommunityQueryPort>,
     pub(crate) chat_settings_query: Box<dyn ChatSettingsQueryPort>,
     pub(crate) dm_resolver: Box<dyn DmResolverPort>,
+    pub(crate) group_info_query: Box<dyn GroupInfoQueryPort>,
+    pub(crate) group_participants_query: Box<dyn GroupParticipantsQueryPort>,
     pub(crate) message_reaction_write: Box<dyn MessageReactionWritePort>,
     pub(crate) chat_read_cursor: Box<dyn ChatReadCursorPort>,
     pub(crate) status_cursor: Box<dyn StatusCursorPort>,
@@ -372,6 +378,16 @@ impl App<'_> {
     #[cfg(test)]
     pub(crate) fn set_dm_resolver(&mut self, port: Box<dyn DmResolverPort>) {
         self.dm_resolver = port;
+    }
+
+    #[cfg(test)]
+    pub fn set_group_info_query(&mut self, port: Box<dyn GroupInfoQueryPort>) {
+        self.group_info_query = port;
+    }
+
+    #[cfg(test)]
+    pub fn set_group_participants_query(&mut self, port: Box<dyn GroupParticipantsQueryPort>) {
+        self.group_participants_query = port;
     }
 
     pub fn set_message_reaction_write(&mut self, port: Box<dyn MessageReactionWritePort>) {

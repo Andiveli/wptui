@@ -1,8 +1,8 @@
 use super::{
     App, ChatReadCursorPort, ChatSettingsQueryPort, Clock, CommunityQueryPort, ContactSourcePort,
-    DmResolverPort, NotificationProjection, Notifier, PurgeExpiredStatuses, PurgedExpiredStatuses,
-    StatusCursorError, StatusCursorPort, StatusRetentionError, StatusRetentionPort,
-    StoreChatReadCursor, StoreStatusCursor,
+    DmResolverPort, GroupInfoQueryPort, GroupParticipantsQueryPort, NotificationProjection,
+    Notifier, PurgeExpiredStatuses, PurgedExpiredStatuses, StatusCursorError, StatusCursorPort,
+    StatusRetentionError, StatusRetentionPort, StoreChatReadCursor, StoreStatusCursor,
 };
 use crate::db::{
     DatabaseHandler, SqliteChatReadCursor, SqliteChatStoreHydration, SqliteContactWriter,
@@ -103,6 +103,58 @@ impl ChatSettingsQueryPort for FakeChatSettingsQuery {
     fn get_chat_settings(&self, jid: &wr::JID) -> wr::ChatSettings {
         self.jids.lock().unwrap().push(jid.clone());
         self.settings.lock().unwrap().clone()
+    }
+}
+
+pub(crate) type GroupQueryTrace = Arc<Mutex<Vec<&'static str>>>;
+
+#[derive(Clone, Default)]
+pub(crate) struct FakeGroupInfoQuery {
+    pub(crate) results: Arc<Mutex<VecDeque<Result<wr::GroupInfo, wr::GroupInfoError>>>>,
+    pub(crate) calls: Arc<Mutex<Vec<wr::JID>>>,
+    pub(crate) trace: GroupQueryTrace,
+}
+impl GroupInfoQueryPort for FakeGroupInfoQuery {
+    fn get_group_info(&self, jid: &wr::JID) -> Result<wr::GroupInfo, wr::GroupInfoError> {
+        self.calls.lock().unwrap().push(jid.clone());
+        self.trace.lock().unwrap().push("info");
+        self.results
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("group info result must be configured")
+    }
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct FakeGroupParticipantsQuery {
+    pub(crate) results: Arc<Mutex<VecDeque<Vec<wr::GroupParticipant>>>>,
+    pub(crate) calls: Arc<Mutex<Vec<wr::JID>>>,
+    pub(crate) trace: GroupQueryTrace,
+}
+impl GroupParticipantsQueryPort for FakeGroupParticipantsQuery {
+    fn get_group_participants(&self, jid: &wr::JID) -> Vec<wr::GroupParticipant> {
+        self.calls.lock().unwrap().push(jid.clone());
+        self.trace.lock().unwrap().push("participants");
+        self.results
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("group participants must be configured")
+    }
+}
+
+struct UnavailableGroupInfoQuery;
+impl GroupInfoQueryPort for UnavailableGroupInfoQuery {
+    fn get_group_info(&self, _: &wr::JID) -> Result<wr::GroupInfo, wr::GroupInfoError> {
+        Err(wr::GroupInfoError::ClientUnavailable)
+    }
+}
+
+struct EmptyGroupParticipantsQuery;
+impl GroupParticipantsQueryPort for EmptyGroupParticipantsQuery {
+    fn get_group_participants(&self, _: &wr::JID) -> Vec<wr::GroupParticipant> {
+        Vec::new()
     }
 }
 
@@ -207,6 +259,8 @@ impl TestApp {
         app.set_chat_settings_query(Box::new(FakeChatSettingsQuery::default()));
         app.set_community_query(Box::new(FakeCommunityQuery::default()));
         app.set_dm_resolver(Box::new(FakeDmResolver::default()));
+        app.set_group_info_query(Box::new(UnavailableGroupInfoQuery));
+        app.set_group_participants_query(Box::new(EmptyGroupParticipantsQuery));
         app.db_handler.init();
         Self { app, _dir: dir }
     }
@@ -229,6 +283,8 @@ impl TestApp {
         app.set_chat_settings_query(Box::new(FakeChatSettingsQuery::default()));
         app.set_community_query(Box::new(FakeCommunityQuery::default()));
         app.set_dm_resolver(Box::new(FakeDmResolver::default()));
+        app.set_group_info_query(Box::new(UnavailableGroupInfoQuery));
+        app.set_group_participants_query(Box::new(EmptyGroupParticipantsQuery));
         app.db_handler.init();
         Self { app, _dir: dir }
     }
@@ -249,6 +305,8 @@ impl TestApp {
         app.set_chat_settings_query(Box::new(FakeChatSettingsQuery::default()));
         app.set_community_query(Box::new(FakeCommunityQuery::default()));
         app.set_dm_resolver(Box::new(FakeDmResolver::default()));
+        app.set_group_info_query(Box::new(UnavailableGroupInfoQuery));
+        app.set_group_participants_query(Box::new(EmptyGroupParticipantsQuery));
         app.db_handler.init();
         Self { app, _dir: dir }
     }

@@ -898,6 +898,50 @@ fn dm_resolution_stays_at_its_port_and_root_adapter_boundaries() {
 }
 
 #[test]
+fn group_metadata_queries_stay_at_separate_port_and_root_adapter_boundaries() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for query in ["wr::get_group_info", "wr::get_group_participants"] {
+        for path in rust_sources(&root.join("src/app")) {
+            assert!(
+                !fs::read_to_string(&path).unwrap().contains(query),
+                "{} must use its group query port",
+                path.display()
+            );
+        }
+        let adapters: Vec<_> = rust_sources(&root.join("src"))
+            .into_iter()
+            .filter(|path| fs::read_to_string(path).unwrap().contains(query))
+            .collect();
+        assert_eq!(adapters.len(), 1, "one root adapter must call {query}");
+        let adapter = &adapters[0];
+        let source = fs::read_to_string(adapter).unwrap();
+        assert!(
+            adapter.parent() == Some(root.join("src").as_path())
+                && source.matches(query).count() == 1
+        );
+        assert!(
+            ["db", "persist", "action", "session", "DatabaseHandler"]
+                .iter()
+                .all(|token| !source.contains(token)),
+            "{query} adapter must only bridge WhatsRust"
+        );
+    }
+    let bootstrap = fs::read_to_string(root.join("src/app/bootstrap.rs")).unwrap();
+    assert_eq!(bootstrap.matches("WhatsRustGroupInfoQuery").count(), 1);
+    assert_eq!(
+        bootstrap.matches("WhatsRustGroupParticipantsQuery").count(),
+        1
+    );
+    let app = fs::read_to_string(root.join("src/app.rs")).unwrap();
+    for setter in ["set_group_info_query", "set_group_participants_query"] {
+        assert!(
+            app.contains(&format!("#[cfg(test)]\n    pub fn {setter}")),
+            "{setter} must remain test-only"
+        );
+    }
+}
+
+#[test]
 fn chat_settings_query_stays_at_its_port_and_root_adapter_boundaries() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let query = "wr::get_chat_settings";

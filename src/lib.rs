@@ -7,6 +7,8 @@ pub mod crash_diagnostics;
 pub mod db;
 pub mod dm_resolution;
 pub mod file_picker;
+pub mod group_info_query;
+pub mod group_participants_query;
 pub mod input_key;
 pub mod key_handler;
 pub mod keybindings;
