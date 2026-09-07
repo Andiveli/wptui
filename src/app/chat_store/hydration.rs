@@ -94,7 +94,9 @@ impl App<'_> {
             .get(&message.info.sender)
             .map(|name| canonical_contact_name(name))
             .or_else(|| {
-                wr::message_push_name(&message.info.id).map(|name| canonical_contact_name(&name))
+                self.message_push_name
+                    .lookup_push_name(&message.info.id)
+                    .map(|name| canonical_contact_name(&name))
             })
             .unwrap_or_else(|| self.contact_name(&message.info.sender))
     }
@@ -131,7 +133,7 @@ pub(super) fn canonical_contact_name(name: &str) -> Arc<str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::test_support::TestApp;
+    use crate::app::test_support::{FakeMessagePushNamePort, TestApp};
     use whatsrust as wr;
 
     fn message(id: &str, sender: &str) -> wr::Message {
@@ -167,12 +169,13 @@ mod tests {
 
     #[test]
     fn local_contact_name_wins_over_message_push_name() {
-        let mut app = TestApp::new();
         let sender = wr::JID::from("123@s.whatsapp.net".to_owned());
+        let message = message("local-name", sender.0.as_ref());
+        let mut app = TestApp::with_message_push_name(Box::new(
+            FakeMessagePushNamePort::with_name(message.info.id.clone(), "WhatsApp Profile"),
+        ));
         app.contacts
             .insert(sender.clone(), "Saved Full Name".into());
-        let message = message("local-name", sender.0.as_ref());
-        wr::store_message_push_name(&message.info.id, "WhatsApp Profile");
 
         assert_eq!(
             app.message_sender_name(&message).as_ref(),
@@ -182,14 +185,17 @@ mod tests {
 
     #[test]
     fn unsaved_message_push_name_is_plain_and_numeric_is_final_fallback() {
-        let app = TestApp::new();
         let with_push = message("push-name", "123@s.whatsapp.net");
-        wr::store_message_push_name(&with_push.info.id, "WhatsApp Profile");
+        let app = TestApp::with_message_push_name(Box::new(FakeMessagePushNamePort::with_name(
+            with_push.info.id.clone(),
+            "~ WhatsApp Profile",
+        )));
         assert_eq!(
             app.message_sender_name(&with_push).as_ref(),
             "WhatsApp Profile"
         );
 
+        let app = TestApp::new();
         let without_push = message("numeric-name", "456@s.whatsapp.net");
         assert_eq!(
             app.message_sender_name(&without_push).as_ref(),

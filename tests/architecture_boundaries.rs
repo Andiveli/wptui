@@ -1027,6 +1027,52 @@ fn avatar_queries_stay_behind_a_shared_port_and_root_adapter() {
 }
 
 #[test]
+fn message_push_name_stays_at_its_port_and_root_adapter_boundaries() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let query = "wr::message_push_name";
+
+    for path in rust_sources(&root.join("src/app")) {
+        assert!(
+            !fs::read_to_string(&path).unwrap().contains(query),
+            "{} must look up push names through MessagePushNamePort",
+            path.strip_prefix(root).unwrap().display()
+        );
+    }
+
+    let adapters: Vec<_> = rust_sources(&root.join("src"))
+        .into_iter()
+        .filter(|path| fs::read_to_string(path).unwrap().contains(query))
+        .collect();
+    assert_eq!(adapters, vec![root.join("src/message_push_name.rs")]);
+    assert_eq!(
+        fs::read_to_string(&adapters[0])
+            .unwrap()
+            .matches(query)
+            .count(),
+        1
+    );
+
+    let bootstrap = fs::read_to_string(root.join("src/app/bootstrap.rs")).unwrap();
+    assert_eq!(bootstrap.matches("WhatsRustMessagePushName").count(), 1);
+
+    let app = fs::read_to_string(root.join("src/app.rs")).unwrap();
+    assert!(app.contains("#[cfg(test)]\n    pub(crate) fn set_message_push_name"));
+    for path in rust_sources(&root.join("src")) {
+        if fs::read_to_string(&path)
+            .unwrap()
+            .contains(".set_message_push_name(")
+        {
+            assert_eq!(
+                path,
+                root.join("src/app/test_support.rs"),
+                "{} may replace MessagePushNamePort only through TestApp",
+                path.strip_prefix(root).unwrap().display()
+            );
+        }
+    }
+}
+
+#[test]
 fn presence_subscriptions_stay_behind_the_port_and_root_adapter_boundaries() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let query = "wr::subscribe_presence";

@@ -54,6 +54,7 @@ pub mod message_interactions;
 pub mod message_menu;
 pub mod message_navigation;
 pub mod message_opening;
+pub mod message_push_name_port;
 pub mod message_reactions;
 pub mod navigation_conversation_dispatch;
 pub mod notifications;
@@ -118,6 +119,7 @@ use crate::app::message_action_diagnostics::MessageActionDiagnostics;
 pub use crate::app::message_actions::{
     DELETED_MESSAGE_TEXT, MessageAction, MessageActionKind, MessageStatus,
 };
+pub use crate::app::message_push_name_port::MessagePushNamePort;
 pub use crate::app::message_reactions::{MessageReactionWritePort, RecordMessageReaction};
 pub use crate::app::notifications::{
     Clock, NotificationProjection, Notifier, NotifyRustNotifier, SystemClock, now_or, unix_now,
@@ -195,6 +197,7 @@ pub struct App<'a> {
     pub(crate) dm_resolver: Box<dyn DmResolverPort>,
     pub(crate) group_info_query: Box<dyn GroupInfoQueryPort>,
     pub(crate) group_participants_query: Box<dyn GroupParticipantsQueryPort>,
+    pub(crate) message_push_name: Box<dyn MessagePushNamePort>,
     pub(crate) message_reaction_write: Box<dyn MessageReactionWritePort>,
     pub(crate) chat_read_cursor: Box<dyn ChatReadCursorPort>,
     pub(crate) status_cursor: Box<dyn StatusCursorPort>,
@@ -427,6 +430,11 @@ impl App<'_> {
     #[cfg(test)]
     pub fn set_group_participants_query(&mut self, port: Box<dyn GroupParticipantsQueryPort>) {
         self.group_participants_query = port;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_message_push_name(&mut self, port: Box<dyn MessagePushNamePort>) {
+        self.message_push_name = port;
     }
 
     pub fn set_message_reaction_write(&mut self, port: Box<dyn MessageReactionWritePort>) {

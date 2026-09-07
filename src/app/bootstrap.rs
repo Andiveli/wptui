@@ -96,6 +96,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         group_participants_query: Box::new(
             crate::group_participants_query::WhatsRustGroupParticipantsQuery,
         ),
+        message_push_name: Box::new(crate::message_push_name::WhatsRustMessagePushName),
         message_reaction_write: Box::new(crate::db::SqliteMessageReactionWriter::new(&db_path)),
         chat_read_cursor: Box::new(crate::db::SqliteChatReadCursor::new(&db_path)),
         status_cursor: Box::new(crate::db::SqliteStatusCursor::new(&db_path)),

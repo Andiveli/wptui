@@ -1,9 +1,10 @@
 use super::{
     App, AvatarQueryPort, ChatReadCursorPort, ChatSettingsQueryPort, Clock, CommunityQueryPort,
     ContactSourcePort, DmResolverPort, GroupInfoQueryPort, GroupParticipantsQueryPort,
-    NotificationProjection, Notifier, PresenceSubscriptionPort, PurgeExpiredStatuses,
-    PurgedExpiredStatuses, RawPresenceDiagnosticsPort, StatusCursorError, StatusCursorPort,
-    StatusRetentionError, StatusRetentionPort, StoreChatReadCursor, StoreStatusCursor,
+    MessagePushNamePort, NotificationProjection, Notifier, PresenceSubscriptionPort,
+    PurgeExpiredStatuses, PurgedExpiredStatuses, RawPresenceDiagnosticsPort, StatusCursorError,
+    StatusCursorPort, StatusRetentionError, StatusRetentionPort, StoreChatReadCursor,
+    StoreStatusCursor,
 };
 use crate::db::{
     DatabaseHandler, SqliteChatReadCursor, SqliteChatStoreHydration, SqliteContactWriter,
@@ -11,7 +12,7 @@ use crate::db::{
 };
 use std::path::Path;
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     sync::{Arc, Mutex},
 };
 use whatsrust as wr;
@@ -69,6 +70,25 @@ impl ContactSourcePort for FakeContactSource {
     fn get_contacts(&self) -> Vec<(wr::JID, Arc<str>)> {
         *self.calls.lock().unwrap() += 1;
         self.rows.lock().unwrap().clone()
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct FakeMessagePushNamePort {
+    names: HashMap<wr::MessageId, Arc<str>>,
+}
+
+impl FakeMessagePushNamePort {
+    pub(crate) fn with_name(message_id: wr::MessageId, name: impl Into<Arc<str>>) -> Self {
+        Self {
+            names: HashMap::from([(message_id, name.into())]),
+        }
+    }
+}
+
+impl MessagePushNamePort for FakeMessagePushNamePort {
+    fn lookup_push_name(&self, message_id: &wr::MessageId) -> Option<Arc<str>> {
+        self.names.get(message_id).cloned()
     }
 }
 
@@ -338,6 +358,12 @@ impl TestApp {
         Self::with_presence_subscription(Box::new(AcceptedPresenceSubscription))
     }
 
+    pub(crate) fn with_message_push_name(message_push_name: Box<dyn MessagePushNamePort>) -> Self {
+        let mut test_app = Self::new();
+        test_app.app.set_message_push_name(message_push_name);
+        test_app
+    }
+
     pub(crate) fn with_presence_subscription(
         presence_subscription: Box<dyn PresenceSubscriptionPort>,
     ) -> Self {
@@ -347,6 +373,7 @@ impl TestApp {
         app.set_raw_presence_diagnostics(Box::new(EmptyRawPresenceDiagnostics));
         app.set_avatar_query(Arc::new(UnavailableAvatarQuery));
         app.set_contact_source(Box::new(FakeContactSource::default()));
+        app.set_message_push_name(Box::new(FakeMessagePushNamePort::default()));
         app.set_chat_settings_query(Box::new(FakeChatSettingsQuery::default()));
         app.set_community_query(Box::new(FakeCommunityQuery::default()));
         app.set_dm_resolver(Box::new(FakeDmResolver::default()));
@@ -374,6 +401,7 @@ impl TestApp {
         std::mem::replace(&mut app.db_handler, db_handler).stop();
         app.chat_store_hydration = Box::new(SqliteChatStoreHydration::new(&db_path));
         app.set_contact_source(Box::new(FakeContactSource::default()));
+        app.set_message_push_name(Box::new(FakeMessagePushNamePort::default()));
         app.set_chat_settings_query(Box::new(FakeChatSettingsQuery::default()));
         app.set_community_query(Box::new(FakeCommunityQuery::default()));
         app.set_dm_resolver(Box::new(FakeDmResolver::default()));
@@ -399,6 +427,7 @@ impl TestApp {
         app.set_raw_presence_diagnostics(Box::new(EmptyRawPresenceDiagnostics));
         app.set_avatar_query(Arc::new(UnavailableAvatarQuery));
         app.set_contact_source(Box::new(FakeContactSource::default()));
+        app.set_message_push_name(Box::new(FakeMessagePushNamePort::default()));
         app.set_chat_settings_query(Box::new(FakeChatSettingsQuery::default()));
         app.set_community_query(Box::new(FakeCommunityQuery::default()));
         app.set_dm_resolver(Box::new(FakeDmResolver::default()));
