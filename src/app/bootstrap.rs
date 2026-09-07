@@ -134,6 +134,9 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         presence_subscription: Box::new(
             crate::presence_subscription::WhatsRustPresenceSubscription,
         ),
+        raw_presence_diagnostics: Box::new(
+            crate::presence_diagnostics::WhatsRustRawPresenceDiagnostics,
+        ),
         presence_diagnostics: PresenceDiagnostics::default(),
         image_cache: HashMap::new(),
         image_cache_order: VecDeque::new(),

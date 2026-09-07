@@ -2,8 +2,8 @@ use super::{
     App, AvatarQueryPort, ChatReadCursorPort, ChatSettingsQueryPort, Clock, CommunityQueryPort,
     ContactSourcePort, DmResolverPort, GroupInfoQueryPort, GroupParticipantsQueryPort,
     NotificationProjection, Notifier, PresenceSubscriptionPort, PurgeExpiredStatuses,
-    PurgedExpiredStatuses, StatusCursorError, StatusCursorPort, StatusRetentionError,
-    StatusRetentionPort, StoreChatReadCursor, StoreStatusCursor,
+    PurgedExpiredStatuses, RawPresenceDiagnosticsPort, StatusCursorError, StatusCursorPort,
+    StatusRetentionError, StatusRetentionPort, StoreChatReadCursor, StoreStatusCursor,
 };
 use crate::db::{
     DatabaseHandler, SqliteChatReadCursor, SqliteChatStoreHydration, SqliteContactWriter,
@@ -325,6 +325,14 @@ impl PresenceSubscriptionPort for AcceptedPresenceSubscription {
     }
 }
 
+struct EmptyRawPresenceDiagnostics;
+
+impl RawPresenceDiagnosticsPort for EmptyRawPresenceDiagnostics {
+    fn drain(&self) -> Option<String> {
+        None
+    }
+}
+
 impl TestApp {
     pub(crate) fn new() -> Self {
         Self::with_presence_subscription(Box::new(AcceptedPresenceSubscription))
@@ -336,6 +344,7 @@ impl TestApp {
         let dir = tempfile::tempdir().unwrap();
         let mut app = App::with_data_dir(dir.path(), dir.path());
         app.set_presence_subscription(presence_subscription);
+        app.set_raw_presence_diagnostics(Box::new(EmptyRawPresenceDiagnostics));
         app.set_avatar_query(Arc::new(UnavailableAvatarQuery));
         app.set_contact_source(Box::new(FakeContactSource::default()));
         app.set_chat_settings_query(Box::new(FakeChatSettingsQuery::default()));
@@ -351,6 +360,7 @@ impl TestApp {
         let dir = tempfile::tempdir().unwrap();
         let mut app = App::with_data_dir(dir.path(), dir.path());
         app.set_presence_subscription(Box::new(AcceptedPresenceSubscription));
+        app.set_raw_presence_diagnostics(Box::new(EmptyRawPresenceDiagnostics));
         app.set_avatar_query(Arc::new(UnavailableAvatarQuery));
         app.db_handler.init();
         let db_path = path.join("app.db");
@@ -386,6 +396,7 @@ impl TestApp {
             Box::new(notifier),
         );
         app.set_presence_subscription(Box::new(AcceptedPresenceSubscription));
+        app.set_raw_presence_diagnostics(Box::new(EmptyRawPresenceDiagnostics));
         app.set_avatar_query(Arc::new(UnavailableAvatarQuery));
         app.set_contact_source(Box::new(FakeContactSource::default()));
         app.set_chat_settings_query(Box::new(FakeChatSettingsQuery::default()));

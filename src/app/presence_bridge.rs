@@ -30,7 +30,7 @@ impl App<'_> {
 
     pub(crate) fn write_presence_diagnostics(&self, output: &mut impl Write) {
         let _ = self.presence_diagnostics.write_report(&mut *output);
-        let raw_report = wr::drain_raw_presence_diagnostics();
+        let raw_report = self.raw_presence_diagnostics.drain();
         let _ = self
             .presence_diagnostics
             .write_raw_report(&mut *output, raw_report.as_deref());

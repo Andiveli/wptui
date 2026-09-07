@@ -1,6 +1,8 @@
 use super::super::presence::PresenceMarker;
+use super::super::presence_diagnostics_port::RawPresenceDiagnosticsPort;
 use super::super::presence_subscription_port::PresenceSubscriptionPort;
 use super::super::test_support::TestApp;
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use whatsrust as wr;
 
@@ -11,6 +13,18 @@ fn jid(value: &str) -> wr::JID {
 struct Port {
     calls: Arc<Mutex<Vec<wr::JID>>>,
     result: wr::SubscribePresenceResult,
+}
+
+struct RawDiagnosticsPort {
+    reports: Arc<Mutex<VecDeque<Option<String>>>>,
+    calls: Arc<Mutex<usize>>,
+}
+
+impl RawPresenceDiagnosticsPort for RawDiagnosticsPort {
+    fn drain(&self) -> Option<String> {
+        *self.calls.lock().unwrap() += 1;
+        self.reports.lock().unwrap().pop_front().flatten()
+    }
 }
 
 impl PresenceSubscriptionPort for Port {
@@ -87,4 +101,44 @@ fn connected_readiness_resets_subscription_state_for_reconnect() {
     let mut app = TestApp::new();
     app.mark_presence_ready();
     assert_eq!(app.selected_presence.subscription_due(app.now()), None);
+}
+
+#[test]
+fn raw_diagnostics_drain_unconditionally_and_preserve_report_contract() {
+    let reports = Arc::new(Mutex::new(VecDeque::from([
+        Some("raw presence events received: 1\n".to_owned()),
+        Some("raw presence events received: 2\n".to_owned()),
+        None,
+    ])));
+    let calls = Arc::new(Mutex::new(0));
+    let mut app = TestApp::new();
+    app.set_raw_presence_diagnostics(Box::new(RawDiagnosticsPort {
+        reports: Arc::clone(&reports),
+        calls: Arc::clone(&calls),
+    }));
+
+    let mut disabled_output = Vec::new();
+    app.write_presence_diagnostics(&mut disabled_output);
+    assert_eq!(*calls.lock().unwrap(), 1);
+    assert!(disabled_output.is_empty());
+
+    app.enable_presence_diagnostics(true);
+    app.mark_presence_ready();
+    let mut enabled_output = Vec::new();
+    app.write_presence_diagnostics(&mut enabled_output);
+
+    assert_eq!(*calls.lock().unwrap(), 2);
+    assert_eq!(
+        String::from_utf8(enabled_output).unwrap(),
+        "Presence diagnostics:\nRust translated Presence updates: 0\n1. self presence available: ready\n\nGo raw presence diagnostics:\nraw presence events received: 2\n"
+    );
+
+    let mut none_output = Vec::new();
+    app.write_presence_diagnostics(&mut none_output);
+    assert_eq!(*calls.lock().unwrap(), 3);
+    assert_eq!(
+        String::from_utf8(none_output).unwrap(),
+        "Presence diagnostics:\nRust translated Presence updates: 0\n1. self presence available: ready\n"
+    );
+    assert!(reports.lock().unwrap().is_empty());
 }
