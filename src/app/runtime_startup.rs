@@ -2,7 +2,6 @@ use log::info;
 use whatsrust as wr;
 
 use crate::app::App;
-use crate::app::download_worker::spawn as spawn_download_worker;
 use crate::app::media_support::remove_status_media_files;
 use crate::app::runtime_callbacks::register as register_runtime_callbacks;
 use crate::app::{PurgeExpiredStatuses, unix_now};
@@ -22,7 +21,7 @@ pub(crate) fn run(app: &mut App<'_>, phone: Option<String>) {
     wr::new_client(app.whatsmeow_db.to_str().unwrap());
     register_runtime_callbacks(app.tx.clone(), app.message_action_diagnostics.clone());
 
-    let download_worker = spawn_download_worker(app.media_path.to_owned(), app.tx.clone());
+    let download_worker = app.take_media_download_worker();
 
     info!("Connecting to WhatsApp Web");
     // thread::spawn(|| {

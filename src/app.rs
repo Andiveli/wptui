@@ -45,6 +45,7 @@ pub mod lifecycle_settings_dispatch;
 pub mod log_toggle;
 pub mod logout;
 pub mod media_cache;
+pub mod media_download_port;
 pub mod media_jobs;
 pub mod media_support;
 pub mod message_action_diagnostics;
@@ -302,6 +303,7 @@ pub struct App<'a> {
     pub read_sync_worker: wr::ReadSyncWorker,
     read_sync_worker_stopped_for_logout: bool,
     pub optimistic_text_send_worker: optimistic_text_send::Worker,
+    media_download_worker: Option<download_worker::Worker>,
     pub pending_outgoing_text: HashMap<u64, optimistic_text_send::TextSendRequest>,
     pub completed_text_send_ids: VecDeque<u64>,
     pub next_local_send_id: u64,
@@ -355,6 +357,12 @@ impl Default for App<'_> {
 }
 
 impl App<'_> {
+    pub(crate) fn take_media_download_worker(&mut self) -> download_worker::Worker {
+        self.media_download_worker
+            .take()
+            .expect("media download worker must be transferred to the runtime once")
+    }
+
     /// Constructs the full app with explicit storage directories instead of
     /// the user's real data/cache dirs. `App::default()` keeps using the
     /// real directories; tests use this factory with a fresh tempdir so they

@@ -195,6 +195,11 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
             tx.clone(),
             Box::new(crate::app::optimistic_text_send::WhatsAppTextSendPort),
         ),
+        media_download_worker: Some(crate::app::download_worker::spawn_with_port(
+            data_dir.join("media"),
+            tx.clone(),
+            Box::new(crate::media_download::WhatsRustMediaDownload),
+        )),
         pending_outgoing_text: HashMap::new(),
         completed_text_send_ids: VecDeque::new(),
         next_local_send_id: 1,

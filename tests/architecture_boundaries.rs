@@ -1121,6 +1121,35 @@ fn presence_subscriptions_stay_behind_the_port_and_root_adapter_boundaries() {
     }
 }
 
+#[test]
+fn media_download_stays_behind_the_worker_bound_port_and_root_adapter() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let port = fs::read_to_string(root.join("src/app/media_download_port.rs")).unwrap();
+    let worker = fs::read_to_string(root.join("src/app/download_worker.rs")).unwrap();
+    let adapter = fs::read_to_string(root.join("src/media_download.rs")).unwrap();
+    let bootstrap = fs::read_to_string(root.join("src/app/bootstrap.rs")).unwrap();
+    let startup = fs::read_to_string(root.join("src/app/runtime_startup.rs")).unwrap();
+
+    assert!(port.contains("pub trait MediaDownloadPort: Send + 'static"));
+    assert!(worker.contains("Box<dyn MediaDownloadPort>"));
+    assert!(!worker.contains("wr::download_file"));
+    assert_eq!(adapter.matches("wr::download_file").count(), 1);
+    assert!(adapter.contains("impl MediaDownloadPort for WhatsRustMediaDownload"));
+    assert_eq!(bootstrap.matches("WhatsRustMediaDownload").count(), 1);
+    assert!(startup.contains("app.take_media_download_worker()"));
+    assert!(!startup.contains("spawn_download_worker"));
+
+    for path in rust_sources(&root.join("src/app")) {
+        assert!(
+            !fs::read_to_string(&path)
+                .unwrap()
+                .contains("wr::download_file"),
+            "{} must download through MediaDownloadPort",
+            path.strip_prefix(root).unwrap().display()
+        );
+    }
+}
+
 fn rust_sources(directory: &Path) -> Vec<PathBuf> {
     let mut sources = Vec::new();
     collect_rust_sources(directory, &mut sources);

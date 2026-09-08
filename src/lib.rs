@@ -14,6 +14,7 @@ pub mod input_key;
 pub mod key_handler;
 pub mod keybindings;
 pub mod media;
+pub mod media_download;
 pub mod message_push_name;
 pub mod presence_diagnostics;
 pub mod presence_subscription;
