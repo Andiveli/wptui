@@ -1,10 +1,10 @@
 use super::{
-    App, AvatarQueryPort, ChatReadCursorPort, ChatSettingsQueryPort, Clock, CommunityQueryPort,
-    ContactSourcePort, DmResolverPort, GroupInfoQueryPort, GroupParticipantsQueryPort,
-    MessagePushNamePort, NotificationProjection, Notifier, PresenceSubscriptionPort,
-    PurgeExpiredStatuses, PurgedExpiredStatuses, RawPresenceDiagnosticsPort, StatusCursorError,
-    StatusCursorPort, StatusRetentionError, StatusRetentionPort, StoreChatReadCursor,
-    StoreStatusCursor,
+    App, AvatarQueryPort, ChatReadCursorPort, ChatReadSyncPort, ChatSettingsQueryPort, Clock,
+    CommunityQueryPort, ContactSourcePort, DmResolverPort, GroupInfoQueryPort,
+    GroupParticipantsQueryPort, MessagePushNamePort, NotificationProjection, Notifier,
+    PresenceSubscriptionPort, PurgeExpiredStatuses, PurgedExpiredStatuses,
+    RawPresenceDiagnosticsPort, StatusCursorError, StatusCursorPort, StatusRetentionError,
+    StatusRetentionPort, StoreChatReadCursor, StoreStatusCursor,
 };
 use crate::db::{
     DatabaseHandler, SqliteChatReadCursor, SqliteChatStoreHydration, SqliteContactWriter,
@@ -327,6 +327,62 @@ impl ChatReadCursorPort for FakeChatReadCursorPort {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ChatReadSyncCall {
+    pub(crate) chat: wr::JID,
+    pub(crate) message_id: wr::MessageId,
+    pub(crate) timestamp: i64,
+    pub(crate) from_me: bool,
+    pub(crate) participant: Option<wr::JID>,
+}
+
+#[derive(Clone)]
+pub(crate) struct RecordingChatReadSyncPort {
+    pub(crate) calls: Arc<Mutex<Vec<ChatReadSyncCall>>>,
+    pub(crate) schedule_result: Arc<Mutex<bool>>,
+    pub(crate) shutdowns: Arc<Mutex<usize>>,
+    pub(crate) restarts: Arc<Mutex<usize>>,
+}
+
+impl Default for RecordingChatReadSyncPort {
+    fn default() -> Self {
+        Self {
+            calls: Default::default(),
+            schedule_result: Arc::new(Mutex::new(true)),
+            shutdowns: Default::default(),
+            restarts: Default::default(),
+        }
+    }
+}
+
+impl ChatReadSyncPort for RecordingChatReadSyncPort {
+    fn schedule(
+        &mut self,
+        chat: &wr::JID,
+        message_id: &wr::MessageId,
+        timestamp: i64,
+        from_me: bool,
+        participant: Option<&wr::JID>,
+    ) -> bool {
+        self.calls.lock().unwrap().push(ChatReadSyncCall {
+            chat: chat.clone(),
+            message_id: message_id.clone(),
+            timestamp,
+            from_me,
+            participant: participant.cloned(),
+        });
+        *self.schedule_result.lock().unwrap()
+    }
+
+    fn shutdown(&mut self) {
+        *self.shutdowns.lock().unwrap() += 1;
+    }
+
+    fn restart(&mut self) {
+        *self.restarts.lock().unwrap() += 1;
+    }
+}
+
 impl Notifier for RecordingNotifier {
     fn show(&self, notification: &NotificationProjection) -> Result<(), String> {
         self.notifications
@@ -369,6 +425,7 @@ impl TestApp {
     ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let mut app = App::with_data_dir(dir.path(), dir.path());
+        app.set_chat_read_sync(Box::new(RecordingChatReadSyncPort::default()));
         app.set_presence_subscription(presence_subscription);
         app.set_raw_presence_diagnostics(Box::new(EmptyRawPresenceDiagnostics));
         app.set_avatar_query(Arc::new(UnavailableAvatarQuery));
@@ -386,6 +443,7 @@ impl TestApp {
     pub(crate) fn with_database(path: &Path) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let mut app = App::with_data_dir(dir.path(), dir.path());
+        app.set_chat_read_sync(Box::new(RecordingChatReadSyncPort::default()));
         app.set_presence_subscription(Box::new(AcceptedPresenceSubscription));
         app.set_raw_presence_diagnostics(Box::new(EmptyRawPresenceDiagnostics));
         app.set_avatar_query(Arc::new(UnavailableAvatarQuery));
@@ -423,6 +481,7 @@ impl TestApp {
             Box::new(clock),
             Box::new(notifier),
         );
+        app.set_chat_read_sync(Box::new(RecordingChatReadSyncPort::default()));
         app.set_presence_subscription(Box::new(AcceptedPresenceSubscription));
         app.set_raw_presence_diagnostics(Box::new(EmptyRawPresenceDiagnostics));
         app.set_avatar_query(Arc::new(UnavailableAvatarQuery));

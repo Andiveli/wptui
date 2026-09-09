@@ -1,5 +1,6 @@
 pub mod app;
 pub mod avatar_query;
+pub mod chat_read_sync;
 pub mod chat_settings;
 pub mod clipboard;
 pub mod community_query;

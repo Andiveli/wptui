@@ -15,6 +15,7 @@ pub mod chat_navigation;
 pub mod chat_opening;
 pub mod chat_ordering;
 pub mod chat_projection;
+pub mod chat_read_sync_port;
 pub mod chat_search_input;
 pub mod chat_settings_query_port;
 pub mod chat_store;
@@ -100,6 +101,7 @@ use crate::app::actions::{
     WhatsAppMessageReactor, WhatsAppMessageRevoker,
 };
 pub use crate::app::chat_projection::{ChatRow, ContactRow};
+pub use crate::app::chat_read_sync_port::ChatReadSyncPort;
 pub use crate::app::chat_settings_query_port::ChatSettingsQueryPort;
 pub use crate::app::chat_store::{ChatReadCursorPort, StoreChatReadCursor};
 use crate::app::chat_store::{
@@ -300,7 +302,7 @@ pub struct App<'a> {
     pub viewer_zoom: u16,
     pub read_receipts: ReadReceiptCoordinator,
     pub read_receipt_worker: read_receipts::worker::Worker,
-    pub read_sync_worker: wr::ReadSyncWorker,
+    pub(crate) chat_read_sync: Box<dyn ChatReadSyncPort>,
     read_sync_worker_stopped_for_logout: bool,
     pub optimistic_text_send_worker: optimistic_text_send::Worker,
     media_download_worker: Option<download_worker::Worker>,
@@ -451,6 +453,11 @@ impl App<'_> {
 
     pub fn set_chat_read_cursor(&mut self, port: Box<dyn ChatReadCursorPort>) {
         self.chat_read_cursor = port;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_chat_read_sync(&mut self, port: Box<dyn ChatReadSyncPort>) {
+        self.chat_read_sync = port;
     }
 
     pub fn set_status_cursor(&mut self, port: Box<dyn StatusCursorPort>) {

@@ -189,7 +189,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
                 ),
             ),
         ),
-        read_sync_worker: wr::ReadSyncWorker::new(),
+        chat_read_sync: Box::new(crate::chat_read_sync::WhatsRustChatReadSync::default()),
         read_sync_worker_stopped_for_logout: false,
         optimistic_text_send_worker: crate::app::optimistic_text_send::Worker::new(
             tx.clone(),

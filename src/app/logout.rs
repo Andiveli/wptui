@@ -93,8 +93,7 @@ impl App<'_> {
         if !self.read_sync_worker_stopped_for_logout {
             return false;
         }
-        debug_assert!(self.read_sync_worker.is_shutdown());
-        self.read_sync_worker = wr::ReadSyncWorker::new();
+        self.chat_read_sync.restart();
         self.read_sync_worker_stopped_for_logout = false;
         true
     }

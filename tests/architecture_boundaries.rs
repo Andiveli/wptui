@@ -1150,6 +1150,54 @@ fn media_download_stays_behind_the_worker_bound_port_and_root_adapter() {
     }
 }
 
+#[test]
+fn chat_read_sync_stays_behind_an_app_port_and_root_adapter() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let port = fs::read_to_string(root.join("src/app/chat_read_sync_port.rs")).unwrap();
+    let adapter = fs::read_to_string(root.join("src/chat_read_sync.rs")).unwrap();
+    let bootstrap = fs::read_to_string(root.join("src/app/bootstrap.rs")).unwrap();
+
+    assert!(port.contains("pub trait ChatReadSyncPort: Send + 'static"));
+    assert!(port.contains("fn schedule(") && port.contains(") -> bool;"));
+    assert!(
+        [
+            "ReadSyncWorker",
+            "db",
+            "persist",
+            "action",
+            "session",
+            "DatabaseHandler"
+        ]
+        .iter()
+        .all(|token| !port.contains(token)),
+        "ChatReadSyncPort must not depend on worker or lifecycle details"
+    );
+    assert_eq!(adapter.matches("wr::ReadSyncWorker").count(), 3);
+    assert!(adapter.contains("impl ChatReadSyncPort for WhatsRustChatReadSync"));
+    let adapter_compact: String = adapter.split_whitespace().collect();
+    assert!(adapter_compact.contains("self.worker.schedule("));
+    assert!(adapter_compact.contains("self.worker.shutdown();"));
+    assert_eq!(bootstrap.matches("WhatsRustChatReadSync").count(), 1);
+    let worker_owners: Vec<_> = rust_sources(&root.join("src"))
+        .into_iter()
+        .filter(|path| {
+            fs::read_to_string(path)
+                .unwrap()
+                .contains("wr::ReadSyncWorker")
+        })
+        .collect();
+    assert_eq!(worker_owners, vec![root.join("src/chat_read_sync.rs")]);
+
+    for path in rust_sources(&root.join("src/app")) {
+        let source = fs::read_to_string(&path).unwrap();
+        assert!(
+            !source.contains("wr::ReadSyncWorker"),
+            "{} must depend on ChatReadSyncPort, not ReadSyncWorker",
+            path.strip_prefix(root).unwrap().display()
+        );
+    }
+}
+
 fn rust_sources(directory: &Path) -> Vec<PathBuf> {
     let mut sources = Vec::new();
     collect_rust_sources(directory, &mut sources);

@@ -2,7 +2,10 @@ use super::hydration_port::{ChatStoreHydration, ChatStoreHydrationPort};
 use super::*;
 use crate::app::{
     Chat,
-    test_support::{FakeChatReadCursorPort, FakeContactSource, FakeStatusCursorPort, TestApp},
+    test_support::{
+        FakeChatReadCursorPort, FakeContactSource, FakeStatusCursorPort, RecordingChatReadSyncPort,
+        TestApp,
+    },
 };
 use std::{
     panic::AssertUnwindSafe,
@@ -315,17 +318,47 @@ fn chat_cursor_sync_schedules_only_on_a_cursor_transition() {
     let mut app = TestApp::new();
     let chat = wr::JID::from("chat@g.us".to_owned());
     let cursor = FakeChatReadCursorPort::default();
+    let read_sync = RecordingChatReadSyncPort::default();
     app.chat_read_cursor = Box::new(cursor.clone());
+    app.set_chat_read_sync(Box::new(read_sync.clone()));
     app.add_message(message(&chat, "latest", 42));
 
     assert!(app.mark_chat_read_at_latest(&chat));
+    assert_eq!(
+        read_sync.calls.lock().unwrap().as_slice(),
+        &[crate::app::test_support::ChatReadSyncCall {
+            chat: chat.clone(),
+            message_id: "latest".into(),
+            timestamp: 42,
+            from_me: false,
+            participant: Some(chat.clone()),
+        }]
+    );
     let stored = cursor.stored.lock().unwrap();
     assert_eq!(
         (&stored[0].chat, &stored[0].message_id, stored[0].timestamp),
         (&chat, &Some("latest".into()), 42)
     );
     drop(stored);
-    assert_eq!(app.mark_chat_read_at_latest(&chat), false);
+    assert!(!app.mark_chat_read_at_latest(&chat));
+    assert_eq!(read_sync.calls.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn failed_read_sync_schedule_still_advances_the_cursor() {
+    let mut app = TestApp::new();
+    let chat = wr::JID::from("chat@example.test".to_owned());
+    let cursor = FakeChatReadCursorPort::default();
+    let read_sync = RecordingChatReadSyncPort::default();
+    *read_sync.schedule_result.lock().unwrap() = false;
+    app.chat_read_cursor = Box::new(cursor.clone());
+    app.set_chat_read_sync(Box::new(read_sync.clone()));
+    app.add_message(message(&chat, "latest", 42));
+
+    assert!(!app.mark_chat_read_at_latest(&chat));
+    assert_eq!(read_sync.calls.lock().unwrap().len(), 1);
+    assert_eq!(cursor.stored.lock().unwrap().len(), 1);
+    assert_eq!(app.timeline[&chat].last_read_message, Some("latest".into()));
 }
 
 #[test]

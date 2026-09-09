@@ -71,7 +71,7 @@ impl App<'_> {
             if !unchanged && !Self::is_status_chat(chat) {
                 if let Some(message) = self.messages.get(&message_id) {
                     let participant = Self::is_group_chat(chat).then_some(&message.info.sender);
-                    scheduled = self.read_sync_worker.schedule(
+                    scheduled = self.chat_read_sync.schedule(
                         chat,
                         &message.info.id,
                         timestamp,
@@ -91,7 +91,7 @@ impl App<'_> {
     }
 
     pub(crate) fn shutdown_read_sync_worker(&mut self) {
-        self.read_sync_worker.shutdown();
+        self.chat_read_sync.shutdown();
     }
 
     pub fn pending_new_messages(&self, chat: &wr::JID) -> usize {
