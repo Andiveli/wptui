@@ -19,6 +19,7 @@ pub mod media_download;
 pub mod message_push_name;
 pub mod presence_diagnostics;
 pub mod presence_subscription;
+pub mod text_send;
 pub mod ui;
 pub mod updater;
 pub mod url;

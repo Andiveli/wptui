@@ -1151,6 +1151,31 @@ fn media_download_stays_behind_the_worker_bound_port_and_root_adapter() {
 }
 
 #[test]
+fn text_send_stays_behind_a_worker_bound_port_and_root_adapter() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let port = fs::read_to_string(root.join("src/app/optimistic_text_send.rs")).unwrap();
+    let adapter = fs::read_to_string(root.join("src/text_send.rs")).unwrap();
+    let bootstrap = fs::read_to_string(root.join("src/app/bootstrap.rs")).unwrap();
+
+    assert!(port.contains("pub trait TextSendPort: Send"));
+    assert!(port.contains("Box<dyn TextSendPort>"));
+    assert!(!port.contains("wr::send_outbound_message"));
+    assert_eq!(adapter.matches("wr::send_outbound_message").count(), 1);
+    assert!(adapter.contains("impl TextSendPort for WhatsAppTextSendPort"));
+    assert_eq!(bootstrap.matches("WhatsAppTextSendPort").count(), 1);
+
+    for path in rust_sources(&root.join("src/app")) {
+        assert!(
+            !fs::read_to_string(&path)
+                .unwrap()
+                .contains("wr::send_outbound_message"),
+            "{} must send through TextSendPort",
+            path.strip_prefix(root).unwrap().display()
+        );
+    }
+}
+
+#[test]
 fn chat_read_sync_stays_behind_an_app_port_and_root_adapter() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let port = fs::read_to_string(root.join("src/app/chat_read_sync_port.rs")).unwrap();

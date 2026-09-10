@@ -400,20 +400,6 @@ fn run(
     exited.store(true, Ordering::Release);
 }
 
-pub struct WhatsAppTextSendPort;
-
-impl TextSendPort for WhatsAppTextSendPort {
-    fn send(&mut self, request: &TextSendRequest) -> Result<(), wr::OutboundSendFailure> {
-        wr::send_outbound_message(
-            &request.chat,
-            &request.content,
-            request.quote.as_ref(),
-            &request.mentions,
-            request.local_send_id,
-        )
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

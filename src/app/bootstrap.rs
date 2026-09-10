@@ -193,7 +193,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         read_sync_worker_stopped_for_logout: false,
         optimistic_text_send_worker: crate::app::optimistic_text_send::Worker::new(
             tx.clone(),
-            Box::new(crate::app::optimistic_text_send::WhatsAppTextSendPort),
+            Box::new(crate::text_send::WhatsAppTextSendPort),
         ),
         media_download_worker: Some(crate::app::download_worker::spawn_with_port(
             data_dir.join("media"),
