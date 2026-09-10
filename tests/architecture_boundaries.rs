@@ -1213,6 +1213,100 @@ fn read_receipt_send_stays_behind_a_worker_bound_port_and_root_adapter() {
 }
 
 #[test]
+fn message_mutation_stays_behind_app_ports_and_root_adapter() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let adapter = fs::read_to_string(root.join("src/message_mutation.rs")).unwrap();
+    let actions = fs::read_to_string(root.join("src/app/actions.rs")).unwrap();
+    let bootstrap = fs::read_to_string(root.join("src/app/bootstrap.rs")).unwrap();
+    let lib = fs::read_to_string(root.join("src/lib.rs")).unwrap();
+    let adapters = [
+        (
+            "WhatsAppMessageEditor",
+            "MessageEditor",
+            "wr::edit_message(",
+            "Box::new(crate::message_mutation::WhatsAppMessageEditor)",
+        ),
+        (
+            "WhatsAppMessageReactor",
+            "MessageReactor",
+            "wr::react_to_message(",
+            "Box::new(crate::message_mutation::WhatsAppMessageReactor)",
+        ),
+        (
+            "WhatsAppMessageForwarder",
+            "MessageForwarder",
+            "wr::forward_message(",
+            "Box::new(crate::message_mutation::WhatsAppMessageForwarder)",
+        ),
+        (
+            "WhatsAppMessageRevoker",
+            "MessageRevoker",
+            "wr::revoke_message(",
+            "Box::new(crate::message_mutation::WhatsAppMessageRevoker)",
+        ),
+    ];
+    let calls = [
+        "wr::edit_message(",
+        "wr::react_to_message(",
+        "wr::react_to_message_in_chat(",
+        "wr::forward_message(",
+        "wr::revoke_message(",
+    ];
+
+    assert!(lib.contains("pub mod message_mutation;"));
+    for (adapter_name, port_name, bridge_call, construction) in adapters {
+        let trait_declaration_start = actions
+            .find(&format!("pub trait {port_name}"))
+            .unwrap_or_else(|| panic!("src/app/actions.rs must retain {port_name}"));
+        let trait_declaration = &actions[trait_declaration_start..]
+            [..actions[trait_declaration_start..].find('{').unwrap()];
+        assert!(
+            !trait_declaration.contains("Send"),
+            "{port_name} must not require Send"
+        );
+        assert!(
+            adapter.contains(&format!("pub struct {adapter_name};")),
+            "src/message_mutation.rs must define public {adapter_name}"
+        );
+        assert!(
+            adapter.contains(&format!("impl {port_name} for {adapter_name}")),
+            "src/message_mutation.rs must implement {port_name} for {adapter_name}"
+        );
+        assert_eq!(
+            adapter.matches(bridge_call).count(),
+            1,
+            "src/message_mutation.rs must bridge {bridge_call} exactly once"
+        );
+        assert!(
+            !actions.contains(&format!("struct {adapter_name}"))
+                && !actions.contains(&format!("impl {port_name} for {adapter_name}")),
+            "src/app/actions.rs must retain {port_name} without concrete {adapter_name}"
+        );
+        assert_eq!(
+            bootstrap.matches(adapter_name).count(),
+            1,
+            "src/app/bootstrap.rs must construct {adapter_name} exactly once"
+        );
+        assert_eq!(
+            bootstrap.matches(construction).count(),
+            1,
+            "src/app/bootstrap.rs must construct {adapter_name} through crate::message_mutation"
+        );
+    }
+
+    for path in rust_sources(&root.join("src/app")) {
+        let source = fs::read_to_string(&path).unwrap();
+        for call in calls {
+            assert!(
+                !source.contains(call),
+                "{} must mutate messages through app ports, not {call}",
+                path.strip_prefix(root).unwrap().display()
+            );
+        }
+    }
+}
+
+#[test]
 fn chat_read_sync_stays_behind_an_app_port_and_root_adapter() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let port = fs::read_to_string(root.join("src/app/chat_read_sync_port.rs")).unwrap();

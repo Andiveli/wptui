@@ -97,8 +97,7 @@ use crate::app::actions::{
     ActionNotice, ClipboardReader, ClipboardWriter, ConversationMode, FocusPane, MessageEditor,
     MessageForwarder, MessageMenuAction, MessageReactor, MessageRevoker, PaneVisibility, Section,
     SystemClipboardReader, SystemClipboardWriter, SystemUrlOpener, UnavailableClipboardReader,
-    UnavailableClipboardWriter, UrlOpener, WhatsAppMessageEditor, WhatsAppMessageForwarder,
-    WhatsAppMessageReactor, WhatsAppMessageRevoker,
+    UnavailableClipboardWriter, UrlOpener,
 };
 pub use crate::app::chat_projection::{ChatRow, ContactRow};
 pub use crate::app::chat_read_sync_port::ChatReadSyncPort;
