@@ -182,7 +182,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         read_receipts: ReadReceiptCoordinator::default(),
         read_receipt_worker: crate::app::read_receipts::worker::Worker::new(
             tx.clone(),
-            Box::new(crate::app::read_receipts::whatsapp_adapter::WhatsAppAdapter),
+            Box::new(crate::read_receipt_send::WhatsAppAdapter),
             Box::new(
                 crate::app::read_receipts::sqlite_repository::SqliteRepository::new(
                     data_dir.join("whatsapp.db"),

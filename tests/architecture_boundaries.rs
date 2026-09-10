@@ -1176,6 +1176,43 @@ fn text_send_stays_behind_a_worker_bound_port_and_root_adapter() {
 }
 
 #[test]
+fn read_receipt_send_stays_behind_a_worker_bound_port_and_root_adapter() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let port = fs::read_to_string(root.join("src/app/read_receipts.rs")).unwrap();
+    let worker = fs::read_to_string(root.join("src/app/read_receipts/worker.rs")).unwrap();
+    let adapter = fs::read_to_string(root.join("src/read_receipt_send.rs")).unwrap();
+    let bootstrap = fs::read_to_string(root.join("src/app/bootstrap.rs")).unwrap();
+    let send = "whatsrust::mark_as_read";
+
+    assert!(port.contains("pub trait ReadReceiptPort"));
+    assert!(worker.contains("Box<dyn ReadReceiptPort + Send>"));
+    assert!(!worker.contains(send));
+    assert_eq!(adapter.matches(send).count(), 1);
+    assert!(adapter.contains("impl ReadReceiptPort for WhatsAppAdapter"));
+    assert_eq!(
+        bootstrap
+            .matches("Box::new(crate::read_receipt_send::WhatsAppAdapter)")
+            .count(),
+        1,
+        "bootstrap must construct the production read-receipt adapter exactly once"
+    );
+
+    for path in rust_sources(&root.join("src/app")) {
+        assert!(
+            !fs::read_to_string(&path).unwrap().contains(send),
+            "{} must send read receipts through ReadReceiptPort",
+            path.strip_prefix(root).unwrap().display()
+        );
+    }
+
+    let adapters: Vec<_> = rust_sources(&root.join("src"))
+        .into_iter()
+        .filter(|path| fs::read_to_string(path).unwrap().contains(send))
+        .collect();
+    assert_eq!(adapters, vec![root.join("src/read_receipt_send.rs")]);
+}
+
+#[test]
 fn chat_read_sync_stays_behind_an_app_port_and_root_adapter() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let port = fs::read_to_string(root.join("src/app/chat_read_sync_port.rs")).unwrap();
