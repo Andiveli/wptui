@@ -30,6 +30,8 @@ mod message_store;
 mod reaction_repository;
 #[path = "db/reaction_writer.rs"]
 mod reaction_writer;
+#[path = "db/read_receipt_repository.rs"]
+mod read_receipt_repository;
 #[path = "db/retention.rs"]
 mod retention;
 #[path = "schema.rs"]
@@ -49,6 +51,7 @@ pub(crate) use connection::{
 };
 pub use contact_writer::SqliteContactWriter;
 pub use reaction_writer::SqliteMessageReactionWriter;
+pub use read_receipt_repository::SqlitePendingReceiptRepository;
 pub use status_cursor::SqliteStatusCursor;
 pub use status_retention::SqliteStatusRetention;
 

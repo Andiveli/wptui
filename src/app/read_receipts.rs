@@ -3,6 +3,7 @@
 use std::collections::{HashSet, VecDeque};
 
 pub mod repository_port;
+#[cfg(test)]
 pub mod sqlite_repository;
 pub mod viewport;
 pub mod worker;
