@@ -1307,6 +1307,85 @@ fn message_mutation_stays_behind_app_ports_and_root_adapter() {
 }
 
 #[test]
+fn runtime_callback_ingress_stays_behind_root_adapter_boundary() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let adapter = root.join("src/runtime_callbacks.rs");
+
+    assert!(
+        adapter.is_file(),
+        "src/runtime_callbacks.rs must be the root callback adapter"
+    );
+
+    let lib = fs::read_to_string(root.join("src/lib.rs")).unwrap();
+    assert!(
+        lib.contains("pub mod runtime_callbacks;"),
+        "src/lib.rs must export the root runtime callback adapter"
+    );
+    assert!(
+        !root.join("src/app/runtime_callbacks.rs").exists(),
+        "src/app/runtime_callbacks.rs must be removed after moving the root adapter"
+    );
+
+    let startup = fs::read_to_string(root.join("src/app/runtime_startup.rs")).unwrap();
+    assert!(
+        startup.contains("use crate::runtime_callbacks::register as register_runtime_callbacks;"),
+        "runtime startup must import callback registration from the root adapter"
+    );
+    assert_eq!(
+        startup
+            .matches("register_runtime_callbacks(app.tx.clone(), app.message_action_diagnostics.clone());")
+            .count(),
+        1,
+        "runtime startup must invoke callback registration exactly once"
+    );
+
+    let source = fs::read_to_string(&adapter).unwrap();
+    assert!(
+        source.contains(
+            "pub(crate) fn register(tx: Sender<AppInput>, diagnostics: MessageActionDiagnostics)"
+        ),
+        "the root callback adapter must preserve register's signature"
+    );
+
+    let registrations = [
+        "wr::set_log_handler(",
+        "wr::set_event_handler(",
+        "wr::set_presence_handler(",
+        "wr::set_message_handler(",
+        "wr::set_optimistic_text_sent_handler(",
+    ];
+    let positions: Vec<_> = registrations
+        .iter()
+        .map(|registration| {
+            assert_eq!(
+                source.matches(registration).count(),
+                1,
+                "src/runtime_callbacks.rs must register {registration} exactly once"
+            );
+            source.find(registration).unwrap()
+        })
+        .collect();
+    assert!(
+        positions.windows(2).all(|pair| pair[0] < pair[1]),
+        "src/runtime_callbacks.rs must preserve callback registration order"
+    );
+
+    for path in rust_sources(&root.join("src")) {
+        if path == adapter {
+            continue;
+        }
+        let other_source = fs::read_to_string(&path).unwrap();
+        assert!(
+            registrations
+                .iter()
+                .all(|registration| !other_source.contains(registration)),
+            "{} must not own concrete WhatsRust callback registration",
+            path.strip_prefix(root).unwrap().display()
+        );
+    }
+}
+
+#[test]
 fn chat_read_sync_stays_behind_an_app_port_and_root_adapter() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let port = fs::read_to_string(root.join("src/app/chat_read_sync_port.rs")).unwrap();

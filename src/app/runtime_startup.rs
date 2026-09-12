@@ -3,8 +3,8 @@ use whatsrust as wr;
 
 use crate::app::App;
 use crate::app::media_support::remove_status_media_files;
-use crate::app::runtime_callbacks::register as register_runtime_callbacks;
 use crate::app::{PurgeExpiredStatuses, unix_now};
+use crate::runtime_callbacks::register as register_runtime_callbacks;
 
 #[cfg(test)]
 mod tests;

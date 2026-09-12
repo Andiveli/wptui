@@ -21,6 +21,7 @@ pub mod message_push_name;
 pub mod presence_diagnostics;
 pub mod presence_subscription;
 pub mod read_receipt_send;
+pub mod runtime_callbacks;
 pub mod text_send;
 pub mod ui;
 pub mod updater;
