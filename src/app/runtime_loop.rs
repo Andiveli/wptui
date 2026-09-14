@@ -134,6 +134,27 @@ fn finish_terminal_initialization_failure(
     teardown(TerminalInitializationFailureTeardown::FinalizeDiagnostics);
 }
 
+fn execute_terminal_initialization_failure(
+    app: &mut App<'_>,
+    download_worker: &mut DownloadWorker,
+) {
+    finish_terminal_initialization_failure(|step| match step {
+        TerminalInitializationFailureTeardown::StopDownloadWorker => {
+            download_worker.shutdown();
+        }
+        TerminalInitializationFailureTeardown::StopReadReceiptWorker => {
+            app.shutdown_read_receipt_worker();
+        }
+        TerminalInitializationFailureTeardown::StopReadSyncWorker => {
+            app.shutdown_read_sync_worker();
+        }
+        TerminalInitializationFailureTeardown::Disconnect => app.lifecycle_control.disconnect(),
+        TerminalInitializationFailureTeardown::FinalizeDiagnostics => {
+            app.finalize_runtime_diagnostics();
+        }
+    });
+}
+
 /// Owns the terminal runtime: input pumping, event dispatch, redraws, and shutdown.
 ///
 /// Bootstrap stays in `App::run`; this phase owns the already-created download
@@ -148,21 +169,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
             let _ = app
                 .message_action_diagnostics
                 .write_report(std::io::stderr());
-            finish_terminal_initialization_failure(|step| match step {
-                TerminalInitializationFailureTeardown::StopDownloadWorker => {
-                    download_worker.shutdown();
-                }
-                TerminalInitializationFailureTeardown::StopReadReceiptWorker => {
-                    app.shutdown_read_receipt_worker();
-                }
-                TerminalInitializationFailureTeardown::StopReadSyncWorker => {
-                    app.shutdown_read_sync_worker();
-                }
-                TerminalInitializationFailureTeardown::Disconnect => wr::disconnect(),
-                TerminalInitializationFailureTeardown::FinalizeDiagnostics => {
-                    app.finalize_runtime_diagnostics();
-                }
-            });
+            execute_terminal_initialization_failure(app, &mut download_worker);
             return;
         }
     };
@@ -187,7 +194,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
         app.shutdown_read_sync_worker();
         terminal_session.stop_input_reader(&mut app.input_reader);
         terminal_session.restore();
-        wr::disconnect();
+        app.lifecycle_control.disconnect();
         let _ = app
             .message_action_diagnostics
             .write_report(std::io::stderr());
@@ -310,7 +317,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
     terminal_session.stop_input_reader(&mut app.input_reader);
     terminal_session.restore();
     app.set_read_receipt_readiness(crate::app::read_receipts::Readiness::Disconnected);
-    wr::disconnect();
+    app.lifecycle_control.disconnect();
     let stderr = std::io::stderr();
     let mut stderr = stderr.lock();
     app.write_presence_diagnostics(&mut stderr);
@@ -324,11 +331,13 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+
     use crate::app::events::AppEvent;
-    use crate::app::test_support::TestApp;
+    use crate::app::test_support::{RecordingChatReadSyncPort, RecordingLifecycleControl, TestApp};
 
     #[test]
-    fn terminal_initialization_failure_stops_worker_disconnects_once_and_finalizes() {
+    fn terminal_initialization_failure_preserves_the_existing_teardown_order() {
         let mut events = Vec::new();
 
         finish_terminal_initialization_failure(|step| events.push(step));
@@ -342,6 +351,32 @@ mod tests {
                 TerminalInitializationFailureTeardown::Disconnect,
                 TerminalInitializationFailureTeardown::FinalizeDiagnostics,
             ]
+        );
+    }
+
+    #[test]
+    fn terminal_initialization_failure_stops_worker_disconnects_once_and_finalizes() {
+        let mut app = TestApp::new();
+        let trace = Arc::new(Mutex::new(Vec::new()));
+        let read_sync = RecordingChatReadSyncPort::with_shutdown_trace(Arc::clone(&trace));
+        let lifecycle = Arc::new(RecordingLifecycleControl::with_trace(Arc::clone(&trace)));
+        app.set_chat_read_sync(Box::new(read_sync.clone()));
+        app.set_lifecycle_control(Arc::clone(&lifecycle));
+        let mut download_worker = app.take_media_download_worker();
+
+        execute_terminal_initialization_failure(&mut app, &mut download_worker);
+
+        assert!(
+            download_worker
+                .sender()
+                .send(("terminal-init".into(), "file-id".into()))
+                .is_err()
+        );
+        assert_eq!(*read_sync.shutdowns.lock().unwrap(), 1);
+        assert_eq!(*lifecycle.disconnects.lock().unwrap(), 1);
+        assert_eq!(
+            *trace.lock().unwrap(),
+            ["read-sync:stop", "lifecycle:disconnect"]
         );
     }
 

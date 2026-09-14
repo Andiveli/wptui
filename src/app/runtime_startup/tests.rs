@@ -90,6 +90,8 @@ enum LifecycleCall {
     QrPresented(String),
     PairPhone(String),
     PairingPresented(String),
+    Disconnect,
+    Logout,
 }
 
 struct FakeLifecycleControl {
@@ -136,6 +138,14 @@ impl LifecycleControl for FakeLifecycleControl {
     fn pair_phone(&self, phone: &str) -> String {
         self.record(LifecycleCall::PairPhone(phone.to_owned()));
         self.pairing_code.clone()
+    }
+
+    fn disconnect(&self) {
+        self.record(LifecycleCall::Disconnect);
+    }
+
+    fn logout(&self) {
+        self.record(LifecycleCall::Logout);
     }
 }
 

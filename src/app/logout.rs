@@ -47,7 +47,13 @@ impl App<'_> {
     fn confirm_logout(&mut self) {
         self.pending_logout = true;
         self.logout_in_progress = true;
-        logout_after_stopping_read_sync(|| self.stop_read_sync_for_logout(), wr::logout);
+        let lifecycle = std::sync::Arc::clone(&self.lifecycle_control);
+        logout_after_stopping_read_sync(
+            || self.stop_read_sync_for_logout(),
+            move || {
+                lifecycle.logout();
+            },
+        );
     }
 
     pub(crate) fn handle_logout_result(&mut self, status: wr::LogoutStatus) -> bool {

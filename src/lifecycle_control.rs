@@ -14,4 +14,12 @@ impl crate::app::lifecycle_control::LifecycleControl for WhatsRustLifecycleContr
     fn pair_phone(&self, phone: &str) -> String {
         wr::pair_phone(phone)
     }
+
+    fn disconnect(&self) {
+        wr::disconnect();
+    }
+
+    fn logout(&self) {
+        wr::logout();
+    }
 }

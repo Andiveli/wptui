@@ -6,6 +6,7 @@ use super::{
     RawPresenceDiagnosticsPort, StatusCursorError, StatusCursorPort, StatusRetentionError,
     StatusRetentionPort, StoreChatReadCursor, StoreStatusCursor,
 };
+use crate::app::lifecycle_control::{LifecycleControl, QrCallback};
 use crate::db::{
     DatabaseHandler, SqliteChatReadCursor, SqliteChatStoreHydration, SqliteContactWriter,
     SqliteMessageReactionWriter, SqliteStatusCursor, SqliteStatusRetention,
@@ -336,12 +337,24 @@ pub(crate) struct ChatReadSyncCall {
     pub(crate) participant: Option<wr::JID>,
 }
 
+pub(crate) type SharedTrace = Arc<Mutex<Vec<&'static str>>>;
+
 #[derive(Clone)]
 pub(crate) struct RecordingChatReadSyncPort {
     pub(crate) calls: Arc<Mutex<Vec<ChatReadSyncCall>>>,
     pub(crate) schedule_result: Arc<Mutex<bool>>,
     pub(crate) shutdowns: Arc<Mutex<usize>>,
     pub(crate) restarts: Arc<Mutex<usize>>,
+    shutdown_trace: Option<SharedTrace>,
+}
+
+impl RecordingChatReadSyncPort {
+    pub(crate) fn with_shutdown_trace(trace: SharedTrace) -> Self {
+        Self {
+            shutdown_trace: Some(trace),
+            ..Default::default()
+        }
+    }
 }
 
 impl Default for RecordingChatReadSyncPort {
@@ -351,6 +364,7 @@ impl Default for RecordingChatReadSyncPort {
             schedule_result: Arc::new(Mutex::new(true)),
             shutdowns: Default::default(),
             restarts: Default::default(),
+            shutdown_trace: None,
         }
     }
 }
@@ -376,10 +390,50 @@ impl ChatReadSyncPort for RecordingChatReadSyncPort {
 
     fn shutdown(&mut self) {
         *self.shutdowns.lock().unwrap() += 1;
+        if let Some(trace) = &self.shutdown_trace {
+            trace.lock().unwrap().push("read-sync:stop");
+        }
     }
 
     fn restart(&mut self) {
         *self.restarts.lock().unwrap() += 1;
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct RecordingLifecycleControl {
+    trace: SharedTrace,
+    pub(crate) disconnects: Arc<Mutex<usize>>,
+    pub(crate) logouts: Arc<Mutex<usize>>,
+}
+
+impl RecordingLifecycleControl {
+    pub(crate) fn with_trace(trace: SharedTrace) -> Self {
+        Self {
+            trace,
+            disconnects: Default::default(),
+            logouts: Default::default(),
+        }
+    }
+}
+
+impl LifecycleControl for RecordingLifecycleControl {
+    fn new_client(&self, _: &str) {}
+
+    fn connect(&self, _: QrCallback) {}
+
+    fn pair_phone(&self, _: &str) -> String {
+        String::new()
+    }
+
+    fn disconnect(&self) {
+        *self.disconnects.lock().unwrap() += 1;
+        self.trace.lock().unwrap().push("lifecycle:disconnect");
+    }
+
+    fn logout(&self) {
+        *self.logouts.lock().unwrap() += 1;
+        self.trace.lock().unwrap().push("lifecycle:logout");
     }
 }
 

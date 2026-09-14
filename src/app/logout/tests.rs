@@ -1,5 +1,8 @@
 use crate::app::actions::{AppAction, FocusPane, Section};
-use crate::app::test_support::{RecordingChatReadSyncPort, TestApp};
+use std::sync::{Arc, Mutex};
+
+use crate::app::test_support::{RecordingChatReadSyncPort, RecordingLifecycleControl, TestApp};
+use crate::input_key::Key;
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 #[test]
@@ -35,6 +38,28 @@ fn rail_logout_navigation_and_confirmation_preserve_focus_and_section() {
     assert_eq!(
         app.action_notice,
         Some(crate::app::actions::ActionNotice::Cancelled)
+    );
+}
+
+#[test]
+fn logout_confirmation_stops_read_sync_before_requesting_lifecycle_logout() {
+    let mut app = TestApp::new();
+    let trace = Arc::new(Mutex::new(Vec::new()));
+    let read_sync = RecordingChatReadSyncPort::with_shutdown_trace(Arc::clone(&trace));
+    let lifecycle = Arc::new(RecordingLifecycleControl::with_trace(Arc::clone(&trace)));
+    app.set_chat_read_sync(Box::new(read_sync.clone()));
+    app.set_lifecycle_control(Arc::clone(&lifecycle));
+    app.begin_logout_confirmation();
+
+    app.handle_logout_input(Key::k(crate::input_key::KeyCode::Enter));
+
+    assert!(app.pending_logout);
+    assert!(app.logout_in_progress);
+    assert_eq!(*read_sync.shutdowns.lock().unwrap(), 1);
+    assert_eq!(*lifecycle.logouts.lock().unwrap(), 1);
+    assert_eq!(
+        *trace.lock().unwrap(),
+        ["read-sync:stop", "lifecycle:logout"]
     );
 }
 
