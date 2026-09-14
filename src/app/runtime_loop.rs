@@ -4,11 +4,96 @@ use log::error;
 use whatsrust as wr;
 
 use crate::app::App;
-use crate::app::events::{AppInput, DrawSource};
+use crate::app::download_worker::Worker as DownloadWorker;
+use crate::app::events::{
+    AppEvent, AppEventFamily, AppInput, DrawSource, MediaRenderEffect, MediaRenderPlan,
+    viewer_preview_request,
+};
+use crate::app::media_jobs::MediaJobOwner;
 use crate::app::terminal_session::TerminalSession;
 use crate::ui;
 
 type DownloadSender = Sender<(wr::MessageId, wr::FileId)>;
+
+fn dispatch_app_event(
+    app: &mut App<'_>,
+    event: AppEvent,
+    download_tx: &DownloadSender,
+    media_jobs: &mut MediaJobOwner,
+) -> bool {
+    match event.family() {
+        AppEventFamily::Send => app.handle_send_event(event),
+        AppEventFamily::ReadReceipt => app.handle_read_receipt_event(event),
+        AppEventFamily::Avatar => app.handle_avatar_event(event),
+        AppEventFamily::Updater => app.handle_updater_event(event),
+        AppEventFamily::MediaViewer => {
+            app.handle_media_viewer_event(event, download_tx, media_jobs)
+        }
+    }
+}
+
+fn same_media_render_effect(left: &MediaRenderEffect, right: &MediaRenderEffect) -> bool {
+    match (left, right) {
+        (
+            MediaRenderEffect::DownloadFile(left_id, _),
+            MediaRenderEffect::DownloadFile(right_id, _),
+        )
+        | (
+            MediaRenderEffect::LoadFilePreview(left_id),
+            MediaRenderEffect::LoadFilePreview(right_id),
+        ) => left_id == right_id,
+        (
+            MediaRenderEffect::LoadViewerPreview(left_key),
+            MediaRenderEffect::LoadViewerPreview(right_key),
+        ) => left_key == right_key,
+        _ => false,
+    }
+}
+
+fn dispatch_media_render_plan_after_draw<T, E>(
+    app: &mut App<'_>,
+    draw_result: Result<T, E>,
+    plan: MediaRenderPlan,
+    download_tx: &DownloadSender,
+    media_jobs: &mut MediaJobOwner,
+) {
+    if draw_result.is_ok() {
+        dispatch_media_render_plan(app, plan, download_tx, media_jobs);
+    }
+}
+
+fn dispatch_media_render_plan(
+    app: &mut App<'_>,
+    plan: MediaRenderPlan,
+    download_tx: &DownloadSender,
+    media_jobs: &mut MediaJobOwner,
+) {
+    let mut dispatched = Vec::new();
+    for effect in plan.into_effects() {
+        if dispatched
+            .iter()
+            .any(|previous| same_media_render_effect(previous, &effect))
+        {
+            continue;
+        }
+        let event = match &effect {
+            MediaRenderEffect::DownloadFile(message_id, file_id) => {
+                AppEvent::DownloadFile(message_id.clone(), file_id.clone())
+            }
+            MediaRenderEffect::LoadFilePreview(message_id) => {
+                AppEvent::LoadFilePreview(message_id.clone())
+            }
+            MediaRenderEffect::LoadViewerPreview(key) => {
+                let Some(key) = viewer_preview_request(&mut app.viewer_preview, key.clone()) else {
+                    continue;
+                };
+                AppEvent::LoadViewerPreview(key)
+            }
+        };
+        dispatched.push(effect);
+        dispatch_app_event(app, event, download_tx, media_jobs);
+    }
+}
 
 fn should_draw_for_source(app: &App<'_>, source: DrawSource) -> bool {
     match source {
@@ -30,11 +115,52 @@ fn refresh_composer_viewport_width(app: &mut App<'_>, terminal_session: &mut Ter
     app.set_composer_viewport_width(width);
 }
 
+#[derive(Debug, PartialEq)]
+enum TerminalInitializationFailureTeardown {
+    StopDownloadWorker,
+    StopReadReceiptWorker,
+    StopReadSyncWorker,
+    Disconnect,
+    FinalizeDiagnostics,
+}
+
+fn finish_terminal_initialization_failure(
+    mut teardown: impl FnMut(TerminalInitializationFailureTeardown),
+) {
+    teardown(TerminalInitializationFailureTeardown::StopDownloadWorker);
+    teardown(TerminalInitializationFailureTeardown::StopReadReceiptWorker);
+    teardown(TerminalInitializationFailureTeardown::StopReadSyncWorker);
+    teardown(TerminalInitializationFailureTeardown::Disconnect);
+    teardown(TerminalInitializationFailureTeardown::FinalizeDiagnostics);
+}
+
+fn execute_terminal_initialization_failure(
+    app: &mut App<'_>,
+    download_worker: &mut DownloadWorker,
+) {
+    finish_terminal_initialization_failure(|step| match step {
+        TerminalInitializationFailureTeardown::StopDownloadWorker => {
+            download_worker.shutdown();
+        }
+        TerminalInitializationFailureTeardown::StopReadReceiptWorker => {
+            app.shutdown_read_receipt_worker();
+        }
+        TerminalInitializationFailureTeardown::StopReadSyncWorker => {
+            app.shutdown_read_sync_worker();
+        }
+        TerminalInitializationFailureTeardown::Disconnect => app.lifecycle_control.disconnect(),
+        TerminalInitializationFailureTeardown::FinalizeDiagnostics => {
+            app.finalize_runtime_diagnostics();
+        }
+    });
+}
+
 /// Owns the terminal runtime: input pumping, event dispatch, redraws, and shutdown.
 ///
-/// Bootstrap stays in `App::run`; this phase consumes the already-created download
-/// sender and delegates each event family to its focused runtime owner.
-pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
+/// Bootstrap stays in `App::run`; this phase owns the already-created download
+/// worker and delegates each event family to its focused runtime owner.
+pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
+    let download_tx = download_worker.sender();
     let mut terminal_session = match TerminalSession::try_new() {
         Ok(session) => session,
         Err(e) => {
@@ -43,26 +169,32 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
             let _ = app
                 .message_action_diagnostics
                 .write_report(std::io::stderr());
-            app.shutdown_read_receipt_worker();
-            app.finalize_runtime_diagnostics();
+            execute_terminal_initialization_failure(app, &mut download_worker);
             return;
         }
     };
 
+    let mut media_jobs = MediaJobOwner::new();
     terminal_session.start_input_reader(&mut app.input_reader, app.tx.clone());
 
     app.sync_selected_presence();
     refresh_composer_viewport_width(app, &mut terminal_session);
     let initial_draw_started = app.runtime_diagnostics.draw_started();
-    if let Err(error) = terminal_session
+    let mut media_render_plan = MediaRenderPlan::default();
+    let mut visibility_plan = crate::app::read_receipts::VisibilityPlan::default();
+    let draw_result = terminal_session
         .terminal_mut()
-        .draw(|frame| ui::draw(frame, app))
-    {
+        .draw(|frame| ui::draw_with_plan(frame, app, &mut media_render_plan, &mut visibility_plan));
+    if let Err(error) = &draw_result {
         error!("Failed to draw terminal UI: {error}");
+        app.shutdown_avatar_runtime();
+        media_jobs.shutdown();
+        download_worker.shutdown();
         app.shutdown_read_receipt_worker();
+        app.shutdown_read_sync_worker();
         terminal_session.stop_input_reader(&mut app.input_reader);
         terminal_session.restore();
-        wr::disconnect();
+        app.lifecycle_control.disconnect();
         let _ = app
             .message_action_diagnostics
             .write_report(std::io::stderr());
@@ -72,6 +204,17 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
     app.runtime_diagnostics.record_should_draw();
     if let Some(started) = initial_draw_started {
         app.runtime_diagnostics.record_draw_finished(started);
+    }
+    dispatch_media_render_plan_after_draw(
+        app,
+        draw_result,
+        media_render_plan,
+        &download_tx,
+        &mut media_jobs,
+    );
+    app.apply_visibility_plan(visibility_plan);
+    if let Ok(area) = terminal_session.terminal_mut().size() {
+        app.schedule_avatar_viewport(area.into());
     }
     app.dispatch_read_receipts();
 
@@ -91,8 +234,24 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
             app.runtime_diagnostics.record_input(input);
         }
         let should_draw = match msg {
-            Ok(AppInput::App(event)) => app.handle_media_event(event, &download_tx),
-            Ok(AppInput::WhatsApp(event)) => app.handle_whatsapp_event(event),
+            Ok(AppInput::App(event)) => {
+                dispatch_app_event(app, event, &download_tx, &mut media_jobs)
+            }
+            Ok(AppInput::WhatsApp(event)) => {
+                if matches!(
+                    &event,
+                    wr::Event::LogoutResult(
+                        wr::LogoutStatus::LoggedOut | wr::LogoutStatus::NotLoggedIn
+                    )
+                ) {
+                    // This is terminal shutdown, not ordinary event handling: no job
+                    // may access or publish into the media directory while logout clears it.
+                    media_jobs.shutdown();
+                    download_worker.shutdown();
+                    app.shutdown_read_sync_worker();
+                }
+                app.handle_whatsapp_event(event)
+            }
             Ok(AppInput::Message { message, is_sync }) => app.process_message(message, is_sync),
             Ok(AppInput::Presence(update)) => app.handle_presence_update(update),
             Ok(AppInput::Terminal(event)) => {
@@ -118,16 +277,29 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
         if should_draw {
             app.runtime_diagnostics.record_should_draw();
             let started = app.runtime_diagnostics.draw_started();
-            if let Err(error) = terminal_session
-                .terminal_mut()
-                .draw(|frame| ui::draw(frame, app))
-            {
+            let mut media_render_plan = MediaRenderPlan::default();
+            let mut visibility_plan = crate::app::read_receipts::VisibilityPlan::default();
+            let draw_result = terminal_session.terminal_mut().draw(|frame| {
+                ui::draw_with_plan(frame, app, &mut media_render_plan, &mut visibility_plan)
+            });
+            if let Err(error) = &draw_result {
                 error!("Failed to draw terminal UI: {error}");
                 app.set_read_receipt_readiness(crate::app::read_receipts::Readiness::Disconnected);
                 break;
             }
             if let Some(started) = started {
                 app.runtime_diagnostics.record_draw_finished(started);
+            }
+            dispatch_media_render_plan_after_draw(
+                app,
+                draw_result,
+                media_render_plan,
+                &download_tx,
+                &mut media_jobs,
+            );
+            app.apply_visibility_plan(visibility_plan);
+            if let Ok(area) = terminal_session.terminal_mut().size() {
+                app.schedule_avatar_viewport(area.into());
             }
         }
         app.dispatch_read_receipts();
@@ -137,11 +309,15 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
         }
     }
 
+    app.shutdown_avatar_runtime();
+    media_jobs.shutdown();
+    download_worker.shutdown();
     app.shutdown_read_receipt_worker();
+    app.shutdown_read_sync_worker();
     terminal_session.stop_input_reader(&mut app.input_reader);
     terminal_session.restore();
     app.set_read_receipt_readiness(crate::app::read_receipts::Readiness::Disconnected);
-    wr::disconnect();
+    app.lifecycle_control.disconnect();
     let stderr = std::io::stderr();
     let mut stderr = stderr.lock();
     app.write_presence_diagnostics(&mut stderr);
@@ -155,7 +331,143 @@ pub(crate) fn run(app: &mut App<'_>, download_tx: DownloadSender) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::test_support::TestApp;
+    use std::sync::{Arc, Mutex};
+
+    use crate::app::events::AppEvent;
+    use crate::app::test_support::{RecordingChatReadSyncPort, RecordingLifecycleControl, TestApp};
+
+    #[test]
+    fn terminal_initialization_failure_preserves_the_existing_teardown_order() {
+        let mut events = Vec::new();
+
+        finish_terminal_initialization_failure(|step| events.push(step));
+
+        assert_eq!(
+            events,
+            [
+                TerminalInitializationFailureTeardown::StopDownloadWorker,
+                TerminalInitializationFailureTeardown::StopReadReceiptWorker,
+                TerminalInitializationFailureTeardown::StopReadSyncWorker,
+                TerminalInitializationFailureTeardown::Disconnect,
+                TerminalInitializationFailureTeardown::FinalizeDiagnostics,
+            ]
+        );
+    }
+
+    #[test]
+    fn terminal_initialization_failure_stops_worker_disconnects_once_and_finalizes() {
+        let mut app = TestApp::new();
+        let trace = Arc::new(Mutex::new(Vec::new()));
+        let read_sync = RecordingChatReadSyncPort::with_shutdown_trace(Arc::clone(&trace));
+        let lifecycle = Arc::new(RecordingLifecycleControl::with_trace(Arc::clone(&trace)));
+        app.set_chat_read_sync(Box::new(read_sync.clone()));
+        app.set_lifecycle_control(Arc::clone(&lifecycle));
+        let mut download_worker = app.take_media_download_worker();
+
+        execute_terminal_initialization_failure(&mut app, &mut download_worker);
+
+        assert!(
+            download_worker
+                .sender()
+                .send(("terminal-init".into(), "file-id".into()))
+                .is_err()
+        );
+        assert_eq!(*read_sync.shutdowns.lock().unwrap(), 1);
+        assert_eq!(*lifecycle.disconnects.lock().unwrap(), 1);
+        assert_eq!(
+            *trace.lock().unwrap(),
+            ["read-sync:stop", "lifecycle:disconnect"]
+        );
+    }
+
+    #[test]
+    fn send_events_route_to_the_send_handler() {
+        let mut app = TestApp::new();
+        let (download_tx, _download_rx) = mpsc::channel();
+        let mut media_jobs = MediaJobOwner::new();
+
+        assert!(!dispatch_app_event(
+            &mut app,
+            AppEvent::OutboundSendFailed { local_send_id: 1 },
+            &download_tx,
+            &mut media_jobs,
+        ));
+    }
+
+    #[test]
+    fn read_receipt_events_route_to_the_read_receipt_handler() {
+        let mut app = TestApp::new();
+        app.read_receipts.set_enabled(true);
+        let (download_tx, _download_rx) = mpsc::channel();
+        let mut media_jobs = MediaJobOwner::new();
+
+        assert!(!dispatch_app_event(
+            &mut app,
+            AppEvent::ReadReceiptRestored(Ok(Vec::new())),
+            &download_tx,
+            &mut media_jobs,
+        ));
+    }
+
+    #[test]
+    fn updater_events_route_to_the_updater_handler() {
+        let mut app = TestApp::new();
+        let (download_tx, _download_rx) = mpsc::channel();
+        let mut media_jobs = MediaJobOwner::new();
+
+        assert!(dispatch_app_event(
+            &mut app,
+            AppEvent::UpdateAvailable("1.2.3".to_owned()),
+            &download_tx,
+            &mut media_jobs,
+        ));
+        assert_eq!(app.update_notice.as_deref(), Some("1.2.3"));
+    }
+
+    #[test]
+    fn stale_media_viewer_requests_route_without_spawning_work() {
+        let mut app = TestApp::new();
+        let current = crate::app::events::ViewerPreviewKey::new("current.jpg", 20, 10);
+        app.viewer_preview = Some(crate::app::events::ViewerPreviewState::Loading(
+            current.clone(),
+        ));
+        let (download_tx, _download_rx) = mpsc::channel();
+        let mut media_jobs = MediaJobOwner::new();
+
+        assert!(!dispatch_app_event(
+            &mut app,
+            AppEvent::LoadViewerPreview(crate::app::events::ViewerPreviewKey::new(
+                "stale.jpg",
+                20,
+                10,
+            )),
+            &download_tx,
+            &mut media_jobs,
+        ));
+        assert_eq!(app.viewer_preview.as_ref().unwrap().key(), &current);
+    }
+
+    #[test]
+    fn stale_media_viewer_results_route_without_mutating_preview_state() {
+        let mut app = TestApp::new();
+        let current = crate::app::events::ViewerPreviewKey::new("current.jpg", 20, 10);
+        app.viewer_preview = Some(crate::app::events::ViewerPreviewState::Loading(
+            current.clone(),
+        ));
+        let (download_tx, _download_rx) = mpsc::channel();
+        let mut media_jobs = MediaJobOwner::new();
+
+        assert!(!dispatch_app_event(
+            &mut app,
+            AppEvent::SetViewerPreview(
+                crate::app::events::ViewerPreviewKey::new("stale.jpg", 20, 10),
+                None,
+            ),
+            &download_tx,
+            &mut media_jobs,
+        ));
+        assert_eq!(app.viewer_preview.as_ref().unwrap().key(), &current);
+    }
 
     #[test]
     fn hidden_log_panel_suppresses_only_go_log_draws() {
@@ -184,5 +496,59 @@ mod tests {
             .map(|source| should_draw_for_source(&app, source));
 
         assert_eq!(results, [false, true, false]);
+    }
+
+    #[test]
+    fn dispatching_duplicate_download_effects_submits_one_download() {
+        let mut app = TestApp::new();
+        let (download_tx, download_rx) = mpsc::channel();
+        let mut media_jobs = MediaJobOwner::new();
+        let message_id: wr::MessageId = "duplicate-media".into();
+        let file_id: wr::FileId = "file-id".into();
+        let mut plan = MediaRenderPlan::default();
+        plan.append(MediaRenderEffect::DownloadFile(
+            message_id.clone(),
+            file_id.clone(),
+        ));
+        plan.append(MediaRenderEffect::DownloadFile(message_id, file_id));
+
+        dispatch_media_render_plan(&mut app, plan, &download_tx, &mut media_jobs);
+
+        assert_eq!(download_rx.try_iter().count(), 1);
+    }
+
+    #[test]
+    fn failed_media_render_attempt_leaves_viewer_unchanged_until_a_successful_plan_dispatches() {
+        let mut app = TestApp::new();
+        let (download_tx, _) = mpsc::channel();
+        let mut media_jobs = MediaJobOwner::new();
+        let key = crate::app::events::ViewerPreviewKey::new("media.png", 20, 8);
+        let mut failed_plan = MediaRenderPlan::default();
+        failed_plan.append(MediaRenderEffect::LoadViewerPreview(key.clone()));
+
+        dispatch_media_render_plan_after_draw(
+            &mut app,
+            Err::<(), _>(()),
+            failed_plan,
+            &download_tx,
+            &mut media_jobs,
+        );
+        assert!(app.viewer_preview.is_none());
+
+        let mut successful_plan = MediaRenderPlan::default();
+        successful_plan.append(MediaRenderEffect::LoadViewerPreview(key.clone()));
+        dispatch_media_render_plan_after_draw(
+            &mut app,
+            Ok::<(), ()>(()),
+            successful_plan,
+            &download_tx,
+            &mut media_jobs,
+        );
+
+        assert!(matches!(
+            app.viewer_preview,
+            Some(crate::app::events::ViewerPreviewState::Loading(ref actual_key))
+                if actual_key == &key
+        ));
     }
 }

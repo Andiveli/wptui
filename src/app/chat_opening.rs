@@ -28,11 +28,11 @@ impl App<'_> {
     fn refresh_group_permission(&mut self, chat: &wr::JID) {
         if Self::is_group_chat(chat) {
             self.group_permissions.remove(chat);
-            if let Ok(info) = wr::get_group_info(chat) {
+            if let Ok(info) = self.group_info_query.get_group_info(chat) {
                 self.group_permissions.insert(chat.clone(), info);
             }
-            self.composer
-                .set_group_participants(wr::get_group_participants(chat));
+            let participants = self.group_participants_query.get_group_participants(chat);
+            self.composer.set_group_participants(participants);
         } else {
             self.composer.set_group_participants(Vec::new());
         }

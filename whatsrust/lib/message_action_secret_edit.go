@@ -16,7 +16,11 @@ import (
 type decryptSecretEncryptedMessageFunc func(context.Context, *events.Message) (*waE2E.Message, error)
 
 func decryptSecretEncryptedMessage(ctx context.Context, evt *events.Message) (*waE2E.Message, error) {
-	return client.DecryptSecretEncryptedMessage(ctx, evt)
+	clientSnapshot := lifecycleState.clientSnapshot()
+	if clientSnapshot == nil {
+		return nil, fmt.Errorf("WhatsApp client is unavailable")
+	}
+	return clientSnapshot.DecryptSecretEncryptedMessage(ctx, evt)
 }
 
 func secretEditErrorClass(err error) string {

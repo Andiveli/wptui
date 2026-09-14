@@ -29,11 +29,11 @@ func TestHandleMessageOrchestrationOwnership(t *testing.T) {
 	for _, fragment := range []string{
 		"emitTextMessage(cinfo, msg.GetConversation(), isSync)",
 		"emitTextMessage(cinfo, text, isSync)",
-		"emitImageMessage(cinfo, info.ID, msg.GetImageMessage(), isSync)",
-		"emitVideoMessage(cinfo, info.ID, msg.GetVideoMessage(), isSync)",
-		"emitAudioMessage(cinfo, info.ID, msg.GetAudioMessage(), isSync)",
-		"emitDocumentMessage(cinfo, info.ID, msg.GetDocumentMessage(), isSync)",
-		"emitStickerMessage(cinfo, info.ID, msg.GetStickerMessage(), isSync)",
+		"emitImageMessage(callback, info.ID, msg.GetImageMessage(), isSync)",
+		"emitVideoMessage(callback, info.ID, msg.GetVideoMessage(), isSync)",
+		"emitAudioMessage(callback, info.ID, msg.GetAudioMessage(), isSync)",
+		"emitDocumentMessage(callback, info.ID, msg.GetDocumentMessage(), isSync)",
+		"emitStickerMessage(callback, info.ID, msg.GetStickerMessage(), isSync)",
 	} {
 		if !strings.Contains(source, fragment) {
 			t.Fatalf("message orchestration call is missing: %q", fragment)

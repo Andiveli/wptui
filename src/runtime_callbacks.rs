@@ -44,7 +44,7 @@ pub(crate) fn register(tx: Sender<AppInput>, diagnostics: MessageActionDiagnosti
     });
     wr::set_optimistic_text_sent_handler(move |local_send_id, message| {
         optimistic_tx
-            .send(AppInput::App(AppEvent::OptimisticTextSent {
+            .send(AppInput::App(AppEvent::OutboundSendSucceeded {
                 local_send_id,
                 message,
             }))

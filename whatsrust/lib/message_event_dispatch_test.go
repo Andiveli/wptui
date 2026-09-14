@@ -25,8 +25,8 @@ func TestNormalizeMessageInfoKeepsCanonicalIDs(t *testing.T) {
 func TestNormalizeMessageInfoPromotesVerifiedSelfSenderAliases(t *testing.T) {
 	pn := types.NewJID("123", types.DefaultUserServer)
 	lid := types.NewJID("456", types.HiddenUserServer)
-	previous := client
-	client = &whatsmeow.Client{Store: &store.Device{
+	previous := lifecycleState.clientSnapshot()
+	client := &whatsmeow.Client{Store: &store.Device{
 		ID:  &pn,
 		LID: lid,
 		LIDs: participantIdentityLIDStore{
@@ -34,7 +34,8 @@ func TestNormalizeMessageInfoPromotesVerifiedSelfSenderAliases(t *testing.T) {
 			lidByPN: map[types.JID]types.JID{pn: lid},
 		},
 	}}
-	defer func() { client = previous }()
+	lifecycleState.publishClient(client)
+	defer func() { lifecycleState.publishClient(previous) }()
 
 	for name, sender := range map[string]types.JID{
 		"phone number": pn,

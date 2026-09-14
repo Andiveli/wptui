@@ -66,7 +66,7 @@ pub(crate) fn share_picker_action(key: &Key) -> Option<AppAction> {
 pub(crate) fn reaction_picker_action(key: &Key) -> Option<AppAction> {
     Some(match key.code {
         KeyCode::Char('h') | KeyCode::Left => AppAction::ReactionPrev,
-        KeyCode::Char('l') | KeyCode::Right => AppAction::ReactionNext,
+        KeyCode::Char('l') | KeyCode::Right | KeyCode::Down => AppAction::ReactionNext,
         KeyCode::Enter => AppAction::ConfirmReaction,
         KeyCode::Esc => AppAction::CancelReaction,
         _ => return None,

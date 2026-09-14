@@ -5,6 +5,11 @@ use crate::app::actions::{ActionNotice, Section};
 use crate::input_key::Key;
 use whatsrust as wr;
 
+fn logout_after_stopping_read_sync(stop_read_sync: impl FnOnce(), logout: impl FnOnce()) {
+    stop_read_sync();
+    logout();
+}
+
 impl App<'_> {
     pub(crate) fn handle_logout_input(&mut self, key: Key) {
         match key.code {
@@ -42,7 +47,13 @@ impl App<'_> {
     fn confirm_logout(&mut self) {
         self.pending_logout = true;
         self.logout_in_progress = true;
-        wr::logout();
+        let lifecycle = std::sync::Arc::clone(&self.lifecycle_control);
+        logout_after_stopping_read_sync(
+            || self.stop_read_sync_for_logout(),
+            move || {
+                lifecycle.logout();
+            },
+        );
     }
 
     pub(crate) fn handle_logout_result(&mut self, status: wr::LogoutStatus) -> bool {
@@ -54,12 +65,14 @@ impl App<'_> {
                 log::warn!(
                     "Logout: device was not unlinked on the phone; remove it manually in WhatsApp → Linked devices"
                 );
+                self.restore_read_sync_worker_after_logout_retry();
                 self.reset_logout_prompt();
                 self.unavailable(
                     "Logged out locally, but the device is still linked on the phone — remove it in WhatsApp (Settings → Linked devices), then log out again to finish",
                 );
             }
             wr::LogoutStatus::Failed => {
+                self.restore_read_sync_worker_after_logout_retry();
                 self.reset_logout_prompt();
                 self.unavailable("Could not log out");
             }
@@ -68,12 +81,27 @@ impl App<'_> {
     }
 
     pub(crate) fn finish_logout(&mut self) {
+        self.shutdown_read_sync_worker();
         self.reset_logout_prompt();
         self.db_handler.stop();
         wipe_sqlite_file(&self.whatsmeow_db);
         wipe_sqlite_file(&self.whatsmeow_db.with_file_name("whatsapp.db"));
         clear_media_dir(&self.media_path);
         self.should_quit = true;
+    }
+
+    fn stop_read_sync_for_logout(&mut self) {
+        self.shutdown_read_sync_worker();
+        self.read_sync_worker_stopped_for_logout = true;
+    }
+
+    fn restore_read_sync_worker_after_logout_retry(&mut self) -> bool {
+        if !self.read_sync_worker_stopped_for_logout {
+            return false;
+        }
+        self.chat_read_sync.restart();
+        self.read_sync_worker_stopped_for_logout = false;
+        true
     }
 
     fn reset_logout_prompt(&mut self) {
@@ -143,6 +171,50 @@ fn clear_media_dir(media_path: &std::path::Path) {
         } else {
             let _ = std::fs::remove_file(path);
         }
+    }
+}
+
+#[cfg(test)]
+mod ordering_tests {
+    use std::cell::RefCell;
+
+    use super::logout_after_stopping_read_sync;
+
+    #[test]
+    fn remote_logout_stops_read_sync_before_requesting_bridge_logout() {
+        let events = RefCell::new(Vec::new());
+
+        logout_after_stopping_read_sync(
+            || events.borrow_mut().push("stop read sync"),
+            || events.borrow_mut().push("request remote logout"),
+        );
+
+        assert_eq!(
+            events.into_inner(),
+            ["stop read sync", "request remote logout"]
+        );
+    }
+
+    #[test]
+    fn local_fallback_logout_stops_read_sync_before_requesting_bridge_logout() {
+        let events = RefCell::new(Vec::new());
+
+        logout_after_stopping_read_sync(
+            || events.borrow_mut().push("stop read sync"),
+            || {
+                events
+                    .borrow_mut()
+                    .push("request logout that may return local fallback")
+            },
+        );
+
+        assert_eq!(
+            events.into_inner(),
+            [
+                "stop read sync",
+                "request logout that may return local fallback"
+            ]
+        );
     }
 }
 
