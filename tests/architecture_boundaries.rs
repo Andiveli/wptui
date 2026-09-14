@@ -1332,9 +1332,7 @@ fn runtime_callback_ingress_stays_behind_root_adapter_boundary() {
         "runtime startup must import callback registration from the root adapter"
     );
     assert_eq!(
-        startup
-            .matches("register_runtime_callbacks(app.tx.clone(), app.message_action_diagnostics.clone());")
-            .count(),
+        startup.matches("register_runtime_callbacks(").count(),
         1,
         "runtime startup must invoke callback registration exactly once"
     );

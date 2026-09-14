@@ -1,5 +1,4 @@
 use log::info;
-use whatsrust as wr;
 
 use crate::app::App;
 use crate::app::media_support::remove_status_media_files;
@@ -18,23 +17,42 @@ pub(crate) fn run(app: &mut App<'_>, phone: Option<String>) {
     app.db_handler.init();
     prepare_persisted_state(app);
 
-    wr::new_client(app.whatsmeow_db.to_str().unwrap());
-    register_runtime_callbacks(app.tx.clone(), app.message_action_diagnostics.clone());
+    let tx = app.tx.clone();
+    let diagnostics = app.message_action_diagnostics.clone();
+    let download_worker = start_lifecycle(
+        app,
+        phone,
+        move || register_runtime_callbacks(tx, diagnostics),
+        |data| qr2term::print_qr(data).unwrap(),
+        |code| println!("Pairing code: {}", code),
+    );
+    info!("Connected, initializing terminal UI");
+    crate::app::runtime_loop::run(app, download_worker);
+}
 
+fn start_lifecycle(
+    app: &mut App<'_>,
+    phone: Option<String>,
+    register_callbacks: impl FnOnce(),
+    mut present_qr: impl FnMut(String) + 'static,
+    mut present_pairing: impl FnMut(String) + 'static,
+) -> crate::app::download_worker::Worker {
+    let lifecycle_control = app.lifecycle_control.clone();
+    lifecycle_control.new_client(app.whatsmeow_db.to_str().unwrap());
+    register_callbacks();
     let download_worker = app.take_media_download_worker();
 
     info!("Connecting to WhatsApp Web");
-    // thread::spawn(|| {
-    wr::connect(move |data| {
-        qr2term::print_qr(data).unwrap();
+    let qr_lifecycle_control = lifecycle_control.clone();
+    lifecycle_control.connect(Box::new(move |qr| {
+        present_qr(qr);
         if let Some(phone) = phone.as_ref() {
-            let code = wr::pair_phone(phone);
-            println!("Pairing code: {}", code);
+            let code = qr_lifecycle_control.pair_phone(phone);
+            present_pairing(code);
         }
-    });
-    // });
-    info!("Connected, initializing terminal UI");
-    crate::app::runtime_loop::run(app, download_worker);
+    }));
+
+    download_worker
 }
 
 pub(crate) fn prepare_persisted_state(app: &mut App<'_>) {

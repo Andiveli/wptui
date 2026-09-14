@@ -101,6 +101,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         chat_read_cursor: Box::new(crate::db::SqliteChatReadCursor::new(&db_path)),
         status_cursor: Box::new(crate::db::SqliteStatusCursor::new(&db_path)),
         status_retention: Box::new(crate::db::SqliteStatusRetention::new(&db_path)),
+        lifecycle_control: Arc::new(crate::lifecycle_control::WhatsRustLifecycleControl),
         media_path: data_dir.join("media"),
         whatsmeow_db: data_dir.join("whatsmeow.db"),
         clock,

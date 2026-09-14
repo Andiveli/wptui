@@ -14,6 +14,7 @@ pub mod group_participants_query;
 pub mod input_key;
 pub mod key_handler;
 pub mod keybindings;
+pub mod lifecycle_control;
 pub mod media;
 pub mod media_download;
 pub mod message_mutation;

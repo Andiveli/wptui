@@ -42,6 +42,7 @@ pub mod input_reader;
 pub mod input_router;
 pub mod inputs;
 pub mod leader_menu;
+pub mod lifecycle_control;
 pub mod lifecycle_settings_dispatch;
 pub mod log_toggle;
 pub mod logout;
@@ -203,6 +204,7 @@ pub struct App<'a> {
     pub(crate) chat_read_cursor: Box<dyn ChatReadCursorPort>,
     pub(crate) status_cursor: Box<dyn StatusCursorPort>,
     pub(crate) status_retention: Box<dyn StatusRetentionPort>,
+    pub(crate) lifecycle_control: Arc<dyn lifecycle_control::LifecycleControl>,
     pub media_path: PathBuf,
     pub whatsmeow_db: PathBuf,
     pub clock: Box<dyn Clock>,
@@ -464,6 +466,14 @@ impl App<'_> {
 
     pub fn set_status_retention(&mut self, port: Box<dyn StatusRetentionPort>) {
         self.status_retention = port;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_lifecycle_control<T: lifecycle_control::LifecycleControl>(
+        &mut self,
+        lifecycle_control: Arc<T>,
+    ) {
+        self.lifecycle_control = lifecycle_control;
     }
 
     pub(crate) fn toggle_composer_direction(&mut self) {
