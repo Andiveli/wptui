@@ -1,6 +1,36 @@
 use super::*;
-use crate::app::test_support::{TestApp, message};
-use std::sync::Arc;
+use crate::app::{
+    chat_store::write_port::{ChatStoreWritePort, PersistChat, PersistChatMessage, PersistMessage},
+    test_support::{
+        FakeChatReadCursorPort, FakeCommunityQuery, FakeStatusCursorPort, TestApp, message,
+    },
+};
+use std::{
+    panic::AssertUnwindSafe,
+    sync::{Arc, Mutex},
+};
+
+struct RecordingChatStoreWritePort(Arc<Mutex<Vec<Chat>>>);
+
+impl ChatStoreWritePort for RecordingChatStoreWritePort {
+    fn persist(&self, _: PersistChatMessage) {}
+
+    fn persist_chat(&self, command: PersistChat) {
+        self.0.lock().unwrap().push(command.chat);
+    }
+
+    fn persist_message(&self, _: PersistMessage) {}
+}
+
+struct PanickingChatStoreWritePort;
+
+impl ChatStoreWritePort for PanickingChatStoreWritePort {
+    fn persist(&self, _: PersistChatMessage) {}
+    fn persist_chat(&self, _: PersistChat) {
+        panic!("chat persistence failed")
+    }
+    fn persist_message(&self, _: PersistMessage) {}
+}
 
 fn status_message(sender: &wr::JID, id: &str, timestamp: i64) -> wr::Message {
     let mut message = message(&wr::JID::from("status@broadcast".to_owned()), id, timestamp);
@@ -17,20 +47,62 @@ fn sync_progress_event_updates_history_progress() {
 }
 
 #[test]
-fn chat_event_keeps_empty_chat_and_updates_newer_timestamp() {
+fn connection_and_sync_complete_each_query_communities_once() {
+    let mut app = TestApp::new();
+    let query = FakeCommunityQuery::default();
+    query.results.lock().unwrap().extend([
+        Err(wr::CommunitiesError::BridgeUnavailable),
+        Err(wr::CommunitiesError::BridgeUnavailable),
+    ]);
+    app.set_community_query(Box::new(query.clone()));
+
+    app.handle_whatsapp_event(wr::Event::Connected);
+    assert_eq!(*query.calls.lock().unwrap(), 1);
+    app.handle_whatsapp_event(wr::Event::AppStateSyncComplete);
+    assert_eq!(*query.calls.lock().unwrap(), 2);
+}
+
+#[test]
+fn chat_event_updates_memory_and_persists_each_current_canonical_chat() {
     let mut app = TestApp::new();
     let jid = wr::JID::from("chat@example.test".to_owned());
+    let persisted = Arc::new(Mutex::new(Vec::new()));
+    app.chat_store_write = Box::new(RecordingChatStoreWritePort(persisted.clone()));
 
-    assert!(app.handle_whatsapp_event(wr::Event::Chat {
-        jid: jid.clone(),
-        last_message_time: 0,
-    }));
-    assert_eq!(app.chats[&jid].last_message_time, None);
+    for timestamp in [0, 12, 7, 12] {
+        assert!(app.handle_whatsapp_event(wr::Event::Chat {
+            jid: jid.clone(),
+            last_message_time: timestamp,
+        }));
+    }
 
-    app.handle_whatsapp_event(wr::Event::Chat {
-        jid: jid.clone(),
-        last_message_time: 12,
-    });
+    assert_eq!(app.chats[&jid].last_message_time, Some(12));
+    assert_eq!(
+        persisted
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|chat| chat.last_message_time)
+            .collect::<Vec<_>>(),
+        [None, Some(12), Some(12), Some(12)]
+    );
+}
+
+#[test]
+fn chat_event_updates_memory_before_persistence_panics() {
+    let mut app = TestApp::new();
+    let jid = wr::JID::from("chat@example.test".to_owned());
+    app.chat_store_write = Box::new(PanickingChatStoreWritePort);
+
+    assert!(
+        std::panic::catch_unwind(AssertUnwindSafe(|| {
+            app.handle_whatsapp_event(wr::Event::Chat {
+                jid: jid.clone(),
+                last_message_time: 12,
+            });
+        }))
+        .is_err()
+    );
     assert_eq!(app.chats[&jid].last_message_time, Some(12));
 }
 
@@ -54,6 +126,8 @@ fn reaction_event_is_translated_into_reaction_projection() {
 fn remote_read_clears_only_the_covered_unread_range() {
     let mut app = TestApp::new();
     let chat = wr::JID::from("chat@example.test".to_owned());
+    let cursor = FakeChatReadCursorPort::default();
+    app.chat_read_cursor = Box::new(cursor.clone());
     for (id, timestamp) in [("first", 10), ("middle", 20), ("latest", 30)] {
         app.add_message(message(&chat, id, timestamp));
     }
@@ -74,6 +148,33 @@ fn remote_read_clears_only_the_covered_unread_range() {
         Some("middle")
     );
     assert_eq!(app.timeline[&chat].last_read_at, Some(20));
+    let stored = cursor.stored.lock().unwrap();
+    assert_eq!(
+        (&stored[0].chat, &stored[0].message_id, stored[0].timestamp),
+        (&chat, &Some("middle".into()), 20)
+    );
+}
+
+#[test]
+fn remote_read_mutates_timeline_before_cursor_storage_panics() {
+    let mut app = TestApp::new();
+    let chat = wr::JID::from("chat@example.test".to_owned());
+    app.add_message(message(&chat, "read", 20));
+    let cursor = FakeChatReadCursorPort::default();
+    *cursor.panic_on_store.lock().unwrap() = true;
+    app.chat_read_cursor = Box::new(cursor);
+
+    assert!(
+        std::panic::catch_unwind(AssertUnwindSafe(|| {
+            app.apply_remote_chat_read(chat.clone(), "read".into(), true, 20, false, None);
+        }))
+        .is_err()
+    );
+    assert_eq!(
+        app.timeline[&chat].last_read_message.as_deref(),
+        Some("read")
+    );
+    assert_eq!(app.pending_new_messages(&chat), 0);
 }
 
 #[test]
@@ -230,6 +331,10 @@ fn ordinary_read_of_outgoing_message_updates_peer_read_state() {
 fn ordinary_read_of_incoming_message_advances_local_cursor_and_preserves_later_unread() {
     let mut app = TestApp::new();
     let chat = wr::JID::from("chat@example.test".to_owned());
+    let cursor = FakeChatReadCursorPort::default();
+    let status_cursor = FakeStatusCursorPort::default();
+    app.chat_read_cursor = Box::new(cursor.clone());
+    app.status_cursor = Box::new(status_cursor.clone());
     for (id, timestamp) in [("old", 10), ("read", 20), ("later", 30)] {
         app.add_message(message(&chat, id, timestamp));
     }
@@ -247,6 +352,12 @@ fn ordinary_read_of_incoming_message_advances_local_cursor_and_preserves_later_u
     assert_eq!(app.timeline[&chat].last_read_at, Some(20));
     assert_eq!(app.pending_new_messages(&chat), 1);
     assert_eq!(app.messages["read"].info.read_by, 0);
+    let stored = cursor.stored.lock().unwrap();
+    assert_eq!(
+        (&stored[0].chat, &stored[0].message_id, stored[0].timestamp),
+        (&chat, &Some("read".into()), 20)
+    );
+    assert!(status_cursor.stored.lock().unwrap().is_empty());
 }
 
 #[test]

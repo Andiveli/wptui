@@ -3,9 +3,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use whatsrust::{FileContent, FileKind, JID, Message, MessageContent, MessageInfo};
 
-use wp_tui::app::App;
 use wp_tui::app::actions::{AppAction, ConversationMode, FocusPane, MessageReactor, Section};
 use wp_tui::app::unix_now;
+use wp_tui::app::{App, events::MediaRenderPlan};
 use wp_tui::ui;
 mod common;
 use common::TestApp;
@@ -97,8 +97,10 @@ fn status_media_message(sender: &JID, id: &str, timestamp: i64, path: &str) -> M
 fn render(app: &mut App, width: u16, height: u16) -> String {
     let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+    let mut media_render_plan = MediaRenderPlan::default();
+    let mut visibility_plan = wp_tui::app::read_receipts::VisibilityPlan::default();
     terminal
-        .draw(|frame| ui::draw(frame, app))
+        .draw(|frame| ui::draw_with_plan(frame, app, &mut media_render_plan, &mut visibility_plan))
         .expect("status section should render");
     terminal
         .backend()
@@ -376,11 +378,13 @@ fn status_renderers_have_a_dedicated_owner_and_ui_keeps_composition() {
             .expect("status renderer module should exist");
 
     assert!(status_source.contains("pub(super) fn render_status_contacts"));
-    assert!(status_source.contains("pub(super) fn render_statuses"));
+    assert!(status_source.contains("pub(super) fn render_statuses_with_plan"));
     assert!(!source.contains("fn render_status_contacts"));
     assert!(!source.contains("fn render_statuses"));
     assert!(source.contains("render_status_contacts(frame, app, area)"));
-    assert!(source.contains("render_statuses(frame, app, areas.conversation)"));
+    assert!(source.contains("render_statuses_with_plan("));
+    assert!(source.contains("media_render_plan,"));
+    assert!(source.contains("visibility_plan,"));
 }
 
 #[test]

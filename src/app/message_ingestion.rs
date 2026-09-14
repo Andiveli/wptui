@@ -10,8 +10,12 @@ use whatsrust as wr;
 
 impl App<'_> {
     pub fn apply_reaction(&mut self, target: &wr::MessageId, participant: wr::JID, text: Arc<str>) {
-        self.db_handler
-            .record_reaction(target, participant.clone(), text.clone());
+        self.message_reaction_write
+            .record(crate::app::message_reactions::RecordMessageReaction {
+                message_id: target.clone(),
+                participant: participant.clone(),
+                emoji: text.clone(),
+            });
         if text.is_empty() {
             if let Some(reactions) = self.reactions.get_mut(target) {
                 reactions.remove(&participant);
@@ -29,7 +33,15 @@ impl App<'_> {
     }
 
     pub(crate) fn process_message(&mut self, message: wr::Message, is_sync: bool) -> bool {
-        self.process_message_with_lookup(message, is_sync, wr::get_chat_settings)
+        let mut chat_settings = (!is_sync && self.should_notify(&message)).then(|| {
+            self.chat_settings_query
+                .get_chat_settings(&message.info.chat)
+        });
+        self.process_message_with_lookup(message, is_sync, move |_| {
+            chat_settings
+                .take()
+                .expect("chat settings are queried only for eligible messages")
+        })
     }
 
     pub(crate) fn process_message_with_lookup(
@@ -43,7 +55,7 @@ impl App<'_> {
                 app.handle_notification_with_lookup(&message, lookup);
             }
 
-            app.db_handler.add_message(&message);
+            let message_for_persistence = message.clone();
             if is_sync {
                 let chat = message.info.chat.clone();
                 app.with_chat_list_mutation(|app| {
@@ -56,6 +68,16 @@ impl App<'_> {
             } else {
                 app.add_message(message);
             }
+            let chat = app
+                .chats
+                .get(&message_for_persistence.info.chat)
+                .expect("message ingestion creates its chat")
+                .clone();
+            app.chat_store_write
+                .persist(crate::app::chat_store::write_port::PersistChatMessage {
+                    chat,
+                    message: message_for_persistence,
+                });
 
             let chat_jid = app.get_selected_chat();
             app.sort_chats();

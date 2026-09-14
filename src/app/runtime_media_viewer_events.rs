@@ -1,13 +1,13 @@
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
-use std::thread;
 
 use ratatui::layout::Size;
 use ratatui_image::{Resize, ResizeEncodeRender};
 use whatsrust as wr;
 
 use crate::app::events::{AppEvent, AppInput, ViewerPreviewState, ViewerStatus};
+use crate::app::media_jobs::MediaJobOwner;
 use crate::app::media_support::{
     apply_video_play_marker, generate_video_thumbnail, has_decent_video_thumbnail,
 };
@@ -18,55 +18,24 @@ use crate::ui::message_list::{IMAGE_HEIGHT, IMAGE_WIDTH, VIDEO_HEIGHT, VIDEO_WID
 type DownloadSender = Sender<(wr::MessageId, wr::FileId)>;
 
 impl App<'_> {
-    pub(crate) fn handle_media_event(
+    pub(crate) fn handle_media_viewer_event(
         &mut self,
         event: AppEvent,
         download_tx: &DownloadSender,
+        media_jobs: &mut MediaJobOwner,
     ) -> bool {
         match event {
-            AppEvent::UpdateAvailable(version) => {
-                self.update_notice = Some(version);
-                true
+            AppEvent::OutboundSendSucceeded { .. } | AppEvent::OutboundSendFailed { .. } => {
+                unreachable!("runtime_loop must route Send events to handle_send_event")
             }
-            AppEvent::OptimisticTextSent {
-                local_send_id,
-                message,
-            } => self.complete_text_send(local_send_id, message),
-            AppEvent::TextSendFailed { local_send_id } => self.fail_text_send(local_send_id),
-            AppEvent::ReadReceiptResult(key, status) => {
-                self.complete_read_receipt(&key, status);
-                false
-            }
-            AppEvent::ReadReceiptRestored(result) => {
-                match result {
-                    Ok(candidates) => self
-                        .read_receipts
-                        .restore_candidates(candidates, self.now()),
-                    Err(error) => self.read_receipts.restore_failed(self.now(), error),
-                }
-                false
-            }
-            AppEvent::ReadReceiptPersisted(candidate, result) => {
-                self.read_receipts.persisted(candidate, result, self.now());
-                false
-            }
-            AppEvent::ReadReceiptCompleted(key, result) => {
-                let success = result.is_ok();
-                self.read_receipts.persistence_completed(&key, result);
-                if success && self.read_receipts.enabled() {
-                    self.read_receipts.restore_load_needed();
-                    self.request_restore_load();
-                }
-                false
-            }
-            AppEvent::ReadReceiptRejected(key, result) => {
-                let success = result.is_ok();
-                self.read_receipts.persistence_rejected(&key, result);
-                if success && self.read_receipts.enabled() {
-                    self.read_receipts.restore_load_needed();
-                    self.request_restore_load();
-                }
-                false
+            AppEvent::ReadReceiptResult(..)
+            | AppEvent::ReadReceiptRestored(..)
+            | AppEvent::ReadReceiptPersisted(..)
+            | AppEvent::ReadReceiptCompleted(..)
+            | AppEvent::ReadReceiptRejected(..) => {
+                unreachable!(
+                    "runtime_loop must route ReadReceipt events to handle_read_receipt_event"
+                )
             }
             AppEvent::SetFilePreview(message_id, file_path, img) => {
                 self.cache_file_preview(message_id.clone(), file_path, img);
@@ -88,7 +57,7 @@ impl App<'_> {
                     let tx = self.tx.clone();
                     let media_path = self.media_path.clone();
                     let picker = Arc::clone(&self.picker);
-                    thread::spawn(move || {
+                    media_jobs.spawn(move |permit| {
                         let protocol = MediaRoot::new(&media_path)
                             .and_then(|root| {
                                 root.media_file(Path::new(key.preview_path().as_ref()))
@@ -105,7 +74,10 @@ impl App<'_> {
                                 );
                                 protocol
                             });
-                        let _ = tx.send(AppInput::App(AppEvent::SetViewerPreview(key, protocol)));
+                        permit.send(
+                            &tx,
+                            AppInput::App(AppEvent::SetViewerPreview(key, protocol)),
+                        );
                     });
                     false
                 }
@@ -144,7 +116,7 @@ impl App<'_> {
                         _ => None,
                     };
                     if let Some(file) = file {
-                        thread::spawn(move || {
+                        media_jobs.spawn(move |permit| {
                             let preview_path = match file.kind {
                                 wr::FileKind::Video => {
                                     let video_rel = Path::new(file.path.as_ref());
@@ -178,24 +150,30 @@ impl App<'_> {
                                     &Resize::Scale(None),
                                     Size::new(preview_width as u16, preview_height as u16),
                                 );
-                                tx.send(AppInput::App(AppEvent::SetFilePreview(
-                                    message_id.clone(),
-                                    file.path.clone(),
-                                    img,
-                                )))
-                                .unwrap();
+                                permit.send(
+                                    &tx,
+                                    AppInput::App(AppEvent::SetFilePreview(
+                                        message_id.clone(),
+                                        file.path.clone(),
+                                        img,
+                                    )),
+                                );
                             } else if matches!(file.kind, wr::FileKind::Video) {
-                                tx.send(AppInput::App(AppEvent::SetFileState(
-                                    message_id.clone(),
-                                    FileMeta::Loaded,
-                                )))
-                                .unwrap();
+                                permit.send(
+                                    &tx,
+                                    AppInput::App(AppEvent::SetFileState(
+                                        message_id.clone(),
+                                        FileMeta::Loaded,
+                                    )),
+                                );
                             } else {
-                                tx.send(AppInput::App(AppEvent::SetFileState(
-                                    message_id.clone(),
-                                    FileMeta::LoadFailed,
-                                )))
-                                .unwrap();
+                                permit.send(
+                                    &tx,
+                                    AppInput::App(AppEvent::SetFileState(
+                                        message_id.clone(),
+                                        FileMeta::LoadFailed,
+                                    )),
+                                );
                             }
                         });
                     } else {
@@ -221,7 +199,7 @@ impl App<'_> {
                     self.metadata.get(&message_id),
                     Some(Metadata::File(FileMeta::Downloaded | FileMeta::Loaded))
                 ) {
-                    self.spawn_audio_duration_probe_if_missing(&message_id);
+                    self.spawn_audio_duration_probe_if_missing(&message_id, media_jobs);
                 }
                 true
             }
@@ -230,10 +208,6 @@ impl App<'_> {
                     self.audio_durations.insert(path, duration);
                 }
                 true
-            }
-            AppEvent::ContactAvatar(result) => self.contact_avatars.apply(result),
-            AppEvent::ContactAvatarRefreshed { generation, target } => {
-                self.contact_avatars.mark_refreshed(generation, target)
             }
             AppEvent::DownloadFile(message_id, file_id) => {
                 if matches!(
@@ -255,6 +229,9 @@ impl App<'_> {
                 self.message_height_cache.invalidate(&message_id);
                 true
             }
+            _ => unreachable!(
+                "runtime_loop must route only MediaViewer events to handle_media_viewer_event"
+            ),
         }
     }
 }

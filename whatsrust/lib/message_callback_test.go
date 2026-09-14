@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -45,8 +46,8 @@ func TestMessageCallbackMetadataFromPreservesCallbackFields(t *testing.T) {
 func TestMessageCallbackCarriesSemanticSelfMentionForPNAndLID(t *testing.T) {
 	pn := types.NewJID("123", types.DefaultUserServer)
 	lid := types.NewJID("456", types.HiddenUserServer)
-	previousClient := client
-	client = &whatsmeow.Client{Store: &store.Device{
+	previousClient := lifecycleState.clientSnapshot()
+	client := &whatsmeow.Client{Store: &store.Device{
 		ID:  &pn,
 		LID: lid,
 		LIDs: participantIdentityLIDStore{
@@ -54,7 +55,8 @@ func TestMessageCallbackCarriesSemanticSelfMentionForPNAndLID(t *testing.T) {
 			lidByPN: map[types.JID]types.JID{pn: lid},
 		},
 	}}
-	t.Cleanup(func() { client = previousClient })
+	lifecycleState.publishClient(client)
+	t.Cleanup(func() { lifecycleState.publishClient(previousClient) })
 
 	message := &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
 		ContextInfo: &waE2E.ContextInfo{MentionedJID: []string{lid.String()}},
@@ -74,8 +76,8 @@ func TestMessageCallbackCarriesSemanticSelfMentionForPNAndLID(t *testing.T) {
 func TestMessageCallbackSelfMentionIdentityVariantsFailClosed(t *testing.T) {
 	pn := types.NewJID("123", types.DefaultUserServer)
 	lid := types.NewJID("456", types.HiddenUserServer)
-	previousClient := client
-	client = &whatsmeow.Client{Store: &store.Device{
+	previousClient := lifecycleState.clientSnapshot()
+	client := &whatsmeow.Client{Store: &store.Device{
 		ID:  &pn,
 		LID: lid,
 		LIDs: participantIdentityLIDStore{
@@ -83,7 +85,8 @@ func TestMessageCallbackSelfMentionIdentityVariantsFailClosed(t *testing.T) {
 			lidByPN: map[types.JID]types.JID{pn: lid},
 		},
 	}}
-	t.Cleanup(func() { client = previousClient })
+	lifecycleState.publishClient(client)
+	t.Cleanup(func() { lifecycleState.publishClient(previousClient) })
 
 	tests := []struct {
 		name      string
@@ -116,20 +119,104 @@ func TestBeginMessageCallbackPreservesPushNameAcrossCMetadata(t *testing.T) {
 	}
 }
 
+func TestHandleMessageQuotedTextUsesOwnedCallbackQuoteID(t *testing.T) {
+	previousObserve := observeTextCallback
+	t.Cleanup(func() { observeTextCallback = previousObserve })
+
+	var output textCallbackOutput
+	observeTextCallback = func(got textCallbackOutput) { output = got }
+	stanzaID := "quoted-message"
+	text := "reply"
+	HandleMessage(types.MessageInfo{ID: "message-id"}, &waE2E.Message{
+		ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+			Text:        &text,
+			ContextInfo: &waE2E.ContextInfo{StanzaID: &stanzaID},
+		},
+	}, false)
+
+	if output.quoteID != stanzaID {
+		t.Fatalf("quoted callback quote ID = %q, want %q", output.quoteID, stanzaID)
+	}
+}
+
+func TestHandleOptimisticTextSentDeliversDownloadableFilePayloadWithLocalSendID(t *testing.T) {
+	previousObserve := observeOptimisticFileCallback
+	t.Cleanup(func() { observeOptimisticFileCallback = previousObserve })
+
+	caption := "caption"
+	directPath := "/media/direct"
+	tests := []struct {
+		name       string
+		message    *waE2E.Message
+		kind       uint8
+		pathPrefix string
+		caption    string
+	}{
+		{name: "image", message: &waE2E.Message{ImageMessage: &waE2E.ImageMessage{Caption: &caption, DirectPath: &directPath}}, kind: FileTypeImage, pathPrefix: "imgs/", caption: caption},
+		{name: "video", message: &waE2E.Message{VideoMessage: &waE2E.VideoMessage{Caption: &caption, DirectPath: &directPath}}, kind: FileTypeVideo, pathPrefix: "videos/", caption: caption},
+		{name: "audio", message: &waE2E.Message{AudioMessage: &waE2E.AudioMessage{DirectPath: &directPath}}, kind: FileTypeAudio, pathPrefix: "audios/"},
+		{name: "document", message: &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{Caption: &caption, DirectPath: &directPath}}, kind: FileTypeDocument, pathPrefix: "docs/", caption: caption},
+		{name: "sticker", message: &waE2E.Message{StickerMessage: &waE2E.StickerMessage{DirectPath: &directPath}}, kind: FileTypeSticker, pathPrefix: "stickers/"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var output fileCallbackOutput
+			observeOptimisticFileCallback = func(got fileCallbackOutput) { output = got }
+			HandleOptimisticTextSent(42, types.MessageInfo{ID: "message-id"}, test.message)
+
+			if output.localSendID != 42 || output.kind != test.kind || output.caption != test.caption {
+				t.Fatalf("optimistic file callback = %#v", output)
+			}
+			if !strings.HasPrefix(output.path, test.pathPrefix) {
+				t.Fatalf("optimistic file path = %q, want prefix %q", output.path, test.pathPrefix)
+			}
+			info, err := FileIdToDownloadInfo(output.fileID)
+			if err != nil {
+				t.Fatalf("decode optimistic file ID: %v", err)
+			}
+			if info.TargetPath != output.path || info.DirectPath != directPath {
+				t.Fatalf("optimistic download info = %#v", info)
+			}
+		})
+	}
+}
+
+func TestMessageCallbackCloseReleasesAllCallbackStateExactlyOnce(t *testing.T) {
+	callback := beginMessageCallback(types.MessageInfo{PushName: "profile"}, &waE2E.Message{}, []byte("forwarded"))
+	callback.setQuoteID("quoted-message")
+	callback.close()
+	callback.close()
+
+	if callback.forwardData != nil || callback.info.id != nil || callback.info.chat != nil || callback.info.sender != nil || callback.info.pushName != nil || callback.info.quoteID != nil {
+		t.Fatalf("callback cleanup left owned state: %#v", callback)
+	}
+
+	// A second callback proves the first close released the serialization lock.
+	next := beginMessageCallback(types.MessageInfo{}, &waE2E.Message{}, nil)
+	next.close()
+}
+
+func TestMessageCallbackCloseNilIsSafe(t *testing.T) {
+	var callback *messageCallback
+	callback.close()
+}
+
 func TestSelfMentionUsesAuthenticatedPushNameLearnedFromOwnCallback(t *testing.T) {
-	previousClient := client
+	previousClient := lifecycleState.clientSnapshot()
 	t.Cleanup(func() {
-		client = previousClient
+		lifecycleState.publishClient(previousClient)
 		clearAuthenticatedPushNameCache()
 	})
 
 	pn := types.NewJID("593995682425", types.DefaultUserServer)
-	client = whatsmeow.NewClient(&store.Device{
+	client := whatsmeow.NewClient(&store.Device{
 		ID: &pn,
 		Contacts: mentionDirectContactStore{direct: map[types.JID]types.ContactInfo{
 			pn: {FullName: "+593 99 568 2425", FirstName: "+593 99 568 2425"},
 		}},
 	}, nil)
+	lifecycleState.publishClient(client)
 
 	callback := beginMessageCallback(types.MessageInfo{
 		MessageSource: types.MessageSource{Sender: pn, IsFromMe: true},
@@ -146,15 +233,16 @@ func TestSelfMentionUsesAuthenticatedPushNameLearnedFromOwnCallback(t *testing.T
 }
 
 func TestOtherUsersPushNameNeverContaminatesAuthenticatedSelfCache(t *testing.T) {
-	previousClient := client
+	previousClient := lifecycleState.clientSnapshot()
 	t.Cleanup(func() {
-		client = previousClient
+		lifecycleState.publishClient(previousClient)
 		clearAuthenticatedPushNameCache()
 	})
 
 	self := types.NewJID("593995682425", types.DefaultUserServer)
 	bryan := types.NewJID("15551234567", types.DefaultUserServer)
-	client = whatsmeow.NewClient(&store.Device{ID: &self}, nil)
+	client := whatsmeow.NewClient(&store.Device{ID: &self}, nil)
+	lifecycleState.publishClient(client)
 
 	callback := beginMessageCallback(types.MessageInfo{
 		MessageSource: types.MessageSource{Sender: bryan, IsFromMe: false},
@@ -173,14 +261,15 @@ func TestOtherUsersPushNameNeverContaminatesAuthenticatedSelfCache(t *testing.T)
 }
 
 func TestAuthenticatedPushNameCacheIsolatedByAccountIdentity(t *testing.T) {
-	previousClient := client
+	previousClient := lifecycleState.clientSnapshot()
 	t.Cleanup(func() {
-		client = previousClient
+		lifecycleState.publishClient(previousClient)
 		clearAuthenticatedPushNameCache()
 	})
 
 	first := types.NewJID("111", types.DefaultUserServer)
-	client = whatsmeow.NewClient(&store.Device{ID: &first}, nil)
+	client := whatsmeow.NewClient(&store.Device{ID: &first}, nil)
+	lifecycleState.publishClient(client)
 	callback := beginMessageCallback(types.MessageInfo{
 		MessageSource: types.MessageSource{Sender: first, IsFromMe: true},
 		PushName:      "First Account",
@@ -189,6 +278,7 @@ func TestAuthenticatedPushNameCacheIsolatedByAccountIdentity(t *testing.T) {
 
 	second := types.NewJID("222", types.DefaultUserServer)
 	client = whatsmeow.NewClient(&store.Device{ID: &second}, nil)
+	lifecycleState.publishClient(client)
 	if got := selfDisplayName(context.Background(), client); got != "" {
 		t.Fatalf("push name from previous account leaked into current account: %q", got)
 	}

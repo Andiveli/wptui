@@ -72,13 +72,13 @@ func TestNormalAndOptimisticSendRoutesPreserveWireAndQuoteParity(t *testing.T) {
 }
 
 func TestNormalAndOptimisticProductionRoutesHaveWireAndCallbackParity(t *testing.T) {
-	previousClient := client
+	previousClient := lifecycleState.clientSnapshot()
 	previousSend := requestSendMessage
 	previousNormal := normalMessageCallback
 	previousOptimistic := optimisticTextSentCallback
 	previousObserve := observeTextCallback
 	t.Cleanup(func() {
-		client = previousClient
+		lifecycleState.publishClient(previousClient)
 		requestSendMessage = previousSend
 		normalMessageCallback = previousNormal
 		optimisticTextSentCallback = previousOptimistic
@@ -89,18 +89,18 @@ func TestNormalAndOptimisticProductionRoutesHaveWireAndCallbackParity(t *testing
 	otherPN := types.NewJID("222", types.DefaultUserServer)
 	otherLID := types.NewJID("222", types.HiddenUserServer)
 	selfLID := types.NewJID("444", types.HiddenUserServer)
-	client = &whatsmeow.Client{Store: &store.Device{
-		ID:       &self,
-		LID:      selfLID,
+	lifecycleState.publishClient(&whatsmeow.Client{Store: &store.Device{
+		ID:  &self,
+		LID: selfLID,
 		Contacts: parityContactStore{contacts: map[types.JID]types.ContactInfo{
-			self: {FullName: "Álvaro"},
+			self:    {FullName: "Álvaro"},
 			otherPN: {FullName: "李雷"},
 		}},
 		LIDs: participantIdentityLIDStore{
 			pnByLID: map[types.JID]types.JID{otherLID: otherPN, selfLID: self},
 			lidByPN: map[types.JID]types.JID{otherPN: otherLID, self: selfLID},
 		},
-	}}
+	}})
 	request := textSendRequest{
 		messageType:   MessageTypeText,
 		chat:          types.NewJID("999", types.DefaultUserServer),
@@ -117,7 +117,7 @@ func TestNormalAndOptimisticProductionRoutesHaveWireAndCallbackParity(t *testing
 
 	var sent []*waE2E.Message
 	var outputs []textCallbackOutput
-	requestSendMessage = func(_ context.Context, _ types.JID, message *waE2E.Message) (whatsmeow.SendResponse, error) {
+	requestSendMessage = func(_ *whatsmeow.Client, _ context.Context, _ types.JID, message *waE2E.Message) (whatsmeow.SendResponse, error) {
 		sent = append(sent, message)
 		return whatsmeow.SendResponse{ID: "server-1"}, nil
 	}

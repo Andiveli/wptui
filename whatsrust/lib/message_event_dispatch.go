@@ -1,24 +1,29 @@
 package main
 
 import (
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 )
 
 func normalizeMessageInfo(info types.MessageInfo) types.MessageInfo {
+	return normalizeMessageInfoWithClient(lifecycleState.clientSnapshot(), info)
+}
+
+func normalizeMessageInfoWithClient(clientSnapshot *whatsmeow.Client, info types.MessageInfo) types.MessageInfo {
 	// Some history and DeviceSent events carry the sender identity while leaving
 	// IsFromMe unset. Resolve that source identity before canonicalization so the
 	// Rust side receives verified ownership for PN, LID, and device aliases.
-	if !info.IsFromMe && participantMatchesSelf(client, types.GroupParticipant{JID: info.Sender}) {
+	if !info.IsFromMe && participantMatchesSelf(clientSnapshot, types.GroupParticipant{JID: info.Sender}) {
 		info.IsFromMe = true
 	}
 	// Normalize chat and sender ids (LID→PN, broadcast→per-sender) so Rust sees canonical ids.
-	if normalizedChat := GetChatId(client, &info.Chat, &info.Sender); normalizedChat != "" {
+	if normalizedChat := GetChatId(clientSnapshot, &info.Chat, &info.Sender); normalizedChat != "" {
 		if jid, err := types.ParseJID(normalizedChat); err == nil {
 			info.Chat = jid
 		}
 	}
-	if normalizedSender := GetUserId(client, &info.Chat, &info.Sender); normalizedSender != "" {
+	if normalizedSender := GetUserId(clientSnapshot, &info.Chat, &info.Sender); normalizedSender != "" {
 		if jid, err := types.ParseJID(normalizedSender); err == nil {
 			info.Sender = jid
 		}

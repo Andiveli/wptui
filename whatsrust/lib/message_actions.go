@@ -35,16 +35,20 @@ func C_ReactToMessage(targetJID C.JID, destinationJID C.JID, senderJID C.JID, me
 		LOG_WARN("reaction rejected: %v", err)
 		return 1
 	}
-	message, err := buildOrdinaryReaction(client, request.target, request.sender, request.id, request.reaction)
+	clientSnapshot := lifecycleState.clientSnapshot()
+	if clientSnapshot == nil || clientSnapshot.Store == nil || clientSnapshot.Store.ID == nil {
+		return 1
+	}
+	message, err := buildOrdinaryReaction(clientSnapshot, request.target, request.sender, request.id, request.reaction)
 	if err != nil {
 		LOG_WARN("reaction rejected: %v", err)
 		return 1
 	}
-	if _, err := client.SendMessage(context.Background(), request.destination, message); err != nil {
+	if _, err := clientSnapshot.SendMessage(context.Background(), request.destination, message); err != nil {
 		LOG_WARN("reaction send failed: %v", err)
 		return 1
 	}
-	HandleMessage(types.MessageInfo{MessageSource: types.MessageSource{Chat: request.destination, Sender: *client.Store.ID, IsFromMe: true}}, message, false)
+	HandleMessage(types.MessageInfo{MessageSource: types.MessageSource{Chat: request.destination, Sender: *clientSnapshot.Store.ID, IsFromMe: true}}, message, false)
 	return 0
 }
 
@@ -57,12 +61,16 @@ func C_EditMessage(chatJID C.JID, messageID *C.char, replacement *C.char) C.uint
 	if err != nil {
 		return 1
 	}
-	message, err := buildOrdinaryEdit(client, chat, types.MessageID(C.GoString(messageID)), C.GoString(replacement))
+	clientSnapshot := lifecycleState.clientSnapshot()
+	if clientSnapshot == nil {
+		return 1
+	}
+	message, err := buildOrdinaryEdit(clientSnapshot, chat, types.MessageID(C.GoString(messageID)), C.GoString(replacement))
 	if err != nil {
 		LOG_WARN("edit rejected: %v", err)
 		return 1
 	}
-	if _, err := client.SendMessage(context.Background(), chat, message); err != nil {
+	if _, err := clientSnapshot.SendMessage(context.Background(), chat, message); err != nil {
 		LOG_WARN("edit send failed: %v", err)
 		return 1
 	}
@@ -83,12 +91,16 @@ func C_RevokeMessage(chatJID C.JID, senderJID C.JID, messageID *C.char) C.uint8_
 		return 1
 	}
 	id := types.MessageID(C.GoString(messageID))
-	message, err := buildOrdinaryRevoke(client, chat, sender, id)
+	clientSnapshot := lifecycleState.clientSnapshot()
+	if clientSnapshot == nil {
+		return 1
+	}
+	message, err := buildOrdinaryRevoke(clientSnapshot, chat, sender, id)
 	if err != nil {
 		LOG_WARN("revoke rejected: %v", err)
 		return 1
 	}
-	if _, err := client.SendMessage(context.Background(), chat, message); err != nil {
+	if _, err := clientSnapshot.SendMessage(context.Background(), chat, message); err != nil {
 		LOG_WARN("revoke send failed: %v", err)
 		return 1
 	}

@@ -35,15 +35,15 @@ func TestMessageActionDispatchOwnsPayloadInCUntilSynchronousCallbackReturns(t *t
 }
 
 func TestMessageActionDispatchLeavesMessageRouterInMain(t *testing.T) {
-	source, err := os.ReadFile("event_wiring.go")
+	source, err := os.ReadFile("event_message_wiring.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	body := string(source)
-	if !strings.Contains(body, "dispatchIncomingMessage(evt, dispatchMessageActionEvent, HandleMessage)") {
-		t.Fatal("event wiring no longer delegates message action dispatch")
+	if !strings.Contains(body, "dispatchIncomingMessage(evt, dispatchMessageActionEvent, HandleMessage, dispatchViewOnce)") {
+		t.Fatal("message family no longer delegates message action dispatch")
 	}
 	if strings.Contains(body, "func dispatchMessageActionEvent(action messageActionEvent)") {
-		t.Fatal("message action dispatch remains in event_wiring.go")
+		t.Fatal("message action dispatch remains in event_message_wiring.go")
 	}
 }
