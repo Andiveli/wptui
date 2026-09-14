@@ -82,6 +82,8 @@ func TestHistorySyncDispatchKeepsProgressChatAndMessageOrdering(t *testing.T) {
 		"EventTypeSyncProgress",
 		"C.free(unsafe.Pointer(cpercent))",
 		"EventTypeChat",
+		"C.free(unsafe.Pointer(payload.chat))",
+		"C.free(unsafe.Pointer(payload))",
 		"conversation.GetMessages()",
 		"dispatchMessage(parsed)",
 	} {
@@ -91,5 +93,11 @@ func TestHistorySyncDispatchKeepsProgressChatAndMessageOrdering(t *testing.T) {
 	}
 	if strings.Index(body, "EventTypeSyncProgress") > strings.Index(body, "EventTypeChat") {
 		t.Fatal("sync progress must be emitted before chat lifecycle events")
+	}
+	chatCallbackIndex := strings.Index(body, "C.callSyncEventCallback(eventHandler, &C.Event{\n\t\t\tkind: C.uint8_t(EventTypeChat)")
+	chatCleanupIndex := strings.Index(body, "C.free(unsafe.Pointer(payload.chat))")
+	payloadCleanupIndex := strings.Index(body, "C.free(unsafe.Pointer(payload))")
+	if chatCallbackIndex < 0 || chatCleanupIndex < 0 || payloadCleanupIndex < 0 || chatCallbackIndex > chatCleanupIndex || chatCleanupIndex > payloadCleanupIndex {
+		t.Fatal("history chat callback payload allocations must be freed after the callback")
 	}
 }

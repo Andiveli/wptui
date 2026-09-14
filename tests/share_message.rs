@@ -1,12 +1,13 @@
 use std::cell::RefCell;
 use std::rc::Rc;
+use wp_tui::app::read_receipts::VisibilityPlan;
 
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use whatsrust::{ForwardFailure, ForwardReport, JID, Message, MessageContent, MessageInfo};
 use wp_tui::app::actions::{ActionNotice, FocusPane, MessageForwarder};
-use wp_tui::app::{App, Chat};
-use wp_tui::ui::render_chats;
+use wp_tui::app::{App, Chat, events::MediaRenderPlan};
+use wp_tui::ui::render_chats_with_plan;
 mod common;
 use common::TestApp;
 
@@ -207,7 +208,17 @@ fn share_picker_sorts_by_activity_and_keeps_navigation_visible_in_small_viewport
     }
     let mut terminal = Terminal::new(TestBackend::new(30, 7)).unwrap();
     terminal
-        .draw(|frame| render_chats(frame, &mut app, Rect::new(0, 0, 30, 7)))
+        .draw(|frame| {
+            let mut media_render_plan = MediaRenderPlan::default();
+            let mut visibility_plan = VisibilityPlan::default();
+            render_chats_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                &mut visibility_plan,
+                Rect::new(0, 0, 30, 7),
+            )
+        })
         .unwrap();
     let picker = app.share_picker.as_ref().unwrap();
     assert_eq!(picker.viewport().len(), 1);
@@ -261,7 +272,17 @@ fn forwarding_failure_notices_are_concise_and_typed() {
         });
         let mut terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
         terminal
-            .draw(|frame| render_chats(frame, &mut app, Rect::new(0, 0, 80, 12)))
+            .draw(|frame| {
+                let mut media_render_plan = MediaRenderPlan::default();
+                let mut visibility_plan = VisibilityPlan::default();
+                render_chats_with_plan(
+                    frame,
+                    &mut app,
+                    &mut media_render_plan,
+                    &mut visibility_plan,
+                    Rect::new(0, 0, 80, 12),
+                )
+            })
             .unwrap();
         let rendered = terminal
             .backend()

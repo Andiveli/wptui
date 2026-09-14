@@ -23,7 +23,8 @@ func markMessageAsRead(msgID string, chat, sender types.JID, markRead markAsRead
 
 //export C_MarkAsRead
 func C_MarkAsRead(msgID *C.char, chatJID C.JID, senderJID C.JID) C.int {
-	if client == nil || msgID == nil || chatJID == nil || senderJID == nil {
+	clientSnapshot := lifecycleState.clientSnapshot()
+	if clientSnapshot == nil || msgID == nil || chatJID == nil || senderJID == nil {
 		return 1
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -38,7 +39,7 @@ func C_MarkAsRead(msgID *C.char, chatJID C.JID, senderJID C.JID) C.int {
 	}
 
 	return markReadResult(func() error {
-		return client.MarkRead(ctx, []types.MessageID{C.GoString(msgID)}, time.Now(), chat, sender)
+		return clientSnapshot.MarkRead(ctx, []types.MessageID{C.GoString(msgID)}, time.Now(), chat, sender)
 	})
 }
 

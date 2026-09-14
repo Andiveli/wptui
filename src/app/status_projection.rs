@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::App;
+use super::{App, StoreStatusCursor};
 use whatsrust as wr;
 
 /// The synthetic chat that carries WhatsApp status broadcasts. Each message's
@@ -117,8 +117,12 @@ impl App<'_> {
                 .copied()
                 .unwrap_or_default();
             if latest > current {
-                match self.db_handler.set_status_last_seen(&contact, latest) {
-                    Ok(rows) => {
+                match self.status_cursor.store(StoreStatusCursor {
+                    contact: contact.clone(),
+                    timestamp: latest,
+                }) {
+                    Ok(()) => {
+                        let rows = 1;
                         let contact_id =
                             crate::app::message_action_diagnostics::identifier_for_log(&contact.0);
                         self.message_action_diagnostics.record_read_sync(|| {

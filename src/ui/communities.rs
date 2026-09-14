@@ -1,8 +1,5 @@
-use std::sync::Arc;
-
 use crate::app::actions::FocusPane;
-use crate::app::contact_avatars::{AvatarTarget, prioritized_avatar_requests};
-use crate::app::runtime_diagnostics::Phase;
+use crate::app::contact_avatars::AvatarTarget;
 use crate::app::{App, CommunityNavigationRow, community_hierarchy::community_group_label};
 use crate::ui::contact_list::{
     AVATAR_HEIGHT, AVATAR_WIDTH, CONTACT_ITEM_HEIGHT, initials, truncate,
@@ -93,7 +90,7 @@ fn community_layout(
         .collect()
 }
 
-fn community_avatar_targets(_app: &App, rows: &[CommunityNavigationRow]) -> Vec<AvatarTarget> {
+pub(crate) fn community_avatar_targets(rows: &[CommunityNavigationRow]) -> Vec<AvatarTarget> {
     rows.iter()
         .filter_map(|row| match row {
             CommunityNavigationRow::Root(jid) => Some(AvatarTarget::CommunityRoot(jid.clone())),
@@ -128,17 +125,6 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 
     let selected = app.chat_list_state.selected();
-    let targets = community_avatar_targets(app, &rows);
-    let avatar_started = app.runtime_diagnostics.phase_started();
-    app.contact_avatars.schedule(
-        prioritized_avatar_requests(&targets, None, 0, targets.len()),
-        app.tx.clone(),
-        Arc::clone(&app.picker),
-    );
-    if let Some(started) = avatar_started {
-        app.runtime_diagnostics
-            .record_phase_finished(Phase::AvatarScheduling, started);
-    }
     for (row, row_area, selectable_index) in community_layout(&rows, selected, inner) {
         let selected = selectable_index == selected;
         let base = if selected {
@@ -285,7 +271,7 @@ mod tests {
             is_announce: None,
             participant_count: None,
         }];
-        let targets = community_avatar_targets(&app, &rows(2));
+        let targets = community_avatar_targets(&rows(2));
         assert_eq!(targets.len(), 3);
         assert!(matches!(targets[0], AvatarTarget::CommunityRoot(_)));
     }

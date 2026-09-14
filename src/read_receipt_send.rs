@@ -1,4 +1,4 @@
-use super::{ReadReceiptPort, ReceiptCandidate, ReceiptSendStatus};
+use crate::app::read_receipts::{ReadReceiptPort, ReceiptCandidate, ReceiptSendStatus};
 
 pub struct WhatsAppAdapter;
 

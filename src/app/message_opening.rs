@@ -52,8 +52,7 @@ impl App<'_> {
             Some(Path::new(file.path.as_ref())),
         ) {
             Ok(Some(plan)) => {
-                match crate::media::execute_launch(&plan, &mut crate::media::CommandLaunchExecutor)
-                {
+                match crate::media::execute_launch(&plan, self.launch_executor.as_mut()) {
                     Ok(()) => {
                         self.action_notice = Some(crate::app::actions::ActionNotice::Unavailable(
                             "Document viewer started".into(),

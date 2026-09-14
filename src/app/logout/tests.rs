@@ -1,5 +1,8 @@
 use crate::app::actions::{AppAction, FocusPane, Section};
-use crate::app::test_support::TestApp;
+use std::sync::{Arc, Mutex};
+
+use crate::app::test_support::{RecordingChatReadSyncPort, RecordingLifecycleControl, TestApp};
+use crate::input_key::Key;
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 #[test]
@@ -39,6 +42,28 @@ fn rail_logout_navigation_and_confirmation_preserve_focus_and_section() {
 }
 
 #[test]
+fn logout_confirmation_stops_read_sync_before_requesting_lifecycle_logout() {
+    let mut app = TestApp::new();
+    let trace = Arc::new(Mutex::new(Vec::new()));
+    let read_sync = RecordingChatReadSyncPort::with_shutdown_trace(Arc::clone(&trace));
+    let lifecycle = Arc::new(RecordingLifecycleControl::with_trace(Arc::clone(&trace)));
+    app.set_chat_read_sync(Box::new(read_sync.clone()));
+    app.set_lifecycle_control(Arc::clone(&lifecycle));
+    app.begin_logout_confirmation();
+
+    app.handle_logout_input(Key::k(crate::input_key::KeyCode::Enter));
+
+    assert!(app.pending_logout);
+    assert!(app.logout_in_progress);
+    assert_eq!(*read_sync.shutdowns.lock().unwrap(), 1);
+    assert_eq!(*lifecycle.logouts.lock().unwrap(), 1);
+    assert_eq!(
+        *trace.lock().unwrap(),
+        ["read-sync:stop", "lifecycle:logout"]
+    );
+}
+
+#[test]
 fn logout_statuses_keep_local_only_and_failed_sessions_retryable() {
     let mut app = TestApp::new();
     app.pending_logout = true;
@@ -68,6 +93,56 @@ fn logout_statuses_keep_local_only_and_failed_sessions_retryable() {
     assert!(!app.pending_logout);
     assert!(!app.logout_in_progress);
     assert_eq!(app.logout_menu_index, 0);
+}
+
+#[test]
+fn local_only_logout_restores_read_sync_once_for_cursor_transitions() {
+    let mut app = TestApp::new();
+    let read_sync = RecordingChatReadSyncPort::default();
+    let chat = whatsrust::JID::from("chat@example.test".to_owned());
+    app.set_chat_read_sync(Box::new(read_sync.clone()));
+    app.stop_read_sync_for_logout();
+
+    app.handle_logout_result(whatsrust::LogoutStatus::LocalOnly);
+
+    app.add_message(crate::app::test_support::message(&chat, "latest", 42));
+    assert!(app.mark_chat_read_at_latest(&chat));
+
+    app.handle_logout_result(whatsrust::LogoutStatus::LocalOnly);
+    app.handle_logout_result(whatsrust::LogoutStatus::LoggedOut);
+
+    assert!(app.should_quit);
+    assert_eq!(*read_sync.shutdowns.lock().unwrap(), 2);
+    assert_eq!(*read_sync.restarts.lock().unwrap(), 1);
+}
+
+#[test]
+fn failed_logout_restores_read_sync_for_cursor_transitions() {
+    let mut app = TestApp::new();
+    let read_sync = RecordingChatReadSyncPort::default();
+    let chat = whatsrust::JID::from("chat@example.test".to_owned());
+    app.set_chat_read_sync(Box::new(read_sync.clone()));
+    app.stop_read_sync_for_logout();
+
+    app.handle_logout_result(whatsrust::LogoutStatus::Failed);
+
+    app.add_message(crate::app::test_support::message(&chat, "latest", 42));
+    assert!(app.mark_chat_read_at_latest(&chat));
+    assert_eq!(*read_sync.restarts.lock().unwrap(), 1);
+}
+
+#[test]
+fn retryable_logout_restarts_the_read_sync_port_exactly_once() {
+    let mut app = TestApp::new();
+    let read_sync = RecordingChatReadSyncPort::default();
+    app.set_chat_read_sync(Box::new(read_sync.clone()));
+
+    app.stop_read_sync_for_logout();
+    app.handle_logout_result(whatsrust::LogoutStatus::Failed);
+    app.handle_logout_result(whatsrust::LogoutStatus::Failed);
+
+    assert_eq!(*read_sync.shutdowns.lock().unwrap(), 1);
+    assert_eq!(*read_sync.restarts.lock().unwrap(), 1);
 }
 
 #[test]

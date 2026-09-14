@@ -1,8 +1,9 @@
 use std::{
+    ffi::OsString,
     fs,
     path::{Path, PathBuf},
     process::Child,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard},
 };
 
 use tempfile::tempdir;
@@ -185,6 +186,54 @@ fn viewer_launch_rejects_unready_media_with_a_visible_notice() {
         app.action_notice,
         Some(ActionNotice::Unavailable("Media is not downloaded".into()))
     );
+}
+
+#[test]
+fn app_injected_launch_executor_handles_viewer_media_and_document_opening() {
+    let _environment = EnvironmentGuard::set(&[
+        ("WPTUI_MEDIA_PLAYER", "wptui-media-test"),
+        ("WPTUI_IMAGE_VIEWER", "wptui-image-test"),
+        ("WPTUI_PDF_VIEWER", "wptui-pdf-test"),
+        ("WPTUI_DOCUMENT_VIEWER", "wptui-doc-test"),
+    ]);
+    let root = tempdir().unwrap();
+    fs::write(root.path().join("image.png"), []).unwrap();
+    fs::write(root.path().join("report.pdf"), []).unwrap();
+    let launches = Arc::new(Mutex::new(Vec::new()));
+    let mut app = TestApp::new();
+    app.media_path = root.path().to_path_buf();
+    app.launch_executor = Box::new(SharedRecordingExecutor(launches.clone()));
+
+    let image = media_message("image", FileKind::Image, "image.png");
+    let document = media_message("document", FileKind::Document, "report.pdf");
+    for message in [image, document] {
+        app.metadata.insert(
+            message.info.id.clone(),
+            wp_tui::app::Metadata::File(wp_tui::app::FileMeta::Downloaded),
+        );
+        app.messages.insert(message.info.id.clone(), message);
+    }
+
+    app.message_list_state.set_selected_message("image".into());
+    app.dispatch_action(AppAction::ViewMessage);
+    app.on_terminal_event(ratatui::crossterm::event::Event::Key(
+        ratatui::crossterm::event::KeyEvent::new(
+            ratatui::crossterm::event::KeyCode::Char('x'),
+            ratatui::crossterm::event::KeyModifiers::NONE,
+        ),
+    ));
+
+    app.message_list_state
+        .set_selected_message("document".into());
+    app.dispatch_action(AppAction::OpenMessage);
+
+    let launches = launches.lock().unwrap();
+    assert_eq!(launches.len(), 2);
+    assert!(launches.iter().all(|(_, arguments)| {
+        arguments
+            .iter()
+            .any(|argument| argument.starts_with("/proc/self/fd/"))
+    }));
 }
 
 #[test]
@@ -459,27 +508,12 @@ fn image_opener_defaults_to_feh_while_other_media_uses_mpv() {
 
 #[test]
 fn environment_selects_media_player_and_openers_by_wptui_vars() {
-    struct EnvGuard(&'static [&'static str]);
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            for name in self.0 {
-                unsafe { std::env::remove_var(name) };
-            }
-        }
-    }
-
-    let guard = EnvGuard(&[
-        "WPTUI_MEDIA_PLAYER",
-        "WPTUI_IMAGE_VIEWER",
-        "WPTUI_PDF_VIEWER",
-        "WPTUI_DOCUMENT_VIEWER",
+    let _environment = EnvironmentGuard::set(&[
+        ("WPTUI_MEDIA_PLAYER", "wptui-media-test"),
+        ("WPTUI_IMAGE_VIEWER", "wptui-image-test"),
+        ("WPTUI_PDF_VIEWER", "wptui-pdf-test"),
+        ("WPTUI_DOCUMENT_VIEWER", "wptui-doc-test"),
     ]);
-    unsafe {
-        std::env::set_var("WPTUI_MEDIA_PLAYER", "wptui-media-test");
-        std::env::set_var("WPTUI_IMAGE_VIEWER", "wptui-image-test");
-        std::env::set_var("WPTUI_PDF_VIEWER", "wptui-pdf-test");
-        std::env::set_var("WPTUI_DOCUMENT_VIEWER", "wptui-doc-test");
-    }
 
     assert_eq!(
         media_player_from_environment(),
@@ -501,8 +535,6 @@ fn environment_selects_media_player_and_openers_by_wptui_vars() {
         document_opener_from_environment(Path::new("notes.odt")),
         Ok(PathBuf::from("wptui-doc-test"))
     );
-
-    drop(guard);
 }
 
 #[test]
@@ -587,6 +619,62 @@ struct RecordingExecutor {
 impl LaunchExecutor for RecordingExecutor {
     fn spawn(&mut self, executable: &Path, arguments: &[PathBuf]) -> std::io::Result<()> {
         self.calls.push((executable.into(), arguments.to_vec()));
+        Ok(())
+    }
+}
+
+const LAUNCH_ENVIRONMENT: [&str; 4] = [
+    "WPTUI_MEDIA_PLAYER",
+    "WPTUI_IMAGE_VIEWER",
+    "WPTUI_PDF_VIEWER",
+    "WPTUI_DOCUMENT_VIEWER",
+];
+static ENVIRONMENT_LOCK: Mutex<()> = Mutex::new(());
+
+struct EnvironmentGuard {
+    _lock: MutexGuard<'static, ()>,
+    values: Vec<(&'static str, Option<OsString>)>,
+}
+
+impl EnvironmentGuard {
+    fn set(values: &[(&'static str, &'static str)]) -> Self {
+        let lock = ENVIRONMENT_LOCK.lock().unwrap();
+        let saved = LAUNCH_ENVIRONMENT
+            .iter()
+            .map(|name| (*name, std::env::var_os(name)))
+            .collect();
+        for (name, value) in values {
+            unsafe { std::env::set_var(name, value) };
+        }
+        Self {
+            _lock: lock,
+            values: saved,
+        }
+    }
+}
+
+impl Drop for EnvironmentGuard {
+    fn drop(&mut self) {
+        for (name, value) in &self.values {
+            unsafe {
+                if let Some(value) = value {
+                    std::env::set_var(name, value);
+                } else {
+                    std::env::remove_var(name);
+                }
+            }
+        }
+    }
+}
+
+struct SharedRecordingExecutor(Arc<Mutex<Vec<(PathBuf, Vec<PathBuf>)>>>);
+
+impl LaunchExecutor for SharedRecordingExecutor {
+    fn spawn(&mut self, executable: &Path, arguments: &[PathBuf]) -> std::io::Result<()> {
+        self.0
+            .lock()
+            .unwrap()
+            .push((executable.into(), arguments.to_vec()));
         Ok(())
     }
 }
