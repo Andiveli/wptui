@@ -21,13 +21,12 @@ pub(crate) use layout::{
 
 use crate::app::App;
 use crate::app::actions::{ConversationMode, FocusPane, Section};
-use crate::app::events::{
-    ViewerPreviewKey, ViewerPreviewState, ViewerStatus, viewer_preview_request,
-};
+use crate::app::events::{ViewerPreviewKey, ViewerPreviewState, ViewerStatus};
+use crate::app::read_receipts::VisibilityPlan;
 use crate::app::runtime_diagnostics::Phase;
 use crate::keybindings::canonical_shortcuts;
 use contacts::render_contacts;
-use message_list::{get_quoted_text, render_messages};
+use message_list::{get_quoted_text, render_messages_with_plan};
 use navigation::{
     render_logout_placeholder, render_logs, render_section_rail, render_structural_placeholder,
 };
@@ -40,10 +39,16 @@ use ratatui::{
     widgets::{Block, Clear, Paragraph, StatefulWidget, Wrap},
 };
 use ratatui_image::{Resize, StatefulImage};
-use status::{render_status_contacts, render_statuses};
+use status::{render_status_contacts, render_statuses_with_plan};
 use whatsrust as wr;
 
-pub fn draw(frame: &mut Frame, app: &mut App) {
+/// Draws one frame and records deferred media and visibility effects for the runtime.
+pub fn draw_with_plan(
+    frame: &mut Frame,
+    app: &mut App,
+    media_render_plan: &mut crate::app::events::MediaRenderPlan,
+    visibility_plan: &mut VisibilityPlan,
+) {
     let content_area = if app.show_logs {
         let [content_area, logs_area] =
             Layout::horizontal([Constraint::Percentage(67), Constraint::Percentage(33)])
@@ -59,7 +64,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         render_section_rail(frame, app, area);
     }
     if app.rail_on_logout {
-        app.contact_avatars.clear_window();
         if let Some(area) = areas.chat_list {
             render_structural_placeholder(frame, app, area);
         }
@@ -69,16 +73,25 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             app.record_phase(Phase::ContactsChatProjectionRows, |app| {
                 render_contacts(frame, app, area)
             });
-        } else {
-            app.contact_avatars.clear_window();
         }
-        render_chats(frame, app, areas.conversation);
+        render_chats_with_plan(
+            frame,
+            app,
+            media_render_plan,
+            visibility_plan,
+            areas.conversation,
+        );
     } else if app.selected_section == Section::Status {
-        app.contact_avatars.clear_window();
         if let Some(area) = areas.chat_list {
             render_status_contacts(frame, app, area);
         }
-        render_statuses(frame, app, areas.conversation);
+        render_statuses_with_plan(
+            frame,
+            app,
+            media_render_plan,
+            visibility_plan,
+            areas.conversation,
+        );
     } else if app.selected_section == Section::Communities {
         if let Some(area) = areas.chat_list {
             if app.community_detail.is_some() {
@@ -91,15 +104,20 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 });
             }
         }
-        render_chats(frame, app, areas.conversation);
+        render_chats_with_plan(
+            frame,
+            app,
+            media_render_plan,
+            visibility_plan,
+            areas.conversation,
+        );
     } else {
-        app.contact_avatars.clear_window();
         if let Some(area) = areas.chat_list {
             render_structural_placeholder(frame, app, area);
         }
         render_structural_placeholder(frame, app, areas.conversation);
     }
-    render_attachment_viewer(frame, app);
+    render_attachment_viewer(frame, app, media_render_plan);
     render_url_picker(frame, app);
     render_share_picker(frame, app);
     render_file_picker(frame, app);
@@ -283,7 +301,13 @@ fn empty_chat_lines(update_notice: Option<&str>) -> Vec<Line<'static>> {
     lines
 }
 
-pub fn render_chats(frame: &mut Frame, app: &mut App, area: Rect) {
+pub fn render_chats_with_plan(
+    frame: &mut Frame,
+    app: &mut App,
+    media_render_plan: &mut crate::app::events::MediaRenderPlan,
+    visibility_plan: &mut VisibilityPlan,
+    area: Rect,
+) {
     // Outer block wrapping messages + composer, like Concord's panel_block_owned
     let outer_title = app
         .open_chat()
@@ -449,7 +473,7 @@ pub fn render_chats(frame: &mut Frame, app: &mut App, area: Rect) {
         render_chat_empty_state(frame, app, chat_area);
     } else {
         app.record_phase(Phase::MessageListRenderLayout, |app| {
-            render_messages(frame, app, chat_area)
+            render_messages_with_plan(frame, app, media_render_plan, visibility_plan, chat_area)
         });
     }
 
@@ -641,8 +665,12 @@ fn mention_picker_window(
     start..start + visible_count
 }
 
-fn render_attachment_viewer(frame: &mut Frame, app: &mut App) {
-    let Some(viewer) = app.attachment_viewer.as_ref() else {
+fn render_attachment_viewer(
+    frame: &mut Frame,
+    app: &mut App,
+    media_render_plan: &mut crate::app::events::MediaRenderPlan,
+) {
+    let Some(viewer) = app.attachment_viewer.as_ref().cloned() else {
         return;
     };
     let layout = viewer_preview_layout(frame.area(), app.viewer_zoom);
@@ -672,9 +700,9 @@ fn render_attachment_viewer(frame: &mut Frame, app: &mut App) {
             layout.preview.width,
             layout.preview.height,
         );
-        if let Some(key) = viewer_preview_request(&mut app.viewer_preview, key) {
-            let _ = app.tx.send(crate::app::events::AppInput::App(
-                crate::app::events::AppEvent::LoadViewerPreview(key),
+        if crate::app::events::viewer_preview_needs_load(&app.viewer_preview, &key) {
+            media_render_plan.append(crate::app::events::MediaRenderEffect::LoadViewerPreview(
+                key,
             ));
         }
     }

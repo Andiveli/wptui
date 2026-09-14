@@ -40,10 +40,11 @@ const (
 //export C_SubscribePresence
 func C_SubscribePresence(cjid C.JID) C.uint8_t {
 	jid := cToJid(cjid)
-	if client == nil {
+	clientSnapshot := lifecycleState.clientSnapshot()
+	if clientSnapshot == nil {
 		return C.uint8_t(subscribePresenceRejected)
 	}
-	result := subscribePresence(jid, client.SubscribePresence)
+	result := subscribePresence(jid, clientSnapshot.SubscribePresence)
 	if result == subscribePresenceNoPrivacyToken {
 		LOG_WARN("Failed to subscribe to presence: no privacy token")
 	} else if result == subscribePresenceRejected {

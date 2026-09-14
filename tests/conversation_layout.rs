@@ -1,10 +1,12 @@
 use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Color};
 use whatsrust::JID;
+use wp_tui::app::read_receipts::VisibilityPlan;
 use wp_tui::{
     app::{
         App,
         actions::{PaneVisibility, Section},
         composer::PendingAttachment,
+        events::MediaRenderPlan,
     },
     ui::{
         self, attachment_preview_lines, composer_height, composer_visual_cursor,
@@ -26,7 +28,16 @@ fn draw_top_row(width: u16, setup: impl FnOnce(&mut App)) -> String {
     let backend = TestBackend::new(width, 6);
     let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
     terminal
-        .draw(|frame| ui::draw(frame, &mut app))
+        .draw(|frame| {
+            let mut media_render_plan = MediaRenderPlan::default();
+            let mut visibility_plan = VisibilityPlan::default();
+            ui::draw_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                &mut visibility_plan,
+            )
+        })
         .expect("chat should render");
 
     terminal
@@ -61,7 +72,16 @@ fn conversation_presence_marker_precedes_name_with_expected_colors() {
     let backend = TestBackend::new(30, 6);
     let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
     terminal
-        .draw(|frame| ui::draw(frame, &mut app))
+        .draw(|frame| {
+            let mut media_render_plan = MediaRenderPlan::default();
+            let mut visibility_plan = VisibilityPlan::default();
+            ui::draw_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                &mut visibility_plan,
+            )
+        })
         .expect("chat should render");
     let row = &terminal.backend().buffer().content()[..30];
     let marker = row.iter().position(|cell| cell.symbol() == "●").unwrap();
@@ -71,7 +91,18 @@ fn conversation_presence_marker_precedes_name_with_expected_colors() {
 
     app.selected_presence
         .update(&chat, true, 0, wp_tui::app::unix_now());
-    terminal.draw(|frame| ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| {
+            let mut media_render_plan = MediaRenderPlan::default();
+            let mut visibility_plan = VisibilityPlan::default();
+            ui::draw_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                &mut visibility_plan,
+            )
+        })
+        .unwrap();
     let row = &terminal.backend().buffer().content()[..30];
     let marker = row.iter().position(|cell| cell.symbol() == "●").unwrap();
     assert_eq!(row[marker].fg, Color::Yellow);
@@ -92,7 +123,18 @@ fn group_conversation_presence_is_empty_circle() {
 
     let backend = TestBackend::new(30, 6);
     let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
-    terminal.draw(|frame| ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| {
+            let mut media_render_plan = MediaRenderPlan::default();
+            let mut visibility_plan = VisibilityPlan::default();
+            ui::draw_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                &mut visibility_plan,
+            )
+        })
+        .unwrap();
     let row = terminal.backend().buffer().content()[..30]
         .iter()
         .map(|cell| cell.symbol())
@@ -187,7 +229,16 @@ fn composer_renders_wrapped_text_without_inserting_a_newline() {
     let backend = TestBackend::new(12, 8);
     let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
     terminal
-        .draw(|frame| ui::draw(frame, &mut app))
+        .draw(|frame| {
+            let mut media_render_plan = MediaRenderPlan::default();
+            let mut visibility_plan = VisibilityPlan::default();
+            ui::draw_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                &mut visibility_plan,
+            )
+        })
         .expect("chat should render");
 
     let rows = terminal
@@ -225,7 +276,16 @@ fn composer_renders_a_word_on_the_same_row_as_its_cursor() {
     let backend = TestBackend::new(12, 8);
     let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
     terminal
-        .draw(|frame| ui::draw(frame, &mut app))
+        .draw(|frame| {
+            let mut media_render_plan = MediaRenderPlan::default();
+            let mut visibility_plan = VisibilityPlan::default();
+            ui::draw_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                &mut visibility_plan,
+            )
+        })
         .expect("chat should render");
 
     let rows = terminal
@@ -271,7 +331,16 @@ fn composer_scrolls_to_keep_the_selected_cursor_row_visible() {
     let backend = TestBackend::new(20, 8);
     let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
     terminal
-        .draw(|frame| ui::draw(frame, &mut app))
+        .draw(|frame| {
+            let mut media_render_plan = MediaRenderPlan::default();
+            let mut visibility_plan = VisibilityPlan::default();
+            ui::draw_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                &mut visibility_plan,
+            )
+        })
         .expect("chat should render");
 
     let rows = terminal
@@ -377,7 +446,16 @@ fn structural_placeholders_do_not_render_chat_or_contact_content() {
         let backend = TestBackend::new(100, 12);
         let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
         terminal
-            .draw(|frame| ui::draw(frame, &mut app))
+            .draw(|frame| {
+                let mut media_render_plan = MediaRenderPlan::default();
+                let mut visibility_plan = VisibilityPlan::default();
+                ui::draw_with_plan(
+                    frame,
+                    &mut app,
+                    &mut media_render_plan,
+                    &mut visibility_plan,
+                )
+            })
             .expect("placeholder should render");
 
         let output = terminal

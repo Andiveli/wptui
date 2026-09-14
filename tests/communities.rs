@@ -1,3 +1,4 @@
+use wp_tui::app::read_receipts::VisibilityPlan;
 mod common;
 
 use common::TestApp;
@@ -7,8 +8,9 @@ use wp_tui::{
     app::{
         Chat, CommunityNode,
         actions::{AppAction, FocusPane, Section},
+        events::MediaRenderPlan,
     },
-    ui::message_list::render_messages,
+    ui::message_list::render_messages_with_plan,
 };
 
 fn jid(value: &str) -> wr::JID {
@@ -81,7 +83,15 @@ fn opening_selected_community_renders_the_existing_chat_context() {
     let mut terminal = Terminal::new(TestBackend::new(40, 8)).unwrap();
     terminal
         .draw(|frame| {
-            render_messages(frame, &mut test_app, Rect::new(0, 0, 40, 8));
+            let mut media_render_plan = MediaRenderPlan::default();
+            let mut visibility_plan = VisibilityPlan::default();
+            render_messages_with_plan(
+                frame,
+                &mut test_app,
+                &mut media_render_plan,
+                &mut visibility_plan,
+                Rect::new(0, 0, 40, 8),
+            );
         })
         .unwrap();
     let buffer = terminal.backend().buffer();

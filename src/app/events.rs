@@ -90,6 +90,13 @@ pub fn viewer_preview_request(
     }
 }
 
+pub(crate) fn viewer_preview_needs_load(
+    state: &Option<ViewerPreviewState>,
+    key: &ViewerPreviewKey,
+) -> bool {
+    state.as_ref().is_none_or(|current| current.key() != key)
+}
+
 #[derive(Clone, Debug)]
 pub struct ViewerAttachment {
     pub message_id: wr::MessageId,
@@ -139,13 +146,39 @@ impl AttachmentViewerState {
     }
 }
 
+#[derive(Clone, Debug)]
+pub(crate) enum MediaRenderEffect {
+    DownloadFile(wr::MessageId, wr::FileId),
+    LoadFilePreview(wr::MessageId),
+    LoadViewerPreview(ViewerPreviewKey),
+}
+
+#[derive(Default)]
+pub struct MediaRenderPlan {
+    effects: Vec<MediaRenderEffect>,
+}
+
+impl MediaRenderPlan {
+    pub fn is_empty(&self) -> bool {
+        self.effects.is_empty()
+    }
+
+    pub(crate) fn append(&mut self, effect: MediaRenderEffect) {
+        self.effects.push(effect);
+    }
+
+    pub(crate) fn into_effects(self) -> Vec<MediaRenderEffect> {
+        self.effects
+    }
+}
+
 pub enum AppEvent {
     UpdateAvailable(String),
-    OptimisticTextSent {
+    OutboundSendSucceeded {
         local_send_id: u64,
         message: wr::Message,
     },
-    TextSendFailed {
+    OutboundSendFailed {
         local_send_id: u64,
     },
     ReadReceiptResult(ReceiptKey, ReceiptSendStatus),
@@ -166,6 +199,40 @@ pub enum AppEvent {
         generation: u64,
         target: AvatarTarget,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AppEventFamily {
+    Updater,
+    Send,
+    ReadReceipt,
+    MediaViewer,
+    Avatar,
+}
+
+impl AppEvent {
+    pub const fn family(&self) -> AppEventFamily {
+        match self {
+            Self::UpdateAvailable(_) => AppEventFamily::Updater,
+            Self::OutboundSendSucceeded { .. } | Self::OutboundSendFailed { .. } => {
+                AppEventFamily::Send
+            }
+            Self::ReadReceiptResult(_, _)
+            | Self::ReadReceiptRestored(_)
+            | Self::ReadReceiptPersisted(_, _)
+            | Self::ReadReceiptCompleted(_, _)
+            | Self::ReadReceiptRejected(_, _) => AppEventFamily::ReadReceipt,
+            Self::DownloadFile(_, _)
+            | Self::DownloadFileDone(_, _)
+            | Self::LoadFilePreview(_)
+            | Self::SetFilePreview(_, _, _)
+            | Self::LoadViewerPreview(_)
+            | Self::SetViewerPreview(_, _)
+            | Self::SetFileState(_, _)
+            | Self::SetAudioDuration(_, _, _) => AppEventFamily::MediaViewer,
+            Self::ContactAvatar(_) | Self::ContactAvatarRefreshed { .. } => AppEventFamily::Avatar,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -190,16 +257,16 @@ impl fmt::Debug for AppEvent {
             AppEvent::UpdateAvailable(version) => {
                 f.debug_tuple("UpdateAvailable").field(version).finish()
             }
-            AppEvent::OptimisticTextSent {
+            AppEvent::OutboundSendSucceeded {
                 local_send_id,
                 message,
             } => f
-                .debug_struct("OptimisticTextSent")
+                .debug_struct("OutboundSendSucceeded")
                 .field("local_send_id", local_send_id)
                 .field("server_message_id", &message.info.id)
                 .finish(),
-            AppEvent::TextSendFailed { local_send_id } => f
-                .debug_struct("TextSendFailed")
+            AppEvent::OutboundSendFailed { local_send_id } => f
+                .debug_struct("OutboundSendFailed")
                 .field("local_send_id", local_send_id)
                 .finish(),
             AppEvent::ReadReceiptResult(key, status) => f
@@ -278,3 +345,36 @@ impl fmt::Debug for AppEvent {
 }
 
 impl App<'_> {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn event_families_classify_every_runtime_owner() {
+        assert_eq!(
+            AppEvent::UpdateAvailable("1.2.3".to_owned()).family(),
+            AppEventFamily::Updater
+        );
+        assert_eq!(
+            AppEvent::OutboundSendFailed { local_send_id: 1 }.family(),
+            AppEventFamily::Send
+        );
+        assert_eq!(
+            AppEvent::ReadReceiptRestored(Ok(vec![])).family(),
+            AppEventFamily::ReadReceipt
+        );
+        assert_eq!(
+            AppEvent::LoadFilePreview("message-1".into()).family(),
+            AppEventFamily::MediaViewer
+        );
+        assert_eq!(
+            AppEvent::ContactAvatarRefreshed {
+                generation: 1,
+                target: AvatarTarget::Contact("contact@s.whatsapp.net".to_owned().into()),
+            }
+            .family(),
+            AppEventFamily::Avatar
+        );
+    }
+}

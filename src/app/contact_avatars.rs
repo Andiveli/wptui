@@ -1,7 +1,5 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    fs::{self, OpenOptions},
-    io::{self, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, mpsc},
     thread,
@@ -12,13 +10,16 @@ use ratatui::layout::Size;
 use ratatui_image::{Resize, ResizeEncodeRender, picker::Picker, protocol::StatefulProtocol};
 use whatsrust as wr;
 
+use crate::app::SharedAvatarQueryPort;
 use crate::app::events::{AppEvent, AppInput};
 
 pub const AVATAR_CACHE_CAPACITY: usize = 32;
 pub const AVATAR_OVERSCAN: usize = 3;
 pub const AVATAR_WORKERS: usize = 2;
-const MAX_PERSISTED_BYTES: usize = 512 * 1024;
 const RETRY_COOLDOWN: Duration = Duration::from_secs(30);
+
+mod cache;
+pub use cache::AvatarDiskCache;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum AvatarTarget {
@@ -118,109 +119,19 @@ pub fn prioritized_avatar_requests<T: Clone + Eq>(
     result
 }
 
-#[derive(Debug)]
-pub struct AvatarDiskCache {
-    root: PathBuf,
-}
-
-impl AvatarDiskCache {
-    pub fn new(root: impl Into<PathBuf>) -> io::Result<Self> {
-        let root = root.into();
-        fs::create_dir_all(&root)?;
-        if fs::symlink_metadata(&root)?.file_type().is_symlink() {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "avatar cache root is a symlink",
-            ));
-        }
-        Ok(Self { root })
-    }
-
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-
-    pub fn picture_path(&self, jid: &wr::JID, picture_id: &str) -> PathBuf {
-        self.root.join(format!(
-            "{}-{}.image",
-            safe_key(jid.0.as_ref()),
-            safe_key(picture_id)
-        ))
-    }
-
-    fn current_path(&self, jid: &wr::JID) -> PathBuf {
-        self.root
-            .join(format!("{}.current", safe_key(jid.0.as_ref())))
-    }
-
-    pub fn load_current(&self, jid: &wr::JID) -> io::Result<Option<(Arc<str>, Vec<u8>)>> {
-        let current = self.current_path(jid);
-        let picture_id = match fs::read_to_string(&current) {
-            Ok(value) if value.len() <= 1024 && !value.is_empty() => value,
-            Ok(_) => return Ok(None),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error),
-        };
-        let path = self.picture_path(jid, &picture_id);
-        if fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "avatar cache entry is a symlink",
-            ));
-        }
-        let bytes = fs::read(path)?;
-        if bytes.is_empty() || bytes.len() > MAX_PERSISTED_BYTES {
-            return Ok(None);
-        }
-        Ok(Some((picture_id.into(), bytes)))
-    }
-
-    pub fn store(&self, jid: &wr::JID, picture_id: &str, bytes: &[u8]) -> io::Result<()> {
-        if bytes.is_empty() || bytes.len() > MAX_PERSISTED_BYTES || picture_id.len() > 1024 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "invalid avatar cache entry",
-            ));
-        }
-        atomic_write(&self.picture_path(jid, picture_id), bytes)?;
-        atomic_write(&self.current_path(jid), picture_id.as_bytes())
-    }
-}
-
-fn safe_key(value: &str) -> String {
-    let mut hash = 0xcbf29ce484222325_u64;
-    for byte in value.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    format!("{hash:016x}")
-}
-
-fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = match options.open(&temporary) {
-        Ok(file) => file,
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            fs::remove_file(&temporary)?;
-            options.open(&temporary)?
-        }
-        Err(error) => return Err(error),
-    };
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    fs::rename(&temporary, path)
-}
-
 struct AvatarRuntime {
     sender: mpsc::Sender<AvatarRequest>,
     desired: Arc<Mutex<(u64, HashSet<AvatarTarget>)>>,
+    workers: Vec<thread::JoinHandle<()>>,
+}
+
+impl AvatarRuntime {
+    fn shutdown(self) {
+        drop(self.sender);
+        for worker in self.workers {
+            let _ = worker.join();
+        }
+    }
 }
 
 fn cache_for_target(disk_root: &Path, target: &AvatarTarget) -> Option<AvatarDiskCache> {
@@ -233,6 +144,7 @@ fn cache_for_target(disk_root: &Path, target: &AvatarTarget) -> Option<AvatarDis
 
 pub struct ContactAvatars {
     disk_root: PathBuf,
+    avatar_query: Option<SharedAvatarQueryPort>,
     runtime: Option<AvatarRuntime>,
     generation: u64,
     requested: Vec<AvatarTarget>,
@@ -246,10 +158,17 @@ pub struct ContactAvatars {
     enqueued: usize,
 }
 
+impl Drop for ContactAvatars {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
 impl ContactAvatars {
     pub fn new(disk_root: PathBuf) -> Self {
         Self {
             disk_root,
+            avatar_query: None,
             runtime: None,
             generation: 0,
             requested: Vec::new(),
@@ -262,6 +181,24 @@ impl ContactAvatars {
             #[cfg(test)]
             enqueued: 0,
         }
+    }
+
+    pub(crate) fn with_avatar_query(
+        disk_root: PathBuf,
+        avatar_query: SharedAvatarQueryPort,
+    ) -> Self {
+        let mut avatars = Self::new(disk_root);
+        avatars.avatar_query = Some(avatar_query);
+        avatars
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_avatar_query(&mut self, avatar_query: SharedAvatarQueryPort) {
+        assert!(
+            self.runtime.is_none(),
+            "avatar query must be injected before scheduling"
+        );
+        self.avatar_query = Some(avatar_query);
     }
 
     pub fn schedule(
@@ -284,9 +221,18 @@ impl ContactAvatars {
         // before producing a result. Reset ownership so overlapping targets
         // are eligible for the current generation's request.
         self.in_flight.clear();
-        let runtime = self
-            .runtime
-            .get_or_insert_with(|| start_runtime(self.disk_root.clone(), tx, picker));
+        let runtime = self.runtime.get_or_insert_with(|| {
+            start_runtime(
+                self.disk_root.clone(),
+                tx,
+                picker,
+                Arc::clone(
+                    self.avatar_query
+                        .as_ref()
+                        .expect("avatar query must be configured before scheduling"),
+                ),
+            )
+        });
         *runtime.desired.lock().unwrap() = (self.generation, desired);
         let now = Instant::now();
         for target in &self.requested {
@@ -313,6 +259,12 @@ impl ContactAvatars {
                     self.enqueued += 1;
                 }
             }
+        }
+    }
+
+    pub fn shutdown(&mut self) {
+        if let Some(runtime) = self.runtime.take() {
+            runtime.shutdown();
         }
     }
 
@@ -409,17 +361,20 @@ fn start_runtime(
     disk_root: PathBuf,
     app_tx: mpsc::Sender<AppInput>,
     picker: Arc<Mutex<Picker>>,
+    avatar_query: SharedAvatarQueryPort,
 ) -> AvatarRuntime {
     let (sender, receiver) = mpsc::channel::<AvatarRequest>();
     let receiver = Arc::new(Mutex::new(receiver));
     let desired = Arc::new(Mutex::new((0, HashSet::new())));
+    let mut workers = Vec::with_capacity(AVATAR_WORKERS);
     for _ in 0..AVATAR_WORKERS {
         let receiver = Arc::clone(&receiver);
         let desired_worker = Arc::clone(&desired);
         let app_tx = app_tx.clone();
         let picker = Arc::clone(&picker);
         let disk_root = disk_root.clone();
-        thread::spawn(move || {
+        let avatar_query = Arc::clone(&avatar_query);
+        workers.push(thread::spawn(move || {
             loop {
                 let Ok(request) = receiver.lock().unwrap().recv() else {
                     return;
@@ -462,8 +417,10 @@ fn start_runtime(
                     continue;
                 }
                 let result = match match &request.target {
-                    AvatarTarget::Contact(_) => wr::get_profile_picture(jid),
-                    AvatarTarget::CommunityRoot(_) => wr::get_community_profile_picture(jid),
+                    AvatarTarget::Contact(_) => avatar_query.get_profile_picture(jid),
+                    AvatarTarget::CommunityRoot(_) => {
+                        avatar_query.get_community_profile_picture(jid)
+                    }
                 } {
                     Ok(wr::ProfilePictureAvailability::Available(picture)) => {
                         let unchanged = cached_id.as_ref().is_some_and(|id| id == &picture.id);
@@ -507,9 +464,13 @@ fn start_runtime(
                     }));
                 }
             }
-        });
+        }));
     }
-    AvatarRuntime { sender, desired }
+    AvatarRuntime {
+        sender,
+        desired,
+        workers,
+    }
 }
 
 fn decode_protocol(picker: &Arc<Mutex<Picker>>, bytes: &[u8]) -> Option<StatefulProtocol> {
@@ -521,10 +482,14 @@ fn decode_protocol(picker: &Arc<Mutex<Picker>>, bytes: &[u8]) -> Option<Stateful
 
 #[cfg(test)]
 mod tests {
-    use super::super::{Chat, CommunityNode, test_support::TestApp};
+    use super::super::{
+        Chat, CommunityNode,
+        test_support::{AvatarQueryCall, FakeAvatarQuery, TestApp},
+    };
     use super::*;
     use crate::ui::communities;
     use ratatui::{Terminal, backend::TestBackend};
+    use std::io;
     use tempfile::tempdir;
 
     fn jid(index: usize) -> wr::JID {
@@ -638,6 +603,7 @@ mod tests {
         avatars.runtime = Some(AvatarRuntime {
             sender: request_tx,
             desired: Arc::new(Mutex::new((0, HashSet::new()))),
+            workers: Vec::new(),
         });
         let (app_tx, _app_rx) = mpsc::channel();
         let picker = Arc::new(Mutex::new(Picker::halfblocks()));
@@ -656,6 +622,67 @@ mod tests {
         // but schedule must enqueue it again for the new generation.
         assert_eq!(avatars.enqueued, 4);
         assert_eq!(avatars.in_flight, [target(1), target(8)].into());
+    }
+
+    #[test]
+    fn contact_and_community_targets_use_distinct_port_operations() {
+        let root = tempdir().unwrap();
+        let jid = wr::JID::from("same@g.us".to_owned());
+        let contact = AvatarTarget::Contact(jid.clone());
+        let community = AvatarTarget::CommunityRoot(jid.clone());
+        let query = Arc::new(FakeAvatarQuery::default());
+        query
+            .contact_results
+            .lock()
+            .unwrap()
+            .push_back(Ok(wr::ProfilePictureAvailability::Unavailable));
+        query
+            .community_results
+            .lock()
+            .unwrap()
+            .push_back(Ok(wr::ProfilePictureAvailability::Unavailable));
+        let (app_tx, app_rx) = mpsc::channel();
+        let avatar_query: SharedAvatarQueryPort = query.clone();
+        let runtime = start_runtime(
+            root.path().into(),
+            app_tx,
+            Arc::new(Mutex::new(Picker::halfblocks())),
+            avatar_query,
+        );
+        *runtime.desired.lock().unwrap() = (1, [contact.clone(), community.clone()].into());
+        for target in [contact, community] {
+            runtime
+                .sender
+                .send(AvatarRequest {
+                    generation: 1,
+                    target,
+                    refresh: true,
+                })
+                .unwrap();
+        }
+        for _ in 0..2 {
+            assert!(matches!(
+                app_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+                AppInput::App(AppEvent::ContactAvatar(AvatarResult::Unavailable { .. }))
+            ));
+        }
+        runtime.shutdown();
+        let calls = query.calls.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|call| **call == AvatarQueryCall::Contact(jid.clone()))
+                .count(),
+            1
+        );
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|call| **call == AvatarQueryCall::CommunityRoot(jid.clone()))
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -706,7 +733,7 @@ mod tests {
         let root = tempdir().unwrap();
         let cache = AvatarDiskCache::new(root.path().join("avatars")).unwrap();
         let contact = jid(1);
-        fs::write(cache.current_path(&contact), "picture").unwrap();
+        std::fs::write(cache.current_path(&contact), "picture").unwrap();
         symlink(
             root.path().join("outside"),
             cache.picture_path(&contact, "picture"),

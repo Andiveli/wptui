@@ -79,8 +79,29 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
     let preferences_path = preferences::settings_path(data_dir);
     let composer_direction = preferences::load_composer_direction(&preferences_path);
 
-    App {
-        db_handler: DatabaseHandler::new(&data_dir.join("whatsapp.db")),
+    let db_path = data_dir.join("whatsapp.db");
+    let db_handler = DatabaseHandler::new(&db_path);
+    let chat_store_write = Box::new(db_handler.chat_store_writer());
+    let avatar_query: SharedAvatarQueryPort = Arc::new(crate::avatar_query::WhatsRustAvatarQuery);
+    let app = App {
+        db_handler,
+        chat_store_hydration: Box::new(crate::db::SqliteChatStoreHydration::new(&db_path)),
+        chat_store_write,
+        contact_write: Box::new(crate::db::SqliteContactWriter::new(&db_path)),
+        contact_source: Box::new(crate::contact_source::WhatsRustContactSource),
+        community_query: Box::new(crate::community_query::WhatsRustCommunityQuery),
+        chat_settings_query: Box::new(crate::chat_settings::WhatsRustChatSettingsQuery),
+        dm_resolver: Box::new(crate::dm_resolution::WhatsRustDmResolver),
+        group_info_query: Box::new(crate::group_info_query::WhatsRustGroupInfoQuery),
+        group_participants_query: Box::new(
+            crate::group_participants_query::WhatsRustGroupParticipantsQuery,
+        ),
+        message_push_name: Box::new(crate::message_push_name::WhatsRustMessagePushName),
+        message_reaction_write: Box::new(crate::db::SqliteMessageReactionWriter::new(&db_path)),
+        chat_read_cursor: Box::new(crate::db::SqliteChatReadCursor::new(&db_path)),
+        status_cursor: Box::new(crate::db::SqliteStatusCursor::new(&db_path)),
+        status_retention: Box::new(crate::db::SqliteStatusRetention::new(&db_path)),
+        lifecycle_control: Arc::new(crate::lifecycle_control::WhatsRustLifecycleControl),
         media_path: data_dir.join("media"),
         whatsmeow_db: data_dir.join("whatsmeow.db"),
         clock,
@@ -112,6 +133,12 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         metadata: HashMap::new(),
         history_sync_percent: None,
         selected_presence: SelectedPresence::default(),
+        presence_subscription: Box::new(
+            crate::presence_subscription::WhatsRustPresenceSubscription,
+        ),
+        raw_presence_diagnostics: Box::new(
+            crate::presence_diagnostics::WhatsRustRawPresenceDiagnostics,
+        ),
         presence_diagnostics: PresenceDiagnostics::default(),
         image_cache: HashMap::new(),
         image_cache_order: VecDeque::new(),
@@ -125,16 +152,19 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         composer_viewport_width: 80,
         preferences_path,
         picker: Arc::new(Mutex::new(picker)),
-        contact_avatars: ContactAvatars::new(cache_dir.join("contact-avatars")),
+        contact_avatars: ContactAvatars::with_avatar_query(
+            cache_dir.join("contact-avatars"),
+            avatar_query,
+        ),
         focus_pane: FocusPane::ChatList,
         pane_visibility: PaneVisibility::default(),
         selected_section: Section::default(),
         conversation_mode: ConversationMode::MessageNavigation,
         edit_message: None,
-        message_editor: Box::new(WhatsAppMessageEditor),
-        message_reactor: Box::new(WhatsAppMessageReactor),
-        message_forwarder: Box::new(WhatsAppMessageForwarder),
-        message_revoker: Box::new(WhatsAppMessageRevoker),
+        message_editor: Box::new(crate::message_mutation::WhatsAppMessageEditor),
+        message_reactor: Box::new(crate::message_mutation::WhatsAppMessageReactor),
+        message_forwarder: Box::new(crate::message_mutation::WhatsAppMessageForwarder),
+        message_revoker: Box::new(crate::message_mutation::WhatsAppMessageRevoker),
         action_notice: None,
         update_notice: None,
         message_menu: None,
@@ -146,23 +176,29 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         url_picker: None,
         file_picker: None,
         url_opener: Box::new(SystemUrlOpener),
+        launch_executor: Box::new(crate::media::CommandLaunchExecutor),
         attachment_viewer: None,
         viewer_preview: None,
         viewer_zoom: 100,
         read_receipts: ReadReceiptCoordinator::default(),
         read_receipt_worker: crate::app::read_receipts::worker::Worker::new(
             tx.clone(),
-            Box::new(crate::app::read_receipts::whatsapp_adapter::WhatsAppAdapter),
-            Box::new(
-                crate::app::read_receipts::sqlite_repository::SqliteRepository::new(
-                    data_dir.join("whatsapp.db"),
-                ),
-            ),
+            Box::new(crate::read_receipt_send::WhatsAppAdapter),
+            Box::new(crate::db::SqlitePendingReceiptRepository::new(
+                data_dir.join("whatsapp.db"),
+            )),
         ),
+        chat_read_sync: Box::new(crate::chat_read_sync::WhatsRustChatReadSync::default()),
+        read_sync_worker_stopped_for_logout: false,
         optimistic_text_send_worker: crate::app::optimistic_text_send::Worker::new(
             tx.clone(),
-            Box::new(crate::app::optimistic_text_send::WhatsAppTextSendPort),
+            Box::new(crate::text_send::WhatsAppTextSendPort),
         ),
+        media_download_worker: Some(crate::app::download_worker::spawn_with_port(
+            data_dir.join("media"),
+            tx.clone(),
+            Box::new(crate::media_download::WhatsRustMediaDownload),
+        )),
         pending_outgoing_text: HashMap::new(),
         completed_text_send_ids: VecDeque::new(),
         next_local_send_id: 1,
@@ -184,7 +220,8 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         chat_list_revision: 0,
         chat_list_mutation_depth: 0,
         chat_list_mutation_pending: false,
-    }
+    };
+    app
 }
 
 /// Opens two independent system clipboard handles with headless fallbacks.

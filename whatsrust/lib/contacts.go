@@ -60,7 +60,8 @@ func lookupContactEntries(ctx context.Context, bridgeClient *whatsmeow.Client) [
 }
 
 func lookupMentionContactEntries() []contactEntry {
-	entries, err := loadContactEntries(context.Background(), client)
+	clientSnapshot := lifecycleState.clientSnapshot()
+	entries, err := loadContactEntries(context.Background(), clientSnapshot)
 	if err != nil {
 		return nil
 	}
@@ -90,14 +91,15 @@ func loadContactEntries(ctx context.Context, bridgeClient *whatsmeow.Client) ([]
 
 //export C_GetContacts
 func C_GetContacts() C.GetContactsResult {
-	if client == nil || client.Store == nil {
+	clientSnapshot := lifecycleState.clientSnapshot()
+	if clientSnapshot == nil || clientSnapshot.Store == nil {
 		return contactEntriesToC(nil)
 	}
 	ctx := context.Background()
-	entries := lookupContactEntries(ctx, client)
+	entries := lookupContactEntries(ctx, clientSnapshot)
 
 	// Groups remain in this bridge wrapper; contacts.go owns only contact lookup.
-	groups, err := client.GetJoinedGroups(ctx)
+	groups, err := clientSnapshot.GetJoinedGroups(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -129,6 +131,15 @@ func freeContactResult(result C.GetContactsResult) {
 		C.free(unsafe.Pointer(entry.name))
 	}
 	C.free(unsafe.Pointer(result.entries))
+}
+
+// C_FreeContacts releases the entries and strings returned by C_GetContacts.
+// The caller owns the result and must invoke this exactly once after copying
+// all entries. Empty results are valid and nil-safe.
+//
+//export C_FreeContacts
+func C_FreeContacts(result C.GetContactsResult) {
+	freeContactResult(result)
 }
 
 func contactEntryStrings(entry C.ContactEntry) (string, string) {

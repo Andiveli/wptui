@@ -1,7 +1,60 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    panic::{AssertUnwindSafe, catch_unwind},
+    sync::{Arc, Mutex},
+};
 
-use super::super::{Chat, STATUS_BROADCAST_CHAT, test_support::TestApp};
+use super::super::{
+    Chat, MessageReactionWritePort, RecordMessageReaction, STATUS_BROADCAST_CHAT,
+    chat_store::write_port::{ChatStoreWritePort, PersistChat, PersistMessage},
+    test_support::{
+        FakeChatReadCursorPort, FakeChatSettingsQuery, FixedClock, RecordingNotifier, TestApp,
+    },
+};
 use whatsrust as wr;
+
+struct RecordingChatStoreWritePort {
+    persisted: Arc<Mutex<Vec<(Chat, wr::Message)>>>,
+}
+
+impl ChatStoreWritePort for RecordingChatStoreWritePort {
+    fn persist(&self, command: super::super::chat_store::write_port::PersistChatMessage) {
+        self.persisted
+            .lock()
+            .unwrap()
+            .push((command.chat, command.message));
+    }
+
+    fn persist_chat(&self, _: PersistChat) {}
+
+    fn persist_message(&self, command: PersistMessage) {
+        let message = command.message;
+        self.persisted.lock().unwrap().push((
+            Chat {
+                jid: message.info.chat.clone(),
+                last_message_time: Some(message.info.timestamp),
+            },
+            message,
+        ));
+    }
+}
+
+struct RecordingMessageReactionWritePort {
+    recorded: Arc<Mutex<Vec<RecordMessageReaction>>>,
+}
+
+impl MessageReactionWritePort for RecordingMessageReactionWritePort {
+    fn record(&self, command: RecordMessageReaction) {
+        self.recorded.lock().unwrap().push(command);
+    }
+}
+
+struct PanickingMessageReactionWritePort;
+
+impl MessageReactionWritePort for PanickingMessageReactionWritePort {
+    fn record(&self, _: RecordMessageReaction) {
+        panic!("reaction persistence failed");
+    }
+}
 
 fn message(chat: &wr::JID, id: &str, timestamp: i64) -> wr::Message {
     wr::Message {
@@ -45,6 +98,67 @@ fn notification_eligibility_and_ingestion_continuation_are_preserved() {
     );
     assert_eq!(*lookup_calls.lock().unwrap(), 1);
     assert!(app.messages.contains_key("ordinary"));
+}
+
+#[test]
+fn process_message_queries_the_port_once_then_notifies_and_persists() {
+    let chat = wr::JID::from("chat@g.us".to_owned());
+    let fake = FakeChatSettingsQuery::default();
+    let notifier = RecordingNotifier::default();
+    let mut app = TestApp::with_ports(FixedClock::new(1_000), notifier.clone());
+    let persisted = Arc::new(Mutex::new(Vec::new()));
+    app.chat_store_write = Box::new(RecordingChatStoreWritePort {
+        persisted: persisted.clone(),
+    });
+    app.set_chat_settings_query(Box::new(fake.clone()));
+    assert!(app.process_message(message(&chat, "live-port", 6), false));
+    assert_eq!(*fake.jids.lock().unwrap(), vec![chat]);
+    assert_eq!(persisted.lock().unwrap().len(), 1);
+    assert_eq!(notifier.notifications.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn process_message_skips_the_port_for_ineligible_paths() {
+    let chat = wr::JID::from("chat@g.us".to_owned());
+    let fake = FakeChatSettingsQuery::default();
+    let mut app = TestApp::new();
+    app.set_chat_settings_query(Box::new(fake.clone()));
+    assert!(!app.process_message(message(&chat, "sync", 1), true));
+    let mut own = message(&chat, "own", 2);
+    own.info.is_from_me = true;
+    app.process_message(own, false);
+    app.process_message(
+        message(
+            &wr::JID::from(STATUS_BROADCAST_CHAT.to_owned()),
+            "status",
+            3,
+        ),
+        false,
+    );
+    app.open_chat = Some(chat.clone());
+    app.process_message(message(&chat, "open", 4), false);
+    assert!(fake.jids.lock().unwrap().is_empty());
+}
+
+#[test]
+fn muted_port_settings_suppress_notification_without_skipping_persistence() {
+    let chat = wr::JID::from("chat@g.us".to_owned());
+    let fake = FakeChatSettingsQuery::default();
+    let notifier = RecordingNotifier::default();
+    let mut app = TestApp::with_ports(FixedClock::new(1_000), notifier.clone());
+    let persisted = Arc::new(Mutex::new(Vec::new()));
+    app.chat_store_write = Box::new(RecordingChatStoreWritePort {
+        persisted: persisted.clone(),
+    });
+    let mut settings = wr::ChatSettings::default();
+    settings.found = true;
+    settings.muted_until = 1_001;
+    *fake.settings.lock().unwrap() = settings;
+    app.set_chat_settings_query(Box::new(fake.clone()));
+    app.process_message(message(&chat, "muted", 6), false);
+    assert_eq!(*fake.jids.lock().unwrap(), vec![chat]);
+    assert!(notifier.notifications.lock().unwrap().is_empty());
+    assert_eq!(persisted.lock().unwrap().len(), 1);
 }
 
 #[test]
@@ -94,6 +208,52 @@ fn live_incoming_messages_update_persistent_timeline_state() {
 }
 
 #[test]
+fn live_inbound_message_persists_owned_chat_and_message_after_updating_memory() {
+    let mut app = TestApp::new();
+    let chat = wr::JID::from("chat@g.us".to_owned());
+    let persisted = Arc::new(Mutex::new(Vec::new()));
+    app.chat_store_write = Box::new(RecordingChatStoreWritePort {
+        persisted: persisted.clone(),
+    });
+
+    app.process_message_with_lookup(message(&chat, "live", 6), false, |_| Default::default());
+
+    assert_eq!(app.chats[&chat].last_message_time, Some(6));
+    let persisted = persisted.lock().unwrap();
+    assert_eq!(persisted.len(), 1);
+    assert_eq!(persisted[0].0.jid, chat);
+    assert_eq!(persisted[0].0.last_message_time, Some(6));
+    assert_eq!(persisted[0].1.info.id.as_ref(), "live");
+}
+
+#[test]
+fn outgoing_read_receipts_persist_each_increment_without_a_chat_cursor() {
+    let mut app = TestApp::new();
+    let chat = wr::JID::from("chat@g.us".to_owned());
+    let persisted = Arc::new(Mutex::new(Vec::new()));
+    let cursor = FakeChatReadCursorPort::default();
+    app.chat_store_write = Box::new(RecordingChatStoreWritePort {
+        persisted: persisted.clone(),
+    });
+    app.chat_read_cursor = Box::new(cursor.clone());
+    let mut sent = message(&chat, "sent", 6);
+    sent.info.is_from_me = true;
+    app.add_message(sent);
+    cursor.stored.lock().unwrap().clear();
+
+    for expected_read_by in [1, 2] {
+        app.apply_receipt(wr::ReceiptKind::Read, chat.clone(), vec!["sent".into()]);
+        assert_eq!(app.messages["sent"].info.read_by, expected_read_by);
+        assert_eq!(persisted.lock().unwrap().len(), expected_read_by as usize);
+    }
+
+    let persisted = persisted.lock().unwrap();
+    assert_eq!(persisted[0].1.info.read_by, 1);
+    assert_eq!(persisted[1].1.info.read_by, 2);
+    assert!(cursor.stored.lock().unwrap().is_empty());
+}
+
+#[test]
 fn sync_message_refreshes_a_primed_chat_view_once_even_when_chat_timestamp_is_zero() {
     let mut app = TestApp::new();
     let chat = wr::JID::from("history@g.us".to_owned());
@@ -135,6 +295,75 @@ fn sync_message_refreshes_a_primed_chat_view_once_even_when_chat_timestamp_is_ze
         })
     );
     assert_eq!(app.chat_list_revision, after);
+}
+
+#[test]
+fn reactions_are_persisted_before_replacing_the_in_memory_value() {
+    let mut app = TestApp::new();
+    let message_id: wr::MessageId = "reaction-message".into();
+    let participant = wr::JID::from("participant@s.whatsapp.net".to_owned());
+    let recorded = Arc::new(Mutex::new(Vec::new()));
+    app.message_reaction_write = Box::new(RecordingMessageReactionWritePort {
+        recorded: recorded.clone(),
+    });
+
+    app.apply_reaction(&message_id, participant.clone(), Arc::from("👍"));
+    app.apply_reaction(&message_id, participant.clone(), Arc::from("❤️"));
+
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.len(), 2);
+    assert_eq!(recorded[0].message_id, message_id);
+    assert_eq!(recorded[0].participant, participant);
+    assert_eq!(recorded[0].emoji.as_ref(), "👍");
+    assert_eq!(recorded[1].message_id, message_id);
+    assert_eq!(recorded[1].participant, participant);
+    assert_eq!(recorded[1].emoji.as_ref(), "❤️");
+    drop(recorded);
+    assert_eq!(app.reactions[&message_id][&participant].as_ref(), "❤️");
+}
+
+#[test]
+fn reaction_removal_is_persisted_before_removing_the_in_memory_entry() {
+    let mut app = TestApp::new();
+    let message_id: wr::MessageId = "reaction-message".into();
+    let participant = wr::JID::from("participant@s.whatsapp.net".to_owned());
+    let recorded = Arc::new(Mutex::new(Vec::new()));
+    app.message_reaction_write = Box::new(RecordingMessageReactionWritePort {
+        recorded: recorded.clone(),
+    });
+    app.reactions
+        .entry(message_id.clone())
+        .or_default()
+        .insert(participant.clone(), Arc::from("👍"));
+
+    app.apply_reaction(&message_id, participant.clone(), Arc::from(""));
+
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0].message_id, message_id);
+    assert_eq!(recorded[0].participant, participant);
+    assert_eq!(recorded[0].emoji.as_ref(), "");
+    drop(recorded);
+    assert!(!app.reactions.contains_key(&message_id));
+}
+
+#[test]
+fn reaction_memory_is_unchanged_when_persistence_panics() {
+    let mut app = TestApp::new();
+    let message_id: wr::MessageId = "reaction-message".into();
+    let participant = wr::JID::from("participant@s.whatsapp.net".to_owned());
+    app.reactions
+        .entry(message_id.clone())
+        .or_default()
+        .insert(participant.clone(), Arc::from("👍"));
+    app.message_reaction_write = Box::new(PanickingMessageReactionWritePort);
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        app.apply_reaction(&message_id, participant.clone(), Arc::from("❤️"));
+    }));
+
+    assert!(result.is_err());
+    assert_eq!(app.reactions[&message_id][&participant].as_ref(), "👍");
 }
 
 #[test]
