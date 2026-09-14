@@ -1,11 +1,11 @@
 module rustmeow
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/mattn/go-sqlite3 v1.14.52
 	go.mau.fi/whatsmeow v0.0.0-20260730092514-662ad1dc6900
-	golang.org/x/sys v0.47.0
+	golang.org/x/sys v0.48.0
 	google.golang.org/protobuf v1.36.12
 )
 
