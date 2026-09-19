@@ -71,9 +71,9 @@ pub use crate::app;
 use crate::app::actions::{
     ActionNotice, ClipboardReader, ClipboardWriter, ConversationMode, FocusPane, MessageEditor,
     MessageForwarder, MessageMenuAction, MessageReactor, MessageRevoker, PaneVisibility, Section,
-    SystemClipboardReader, SystemClipboardWriter, SystemUrlOpener, UnavailableClipboardReader,
-    UnavailableClipboardWriter, UrlOpener, WhatsAppMessageEditor, WhatsAppMessageForwarder,
-    WhatsAppMessageReactor, WhatsAppMessageRevoker,
+    StatusCompositionState, SystemClipboardReader, SystemClipboardWriter, SystemUrlOpener,
+    UnavailableClipboardReader, UnavailableClipboardWriter, UrlOpener, WhatsAppMessageEditor,
+    WhatsAppMessageForwarder, WhatsAppMessageReactor, WhatsAppMessageRevoker,
 };
 pub use crate::app::chat_projection::{ChatRow, ContactRow};
 pub use crate::app::community_hierarchy::{CommunityNavigationRow, CommunityNode};
@@ -175,6 +175,9 @@ pub struct App<'a> {
     /// Latest status timestamp the user has viewed per contact, restored from
     /// the status_read_cursors table at startup.
     pub status_last_seen: HashMap<wr::JID, i64>,
+    /// Outgoing status composition is separate from the read-only incoming
+    /// status pane and starts only from the status contact list.
+    pub status_composition: StatusCompositionState,
 
     pub history_sync_percent: Option<u8>,
     pub selected_presence: SelectedPresence,

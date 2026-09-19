@@ -107,6 +107,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         status_contacts: Vec::new(),
         status_selection: ListState::default(),
         status_last_seen: HashMap::new(),
+        status_composition: StatusCompositionState::default(),
         message_list_state: MessageListState::default(),
         timeline: unread_messages::Timeline::default(),
         metadata: HashMap::new(),

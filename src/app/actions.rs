@@ -14,6 +14,8 @@ pub enum AppAction {
     ToggleChatList,
     FocusPane(FocusPane),
     OpenContextualActions,
+    StartStatusComposition,
+    CancelStatusComposition,
     ToggleShortcutPopup,
     ToggleComposerDirection,
     PlannedLeaderAction(&'static str),
@@ -279,6 +281,16 @@ pub enum MessageMenuAction {
     GoToReference,
     SenderDetails,
     ReactedUsers,
+}
+
+/// Lifecycle for creating an outgoing status. Authoring intentionally owns no
+/// message transport, file selection, or rendering until those capabilities
+/// are implemented.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum StatusCompositionState {
+    #[default]
+    Inactive,
+    Authoring,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

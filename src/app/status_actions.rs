@@ -1,7 +1,23 @@
 use crate::app::App;
-use crate::app::actions::{ActionNotice, ConversationMode, FocusPane, STATUS_REACTION, Section};
+use crate::app::actions::{
+    ActionNotice, ConversationMode, FocusPane, STATUS_REACTION, Section, StatusCompositionState,
+};
 
 impl App<'_> {
+    /// Begins the dedicated outgoing-status lifecycle from the status list.
+    /// Incoming status panes remain read-only.
+    pub(crate) fn start_status_composition(&mut self) {
+        if self.selected_section == Section::Status && self.focus_pane == FocusPane::ChatList {
+            self.status_composition = StatusCompositionState::Authoring;
+        }
+    }
+
+    /// Leaves status authoring without sending or preserving any content.
+    pub(crate) fn cancel_status_composition(&mut self) {
+        self.status_composition = StatusCompositionState::Inactive;
+        self.action_notice = Some(ActionNotice::Cancelled);
+    }
+
     /// Reply from a status: switches to the contact's private chat with
     /// the status quoted, so the answer lands in the inbox.
     pub(crate) fn reply_to_status(&mut self) {

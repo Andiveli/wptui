@@ -1,10 +1,14 @@
+use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{Terminal, backend::TestBackend};
 use std::cell::RefCell;
 use std::rc::Rc;
 use whatsrust::{FileContent, FileKind, JID, Message, MessageContent, MessageInfo};
 
 use wp_tui::app::App;
-use wp_tui::app::actions::{AppAction, ConversationMode, FocusPane, MessageReactor, Section};
+use wp_tui::app::actions::{
+    AppAction, ConversationMode, FocusPane, MessageReactor, Section, StatusCompositionState,
+};
+use wp_tui::app::contextual_actions::{ContextualAction, RowStyle};
 use wp_tui::app::unix_now;
 use wp_tui::ui;
 mod common;
@@ -241,6 +245,70 @@ fn media_viewer_for_statuses_is_scoped_to_the_selected_contact() {
     let viewer = app.attachment_viewer.as_ref().expect("viewer should open");
     assert_eq!(viewer.attachment_count, 1);
     assert_eq!(viewer.attachments[0].message_id.as_ref(), "alice-pic");
+}
+
+#[test]
+fn status_chat_list_menu_exposes_and_routes_create_status() {
+    let mut app = TestApp::new();
+    app.selected_section = Section::Status;
+    app.focus_pane = FocusPane::ChatList;
+
+    app.open_contextual_actions();
+
+    let create_status = app
+        .contextual_menu
+        .as_ref()
+        .expect("status chat-list menu")
+        .0
+        .iter()
+        .position(|row| row.action_token == ContextualAction::CreateStatus)
+        .expect("Create status action");
+    let row = app.contextual_menu.as_ref().unwrap().0[create_status];
+    assert_eq!(row.display_label, "Create status");
+    assert_eq!(row.row_style, RowStyle::Enabled);
+
+    app.on_terminal_event(Event::Key(KeyEvent::new(
+        KeyCode::Char('c'),
+        KeyModifiers::NONE,
+    )));
+
+    assert_eq!(app.status_composition, StatusCompositionState::Authoring);
+    assert!(app.contextual_menu.is_none());
+}
+
+#[test]
+fn status_composition_enters_only_from_the_status_chat_list() {
+    let mut app = TestApp::new();
+
+    app.selected_section = Section::Chats;
+    app.focus_pane = FocusPane::ChatList;
+    app.dispatch_action(AppAction::StartStatusComposition);
+    assert_eq!(app.status_composition, StatusCompositionState::Inactive);
+
+    app.selected_section = Section::Status;
+    app.focus_pane = FocusPane::Conversation;
+    app.dispatch_action(AppAction::StartStatusComposition);
+    assert_eq!(app.status_composition, StatusCompositionState::Inactive);
+
+    app.focus_pane = FocusPane::ChatList;
+    app.dispatch_action(AppAction::StartStatusComposition);
+    assert_eq!(app.status_composition, StatusCompositionState::Authoring);
+}
+
+#[test]
+fn escape_cancels_and_resets_status_composition() {
+    let mut app = TestApp::new();
+    app.selected_section = Section::Status;
+    app.focus_pane = FocusPane::ChatList;
+    app.dispatch_action(AppAction::StartStatusComposition);
+
+    app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+
+    assert_eq!(app.status_composition, StatusCompositionState::Inactive);
+    assert!(matches!(
+        app.action_notice,
+        Some(wp_tui::app::actions::ActionNotice::Cancelled)
+    ));
 }
 
 #[test]

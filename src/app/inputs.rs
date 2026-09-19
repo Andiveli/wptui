@@ -2,7 +2,8 @@ use ratatui::crossterm::event::{Event, KeyEventKind};
 
 use crate::app::App;
 use crate::app::actions::{
-    AppAction, ConversationMode, FocusPane, Section, focus_after, focus_after_visibility_change,
+    AppAction, ConversationMode, FocusPane, Section, StatusCompositionState, focus_after,
+    focus_after_visibility_change,
 };
 pub use crate::app::composer_input_mapping::composer_action_for_editing_key;
 pub use crate::app::composer_input_paste::apply_clipboard_paste;
@@ -120,6 +121,10 @@ impl App<'_> {
             if is_toggle_logs_key(&key) {
                 self.dispatch_action(AppAction::ToggleLogs);
             } else if self.handle_composer_input(key.clone()) {
+            } else if self.status_composition == StatusCompositionState::Authoring {
+                if key == Key::k(KeyCode::Esc) {
+                    self.dispatch_action(AppAction::CancelStatusComposition);
+                }
             } else if self.shortcut_popup {
                 if key == Key::k(KeyCode::Esc) || key == Key::c('?') {
                     self.shortcut_popup = false;
@@ -329,6 +334,8 @@ impl App<'_> {
                 }
             }
             AppAction::OpenContextualActions => self.open_contextual_actions(),
+            AppAction::StartStatusComposition => self.start_status_composition(),
+            AppAction::CancelStatusComposition => self.cancel_status_composition(),
             AppAction::ToggleShortcutPopup => self.shortcut_popup = !self.shortcut_popup,
             AppAction::ToggleComposerDirection => self.toggle_composer_direction(),
             AppAction::PlannedLeaderAction(label) => {
