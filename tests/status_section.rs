@@ -6,7 +6,8 @@ use whatsrust::{FileContent, FileKind, JID, Message, MessageContent, MessageInfo
 
 use wp_tui::app::App;
 use wp_tui::app::actions::{
-    AppAction, ConversationMode, FocusPane, MessageReactor, Section, StatusCompositionState,
+    ActionNotice, AppAction, ConversationMode, FocusPane, MessageReactor, Section,
+    StatusCompositionState,
 };
 use wp_tui::app::contextual_actions::{ContextualAction, RowStyle};
 use wp_tui::app::unix_now;
@@ -316,6 +317,92 @@ fn escape_cancels_and_resets_status_composition() {
         app.action_notice,
         Some(wp_tui::app::actions::ActionNotice::Cancelled)
     ));
+}
+
+#[test]
+fn status_composition_renders_status_specific_authoring_and_submitting_feedback() {
+    let mut app = TestApp::new();
+    app.selected_section = Section::Status;
+    app.status_composition = StatusCompositionState::Authoring;
+    app.composer.insert_text("A new status");
+
+    let authoring = render(&mut app, 100, 20);
+    assert!(authoring.contains("Status update"), "{authoring:?}");
+    assert!(authoring.contains("Enter publish"), "{authoring:?}");
+    assert!(authoring.contains("A new status"), "{authoring:?}");
+
+    app.status_composition = StatusCompositionState::Submitting;
+    app.pending_status_sends = 2;
+    let submitting = render(&mut app, 100, 20);
+    assert!(submitting.contains("Publishing status"), "{submitting:?}");
+    assert!(submitting.contains("2 updates pending"), "{submitting:?}");
+}
+
+#[test]
+fn submitting_status_composition_keeps_progress_and_notices_visible() {
+    let mut app = TestApp::new();
+    app.selected_section = Section::Status;
+    app.status_composition = StatusCompositionState::Submitting;
+    app.pending_status_sends = 2;
+
+    for (notice, expected) in [
+        (ActionNotice::StatusPublished, "StatusPublished"),
+        (ActionNotice::Cancelled, "Cancelled"),
+        (
+            ActionNotice::Unavailable("send failed".into()),
+            "Unavailable",
+        ),
+    ] {
+        app.action_notice = Some(notice);
+        let output = render(&mut app, 100, 20);
+        assert!(output.contains("2 updates pending"), "{output:?}");
+        assert!(output.contains(expected), "{output:?}");
+    }
+}
+
+#[test]
+fn status_notices_remain_visible_across_composition_states() {
+    let mut app = TestApp::new();
+    app.selected_section = Section::Status;
+    app.status_composition = StatusCompositionState::Authoring;
+    app.action_notice = Some(ActionNotice::Unsupported("text only".into()));
+    let authoring = render(&mut app, 100, 20);
+    assert!(authoring.contains("Unsupported"), "{authoring:?}");
+
+    for (notice, expected) in [
+        (ActionNotice::StatusPublished, "StatusPublished"),
+        (ActionNotice::Cancelled, "Cancelled"),
+        (
+            ActionNotice::Unavailable("send failed".into()),
+            "Unavailable",
+        ),
+    ] {
+        app.status_composition = StatusCompositionState::Inactive;
+        app.action_notice = Some(notice);
+        let output = render(&mut app, 100, 20);
+        assert!(output.contains(expected), "{output:?}");
+    }
+}
+
+#[test]
+fn inactive_status_composition_preserves_incoming_status_view() {
+    let mut app = TestApp::new();
+    let alice = JID::from("alice@s.whatsapp.net".to_owned());
+    app.add_message(status_message(
+        &alice,
+        "incoming-status",
+        unix_now(),
+        "Incoming status remains visible",
+    ));
+    app.selected_section = Section::Status;
+    app.open_selected_status();
+
+    let output = render(&mut app, 100, 20);
+    assert!(
+        output.contains("Incoming status remains visible"),
+        "{output:?}"
+    );
+    assert!(!output.contains("Status update"), "{output:?}");
 }
 
 #[test]

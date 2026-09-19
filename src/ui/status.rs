@@ -1,11 +1,13 @@
 use super::status_list::{StatusList, StatusListItem};
 use crate::app::App;
-use crate::app::actions::FocusPane;
+use crate::app::actions::{FocusPane, StatusCompositionState};
 use crate::ui::message_list::render_status_messages;
+use crate::ui::{action_notice_text, render_composer};
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Style},
+    style::{Color, Style, Stylize},
+    text::Line,
     widgets::{Block, Paragraph, Widget},
 };
 
@@ -40,6 +42,37 @@ pub(super) fn render_status_contacts(frame: &mut Frame, app: &mut App, area: Rec
 }
 
 pub(super) fn render_statuses(frame: &mut Frame, app: &mut App, area: Rect) {
+    match app.status_composition {
+        StatusCompositionState::Authoring => {
+            let [help_area, composer_area] = ratatui::layout::Layout::vertical([
+                ratatui::layout::Constraint::Length(1),
+                ratatui::layout::Constraint::Min(1),
+            ])
+            .areas(area);
+            let help = action_notice_text(app)
+                .unwrap_or_else(|| "Enter publish · Esc cancel · Ctrl+O attach".to_string());
+            frame.render_widget(Paragraph::new(help).fg(Color::Cyan), help_area);
+            render_composer(frame, app, composer_area, " Status update ", None, None);
+            return;
+        }
+        StatusCompositionState::Submitting => {
+            let pending = app.pending_status_sends;
+            let feedback = action_notice_text(app)
+                .map(|notice| format!("{pending} updates pending\n{notice}"))
+                .unwrap_or_else(|| format!("{pending} updates pending"));
+            render_composer(
+                frame,
+                app,
+                area,
+                " Publishing status ",
+                None,
+                Some(&feedback),
+            );
+            return;
+        }
+        StatusCompositionState::Inactive => {}
+    }
+
     let title = app
         .open_status_contact()
         .map(|contact| app.contact_name(&contact).to_string())
@@ -49,9 +82,12 @@ pub(super) fn render_statuses(frame: &mut Frame, app: &mut App, area: Rect) {
     } else {
         Color::White
     };
-    let block = Block::bordered()
+    let mut block = Block::bordered()
         .title(title)
         .border_style(Style::default().fg(border_color));
+    if let Some(notice) = action_notice_text(app) {
+        block = block.title(Line::from(notice).right_aligned());
+    }
     let content_area = block.inner(area);
     block.render(area, frame.buffer_mut());
 
