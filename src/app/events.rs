@@ -148,6 +148,8 @@ pub enum AppEvent {
     TextSendFailed {
         local_send_id: u64,
     },
+    StatusSendSucceeded,
+    StatusSendFailed(wr::StatusSendResult),
     ReadReceiptResult(ReceiptKey, ReceiptSendStatus),
     ReadReceiptRestored(Result<Vec<ReceiptCandidate>, RepositoryError>),
     ReadReceiptPersisted(ReceiptCandidate, PersistResult),
@@ -202,6 +204,10 @@ impl fmt::Debug for AppEvent {
                 .debug_struct("TextSendFailed")
                 .field("local_send_id", local_send_id)
                 .finish(),
+            AppEvent::StatusSendSucceeded => f.write_str("StatusSendSucceeded"),
+            AppEvent::StatusSendFailed(result) => {
+                f.debug_tuple("StatusSendFailed").field(result).finish()
+            }
             AppEvent::ReadReceiptResult(key, status) => f
                 .debug_tuple("ReadReceiptResult")
                 .field(key)

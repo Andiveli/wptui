@@ -111,6 +111,7 @@ pub enum ActionNotice {
     Unavailable(String),
     Unauthorized(String),
     Unsupported(String),
+    StatusPublished,
     Cancelled,
 }
 
@@ -283,14 +284,14 @@ pub enum MessageMenuAction {
     ReactedUsers,
 }
 
-/// Lifecycle for creating an outgoing status. Authoring intentionally owns no
-/// message transport, file selection, or rendering until those capabilities
-/// are implemented.
+/// Lifecycle for creating an outgoing status. Rendering remains separate from
+/// this state so status authoring can reuse the existing composer safely.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum StatusCompositionState {
     #[default]
     Inactive,
     Authoring,
+    Submitting,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

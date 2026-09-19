@@ -6,7 +6,9 @@ use std::fs;
 
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use tempfile::tempdir;
-use wp_tui::app::actions::{AppAction, ConversationMode};
+use wp_tui::app::actions::{
+    AppAction, ConversationMode, FocusPane, Section, StatusCompositionState,
+};
 use wp_tui::file_picker::FilePickerState;
 
 mod common;
@@ -152,6 +154,23 @@ fn cancel_closes_picker_without_touching_draft() {
         "cancel must not queue files"
     );
     assert_eq!(app.composer.text(), "hello", "draft text is untouched");
+}
+
+#[test]
+fn picker_cancel_preserves_a_status_authoring_draft() {
+    let mut app = TestApp::new();
+    let dir = tree_dir();
+    app.selected_section = Section::Status;
+    app.focus_pane = FocusPane::ChatList;
+    app.dispatch_action(AppAction::StartStatusComposition);
+    app.composer.insert_text("status draft");
+    app.file_picker = Some(picker_for(dir.path()));
+
+    app.dispatch_action(AppAction::CancelFilePicker);
+
+    assert_eq!(app.status_composition, StatusCompositionState::Authoring);
+    assert_eq!(app.composer.text(), "status draft");
+    assert!(app.file_picker.is_none());
 }
 
 #[test]

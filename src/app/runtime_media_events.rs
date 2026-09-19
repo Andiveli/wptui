@@ -33,6 +33,8 @@ impl App<'_> {
                 message,
             } => self.complete_text_send(local_send_id, message),
             AppEvent::TextSendFailed { local_send_id } => self.fail_text_send(local_send_id),
+            AppEvent::StatusSendSucceeded => self.status_send_succeeded(),
+            AppEvent::StatusSendFailed(result) => self.status_send_failed(result),
             AppEvent::ReadReceiptResult(key, status) => {
                 self.complete_read_receipt(&key, status);
                 false

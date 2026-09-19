@@ -6,7 +6,10 @@ impl App<'_> {
     pub(crate) fn dispatch_file_picker_action(&mut self, action: AppAction) {
         match action {
             AppAction::AttachFile => {
-                if !self.composer_blocked() {
+                if self.status_composition
+                    != crate::app::actions::StatusCompositionState::Submitting
+                    && !self.composer_blocked()
+                {
                     self.open_file_picker();
                 }
             }
@@ -114,6 +117,24 @@ impl App<'_> {
             return;
         }
         self.file_picker = None;
+        if self.status_composition == crate::app::actions::StatusCompositionState::Authoring {
+            let mut rejected = false;
+            for path in &paths {
+                let kind = crate::clipboard::file_kind(path);
+                if crate::app::status_actions::status_attachment_is_supported(&kind) {
+                    self.composer
+                        .queue_attachment(path.to_string_lossy().into_owned().into(), kind);
+                } else {
+                    rejected = true;
+                }
+            }
+            if rejected {
+                self.action_notice = Some(crate::app::actions::ActionNotice::Unsupported(
+                    "Statuses support only text, images, and videos".into(),
+                ));
+            }
+            return;
+        }
         for path in &paths {
             let kind = crate::clipboard::file_kind(path);
             self.composer

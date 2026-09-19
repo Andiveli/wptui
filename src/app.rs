@@ -61,6 +61,7 @@ pub mod share_picker_input;
 pub mod status_actions;
 pub mod status_input;
 pub mod status_projection;
+pub mod status_publish;
 pub mod terminal_session;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -231,6 +232,9 @@ pub struct App<'a> {
     pub read_receipts: ReadReceiptCoordinator,
     pub read_receipt_worker: read_receipts::worker::Worker,
     pub optimistic_text_send_worker: optimistic_text_send::Worker,
+    pub status_send_worker: status_publish::Worker,
+    pub pending_status_sends: usize,
+    pub status_send_failure: Option<wr::StatusSendResult>,
     pub pending_outgoing_text: HashMap<u64, optimistic_text_send::TextSendRequest>,
     pub completed_text_send_ids: VecDeque<u64>,
     pub next_local_send_id: u64,

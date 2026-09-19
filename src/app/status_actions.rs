@@ -1,21 +1,148 @@
 use crate::app::App;
 use crate::app::actions::{
-    ActionNotice, ConversationMode, FocusPane, STATUS_REACTION, Section, StatusCompositionState,
+    ActionNotice, ComposerAction, ConversationMode, FocusPane, STATUS_REACTION, Section,
+    StatusCompositionState,
 };
+use crate::app::composer::ComposerOutcome;
+use crate::app::composer_input_mapping::composer_action_for_editing_key;
+use crate::app::composer_input_paste::apply_clipboard_paste;
+use crate::input_key::{Key, KeyCode};
+use whatsrust as wr;
+
+pub(crate) fn status_content_is_supported(content: &wr::MessageContent) -> bool {
+    matches!(
+        content,
+        wr::MessageContent::Text(_)
+            | wr::MessageContent::File(wr::FileContent {
+                kind: wr::FileKind::Image | wr::FileKind::Video,
+                ..
+            })
+    )
+}
+
+pub(crate) fn status_attachment_is_supported(kind: &wr::FileKind) -> bool {
+    matches!(kind, wr::FileKind::Image | wr::FileKind::Video)
+}
 
 impl App<'_> {
-    /// Begins the dedicated outgoing-status lifecycle from the status list.
-    /// Incoming status panes remain read-only.
     pub(crate) fn start_status_composition(&mut self) {
         if self.selected_section == Section::Status && self.focus_pane == FocusPane::ChatList {
             self.status_composition = StatusCompositionState::Authoring;
         }
     }
 
-    /// Leaves status authoring without sending or preserving any content.
     pub(crate) fn cancel_status_composition(&mut self) {
         self.status_composition = StatusCompositionState::Inactive;
+        self.file_picker = None;
+        self.composer.replace_text("");
+        self.composer.apply(ComposerAction::CancelReply);
+        self.composer.pending.clear();
         self.action_notice = Some(ActionNotice::Cancelled);
+    }
+
+    pub(crate) fn handle_status_composer_input(&mut self, key: Key) -> bool {
+        if self.status_composition != StatusCompositionState::Authoring
+            || self.file_picker.is_some()
+        {
+            return false;
+        }
+        if key == Key::k(KeyCode::Esc) {
+            self.cancel_status_composition();
+        } else if key == Key::ctrl('o') {
+            self.dispatch_file_picker_action(crate::app::actions::AppAction::AttachFile);
+        } else {
+            self.dispatch_status_composer_action(composer_action_for_editing_key(&key));
+        }
+        true
+    }
+
+    pub(crate) fn dispatch_status_composer_action(&mut self, action: ComposerAction) {
+        if self.status_composition != StatusCompositionState::Authoring || self.composer_blocked() {
+            return;
+        }
+        if matches!(action, ComposerAction::Paste) {
+            let paste = self.clipboard_reader.read_paste();
+            if let Err(error) = apply_clipboard_paste(&mut self.composer, &self.media_path, paste) {
+                self.unavailable(&format!("Could not paste clipboard content: {error:?}"));
+            }
+            self.reject_unsupported_status_attachments();
+            return;
+        }
+        if let ComposerOutcome::Submit { messages, .. } = self.composer.apply_with_direction(
+            action,
+            self.composer_direction,
+            self.composer_viewport_width,
+        ) {
+            self.submit_status_messages(messages);
+        }
+    }
+
+    pub(crate) fn reject_unsupported_status_attachments(&mut self) {
+        let pending_before = self.composer.pending.len();
+        self.composer
+            .pending
+            .retain(|attachment| status_attachment_is_supported(&attachment.kind));
+        if self.composer.pending.len() != pending_before {
+            self.action_notice = Some(ActionNotice::Unsupported(
+                "Statuses support only text, images, and videos".into(),
+            ));
+        }
+    }
+
+    fn submit_status_messages(&mut self, messages: Vec<wr::MessageContent>) {
+        if messages
+            .iter()
+            .any(|content| !status_content_is_supported(content))
+        {
+            self.action_notice = Some(ActionNotice::Unsupported(
+                "Statuses support only text, images, and videos".into(),
+            ));
+            return;
+        }
+
+        self.pending_status_sends = 0;
+        self.status_send_failure = None;
+        for content in messages {
+            if self.status_send_worker.enqueue(content) {
+                self.pending_status_sends += 1;
+            }
+        }
+        if self.pending_status_sends == 0 {
+            self.unavailable("Could not publish status");
+            return;
+        }
+        self.status_composition = StatusCompositionState::Submitting;
+    }
+
+    pub(crate) fn status_send_succeeded(&mut self) -> bool {
+        self.finish_status_send(None)
+    }
+
+    pub(crate) fn status_send_failed(&mut self, result: wr::StatusSendResult) -> bool {
+        self.finish_status_send(Some(result))
+    }
+
+    fn finish_status_send(&mut self, failure: Option<wr::StatusSendResult>) -> bool {
+        if self.status_composition != StatusCompositionState::Submitting
+            || self.pending_status_sends == 0
+        {
+            return false;
+        }
+        self.pending_status_sends -= 1;
+        if self.status_send_failure.is_none() {
+            self.status_send_failure = failure;
+        }
+        if self.pending_status_sends != 0 {
+            return false;
+        }
+        if let Some(result) = self.status_send_failure.take() {
+            self.status_composition = StatusCompositionState::Authoring;
+            self.unavailable(&format!("Could not publish status: {result:?}"));
+        } else {
+            self.status_composition = StatusCompositionState::Inactive;
+            self.action_notice = Some(ActionNotice::StatusPublished);
+        }
+        true
     }
 
     /// Reply from a status: switches to the contact's private chat with
@@ -63,7 +190,6 @@ mod tests {
     use super::*;
     use crate::app::actions::{ActionNotice, ConversationMode};
     use crate::app::test_support::TestApp;
-    use whatsrust as wr;
 
     fn status_message(id: &str) -> wr::Message {
         wr::Message {
@@ -115,6 +241,39 @@ mod tests {
         assert!(matches!(
             &app.action_notice,
             Some(ActionNotice::Unavailable(message)) if message == "Reaction is not available"
+        ));
+    }
+
+    #[test]
+    fn status_rejects_unsupported_media_kinds() {
+        for kind in [
+            wr::FileKind::Audio,
+            wr::FileKind::Document,
+            wr::FileKind::Sticker,
+        ] {
+            assert!(!status_attachment_is_supported(&kind), "{kind:?}");
+        }
+        assert!(!status_content_is_supported(
+            &wr::MessageContent::ViewOnceUnavailable
+        ));
+    }
+
+    #[test]
+    fn typed_status_events_update_the_lifecycle_and_notice() {
+        let mut app = TestApp::new();
+        app.status_composition = StatusCompositionState::Submitting;
+        app.pending_status_sends = 1;
+        assert!(app.status_send_succeeded());
+        assert_eq!(app.status_composition, StatusCompositionState::Inactive);
+        assert_eq!(app.action_notice, Some(ActionNotice::StatusPublished));
+
+        app.status_composition = StatusCompositionState::Submitting;
+        app.pending_status_sends = 1;
+        assert!(app.status_send_failed(wr::StatusSendResult::SendFailed));
+        assert_eq!(app.status_composition, StatusCompositionState::Authoring);
+        assert!(matches!(
+            app.action_notice,
+            Some(ActionNotice::Unavailable(_))
         ));
     }
 }

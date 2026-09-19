@@ -301,10 +301,17 @@ fn escape_cancels_and_resets_status_composition() {
     app.selected_section = Section::Status;
     app.focus_pane = FocusPane::ChatList;
     app.dispatch_action(AppAction::StartStatusComposition);
+    app.composer.insert_text("discard me");
+    app.composer
+        .queue_attachment("image.png".into(), FileKind::Image);
+    app.composer.quote = Some(status_message(&broadcast(), "quoted", unix_now(), "quoted"));
 
     app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
 
     assert_eq!(app.status_composition, StatusCompositionState::Inactive);
+    assert!(app.composer.text().is_empty());
+    assert!(app.composer.pending.is_empty());
+    assert!(app.composer.quote.is_none());
     assert!(matches!(
         app.action_notice,
         Some(wp_tui::app::actions::ActionNotice::Cancelled)

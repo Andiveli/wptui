@@ -121,10 +121,7 @@ impl App<'_> {
             if is_toggle_logs_key(&key) {
                 self.dispatch_action(AppAction::ToggleLogs);
             } else if self.handle_composer_input(key.clone()) {
-            } else if self.status_composition == StatusCompositionState::Authoring {
-                if key == Key::k(KeyCode::Esc) {
-                    self.dispatch_action(AppAction::CancelStatusComposition);
-                }
+            } else if self.handle_status_composer_input(key.clone()) {
             } else if self.shortcut_popup {
                 if key == Key::k(KeyCode::Esc) || key == Key::c('?') {
                     self.shortcut_popup = false;
@@ -503,7 +500,13 @@ impl App<'_> {
                     self.unavailable("Reference is not available");
                 }
             }
-            AppAction::Composer(action) => self.dispatch_composer_action(action),
+            AppAction::Composer(action) => {
+                if self.status_composition == StatusCompositionState::Authoring {
+                    self.dispatch_status_composer_action(action);
+                } else {
+                    self.dispatch_composer_action(action);
+                }
+            }
         }
     }
 
