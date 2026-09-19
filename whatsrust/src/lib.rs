@@ -909,6 +909,7 @@ unsafe extern "C" {
         quote_message_content: *const c_void,
         local_send_id: u64,
     ) -> u8;
+    fn C_SendStatusMessage(message_type: u8, message_content: *const c_void) -> u8;
     fn C_ForwardMessage(
         source_id: *const c_char,
         source_chat: CJID,
@@ -2051,6 +2052,123 @@ pub fn send_message(
 pub enum TextSendResult {
     Sent,
     Failed,
+}
+
+/// The bounded outcome of publishing content to the user's WhatsApp status.
+/// Status transport intentionally accepts no quote or mention metadata.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, FromRepr)]
+#[repr(u8)]
+pub enum StatusSendResult {
+    Sent = 0,
+    UnsupportedContent = 1,
+    InvalidContent = 2,
+    ClientUnavailable = 3,
+    MediaPreparationFailed = 4,
+    SendFailed = 5,
+}
+
+fn status_content_is_supported(content: &MessageContent) -> bool {
+    matches!(
+        content,
+        MessageContent::Text(_)
+            | MessageContent::File(FileContent {
+                kind: FileKind::Image | FileKind::Video,
+                ..
+            })
+    )
+}
+
+fn status_content_is_ffi_safe(content: &MessageContent) -> bool {
+    match content {
+        MessageContent::Text(text) => !text.contains('\0'),
+        MessageContent::File(file) => {
+            status_content_is_supported(content)
+                && !file.path.contains('\0')
+                && !file.file_id.contains('\0')
+                && file
+                    .caption
+                    .as_ref()
+                    .is_none_or(|caption| !caption.contains('\0'))
+        }
+        MessageContent::ViewOnceUnavailable => false,
+    }
+}
+
+fn status_send_result_from_code(code: u8) -> StatusSendResult {
+    StatusSendResult::from_repr(code).unwrap_or(StatusSendResult::SendFailed)
+}
+
+/// Publishes text, image, or video content to WhatsApp status.
+///
+/// The bridge always sends to `types.StatusBroadcastJID`; callers cannot
+/// provide a destination, quote, or mentions. Every outcome is returned as a
+/// typed value so callers can surface a later UI/app-state failure.
+pub fn send_status(content: &MessageContent) -> StatusSendResult {
+    if !status_content_is_supported(content) {
+        return StatusSendResult::UnsupportedContent;
+    }
+    if !status_content_is_ffi_safe(content) {
+        return StatusSendResult::InvalidContent;
+    }
+    let (message_type, content_ptr, _holder) = build_content_for_ffi(content, &[]);
+    let status = unsafe { C_SendStatusMessage(message_type, content_ptr) };
+    status_send_result_from_code(status)
+}
+
+#[cfg(test)]
+mod status_send_tests {
+    use std::sync::Arc;
+
+    use super::{
+        FileContent, FileKind, MessageContent, StatusSendResult, status_content_is_ffi_safe,
+        status_send_result_from_code,
+    };
+
+    #[test]
+    fn status_bridge_codes_map_to_a_bounded_typed_result() {
+        let cases = [
+            (0, StatusSendResult::Sent),
+            (1, StatusSendResult::UnsupportedContent),
+            (2, StatusSendResult::InvalidContent),
+            (3, StatusSendResult::ClientUnavailable),
+            (4, StatusSendResult::MediaPreparationFailed),
+            (5, StatusSendResult::SendFailed),
+            (255, StatusSendResult::SendFailed),
+        ];
+        for (code, expected) in cases {
+            assert_eq!(status_send_result_from_code(code), expected);
+        }
+    }
+
+    #[test]
+    fn status_transport_accepts_only_text_images_and_videos_with_ffi_safe_fields() {
+        let valid_text = MessageContent::Text("status".into());
+        let valid_image = MessageContent::File(FileContent {
+            kind: FileKind::Image,
+            path: "status.png".into(),
+            file_id: "".into(),
+            caption: Some("caption".into()),
+        });
+        let valid_video = MessageContent::File(FileContent {
+            kind: FileKind::Video,
+            path: "status.mp4".into(),
+            file_id: "".into(),
+            caption: None,
+        });
+        let audio = MessageContent::File(FileContent {
+            kind: FileKind::Audio,
+            path: "status.ogg".into(),
+            file_id: "".into(),
+            caption: None,
+        });
+        let nul_text = MessageContent::Text(Arc::from("bad\0status"));
+
+        assert!(status_content_is_ffi_safe(&valid_text));
+        assert!(status_content_is_ffi_safe(&valid_image));
+        assert!(status_content_is_ffi_safe(&valid_video));
+        assert!(!status_content_is_ffi_safe(&audio));
+        assert!(!status_content_is_ffi_safe(&nul_text));
+    }
 }
 
 pub fn send_text_message(
