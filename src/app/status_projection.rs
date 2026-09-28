@@ -81,6 +81,21 @@ impl App<'_> {
             .collect()
     }
 
+    /// Already-synced outbound broadcasts, independent of the sender JID.
+    pub fn own_status_messages(&self) -> Vec<wr::MessageId> {
+        self.chat_messages
+            .get(&wr::JID::from(STATUS_BROADCAST_CHAT.to_owned()))
+            .into_iter()
+            .flatten()
+            .filter(|id| {
+                self.messages
+                    .get(*id)
+                    .is_some_and(|message| message.info.is_from_me)
+            })
+            .cloned()
+            .collect()
+    }
+
     pub fn status_latest_time(&self, contact: &wr::JID) -> Option<i64> {
         self.chat_messages
             .get(&wr::JID::from(STATUS_BROADCAST_CHAT.to_owned()))

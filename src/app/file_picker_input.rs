@@ -8,7 +8,9 @@ impl App<'_> {
             AppAction::AttachFile => {
                 if self.status_composition
                     != crate::app::actions::StatusCompositionState::Submitting
-                    && !self.composer_blocked()
+                    && (self.status_composition
+                        == crate::app::actions::StatusCompositionState::Authoring
+                        || !self.composer_blocked())
                 {
                     self.open_file_picker();
                 }
@@ -102,7 +104,9 @@ impl App<'_> {
     }
 
     fn confirm_file_picker(&mut self) {
-        if self.composer_blocked() {
+        if self.status_composition != crate::app::actions::StatusCompositionState::Authoring
+            && self.composer_blocked()
+        {
             self.file_picker = None;
             return;
         }

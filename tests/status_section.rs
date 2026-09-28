@@ -297,7 +297,7 @@ fn status_composition_enters_only_from_the_status_chat_list() {
 }
 
 #[test]
-fn escape_cancels_and_resets_status_composition() {
+fn escape_navigates_then_cancels_and_resets_status_composition() {
     let mut app = TestApp::new();
     app.selected_section = Section::Status;
     app.focus_pane = FocusPane::ChatList;
@@ -308,6 +308,10 @@ fn escape_cancels_and_resets_status_composition() {
     app.composer.quote = Some(status_message(&broadcast(), "quoted", unix_now(), "quoted"));
 
     app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+    assert_eq!(app.status_composition, StatusCompositionState::Navigating);
+    assert_eq!(app.composer.text(), "discard me");
+    assert_eq!(app.composer.pending.len(), 1);
+    app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
 
     assert_eq!(app.status_composition, StatusCompositionState::Inactive);
     assert!(app.composer.text().is_empty());
@@ -317,6 +321,317 @@ fn escape_cancels_and_resets_status_composition() {
         app.action_notice,
         Some(wp_tui::app::actions::ActionNotice::Cancelled)
     ));
+}
+
+#[test]
+fn own_status_navigation_preserves_draft_and_excludes_other_contacts() {
+    let mut app = TestApp::new();
+    let alice = JID::from("alice@s.whatsapp.net".to_owned());
+    app.add_message(status_message(
+        &alice,
+        "incoming",
+        unix_now(),
+        "OTHER CONTACT",
+    ));
+    for (id, timestamp) in [("mine-old", unix_now() - 2), ("mine-new", unix_now() - 1)] {
+        let mut message = status_message(&broadcast(), id, timestamp, id);
+        message.info.is_from_me = true;
+        app.add_message(message);
+    }
+    app.selected_section = Section::Status;
+    app.dispatch_action(AppAction::StartStatusComposition);
+    app.composer.insert_text("saved draft");
+    app.composer
+        .queue_attachment("image.png".into(), FileKind::Image);
+    app.composer
+        .queue_attachment("video.mp4".into(), FileKind::Video);
+    let key = |app: &mut App, code| {
+        app.on_terminal_event(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)))
+    };
+    key(&mut app, KeyCode::Esc);
+    assert_eq!(app.status_composition, StatusCompositionState::Navigating);
+    let output = render(&mut app, 100, 20);
+    assert!(output.contains("navigation") && output.contains("saved draft"));
+    assert!(!output.contains("OTHER CONTACT"));
+    key(&mut app, KeyCode::Char('k'));
+    render(&mut app, 100, 20);
+    assert_eq!(
+        app.message_list_state.get_selected_message().as_deref(),
+        Some("mine-old")
+    );
+    key(&mut app, KeyCode::Char('j'));
+    render(&mut app, 100, 20);
+    assert_eq!(
+        app.message_list_state.get_selected_message().as_deref(),
+        Some("mine-new")
+    );
+    key(&mut app, KeyCode::Char('i'));
+    assert_eq!(app.status_composition, StatusCompositionState::Authoring);
+    assert_eq!(app.composer.text(), "saved draft");
+    assert_eq!(app.composer.pending.len(), 2);
+}
+
+#[test]
+fn authoring_picker_ignores_unrelated_group_permissions_and_cancel_preserves_draft() {
+    let mut app = TestApp::new();
+    let group = JID::from("123@g.us".to_owned());
+    app.open_chat_by_jid(group.clone());
+    app.group_permissions.insert(
+        group.clone(),
+        whatsrust::GroupInfo {
+            jid: group,
+            name: "Admins only".into(),
+            is_announce: true,
+            is_admin: false,
+        },
+    );
+    let blocked = app.composer_blocked();
+    app.composer.set_blocked(blocked);
+    assert!(app.composer_blocked());
+    app.selected_section = Section::Status;
+    app.focus_pane = FocusPane::ChatList;
+    app.dispatch_action(AppAction::StartStatusComposition);
+    app.on_terminal_event(Event::Key(KeyEvent::new(
+        KeyCode::Char('x'),
+        KeyModifiers::NONE,
+    )));
+    assert_eq!(app.composer.text(), "x");
+    app.composer.insert_text("saved draft");
+    app.on_terminal_event(Event::Key(KeyEvent::new(
+        KeyCode::Char('o'),
+        KeyModifiers::CONTROL,
+    )));
+    assert!(app.file_picker.is_some());
+    app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+    assert!(app.file_picker.is_none());
+    assert_eq!(app.status_composition, StatusCompositionState::Authoring);
+    assert_eq!(app.composer.text(), "xsaved draft");
+    assert!(app.composer.pending.is_empty());
+}
+
+#[test]
+fn submitting_rejects_chat_actions_but_preserves_global_controls() {
+    let mut app = TestApp::new();
+    app.selected_section = Section::Status;
+    let mut own = status_message(&broadcast(), "mine-submitting", unix_now(), "mine");
+    own.info.is_from_me = true;
+    app.add_message(own);
+    app.message_list_state
+        .set_selected_message("mine-submitting".into());
+    app.status_composition = StatusCompositionState::Submitting;
+    app.focus_pane = FocusPane::Conversation;
+    app.dispatch_action(AppAction::OpenMessageMenu);
+    app.dispatch_action(AppAction::ReplyMessage);
+    assert!(app.message_menu.is_none());
+    assert_eq!(app.selected_section, Section::Status);
+    app.dispatch_action(AppAction::ToggleLogs);
+    assert!(app.show_logs);
+    app.dispatch_action(AppAction::Quit);
+    assert!(app.should_quit);
+}
+
+#[test]
+fn navigating_own_status_does_not_mark_stale_chat_read() {
+    let mut app = TestApp::new();
+    let chat = JID::from("stale@s.whatsapp.net".to_owned());
+    app.open_chat_by_jid(chat.clone());
+    app.selected_section = Section::Status;
+    app.focus_pane = FocusPane::ChatList;
+    app.dispatch_action(AppAction::StartStatusComposition);
+    app.add_message(Message {
+        info: MessageInfo {
+            id: "unread".into(),
+            chat: chat.clone(),
+            sender: chat.clone(),
+            mentions_self: false,
+            timestamp: unix_now(),
+            is_from_me: false,
+            quote_id: None,
+            read_by: 0,
+            forwarding: Default::default(),
+        },
+        message: MessageContent::Text("unread".into()),
+    });
+    let mut own = status_message(&broadcast(), "mine", unix_now(), "mine");
+    own.info.is_from_me = true;
+    app.add_message(own);
+    app.timeline
+        .entry(chat.clone())
+        .or_default()
+        .pending_new_messages = 2;
+    let pending_before = app.pending_new_messages(&chat);
+    assert_eq!(pending_before, 2);
+    app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+    app.dispatch_action(AppAction::JumpBottom);
+    assert_eq!(app.pending_new_messages(&chat), pending_before);
+}
+
+#[test]
+fn navigating_community_group_to_latest_marks_it_read() {
+    let mut app = TestApp::new();
+    let group = JID::from("group@g.us".to_owned());
+    app.add_message(Message {
+        info: MessageInfo {
+            id: "group-unread".into(),
+            chat: group.clone(),
+            sender: JID::from("member@s.whatsapp.net".to_owned()),
+            mentions_self: false,
+            timestamp: unix_now(),
+            is_from_me: false,
+            quote_id: None,
+            read_by: 0,
+            forwarding: Default::default(),
+        },
+        message: MessageContent::Text("group message".into()),
+    });
+    app.timeline
+        .entry(group.clone())
+        .or_default()
+        .pending_new_messages = 1;
+    app.open_chat = Some(group.clone());
+    app.selected_section = Section::Communities;
+    app.focus_pane = FocusPane::Conversation;
+    app.message_list_state.select(Some(1));
+    assert_eq!(app.pending_new_messages(&group), 1);
+
+    app.dispatch_action(AppAction::JumpBottom);
+
+    assert_eq!(app.message_list_state.selected, Some(0));
+    assert_eq!(app.pending_new_messages(&group), 0);
+}
+
+#[test]
+fn stale_admin_only_chat_does_not_hide_status_draft() {
+    let mut app = TestApp::new();
+    let group = JID::from("123@g.us".to_owned());
+    app.open_chat_by_jid(group.clone());
+    app.group_permissions.insert(
+        group.clone(),
+        whatsrust::GroupInfo {
+            jid: group,
+            name: "Admins only".into(),
+            is_announce: true,
+            is_admin: false,
+        },
+    );
+    app.selected_section = Section::Status;
+    app.focus_pane = FocusPane::ChatList;
+    app.dispatch_action(AppAction::StartStatusComposition);
+    app.composer.insert_text("VISIBLE STATUS DRAFT");
+    let output = render(&mut app, 100, 20);
+    assert!(output.contains("VISIBLE STATUS DRAFT"), "{output:?}");
+    assert!(!output.contains("Admin-only group"), "{output:?}");
+}
+
+#[test]
+fn navigating_status_keeps_global_shortcuts() {
+    let mut app = TestApp::new();
+    app.selected_section = Section::Status;
+    app.dispatch_action(AppAction::StartStatusComposition);
+    app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+    app.on_terminal_event(Event::Key(KeyEvent::new(
+        KeyCode::Char('l'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    )));
+    assert!(app.show_logs);
+    app.on_terminal_event(Event::Key(KeyEvent::new(
+        KeyCode::Char('q'),
+        KeyModifiers::CONTROL,
+    )));
+    assert!(app.should_quit);
+}
+
+#[test]
+fn navigating_status_rejects_chat_actions() {
+    let mut app = TestApp::new();
+    app.selected_section = Section::Status;
+    app.dispatch_action(AppAction::StartStatusComposition);
+    app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+    app.dispatch_action(AppAction::OpenMessageMenu);
+    assert!(app.message_menu.is_none());
+    assert_eq!(app.status_composition, StatusCompositionState::Navigating);
+}
+
+#[test]
+fn status_picker_owns_keys_and_rejects_non_media_without_losing_draft() {
+    let mut app = TestApp::new();
+    app.selected_section = Section::Status;
+    app.dispatch_action(AppAction::StartStatusComposition);
+    app.composer.insert_text("saved draft");
+    let temp = std::env::temp_dir().join(format!(
+        "wptui-status-picker-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be valid")
+            .as_nanos()
+    ));
+    std::fs::create_dir(&temp).expect("create isolated picker directory");
+    for name in ["image.png", "video.mp4", "document.pdf"] {
+        std::fs::write(temp.join(name), b"test media").expect("create picker entry");
+    }
+    app.file_picker = Some(wp_tui::file_picker::FilePickerState::open(&temp).unwrap());
+    app.on_terminal_event(Event::Key(KeyEvent::new(
+        KeyCode::Char('/'),
+        KeyModifiers::NONE,
+    )));
+    assert!(app.file_picker.as_ref().unwrap().searching);
+    app.on_terminal_event(Event::Key(KeyEvent::new(
+        KeyCode::Char('j'),
+        KeyModifiers::NONE,
+    )));
+    assert_eq!(app.file_picker.as_ref().unwrap().query, "j");
+    assert_eq!(app.composer.text(), "saved draft");
+    app.file_picker.as_mut().unwrap().end_search();
+    app.file_picker.as_mut().unwrap().backspace_query();
+    for name in ["image.png", "video.mp4", "document.pdf"] {
+        let picker = app.file_picker.as_mut().unwrap();
+        let index = picker
+            .visible_entries()
+            .iter()
+            .position(|entry| entry.name == name)
+            .unwrap();
+        picker.move_selection(index as isize - picker.selected as isize);
+        assert!(picker.toggle_selected());
+    }
+    assert_eq!(app.file_picker.as_ref().unwrap().selected_count(), 3);
+    app.on_terminal_event(Event::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )));
+    assert!(app.file_picker.is_none());
+    assert!(matches!(
+        app.action_notice,
+        Some(ActionNotice::Unsupported(_))
+    ));
+    assert_eq!(app.status_composition, StatusCompositionState::Authoring);
+    assert_eq!(app.composer.text(), "saved draft");
+    assert_eq!(app.composer.pending.len(), 2);
+    assert!(
+        app.composer
+            .pending
+            .iter()
+            .any(|file| file.path.to_string().ends_with("image.png")
+                && matches!(file.kind, FileKind::Image))
+    );
+    assert!(
+        app.composer
+            .pending
+            .iter()
+            .any(|file| file.path.to_string().ends_with("video.mp4")
+                && matches!(file.kind, FileKind::Video))
+    );
+    assert!(
+        !app.composer
+            .pending
+            .iter()
+            .any(|file| file.path.to_string().ends_with("document.pdf"))
+    );
+    assert_eq!(app.pending_status_sends, 0);
+    for name in ["image.png", "video.mp4", "document.pdf"] {
+        std::fs::remove_file(temp.join(name)).expect("remove picker entry");
+    }
+    std::fs::remove_dir(&temp).expect("remove isolated picker directory");
 }
 
 #[test]
@@ -336,6 +651,178 @@ fn status_composition_renders_status_specific_authoring_and_submitting_feedback(
     let submitting = render(&mut app, 100, 20);
     assert!(submitting.contains("Publishing status"), "{submitting:?}");
     assert!(submitting.contains("2 updates pending"), "{submitting:?}");
+}
+
+#[test]
+fn creating_status_shows_only_loaded_own_statuses_above_composer() {
+    let mut app = TestApp::new();
+    let alice = JID::from("alice@s.whatsapp.net".to_owned());
+    let now = unix_now();
+    app.add_message(status_message(
+        &alice,
+        "alice",
+        now - 1,
+        "PRIVATE ALICE STATUS",
+    ));
+    let mut own = status_message(&alice, "mine", now, "MY LOADED STATUS");
+    own.info.is_from_me = true;
+    app.add_message(own);
+    app.selected_section = Section::Status;
+    app.focus_pane = FocusPane::ChatList;
+    app.dispatch_action(AppAction::StartStatusComposition);
+    app.composer.insert_text("MY DRAFT");
+
+    let output = render(&mut app, 100, 20);
+    assert!(output.contains("Create status"), "{output:?}");
+    assert!(!output.contains("My Statuses"), "{output:?}");
+    assert!(output.contains("MY LOADED STATUS"), "{output:?}");
+    assert!(output.contains("MY DRAFT"), "{output:?}");
+    assert!(!output.contains("PRIVATE ALICE STATUS"), "{output:?}");
+    assert!(
+        output.find("MY LOADED STATUS") < output.find("MY DRAFT"),
+        "own status should render above composer: {output:?}"
+    );
+}
+
+#[test]
+fn creating_status_after_scrolling_incoming_resets_own_status_viewport() {
+    let mut app = TestApp::new();
+    let alice = JID::from("alice@s.whatsapp.net".to_owned());
+    let now = unix_now();
+    for index in 0..16 {
+        app.add_message(status_message(
+            &alice,
+            &format!("incoming-{index}"),
+            now - 10 + index,
+            &format!("INCOMING STATUS {index}"),
+        ));
+    }
+    let mut own = status_message(&broadcast(), "mine", now, "MY LOADED STATUS");
+    own.info.is_from_me = true;
+    app.add_message(own);
+    app.selected_section = Section::Status;
+    let alice_index = app
+        .status_contacts
+        .iter()
+        .position(|contact| contact == &alice)
+        .expect("Alice should appear in the status contact list");
+    app.status_selection.select(Some(alice_index));
+    app.dispatch_action(AppAction::OpenChat);
+    assert_eq!(app.open_status_contact.as_ref(), Some(&alice));
+    assert!(render(&mut app, 100, 12).contains("INCOMING STATUS"));
+    app.dispatch_action(AppAction::JumpTop);
+    render(&mut app, 100, 12);
+    for _ in 0..12 {
+        app.dispatch_action(AppAction::SelectNext);
+        render(&mut app, 100, 12);
+    }
+    assert!(app.message_list_state.offset > 0);
+    let selected = app.message_list_state.selected.expect("status selected");
+    let selected_message = app.message_list_state.get_selected_message();
+    assert_eq!(
+        selected_message,
+        Some(format!("incoming-{}", 15 - selected).into())
+    );
+    app.dispatch_action(AppAction::CloseStatusPane);
+    app.dispatch_action(AppAction::StartStatusComposition);
+
+    assert_eq!(app.status_composition, StatusCompositionState::Authoring);
+    assert_eq!(app.message_list_state.selected, None);
+    assert_eq!(app.message_list_state.offset, 0);
+    assert_eq!(app.message_list_state.get_selected_message(), None);
+    let output = render(&mut app, 100, 20);
+    assert!(output.contains("MY LOADED STATUS"), "{output:?}");
+    assert!(!output.contains("INCOMING STATUS"), "{output:?}");
+}
+
+#[test]
+fn creating_status_without_loaded_own_statuses_shows_empty_state_and_composer() {
+    let mut app = TestApp::new();
+    let alice = JID::from("alice@s.whatsapp.net".to_owned());
+    app.add_message(status_message(
+        &alice,
+        "alice",
+        unix_now(),
+        "PRIVATE ALICE STATUS",
+    ));
+    app.selected_section = Section::Status;
+    app.dispatch_action(AppAction::StartStatusComposition);
+    app.composer.insert_text("MY DRAFT");
+
+    let output = render(&mut app, 100, 20);
+    assert!(output.contains("No statuses published yet"), "{output:?}");
+    assert!(output.contains("MY DRAFT"), "{output:?}");
+    assert!(!output.contains("PRIVATE ALICE STATUS"), "{output:?}");
+}
+
+#[test]
+fn creating_status_in_short_frame_keeps_composer_and_own_status_visible() {
+    let mut app = TestApp::new();
+    let mut own = status_message(&broadcast(), "mine", unix_now(), "MY STATUS");
+    own.info.is_from_me = true;
+    app.add_message(own);
+    app.selected_section = Section::Status;
+    app.dispatch_action(AppAction::StartStatusComposition);
+    app.composer.insert_text("DRAFT");
+
+    let output = render(&mut app, 60, 8);
+    assert!(output.contains("MY STATUS"), "{output:?}");
+    assert!(output.contains("DRAFT"), "{output:?}");
+    assert!(output.contains("Create status"), "{output:?}");
+    assert!(!output.contains("My Statuses"), "{output:?}");
+}
+
+#[test]
+fn narrow_status_composer_keeps_mode_actions_discoverable() {
+    let mut app = TestApp::new();
+    app.selected_section = Section::Status;
+    app.status_composition = StatusCompositionState::Authoring;
+    let editing = render(&mut app, 60, 12);
+    assert!(editing.contains("Enter"), "{editing:?}");
+    assert!(editing.contains("Esc"), "{editing:?}");
+    app.composer.insert_text("draft");
+    let with_draft = render(&mut app, 60, 12);
+    assert!(with_draft.contains("Ctrl+O"), "{with_draft:?}");
+
+    app.status_composition = StatusCompositionState::Navigating;
+    let navigating = render(&mut app, 60, 12);
+    assert!(navigating.contains("i Esc"), "{navigating:?}");
+    assert!(navigating.contains("Esc"), "{navigating:?}");
+}
+
+#[test]
+fn narrow_status_draft_wraps_inside_composer_below_own_status() {
+    let mut app = TestApp::new();
+    let mut own = status_message(&broadcast(), "mine", unix_now(), "MY STATUS");
+    own.info.is_from_me = true;
+    app.add_message(own);
+    app.selected_section = Section::Status;
+    app.dispatch_action(AppAction::StartStatusComposition);
+    app.composer.insert_text("ABCDEFGHIJ1234567890abcdefghij");
+    let width = 60usize;
+    let output = render(&mut app, width as u16, 14);
+    let cells: Vec<char> = output.chars().collect();
+    let rows: Vec<String> = cells
+        .chunks(width)
+        .map(|row| row.iter().collect())
+        .collect();
+    let status_row = rows
+        .iter()
+        .position(|row| row.contains("MY STATUS"))
+        .expect("own status visible");
+    let first = rows
+        .iter()
+        .position(|row| row.contains("ABCDEFGHIJ"))
+        .expect("draft starts");
+    let continuation = rows
+        .iter()
+        .position(|row| row.contains("34567890abcd"))
+        .unwrap_or_else(|| panic!("draft continues: {rows:?}"));
+    assert!(status_row < first && first < continuation, "{rows:?}");
+    assert!(
+        rows[first].contains("│") && rows[continuation].contains("│"),
+        "{rows:?}"
+    );
 }
 
 #[test]

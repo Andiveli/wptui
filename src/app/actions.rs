@@ -291,6 +291,7 @@ pub enum StatusCompositionState {
     #[default]
     Inactive,
     Authoring,
+    Navigating,
     Submitting,
 }
 

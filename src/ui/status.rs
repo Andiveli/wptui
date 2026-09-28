@@ -1,12 +1,12 @@
 use super::status_list::{StatusList, StatusListItem};
 use crate::app::App;
 use crate::app::actions::{FocusPane, StatusCompositionState};
-use crate::ui::message_list::render_status_messages;
-use crate::ui::{action_notice_text, render_composer};
+use crate::ui::message_list::{render_own_status_messages, render_status_messages};
+use crate::ui::{action_notice_text, conversation_areas, render_composer};
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Style, Stylize},
+    style::{Color, Style},
     text::Line,
     widgets::{Block, Paragraph, Widget},
 };
@@ -42,20 +42,79 @@ pub(super) fn render_status_contacts(frame: &mut Frame, app: &mut App, area: Rec
 }
 
 pub(super) fn render_statuses(frame: &mut Frame, app: &mut App, area: Rect) {
-    match app.status_composition {
-        StatusCompositionState::Authoring => {
-            let [help_area, composer_area] = ratatui::layout::Layout::vertical([
-                ratatui::layout::Constraint::Length(1),
-                ratatui::layout::Constraint::Min(1),
-            ])
-            .areas(area);
-            let help = action_notice_text(app)
-                .unwrap_or_else(|| "Enter publish · Esc cancel · Ctrl+O attach".to_string());
-            frame.render_widget(Paragraph::new(help).fg(Color::Cyan), help_area);
-            render_composer(frame, app, composer_area, " Status update ", None, None);
-            return;
+    if app.status_composition != StatusCompositionState::Inactive {
+        let authoring = app.status_composition != StatusCompositionState::Submitting;
+        let navigating = app.status_composition == StatusCompositionState::Navigating;
+        let inner_width = area.width.saturating_sub(2);
+        let input_rows = if authoring {
+            let width = inner_width.saturating_sub(2);
+            let layout = crate::ui::layout::composer_visual_layout_with_direction(
+                app.composer.input.lines(),
+                width,
+                app.composer_direction,
+            );
+            layout
+                .row_count()
+                .max(app.composer.visual_cursor(width, app.composer_direction).0 + 1)
+        } else {
+            2
+        };
+        let mut block =
+            Block::bordered()
+                .title(" Create status ")
+                .border_style(Style::default().fg(if navigating {
+                    Color::Green
+                } else if authoring {
+                    Color::Cyan
+                } else {
+                    Color::White
+                }));
+        if let Some(notice) = action_notice_text(app) {
+            let available = (area.width as usize).saturating_sub(" Create status ".len() + 2);
+            let notice = crate::ui::truncate_with_ellipsis(&notice, available);
+            if !notice.is_empty() {
+                block = block.title(Line::from(notice).right_aligned());
+            }
         }
-        StatusCompositionState::Submitting => {
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        let (statuses_area, composer_area) = conversation_areas(
+            inner,
+            input_rows,
+            usize::from(authoring && app.composer.quote.is_some()),
+            if authoring {
+                app.composer.pending.len()
+            } else {
+                0
+            },
+        );
+        if app.own_status_messages().is_empty() {
+            frame.render_widget(Paragraph::new("No statuses published yet"), statuses_area);
+        } else {
+            render_own_status_messages(frame, app, statuses_area);
+        }
+        if authoring {
+            render_composer(
+                frame,
+                app,
+                composer_area,
+                if inner_width < 45 {
+                    if navigating {
+                        " i Esc "
+                    } else if app.composer.text().is_empty() {
+                        " Enter Esc "
+                    } else {
+                        " Ctrl+O "
+                    }
+                } else if navigating {
+                    " Status draft (navigation: i edit, Esc cancel) "
+                } else {
+                    " Status update (Enter publish, Esc navigate, Ctrl+O attach) "
+                },
+                None,
+                None,
+            );
+        } else {
             let pending = app.pending_status_sends;
             let feedback = action_notice_text(app)
                 .map(|notice| format!("{pending} updates pending\n{notice}"))
@@ -63,14 +122,13 @@ pub(super) fn render_statuses(frame: &mut Frame, app: &mut App, area: Rect) {
             render_composer(
                 frame,
                 app,
-                area,
+                composer_area,
                 " Publishing status ",
                 None,
                 Some(&feedback),
             );
-            return;
         }
-        StatusCompositionState::Inactive => {}
+        return;
     }
 
     let title = app

@@ -517,7 +517,7 @@ pub(super) fn render_composer(
     let mut input_area = input_block.inner(area);
     if let Some(feedback) = submission_feedback {
         frame.render_widget(Paragraph::new(feedback).fg(border_color), input_area);
-    } else if app.composer_blocked() {
+    } else if app.selected_section != Section::Status && app.composer_blocked() {
         frame.render_widget(
             Paragraph::new(crate::app::ADMIN_ONLY_GROUP_MESSAGE).fg(border_color),
             input_area,

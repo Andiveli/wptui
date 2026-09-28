@@ -27,6 +27,8 @@ pub(crate) fn status_attachment_is_supported(kind: &wr::FileKind) -> bool {
 impl App<'_> {
     pub(crate) fn start_status_composition(&mut self) {
         if self.selected_section == Section::Status && self.focus_pane == FocusPane::ChatList {
+            self.message_list_state.reset();
+            self.composer.set_blocked(false);
             self.status_composition = StatusCompositionState::Authoring;
         }
     }
@@ -37,17 +39,50 @@ impl App<'_> {
         self.composer.replace_text("");
         self.composer.apply(ComposerAction::CancelReply);
         self.composer.pending.clear();
+        self.composer.set_blocked(self.composer_blocked());
         self.action_notice = Some(ActionNotice::Cancelled);
     }
 
     pub(crate) fn handle_status_composer_input(&mut self, key: Key) -> bool {
-        if self.status_composition != StatusCompositionState::Authoring
-            || self.file_picker.is_some()
-        {
+        if self.file_picker.is_some() {
+            return false;
+        }
+        if self.status_composition == StatusCompositionState::Navigating {
+            if key == Key::k(KeyCode::Esc) {
+                self.cancel_status_composition();
+            } else if key == Key::c('i') {
+                self.status_composition = StatusCompositionState::Authoring;
+            } else {
+                match self.kh.resolve(key) {
+                    crate::keybindings::SequenceResolution::Complete(action)
+                        if matches!(
+                            action,
+                            crate::app::actions::AppAction::SelectNext
+                                | crate::app::actions::AppAction::SelectPrevious
+                                | crate::app::actions::AppAction::JumpTop
+                                | crate::app::actions::AppAction::JumpBottom
+                                | crate::app::actions::AppAction::HalfPageDown
+                                | crate::app::actions::AppAction::HalfPageUp
+                                | crate::app::actions::AppAction::Quit
+                                | crate::app::actions::AppAction::ToggleLogs
+                        ) =>
+                    {
+                        self.dispatch_action(action)
+                    }
+                    _ => {}
+                }
+            }
+            return true;
+        }
+        if self.status_composition != StatusCompositionState::Authoring {
             return false;
         }
         if key == Key::k(KeyCode::Esc) {
-            self.cancel_status_composition();
+            self.status_composition = StatusCompositionState::Navigating;
+            self.focus_pane = FocusPane::Conversation;
+            if self.status_message_count() > 0 && self.message_list_state.selected.is_none() {
+                self.message_list_state.select(Some(0));
+            }
         } else if key == Key::ctrl('o') {
             self.dispatch_file_picker_action(crate::app::actions::AppAction::AttachFile);
         } else {
@@ -57,7 +92,7 @@ impl App<'_> {
     }
 
     pub(crate) fn dispatch_status_composer_action(&mut self, action: ComposerAction) {
-        if self.status_composition != StatusCompositionState::Authoring || self.composer_blocked() {
+        if self.status_composition != StatusCompositionState::Authoring {
             return;
         }
         if matches!(action, ComposerAction::Paste) {
@@ -140,6 +175,7 @@ impl App<'_> {
             self.unavailable(&format!("Could not publish status: {result:?}"));
         } else {
             self.status_composition = StatusCompositionState::Inactive;
+            self.composer.set_blocked(self.composer_blocked());
             self.action_notice = Some(ActionNotice::StatusPublished);
         }
         true
