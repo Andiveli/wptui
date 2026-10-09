@@ -20,7 +20,7 @@ pub(crate) use layout::{
 };
 
 use crate::app::App;
-use crate::app::actions::{ConversationMode, FocusPane, Section};
+use crate::app::actions::{ConversationMode, FocusPane, Section, StatusCompositionState};
 use crate::app::events::{ViewerPreviewKey, ViewerPreviewState, ViewerStatus};
 use crate::app::read_receipts::VisibilityPlan;
 use crate::app::runtime_diagnostics::Phase;
@@ -523,14 +523,18 @@ pub(super) fn render_composer(
     navigation_hint: Option<&str>,
     submission_feedback: Option<&str>,
 ) {
-    let border_color = if app.focus_pane == FocusPane::Conversation {
-        if app.conversation_mode == ConversationMode::ComposerEditing {
-            ratatui::style::Color::Cyan
-        } else {
-            ratatui::style::Color::Green
+    let border_color = match (app.selected_section, app.status_composition) {
+        (Section::Status, StatusCompositionState::Authoring) => ratatui::style::Color::Cyan,
+        (Section::Status, StatusCompositionState::Navigating) => ratatui::style::Color::Green,
+        (Section::Status, StatusCompositionState::Submitting) => ratatui::style::Color::White,
+        _ if app.focus_pane == FocusPane::Conversation => {
+            if app.conversation_mode == ConversationMode::ComposerEditing {
+                ratatui::style::Color::Cyan
+            } else {
+                ratatui::style::Color::Green
+            }
         }
-    } else {
-        ratatui::style::Color::White
+        _ => ratatui::style::Color::White,
     };
     let input_block = Block::bordered()
         .title(title)
