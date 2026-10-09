@@ -11,7 +11,7 @@ Checks: GitHub Actions only for builds/tests; preserve unrelated `.pi/` and draf
 
 ## Tasks
 
-- T1 [S1-S3] in_progress; transport `d770375`, App/UI `dac6d13`, correction `2841f19`; functional checks pending remote CI.
+- T1 [S1-S3] in_progress; transport `d770375`, App/UI `dac6d13`, corrections `2841f19` and `a145f0c`; functional checks pending remote CI.
 - T2 [S1-S4] pending; push preview commit, remote CI/build, independent verification and local manual validation; evidence pending.
 
 ## Log
@@ -26,3 +26,5 @@ L7 transport commit `d770375` (`feat(status): correlate publish responses with l
 L8 App/UI commit `dac6d13` (`feat(status): show queued own updates until confirmed`), 8 files +263/-14. Direct rustfmt --check and diff --check passed; no Cargo/Go test locally. Both commits form one cohesive feature of 443 added lines and must be reviewed as two slices to protect reviewer focus. No correctness claim before cloud CI.
 L9 independent read-only verifier blocked S1-S3: pending media/caption not dim, message_list test call sites omit new mode argument, and empty canonical ID was treated as Sent without callback. Job-9 watcher was stopped before correcting the candidate; old CI run (if created) is stale. No local Go/Cargo execution.
 L10 correction commit `2841f19` (`fix(status): keep pending media subdued and fail missing ids`) fixes all three findings: media body/captions dim, test invocations updated, and identified send with empty canonical ID treated as uncertain SendFailed with no false confirmation. Added media render regression and Go empty-ID contract regression. gofmt, rustfmt --check, and diff --check passed as static checks; new CI remains pending, no GREEN claim.
+L11 GitHub Actions run 37889012095 on `b8468f8` failed: Go checks and Rust formatting passed; Rust lib tests 476 passed, 1 failed (`failed_status_keeps_confirmed_prefix_without_confirming_uncertain_items`, expected 3 queued vs actual 2). The composer folds caption text into the first media item; two attachments yield two status items. Build and artifact were skipped; no new binary exists. Adjust the test to use three attachments and a canonical media confirmation, then rerun cloud CI. No local Cargo/Go test.
+L12 correction commit `a145f0c` (`test(status): model captioned media as one queued update`) supplies three attachments and a first confirmed media item with the caption. Direct rustfmt --check and diff --check passed; no local Cargo tests and no claimed functional pass before a new GitHub CI run.
