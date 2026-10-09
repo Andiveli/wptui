@@ -195,7 +195,9 @@ release binary with the exact command `WPTUI_PERF=1 target/release/wp-tui`,
 reproduce the CPU spike or interaction, and exit normally. It writes one
 bounded report to `~/.cache/wptui/perf-report.txt`.
 
-Run the Rust test suite:
+To build and test a preview without using local Cargo resources, see [cloud-built preview binaries](docs/preview-builds.md). The preview branch workflow runs the checks and uploads a downloadable binary without creating a release.
+
+For contributors who prefer local checks, run the Rust test suite:
 
 ```bash
 cargo test -- --test-threads=1
@@ -208,8 +210,7 @@ cd whatsrust/lib
 go test ./...
 ```
 
-Continuous integration runs format checks, builds, and both test suites on every push and pull
-request.
+Continuous integration runs format checks, builds, and both test suites on pushes to `main` and pull requests. The preview workflow runs its own checks and uploads a binary on pushes to `preview/**` branches.
 
 ## Disclaimer
 

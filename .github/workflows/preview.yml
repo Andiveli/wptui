@@ -1,0 +1,57 @@
+name: preview
+
+on:
+  push:
+    branches:
+      - "preview/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.96.1
+          components: rustfmt
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "stable"
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libwayland-dev libchafa-dev libglib2.0-dev
+
+      - name: Check Go bridge
+        working-directory: whatsrust/lib
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: Check Rust formatting
+        run: cargo fmt --check
+
+      - name: Run Rust tests
+        run: cargo test --locked -- --test-threads=1
+
+      - name: Build Linux preview
+        run: cargo build --locked --release
+
+      - name: Package preview binary
+        run: tar -czf wptui-linux-x86_64.tar.gz -C target/release wp-tui
+
+      - name: Upload preview artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: wptui-linux-x86_64-${{ github.sha }}
+          path: wptui-linux-x86_64.tar.gz
+          if-no-files-found: error
+          retention-days: 14
