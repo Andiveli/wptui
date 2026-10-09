@@ -608,6 +608,61 @@ pub(super) fn render_composer(
 }
 
 #[cfg(test)]
+mod composer_focus_tests {
+    use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Color};
+
+    use super::render_composer;
+    use crate::app::{
+        actions::{ConversationMode, FocusPane, Section},
+        test_support::TestApp,
+    };
+
+    #[test]
+    fn ordinary_chat_composer_preserves_its_focus_colors() {
+        for (focus, mode, expected) in [
+            (
+                FocusPane::Conversation,
+                ConversationMode::ComposerEditing,
+                Color::Cyan,
+            ),
+            (
+                FocusPane::Conversation,
+                ConversationMode::MessageNavigation,
+                Color::Green,
+            ),
+            (
+                FocusPane::ChatList,
+                ConversationMode::ComposerEditing,
+                Color::White,
+            ),
+        ] {
+            let mut app = TestApp::new();
+            app.selected_section = Section::Chats;
+            app.focus_pane = focus;
+            app.conversation_mode = mode;
+            let mut terminal = Terminal::new(TestBackend::new(50, 4)).unwrap();
+            terminal
+                .draw(|frame| {
+                    render_composer(
+                        frame,
+                        &mut app,
+                        Rect::new(0, 0, 50, 4),
+                        " Compose ",
+                        None,
+                        None,
+                    )
+                })
+                .unwrap();
+            assert_eq!(
+                terminal.backend().buffer()[(0, 0)].fg,
+                expected,
+                "chat focus {focus:?}, mode {mode:?}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
 mod update_notice_tests {
     use super::empty_chat_lines;
 

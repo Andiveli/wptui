@@ -8,11 +8,16 @@ Checks: GitHub Actions only for builds/tests; preserve unrelated `.pi/` and draf
 - S2: "Se supone tenemos \"un chat\" para nuestros estados, se van agregando a la cola como cuando enviamos mensajes en un chat normal, que primero es un color menos intenso que el color de cuando ya se envió"
 - S3: "Sí, correlación fiable (recomendado)". Authorized scope: Go, Rust and UI, maintaining the existing transport contract rather than guessing a synced echo by content.
 - S4: "Sí, worktree beta y rama preview remota". Work only in the authorized beta worktree; publish a preview branch to run checks on GitHub, not main or a release.
+- S5: "Me hace falta el composer, cuando estoy parado sobre quiero que se marque cambiando de color como lo hace en un chat normal, no me gusta como está ahora."
+- S6: "De ahí, ya se sube, y revisemos las demás letras del crud". Review is read-only until any further implementation decision; upload/integration follows the composer check, not immediately.
 
 ## Tasks
 
-- T1 [S1-S3] in_progress; transport `d770375`, App/UI `dac6d13`, corrections `2841f19` and `a145f0c`; functional checks pending remote CI.
-- T2 [S1-S4] pending; push preview commit, remote CI/build, independent verification and local manual validation; evidence pending.
+- T1 [S1-S3] done; transport `d770375`, App/UI `dac6d13`, corrections `2841f19` and `a145f0c`; remote CI 37892296422 passed and scoped independent re-verification passed.
+- T2 [S1-S4] pending; user reports live upload behaves as desired with `6cf1c31`, but only that path is confirmed; keep other media/failure evidence open.
+- T3 [S5] in_progress; status-composer focus color parity with chats, focused regression and prior chat behavior coverage, remote CI preview and work-unit commit pending.
+- T4 [S6] pending; read-only map of status Create/Read/Update/Delete support and gaps, no new U/D behavior implied.
+- T5 [S6] pending; decide post-composer beta integration after checks and CRUD review; no main push/PR/release.
 
 ## Log
 
@@ -28,3 +33,6 @@ L9 independent read-only verifier blocked S1-S3: pending media/caption not dim, 
 L10 correction commit `2841f19` (`fix(status): keep pending media subdued and fail missing ids`) fixes all three findings: media body/captions dim, test invocations updated, and identified send with empty canonical ID treated as uncertain SendFailed with no false confirmation. Added media render regression and Go empty-ID contract regression. gofmt, rustfmt --check, and diff --check passed as static checks; new CI remains pending, no GREEN claim.
 L11 GitHub Actions run 37889012095 on `b8468f8` failed: Go checks and Rust formatting passed; Rust lib tests 476 passed, 1 failed (`failed_status_keeps_confirmed_prefix_without_confirming_uncertain_items`, expected 3 queued vs actual 2). The composer folds caption text into the first media item; two attachments yield two status items. Build and artifact were skipped; no new binary exists. Adjust the test to use three attachments and a canonical media confirmation, then rerun cloud CI. No local Cargo/Go test.
 L12 correction commit `a145f0c` (`test(status): model captioned media as one queued update`) supplies three attachments and a first confirmed media item with the caption. Direct rustfmt --check and diff --check passed; no local Cargo tests and no claimed functional pass before a new GitHub CI run.
+L13 CI run 37892296422 on `6cf1c31` passed Go bridge checks, Rust formatting/tests, Linux release build and upload. Artifact `wptui-linux-x86_64-6cf1c311db38fb7b1a0a6dcdf70d677fad660bd6` verified non-expired and installed project-locally at `.pi/preview-builds/issue-397-feedback-6cf1c31/wp-tui` (SHA256 `92056b37aed4cb958dbf35b01404825e19b11a3cc327c486f9db9c51d2ac90f7`); no global install or old-binary overwrite. Scoped independent verifier confirmed prior S1-S3 blockers fixed and no severe correction-induced issue. Live WhatsApp retest of the new binary remains unverified; no beta/main push, PR or release. Do not push a tracker-only follow-up while the verified candidate is identified by `6cf1c31`.
+L14 user verbatim: "Ahora funciona como quiero, al menos al subirlo, pero sabes? Me hace falta el composer, cuando estoy parado sobre quiero que se marque cambiando de color como lo hace en un chat normal, no me gusta como está ahora. De ahí, ya se sube, y revisemos las demás letras del crud". This confirms the upload feedback only, requests a focused composer color correction before integration, then a read-only CRUD capability review. In the current UI the status outer border follows Authoring/Navigating but shared render_composer derives its inner border from chat FocusPane/ConversationMode, leaving Authoring white when started from ChatList; avoid mutating chat focus state merely for color.
+L15 S5 behavior-first tests now render the status composer border with Authoring/Navigating/Submitting and preserve existing chat composer focus colors. rustfmt --check and diff --check passed locally; no local Cargo runner by user preference. A remote test-only preview run must establish RED before implementation; no RED or GREEN is claimed yet.

@@ -187,14 +187,56 @@ pub(super) fn render_statuses_with_plan(
 
 #[cfg(test)]
 mod tests {
-    use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Modifier};
+    use ratatui::{
+        Terminal,
+        backend::TestBackend,
+        layout::Rect,
+        style::{Color, Modifier},
+    };
     use whatsrust as wr;
 
     use super::render_statuses_with_plan;
-    use crate::app::actions::StatusCompositionState;
+    use crate::app::actions::{ConversationMode, FocusPane, Section, StatusCompositionState};
     use crate::app::read_receipts::VisibilityPlan;
     use crate::app::status_projection::STATUS_BROADCAST_CHAT;
     use crate::app::test_support::TestApp;
+
+    #[test]
+    fn status_composer_border_follows_its_own_focus_mode() {
+        for (mode, expected) in [
+            (StatusCompositionState::Authoring, Color::Cyan),
+            (StatusCompositionState::Navigating, Color::Green),
+            (StatusCompositionState::Submitting, Color::White),
+        ] {
+            let mut app = TestApp::new();
+            app.selected_section = Section::Status;
+            app.focus_pane = FocusPane::ChatList;
+            app.conversation_mode = ConversationMode::MessageNavigation;
+            app.status_composition = mode;
+            let mut terminal = Terminal::new(TestBackend::new(60, 18)).unwrap();
+            let mut media_plan = crate::app::events::MediaRenderPlan::default();
+            let mut visibility_plan = VisibilityPlan::default();
+            terminal
+                .draw(|frame| {
+                    render_statuses_with_plan(
+                        frame,
+                        &mut app,
+                        &mut media_plan,
+                        &mut visibility_plan,
+                        Rect::new(0, 0, 60, 18),
+                    )
+                })
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            let composer_corner = (1..18)
+                .find_map(|y| {
+                    let cell = &buffer[(1, y)];
+                    (cell.symbol() == "╭").then_some(cell)
+                })
+                .expect("own-status composer border must be visible");
+            assert_eq!(composer_corner.fg, expected, "status mode {mode:?}");
+        }
+    }
 
     #[test]
     fn own_status_changes_from_subdued_pending_row_to_confirmed_row() {
