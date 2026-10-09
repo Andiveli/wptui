@@ -11,7 +11,7 @@ Checks: GitHub Actions only for builds/tests; preserve unrelated `.pi/` and draf
 
 ## Tasks
 
-- T1 [S1-S3] in_progress; transport commit `d770375` + App/UI commit `dac6d13`; functional checks pending remote CI.
+- T1 [S1-S3] in_progress; transport `d770375`, App/UI `dac6d13`, correction `2841f19`; functional checks pending remote CI.
 - T2 [S1-S4] pending; push preview commit, remote CI/build, independent verification and local manual validation; evidence pending.
 
 ## Log
@@ -24,3 +24,5 @@ L5 evidence: #397 preview artifact 03dca11 passed Go/Rust CI; user reports live 
 L6 plan update: Go transport callback, Rust batch IDs, App optimistic queue and UI rendering form one dependent behavior; merged the originally separate T1/T2 into one tracked task, split into transport and App/UI commits to keep review slices focused. A transport-only commit cannot be functionally verified without the App/UI counterpart. No runtime checks have run on this candidate yet.
 L7 transport commit `d770375` (`feat(status): correlate publish responses with local send ids`), 4 files +180/-7; gofmt, rustfmt --check, git diff --check passed locally as static checks only. Cargo/Go tests not run locally; candidate correctness unverified pending GitHub CI.
 L8 App/UI commit `dac6d13` (`feat(status): show queued own updates until confirmed`), 8 files +263/-14. Direct rustfmt --check and diff --check passed; no Cargo/Go test locally. Both commits form one cohesive feature of 443 added lines and must be reviewed as two slices to protect reviewer focus. No correctness claim before cloud CI.
+L9 independent read-only verifier blocked S1-S3: pending media/caption not dim, message_list test call sites omit new mode argument, and empty canonical ID was treated as Sent without callback. Job-9 watcher was stopped before correcting the candidate; old CI run (if created) is stale. No local Go/Cargo execution.
+L10 correction commit `2841f19` (`fix(status): keep pending media subdued and fail missing ids`) fixes all three findings: media body/captions dim, test invocations updated, and identified send with empty canonical ID treated as uncertain SendFailed with no false confirmation. Added media render regression and Go empty-ID contract regression. gofmt, rustfmt --check, and diff --check passed as static checks; new CI remains pending, no GREEN claim.
