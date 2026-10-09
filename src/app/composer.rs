@@ -46,6 +46,7 @@ pub struct ComposerDraft {
     text: String,
     quote: Option<wr::Message>,
     mentions: Vec<MentionMark>,
+    pending: Vec<PendingAttachment>,
 }
 
 impl ComposerOutcome {
@@ -84,6 +85,8 @@ pub struct Composer<'a> {
     pub input: TextArea<'a>,
     pub quote: Option<wr::Message>,
     pub pending: Vec<PendingAttachment>,
+    pub(crate) status_draft: Option<ComposerDraft>,
+    chat_draft_before_status: Option<ComposerDraft>,
     pub blocked: bool,
     participants: Vec<wr::GroupParticipant>,
     mention_picker: Option<MentionPicker>,
@@ -118,6 +121,8 @@ impl Default for Composer<'_> {
             input,
             quote: None,
             pending: Vec::new(),
+            status_draft: None,
+            chat_draft_before_status: None,
             blocked: false,
             participants: Vec::new(),
             mention_picker: None,
@@ -410,6 +415,7 @@ impl Composer<'_> {
             text: self.text(),
             quote: self.quote.clone(),
             mentions: self.mentions.clone(),
+            pending: self.pending.clone(),
         };
         let (expanded, mentions, mention_ranges, display_mention_ranges) = self.expanded_text();
         let display_text: Arc<str> = self.text().into();
@@ -448,6 +454,56 @@ impl Composer<'_> {
             display_text,
             display_mention_ranges,
             draft: Some(draft),
+        }
+    }
+
+    pub(crate) fn begin_status_context(&mut self) {
+        if self.chat_draft_before_status.is_some() {
+            return;
+        }
+        self.chat_draft_before_status = Some(ComposerDraft {
+            text: self.text(),
+            quote: self.quote.clone(),
+            mentions: self.mentions.clone(),
+            pending: self.pending.clone(),
+        });
+        self.replace_text("");
+        self.quote = None;
+        self.mentions.clear();
+        self.mention_picker = None;
+        self.pending.clear();
+    }
+
+    pub(crate) fn end_status_context(&mut self) {
+        let Some(draft) = self.chat_draft_before_status.take() else {
+            return;
+        };
+        self.replace_text("");
+        self.quote = None;
+        self.mentions.clear();
+        self.mention_picker = None;
+        self.pending = draft.pending.clone();
+        self.restore_text_draft(draft);
+    }
+
+    pub(crate) fn restore_status_draft(&mut self) {
+        self.restore_status_draft_after(0);
+    }
+
+    pub(crate) fn restore_status_draft_after(&mut self, sent: usize) {
+        if let Some(mut draft) = self.status_draft.take() {
+            if !draft.pending.is_empty() {
+                draft.pending.drain(..sent.min(draft.pending.len()));
+                if sent > 0 {
+                    draft.text.clear();
+                    draft.mentions.clear();
+                    draft.quote = None;
+                }
+            } else if sent > 0 {
+                return;
+            }
+            self.pending = draft.pending.clone();
+            self.restore_text_draft(draft);
         }
     }
 

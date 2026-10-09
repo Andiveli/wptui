@@ -14,6 +14,8 @@ pub enum AppAction {
     ToggleChatList,
     FocusPane(FocusPane),
     OpenContextualActions,
+    StartStatusComposition,
+    CancelStatusComposition,
     ToggleShortcutPopup,
     ToggleComposerDirection,
     PlannedLeaderAction(&'static str),
@@ -109,6 +111,7 @@ pub enum ActionNotice {
     Unavailable(String),
     Unauthorized(String),
     Unsupported(String),
+    StatusPublished,
     Cancelled,
 }
 
@@ -220,6 +223,17 @@ pub enum MessageMenuAction {
     GoToReference,
     SenderDetails,
     ReactedUsers,
+}
+
+/// Lifecycle for creating an outgoing status. Rendering remains separate from
+/// this state so status authoring can reuse the existing composer safely.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum StatusCompositionState {
+    #[default]
+    Inactive,
+    Authoring,
+    Navigating,
+    Submitting,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

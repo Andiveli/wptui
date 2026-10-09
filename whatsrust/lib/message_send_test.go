@@ -14,6 +14,111 @@ import (
 	"go.mau.fi/whatsmeow/types"
 )
 
+func TestSendStatusRequestTargetsStatusBroadcastAndMapsSupportedPayloads(t *testing.T) {
+	imagePath := t.TempDir() + "/status-image.png"
+	videoPath := t.TempDir() + "/status-video.mp4"
+	for _, path := range []string{imagePath, videoPath} {
+		if err := os.WriteFile(path, []byte("media"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	caption := "status caption"
+	cases := []struct {
+		name      string
+		request   statusSendRequest
+		mediaType *whatsmeow.MediaType
+	}{
+		{
+			name:    "text",
+			request: statusSendRequest{messageType: MessageTypeText, text: "status text"},
+		},
+		{
+			name:      "image",
+			request:   statusSendRequest{messageType: MessageTypeFile, fileKind: FileTypeImage, filePath: imagePath, caption: &caption},
+			mediaType: ptr(whatsmeow.MediaImage),
+		},
+		{
+			name:      "video",
+			request:   statusSendRequest{messageType: MessageTypeFile, fileKind: FileTypeVideo, filePath: videoPath, caption: &caption},
+			mediaType: ptr(whatsmeow.MediaVideo),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotDestination types.JID
+			var gotMessage *waE2E.Message
+			result := sendStatusRequest(
+				context.Background(),
+				tc.request,
+				nil,
+				func(_ context.Context, _ []byte, mediaType whatsmeow.MediaType) (whatsmeow.UploadResponse, error) {
+					if tc.mediaType == nil || mediaType != *tc.mediaType {
+						t.Fatalf("upload media type = %q, want %v", mediaType, tc.mediaType)
+					}
+					return whatsmeow.UploadResponse{URL: "https://example.test/status", DirectPath: "/status"}, nil
+				},
+				func(_ *whatsmeow.Client, _ context.Context, destination types.JID, message *waE2E.Message) (whatsmeow.SendResponse, error) {
+					gotDestination = destination
+					gotMessage = message
+					return whatsmeow.SendResponse{ID: "status-send"}, nil
+				},
+			)
+			if result != statusSendResultSent {
+				t.Fatalf("status result = %d, want sent", result)
+			}
+			if gotDestination != types.StatusBroadcastJID {
+				t.Fatalf("status destination = %s, want %s", gotDestination, types.StatusBroadcastJID)
+			}
+			switch tc.name {
+			case "text":
+				if gotMessage.GetExtendedTextMessage().GetText() != "status text" || gotMessage.GetExtendedTextMessage().ContextInfo != nil {
+					t.Fatalf("text status payload = %#v", gotMessage.GetExtendedTextMessage())
+				}
+			case "image":
+				if gotMessage.GetImageMessage().GetCaption() != caption || gotMessage.GetImageMessage().ContextInfo != nil {
+					t.Fatalf("image status payload = %#v", gotMessage.GetImageMessage())
+				}
+			case "video":
+				if gotMessage.GetVideoMessage().GetCaption() != caption || gotMessage.GetVideoMessage().ContextInfo != nil {
+					t.Fatalf("video status payload = %#v", gotMessage.GetVideoMessage())
+				}
+			}
+		})
+	}
+}
+
+func TestSendStatusRequestReportsUploadAndSendFailures(t *testing.T) {
+	mediaPath := t.TempDir() + "/status-image.png"
+	if err := os.WriteFile(mediaPath, []byte("image"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request := statusSendRequest{messageType: MessageTypeFile, fileKind: FileTypeImage, filePath: mediaPath}
+	if result := sendStatusRequest(context.Background(), request, nil,
+		func(context.Context, []byte, whatsmeow.MediaType) (whatsmeow.UploadResponse, error) {
+			return whatsmeow.UploadResponse{}, errors.New("upload failed")
+		},
+		func(*whatsmeow.Client, context.Context, types.JID, *waE2E.Message) (whatsmeow.SendResponse, error) {
+			t.Fatal("send must not run after upload failure")
+			return whatsmeow.SendResponse{}, nil
+		},
+	); result != statusSendResultMediaPreparationFailed {
+		t.Fatalf("upload result = %d, want media preparation failure", result)
+	}
+
+	if result := sendStatusRequest(context.Background(), statusSendRequest{messageType: MessageTypeText, text: "status"}, nil, nil,
+		func(*whatsmeow.Client, context.Context, types.JID, *waE2E.Message) (whatsmeow.SendResponse, error) {
+			return whatsmeow.SendResponse{}, errors.New("send failed")
+		},
+	); result != statusSendResultSendFailed {
+		t.Fatalf("send result = %d, want send failure", result)
+	}
+}
+
+func ptr[T any](value T) *T {
+	return &value
+}
+
 func TestOutboundWirePayloadCarriesTextMentionMetadata(t *testing.T) {
 	message := contentToWaE2EMessage(
 		MessageTypeText,

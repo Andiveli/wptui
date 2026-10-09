@@ -181,6 +181,12 @@ pub enum AppEvent {
     OutboundSendFailed {
         local_send_id: u64,
     },
+    StatusSendSucceeded,
+    StatusSendFailed(wr::StatusSendResult),
+    StatusBatchFinished {
+        sent: usize,
+        failure: Option<wr::StatusSendResult>,
+    },
     ReadReceiptResult(ReceiptKey, ReceiptSendStatus),
     ReadReceiptRestored(Result<Vec<ReceiptCandidate>, RepositoryError>),
     ReadReceiptPersisted(ReceiptCandidate, PersistResult),
@@ -214,9 +220,11 @@ impl AppEvent {
     pub const fn family(&self) -> AppEventFamily {
         match self {
             Self::UpdateAvailable(_) => AppEventFamily::Updater,
-            Self::OutboundSendSucceeded { .. } | Self::OutboundSendFailed { .. } => {
-                AppEventFamily::Send
-            }
+            Self::OutboundSendSucceeded { .. }
+            | Self::OutboundSendFailed { .. }
+            | Self::StatusSendSucceeded
+            | Self::StatusSendFailed(_)
+            | Self::StatusBatchFinished { .. } => AppEventFamily::Send,
             Self::ReadReceiptResult(_, _)
             | Self::ReadReceiptRestored(_)
             | Self::ReadReceiptPersisted(_, _)
@@ -268,6 +276,15 @@ impl fmt::Debug for AppEvent {
             AppEvent::OutboundSendFailed { local_send_id } => f
                 .debug_struct("OutboundSendFailed")
                 .field("local_send_id", local_send_id)
+                .finish(),
+            AppEvent::StatusSendSucceeded => f.write_str("StatusSendSucceeded"),
+            AppEvent::StatusSendFailed(result) => {
+                f.debug_tuple("StatusSendFailed").field(result).finish()
+            }
+            AppEvent::StatusBatchFinished { sent, failure } => f
+                .debug_struct("StatusBatchFinished")
+                .field("sent", sent)
+                .field("failure", failure)
                 .finish(),
             AppEvent::ReadReceiptResult(key, status) => f
                 .debug_tuple("ReadReceiptResult")
@@ -358,6 +375,11 @@ mod tests {
         );
         assert_eq!(
             AppEvent::OutboundSendFailed { local_send_id: 1 }.family(),
+            AppEventFamily::Send
+        );
+        assert_eq!(AppEvent::StatusSendSucceeded.family(), AppEventFamily::Send);
+        assert_eq!(
+            AppEvent::StatusSendFailed(wr::StatusSendResult::SendFailed).family(),
             AppEventFamily::Send
         );
         assert_eq!(

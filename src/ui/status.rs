@@ -1,11 +1,13 @@
 use super::status_list::{StatusList, StatusListItem};
-use crate::app::actions::FocusPane;
+use crate::app::actions::{FocusPane, StatusCompositionState};
 use crate::app::{App, read_receipts::VisibilityPlan};
-use crate::ui::message_list::render_status_messages_with_plan;
+use crate::ui::message_list::{render_own_status_messages, render_status_messages_with_plan};
+use crate::ui::{action_notice_text, conversation_areas, render_composer};
 use ratatui::{
     Frame,
-    layout::Rect,
+    layout::{Constraint, Layout, Rect},
     style::{Color, Style},
+    text::Line,
     widgets::{Block, Paragraph, Widget},
 };
 
@@ -46,6 +48,115 @@ pub(super) fn render_statuses_with_plan(
     visibility_plan: &mut VisibilityPlan,
     area: Rect,
 ) {
+    if app.status_composition != StatusCompositionState::Inactive {
+        let authoring = app.status_composition != StatusCompositionState::Submitting;
+        let navigating = app.status_composition == StatusCompositionState::Navigating;
+        let inner_width = area.width.saturating_sub(2);
+        let input_rows = if authoring {
+            let width = inner_width.saturating_sub(2);
+            let layout = crate::ui::layout::composer_visual_layout_with_direction(
+                app.composer.input.lines(),
+                width,
+                app.composer_direction,
+            );
+            layout
+                .row_count()
+                .max(app.composer.visual_cursor(width, app.composer_direction).0 + 1)
+        } else {
+            2
+        };
+        let mut block =
+            Block::bordered()
+                .title(" Create status ")
+                .border_style(Style::default().fg(if navigating {
+                    Color::Green
+                } else if authoring {
+                    Color::Cyan
+                } else {
+                    Color::White
+                }));
+        if let Some(notice) = action_notice_text(app) {
+            let available = (area.width as usize).saturating_sub(" Create status ".len() + 2);
+            let notice = crate::ui::truncate_with_ellipsis(&notice, available);
+            if !notice.is_empty() {
+                block = block.title(Line::from(notice).right_aligned());
+            }
+        }
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        let (mut statuses_area, composer_area) = conversation_areas(
+            inner,
+            input_rows,
+            usize::from(authoring && app.composer.quote.is_some()),
+            if authoring {
+                app.composer.pending.len()
+            } else {
+                0
+            },
+        );
+        if app.status_retry_warning {
+            let [list, warning] =
+                Layout::vertical([Constraint::Min(0), Constraint::Length(2)]).areas(statuses_area);
+            statuses_area = list;
+            let message = if warning.width < 20 {
+                "MAYBE SENT\nCHECK RETRY"
+            } else {
+                "MAY BE PUBLISHED\nCHECK BEFORE RETRY"
+            };
+            frame.render_widget(
+                Paragraph::new(message).style(Style::default().fg(Color::Yellow)),
+                warning,
+            );
+        }
+        if app.own_status_messages().is_empty() {
+            frame.render_widget(Paragraph::new("No statuses published yet"), statuses_area);
+        } else {
+            render_own_status_messages(
+                frame,
+                app,
+                media_render_plan,
+                visibility_plan,
+                statuses_area,
+            );
+        }
+        if authoring {
+            render_composer(
+                frame,
+                app,
+                composer_area,
+                if inner_width < 45 {
+                    if navigating {
+                        " i Esc "
+                    } else if app.composer.text().is_empty() {
+                        " Enter Esc "
+                    } else {
+                        " Ctrl+O "
+                    }
+                } else if navigating {
+                    " Status draft (navigation: i edit, Esc cancel) "
+                } else {
+                    " Status update (Enter publish, Esc navigate, Ctrl+O attach) "
+                },
+                None,
+                None,
+            );
+        } else {
+            let pending = app.pending_status_sends;
+            let feedback = action_notice_text(app)
+                .map(|notice| format!("{pending} updates pending\n{notice}"))
+                .unwrap_or_else(|| format!("{pending} updates pending"));
+            render_composer(
+                frame,
+                app,
+                composer_area,
+                " Publishing status ",
+                None,
+                Some(&feedback),
+            );
+        }
+        return;
+    }
+
     let title = app
         .open_status_contact()
         .map(|contact| app.contact_name(&contact).to_string())
@@ -55,9 +166,12 @@ pub(super) fn render_statuses_with_plan(
     } else {
         Color::White
     };
-    let block = Block::bordered()
+    let mut block = Block::bordered()
         .title(title)
         .border_style(Style::default().fg(border_color));
+    if let Some(notice) = action_notice_text(app) {
+        block = block.title(Line::from(notice).right_aligned());
+    }
     let content_area = block.inner(area);
     block.render(area, frame.buffer_mut());
 

@@ -1009,12 +1009,33 @@ pub fn render_status_messages_with_plan(
     let Some(contact) = app.open_status_contact() else {
         return;
     };
-    let items: Arc<[wr::MessageId]> = app
-        .status_messages(&contact)
-        .iter()
+    let ids = app.status_messages(&contact);
+    render_status_items(frame, app, area, ids, media_render_plan, visibility_plan);
+}
+
+pub fn render_own_status_messages(
+    frame: &mut Frame,
+    app: &mut App,
+    media_render_plan: &mut MediaRenderPlan,
+    visibility_plan: &mut VisibilityPlan,
+    area: Rect,
+) {
+    let ids = app.own_status_messages();
+    render_status_items(frame, app, area, ids, media_render_plan, visibility_plan);
+}
+
+fn render_status_items(
+    frame: &mut Frame,
+    app: &mut App,
+    area: Rect,
+    ids: Vec<wr::MessageId>,
+    media_render_plan: &mut MediaRenderPlan,
+    visibility_plan: &mut VisibilityPlan,
+) {
+    let items: Arc<[wr::MessageId]> = ids
+        .into_iter()
         .rev()
-        .filter(|id| app.messages.contains_key(*id))
-        .cloned()
+        .filter(|id| app.messages.contains_key(id))
         .collect::<Vec<_>>()
         .into();
     let author_groups: Arc<[AuthorGroupContext]> = items

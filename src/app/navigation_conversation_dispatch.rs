@@ -102,6 +102,8 @@ impl App<'_> {
                     }
                 }
             }
+            AppAction::StartStatusComposition => self.start_status_composition(),
+            AppAction::CancelStatusComposition => self.cancel_status_composition(),
             AppAction::OpenMessage => self.open_selected_url(),
             AppAction::GoToReference => {
                 if !self.follow_selected_reference() {

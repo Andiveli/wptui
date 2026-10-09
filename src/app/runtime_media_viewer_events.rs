@@ -28,6 +28,11 @@ impl App<'_> {
             AppEvent::OutboundSendSucceeded { .. } | AppEvent::OutboundSendFailed { .. } => {
                 unreachable!("runtime_loop must route Send events to handle_send_event")
             }
+            AppEvent::StatusSendSucceeded
+            | AppEvent::StatusSendFailed(_)
+            | AppEvent::StatusBatchFinished { .. } => {
+                unreachable!("runtime_loop must route StatusSend events to handle_send_event")
+            }
             AppEvent::ReadReceiptResult(..)
             | AppEvent::ReadReceiptRestored(..)
             | AppEvent::ReadReceiptPersisted(..)

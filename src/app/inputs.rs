@@ -1,7 +1,7 @@
 use ratatui::crossterm::event::Event;
 
 use crate::app::App;
-use crate::app::actions::{AppAction, FocusPane, Section, focus_after};
+use crate::app::actions::{AppAction, FocusPane, Section, StatusCompositionState, focus_after};
 pub use crate::app::composer_input_mapping::composer_action_for_editing_key;
 pub use crate::app::composer_input_paste::apply_clipboard_paste;
 use crate::app::input_router::{InputRoute, ModalContext, route_context_key, route_modal_key};
@@ -76,6 +76,7 @@ impl App<'_> {
             if is_toggle_logs_key(&key) {
                 self.dispatch_action(AppAction::ToggleLogs);
             } else if self.handle_composer_input(key.clone()) {
+            } else if self.file_picker.is_none() && self.handle_status_composer_input(key.clone()) {
             } else if self.shortcut_popup {
                 if matches!(
                     route_modal_key(&key, ModalContext::ShortcutPopup),
@@ -243,13 +244,49 @@ impl App<'_> {
     }
 
     pub fn dispatch_action(&mut self, action: AppAction) {
-        self.focus_pane = focus_after(self.focus_pane, &action, self.pane_visibility);
+        if self.status_composition == StatusCompositionState::Submitting
+            && !matches!(action, AppAction::Quit | AppAction::ToggleLogs)
+        {
+            return;
+        }
+        if self.status_composition == StatusCompositionState::Navigating
+            && !matches!(
+                action,
+                AppAction::SelectNext
+                    | AppAction::SelectPrevious
+                    | AppAction::JumpTop
+                    | AppAction::JumpBottom
+                    | AppAction::HalfPageDown
+                    | AppAction::HalfPageUp
+                    | AppAction::CancelStatusComposition
+                    | AppAction::Quit
+                    | AppAction::ToggleLogs
+            )
+        {
+            return;
+        }
+        if self.status_composition == StatusCompositionState::Navigating
+            && matches!(
+                action,
+                AppAction::SelectNext
+                    | AppAction::SelectPrevious
+                    | AppAction::JumpTop
+                    | AppAction::JumpBottom
+                    | AppAction::HalfPageDown
+                    | AppAction::HalfPageUp
+            )
+        {
+            self.focus_pane = FocusPane::Conversation;
+        } else {
+            self.focus_pane = focus_after(self.focus_pane, &action, self.pane_visibility);
+        }
 
         // The status view is read-only: chat actions (react, reply, edit,
         // delete, menu, composer) must never target the status@broadcast
         // chat, so they are rejected while a contact's statuses are shown.
         if self.selected_section == Section::Status
             && self.focus_pane == FocusPane::Conversation
+            && self.status_composition == StatusCompositionState::Inactive
             && !status_view_allows(&action)
         {
             return;
@@ -350,11 +387,19 @@ impl App<'_> {
             | AppAction::DeleteMessage
             | AppAction::EditMessage
             | AppAction::OpenChat
+            | AppAction::StartStatusComposition
+            | AppAction::CancelStatusComposition
             | AppAction::OpenMessage
-            | AppAction::GoToReference
-            | AppAction::Composer(_)) => self
+            | AppAction::GoToReference) => self
                 .dispatch_navigation_conversation_action(action)
                 .expect("navigation/conversation action family must be handled by its dispatcher"),
+            AppAction::Composer(action) => {
+                if self.status_composition == StatusCompositionState::Authoring {
+                    self.dispatch_status_composer_action(action);
+                } else {
+                    self.dispatch_composer_action(action);
+                }
+            }
         }
     }
 

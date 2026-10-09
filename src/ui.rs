@@ -380,30 +380,7 @@ pub fn render_chats_with_plan(
                 .join(" | "),
         )
     } else {
-        app.action_notice.as_ref().map(|notice| match notice {
-            crate::app::actions::ActionNotice::Forwarded {
-                succeeded,
-                failed,
-                failure,
-            } => {
-                if *failed == 0 {
-                    format!("Forwarded: {succeeded}")
-                } else {
-                    let reason = match failure {
-                        whatsrust::ForwardFailure::SourceUnavailable => "Source unavailable",
-                        whatsrust::ForwardFailure::InvalidSource => "Invalid source",
-                        whatsrust::ForwardFailure::InvalidDestination => "Invalid destination",
-                        whatsrust::ForwardFailure::SendFailed => "Send failed",
-                        whatsrust::ForwardFailure::None => "Unknown failure",
-                    };
-                    format!("Forwarded: {succeeded} ok, {failed} failed ({reason})")
-                }
-            }
-            crate::app::actions::ActionNotice::ReplyPrivatelyNamed(name) => {
-                format!("Replying to {name} privately")
-            }
-            _ => format!("{notice:?}"),
-        })
+        action_notice_text(app)
     };
     let selected_chat = app.open_chat();
     let now = app.now();
@@ -478,15 +455,6 @@ pub fn render_chats_with_plan(
     }
 
     if let Some(chat_jid) = app.open_chat() {
-        let border_color = if app.focus_pane == FocusPane::Conversation {
-            if app.conversation_mode == ConversationMode::ComposerEditing {
-                ratatui::style::Color::Cyan
-            } else {
-                ratatui::style::Color::Green
-            }
-        } else {
-            ratatui::style::Color::White
-        };
         let input_title = if composer_blocked {
             " Admin-only group "
         } else if app.conversation_mode == ConversationMode::EditingMessage {
@@ -494,80 +462,21 @@ pub fn render_chats_with_plan(
         } else {
             " Message input "
         };
-        let input_block = Block::bordered()
-            .title(input_title)
-            .border_set(symbols::border::ROUNDED)
-            .border_style(Style::default().fg(border_color));
-        frame.render_widget(&input_block, composer_area);
-
-        let mut input_area = input_block.inner(composer_area);
-
-        if composer_blocked {
-            frame.render_widget(
-                Paragraph::new(crate::app::ADMIN_ONLY_GROUP_MESSAGE).fg(border_color),
-                input_area,
-            );
-        } else if app.conversation_mode == ConversationMode::MessageNavigation {
-            let hint = format!(
-                "Press i to write in {} (Ctrl+O attach) | Space 1 sections | Space 2 chats",
-                app.contact_name(&chat_jid)
-            );
-            frame.render_widget(Paragraph::new(hint).fg(border_color), input_area);
-        } else {
-            if let Some(msg) = &app.composer.quote {
-                let [quote_area, input_areaa] =
-                    Layout::vertical([Constraint::Length(1), Constraint::Percentage(100)])
-                        .areas(input_area);
-
-                input_area = input_areaa;
-
-                frame.render_widget(
-                    Paragraph::new(format!("> {}", get_quoted_text(msg))).dark_gray(),
-                    quote_area,
-                );
-            }
-
-            for preview in attachment_preview_lines(&app.composer.pending) {
-                let [attach_area, input_areaa] =
-                    Layout::vertical([Constraint::Length(1), Constraint::Percentage(100)])
-                        .areas(input_area);
-
-                input_area = input_areaa;
-
-                frame.render_widget(
-                    Paragraph::new(format!("🔗 {preview}")).dark_gray(),
-                    attach_area,
-                );
-            }
-
-            let cursor_row = composer_cursor.0;
-            let scroll_top = cursor_row
-                .saturating_add(1)
-                .saturating_sub(input_area.height as usize);
-            let lines = if app.composer.input.lines().iter().all(String::is_empty) {
-                let alignment = composer_layout
-                    .lines()
-                    .first()
-                    .and_then(|line| line.alignment)
-                    .unwrap_or(Alignment::Left);
-                vec![
-                    Line::from(app.composer.input.placeholder_text().to_owned())
-                        .alignment(alignment),
-                ]
-            } else {
-                composer_layout.lines()
-            };
-            frame.render_widget(
-                Paragraph::new(lines).scroll((scroll_top.min(u16::MAX as usize) as u16, 0)),
-                input_area,
-            );
-            if app.focus_pane == FocusPane::Conversation && !input_area.is_empty() {
-                frame.set_cursor_position(composer_cursor_position(
-                    input_area,
-                    (cursor_row.saturating_sub(scroll_top), composer_cursor.1),
-                ));
-            }
-        }
+        let navigation_hint =
+            (app.conversation_mode == ConversationMode::MessageNavigation).then(|| {
+                format!(
+                    "Press i to write in {} (Ctrl+O attach) | Space 1 sections | Space 2 chats",
+                    app.contact_name(&chat_jid)
+                )
+            });
+        render_composer(
+            frame,
+            app,
+            composer_area,
+            input_title,
+            navigation_hint.as_deref(),
+            None,
+        );
     }
 
     // Render the picker last within the conversation pane. This keeps it
@@ -576,6 +485,125 @@ pub fn render_chats_with_plan(
     if app.open_chat().is_some() && !app.composer_blocked() && app.composer.mention_picker_active()
     {
         render_mention_picker(frame, app, chat_area, composer_area);
+    }
+}
+
+pub(super) fn action_notice_text(app: &App) -> Option<String> {
+    app.action_notice.as_ref().map(|notice| match notice {
+        crate::app::actions::ActionNotice::Forwarded {
+            succeeded,
+            failed,
+            failure,
+        } => {
+            if *failed == 0 {
+                format!("Forwarded: {succeeded}")
+            } else {
+                let reason = match failure {
+                    whatsrust::ForwardFailure::SourceUnavailable => "Source unavailable",
+                    whatsrust::ForwardFailure::InvalidSource => "Invalid source",
+                    whatsrust::ForwardFailure::InvalidDestination => "Invalid destination",
+                    whatsrust::ForwardFailure::SendFailed => "Send failed",
+                    whatsrust::ForwardFailure::None => "Unknown failure",
+                };
+                format!("Forwarded: {succeeded} ok, {failed} failed ({reason})")
+            }
+        }
+        crate::app::actions::ActionNotice::ReplyPrivatelyNamed(name) => {
+            format!("Replying to {name} privately")
+        }
+        _ => format!("{notice:?}"),
+    })
+}
+
+pub(super) fn render_composer(
+    frame: &mut Frame,
+    app: &mut App,
+    area: Rect,
+    title: &str,
+    navigation_hint: Option<&str>,
+    submission_feedback: Option<&str>,
+) {
+    let border_color = if app.focus_pane == FocusPane::Conversation {
+        if app.conversation_mode == ConversationMode::ComposerEditing {
+            ratatui::style::Color::Cyan
+        } else {
+            ratatui::style::Color::Green
+        }
+    } else {
+        ratatui::style::Color::White
+    };
+    let input_block = Block::bordered()
+        .title(title)
+        .border_set(symbols::border::ROUNDED)
+        .border_style(Style::default().fg(border_color));
+    frame.render_widget(&input_block, area);
+
+    let mut input_area = input_block.inner(area);
+    if let Some(feedback) = submission_feedback {
+        frame.render_widget(Paragraph::new(feedback).fg(border_color), input_area);
+    } else if app.selected_section != Section::Status && app.composer_blocked() {
+        frame.render_widget(
+            Paragraph::new(crate::app::ADMIN_ONLY_GROUP_MESSAGE).fg(border_color),
+            input_area,
+        );
+    } else if let Some(hint) = navigation_hint {
+        frame.render_widget(Paragraph::new(hint).fg(border_color), input_area);
+    } else {
+        if let Some(msg) = &app.composer.quote {
+            let [quote_area, remaining] =
+                Layout::vertical([Constraint::Length(1), Constraint::Percentage(100)])
+                    .areas(input_area);
+            input_area = remaining;
+            frame.render_widget(
+                Paragraph::new(format!("> {}", get_quoted_text(msg))).dark_gray(),
+                quote_area,
+            );
+        }
+
+        for preview in attachment_preview_lines(&app.composer.pending) {
+            let [attach_area, remaining] =
+                Layout::vertical([Constraint::Length(1), Constraint::Percentage(100)])
+                    .areas(input_area);
+            input_area = remaining;
+            frame.render_widget(
+                Paragraph::new(format!("🔗 {preview}")).dark_gray(),
+                attach_area,
+            );
+        }
+
+        let composer_width = area.width.saturating_sub(2);
+        let composer_layout = composer_visual_layout_with_direction(
+            app.composer.input.lines(),
+            composer_width,
+            app.composer_direction,
+        );
+        let composer_cursor = app
+            .composer
+            .visual_cursor(composer_width, app.composer_direction);
+        let cursor_row = composer_cursor.0;
+        let scroll_top = cursor_row
+            .saturating_add(1)
+            .saturating_sub(input_area.height as usize);
+        let lines = if app.composer.input.lines().iter().all(String::is_empty) {
+            let alignment = composer_layout
+                .lines()
+                .first()
+                .and_then(|line| line.alignment)
+                .unwrap_or(Alignment::Left);
+            vec![Line::from(app.composer.input.placeholder_text().to_owned()).alignment(alignment)]
+        } else {
+            composer_layout.lines()
+        };
+        frame.render_widget(
+            Paragraph::new(lines).scroll((scroll_top.min(u16::MAX as usize) as u16, 0)),
+            input_area,
+        );
+        if app.focus_pane == FocusPane::Conversation && !input_area.is_empty() {
+            frame.set_cursor_position(composer_cursor_position(
+                input_area,
+                (cursor_row.saturating_sub(scroll_top), composer_cursor.1),
+            ));
+        }
     }
 }
 

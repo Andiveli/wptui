@@ -9,6 +9,11 @@ impl App<'_> {
                 message,
             } => self.complete_text_send(local_send_id, message),
             AppEvent::OutboundSendFailed { local_send_id } => self.fail_text_send(local_send_id),
+            AppEvent::StatusSendSucceeded => self.status_send_succeeded(),
+            AppEvent::StatusSendFailed(result) => self.status_send_failed(result),
+            AppEvent::StatusBatchFinished { sent, failure } => {
+                self.status_batch_finished(sent, failure)
+            }
             _ => unreachable!("runtime_loop must route only Send events to handle_send_event"),
         }
     }

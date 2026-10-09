@@ -84,6 +84,7 @@ pub mod status_actions;
 pub mod status_cursor;
 pub mod status_input;
 pub mod status_projection;
+pub mod status_publish;
 pub mod status_retention;
 pub mod terminal_input_translation;
 pub mod terminal_session;
@@ -96,8 +97,8 @@ pub use crate::app;
 use crate::app::actions::{
     ActionNotice, ClipboardReader, ClipboardWriter, ConversationMode, FocusPane, MessageEditor,
     MessageForwarder, MessageMenuAction, MessageReactor, MessageRevoker, PaneVisibility, Section,
-    SystemClipboardReader, SystemClipboardWriter, SystemUrlOpener, UnavailableClipboardReader,
-    UnavailableClipboardWriter, UrlOpener,
+    StatusCompositionState, SystemClipboardReader, SystemClipboardWriter, SystemUrlOpener,
+    UnavailableClipboardReader, UnavailableClipboardWriter, UrlOpener,
 };
 pub use crate::app::chat_projection::{ChatRow, ContactRow};
 pub use crate::app::chat_read_sync_port::ChatReadSyncPort;
@@ -247,6 +248,9 @@ pub struct App<'a> {
     /// Latest status timestamp the user has viewed per contact, restored from
     /// the status_read_cursors table at startup.
     pub status_last_seen: HashMap<wr::JID, i64>,
+    /// Outgoing status composition is separate from the read-only incoming
+    /// status pane and starts only from the status contact list.
+    pub status_composition: StatusCompositionState,
 
     pub history_sync_percent: Option<u8>,
     pub selected_presence: SelectedPresence,
@@ -306,6 +310,10 @@ pub struct App<'a> {
     read_sync_worker_stopped_for_logout: bool,
     pub optimistic_text_send_worker: optimistic_text_send::Worker,
     media_download_worker: Option<download_worker::Worker>,
+    pub status_send_worker: status_publish::Worker,
+    pub pending_status_sends: usize,
+    pub status_send_failure: Option<wr::StatusSendResult>,
+    pub status_retry_warning: bool,
     pub pending_outgoing_text: HashMap<u64, optimistic_text_send::TextSendRequest>,
     pub completed_text_send_ids: VecDeque<u64>,
     pub next_local_send_id: u64,

@@ -79,6 +79,7 @@ fn contextual_action_to_app_action(action: ContextualAction) -> AppAction {
         ContextualAction::GoToReference => AppAction::GoToReference,
         ContextualAction::DeleteForEveryone => AppAction::DeleteMessage,
         ContextualAction::Attach => AppAction::AttachFile,
+        ContextualAction::CreateStatus => AppAction::StartStatusComposition,
         ContextualAction::Quit => AppAction::Quit,
         _ => AppAction::PlannedLeaderAction(
             crate::app::contextual_actions::CONTEXTUAL_ACTION_METADATA

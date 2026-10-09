@@ -24,12 +24,34 @@ typedef struct {
 import "C"
 
 import (
+	"context"
 	"fmt"
+
+	"go.mau.fi/whatsmeow"
 	"unsafe"
 
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 )
+
+type statusSendResult uint8
+
+const (
+	statusSendResultSent statusSendResult = iota
+	statusSendResultUnsupportedContent
+	statusSendResultInvalidContent
+	statusSendResultClientUnavailable
+	statusSendResultMediaPreparationFailed
+	statusSendResultSendFailed
+)
+
+type statusSendRequest struct {
+	messageType uint8
+	text        string
+	fileKind    uint8
+	filePath    string
+	caption     *string
+}
 
 // ContentToWaE2EMessage converts the public FFI payload into a WhatsApp
 // message. File construction remains delegated to the injectable builder.
@@ -139,6 +161,15 @@ func C_SendOutboundMessage(cjid C.JID, messageType C.uint8_t, messageContent uns
 	return C.uint8_t(sendOutboundRequest(request))
 }
 
+//export C_SendStatusMessage
+func C_SendStatusMessage(messageType C.uint8_t, messageContent unsafe.Pointer) C.uint8_t {
+	request, result := statusSendRequestFromC(messageType, messageContent)
+	if result != statusSendResultSent {
+		return C.uint8_t(result)
+	}
+	return C.uint8_t(sendStatusMessage(request))
+}
+
 func textSendRequestFromC(cjid C.JID, messageType C.uint8_t, messageContent unsafe.Pointer, quoteID *C.char, quoteSender C.JID, quoteChat C.JID, quoteMessageType C.uint8_t, quoteMessageContent unsafe.Pointer, localSendID uint64) (textSendRequest, bool) {
 	if cjid == nil || messageContent == nil {
 		return textSendRequest{}, false
@@ -168,6 +199,77 @@ func textSendRequestFromC(cjid C.JID, messageType C.uint8_t, messageContent unsa
 		}
 	}
 	return request, true
+}
+
+func statusSendRequestFromC(messageType C.uint8_t, messageContent unsafe.Pointer) (statusSendRequest, statusSendResult) {
+	if messageContent == nil {
+		return statusSendRequest{}, statusSendResultInvalidContent
+	}
+	switch messageType {
+	case C.uint8_t(MessageTypeText):
+		textMessage := (*C.SendTextMessage)(messageContent)
+		if textMessage.text == nil {
+			return statusSendRequest{}, statusSendResultInvalidContent
+		}
+		return statusSendRequest{messageType: MessageTypeText, text: C.GoString(textMessage.text)}, statusSendResultSent
+	case C.uint8_t(MessageTypeFile):
+		fileMessage := (*C.SendFileMessage)(messageContent)
+		if fileMessage.path == nil {
+			return statusSendRequest{}, statusSendResultInvalidContent
+		}
+		if uint8(fileMessage.kind) != FileTypeImage && uint8(fileMessage.kind) != FileTypeVideo {
+			return statusSendRequest{}, statusSendResultUnsupportedContent
+		}
+		request := statusSendRequest{
+			messageType: MessageTypeFile,
+			fileKind:    uint8(fileMessage.kind),
+			filePath:    C.GoString(fileMessage.path),
+		}
+		if fileMessage.caption != nil {
+			caption := C.GoString(fileMessage.caption)
+			request.caption = &caption
+		}
+		return request, statusSendResultSent
+	default:
+		return statusSendRequest{}, statusSendResultUnsupportedContent
+	}
+}
+
+func sendStatusMessage(request statusSendRequest) statusSendResult {
+	clientSnapshot := lifecycleState.clientSnapshot()
+	if clientSnapshot == nil || clientSnapshot.Store == nil || clientSnapshot.Store.ID == nil {
+		LOG_WARN("status send rejected: client is unavailable")
+		return statusSendResultClientUnavailable
+	}
+	return sendStatusRequest(context.Background(), request, clientSnapshot, clientSnapshot.Upload, requestSendMessage)
+}
+
+func sendStatusRequest(ctx context.Context, request statusSendRequest, clientSnapshot *whatsmeow.Client, upload uploadMediaFunc, send sendMessageRequest) statusSendResult {
+	var message *waE2E.Message
+	switch request.messageType {
+	case MessageTypeText:
+		message = &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: &request.text}}
+	case MessageTypeFile:
+		if request.fileKind != FileTypeImage && request.fileKind != FileTypeVideo {
+			return statusSendResultUnsupportedContent
+		}
+		if upload == nil {
+			return statusSendResultMediaPreparationFailed
+		}
+		var err error
+		message, err = buildFileMessage(ctx, request.fileKind, request.filePath, request.caption, nil, upload)
+		if err != nil {
+			LOG_WARN("status media preparation failed: %v", err)
+			return statusSendResultMediaPreparationFailed
+		}
+	default:
+		return statusSendResultUnsupportedContent
+	}
+	if _, err := send(clientSnapshot, ctx, types.StatusBroadcastJID, message); err != nil {
+		LOG_WARN("status send failed: %v", err)
+		return statusSendResultSendFailed
+	}
+	return statusSendResultSent
 }
 
 func sendNormalTextRequest(request textSendRequest) uint8 {
