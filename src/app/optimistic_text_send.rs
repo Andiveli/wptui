@@ -153,17 +153,22 @@ impl super::App<'_> {
         true
     }
 
-    fn allocate_local_send_ids(&mut self, count: usize) -> Option<Vec<u64>> {
+    pub(crate) fn allocate_local_send_ids(&mut self, count: usize) -> Option<Vec<u64>> {
         let mut ids = Vec::with_capacity(count);
         let mut candidate = self.next_local_send_id;
         let attempts = self
             .pending_outgoing_text
             .len()
+            .saturating_add(self.pending_outgoing_status.len())
             .saturating_add(self.completed_text_send_ids.len())
             .saturating_add(count);
         for _ in 0..attempts {
             if candidate != 0
                 && !self.pending_outgoing_text.contains_key(&candidate)
+                && !self
+                    .pending_outgoing_status
+                    .iter()
+                    .any(|(id, _)| *id == candidate)
                 && !self.completed_text_send_ids.contains(&candidate)
                 && !ids.contains(&candidate)
             {

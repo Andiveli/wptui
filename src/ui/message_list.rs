@@ -882,6 +882,7 @@ pub fn render_messages_with_plan(
         media_render_plan,
         optimistic_area,
         &optimistic_items,
+        MessageTextMode::Chat,
     );
     app.record_message_list_counts(crate::app::runtime_diagnostics::MessageListCounts {
         pending_rows_rendered: pending_rows_rendered as u64,
@@ -941,6 +942,7 @@ fn render_pending_tail(
     media_render_plan: &mut MediaRenderPlan,
     area: Rect,
     items: &[wr::Message],
+    text_mode: MessageTextMode,
 ) -> usize {
     if area.is_empty() || items.is_empty() {
         return 0;
@@ -989,7 +991,7 @@ fn render_pending_tail(
             Rect::new(area.x, y, area.width, render_height),
             media_render_plan,
             false,
-            MessageTextMode::Chat,
+            text_mode,
         );
         rendered_rows += 1;
         y = y.saturating_add(heights[index] as u16);
@@ -1020,8 +1022,32 @@ pub fn render_own_status_messages(
     visibility_plan: &mut VisibilityPlan,
     area: Rect,
 ) {
+    let pending = app.pending_own_status_messages();
+    let pending_height = pending_tail_height(app, &pending, area.width as usize).min(area.height);
+    let list_area = Rect::new(
+        area.x,
+        area.y,
+        area.width,
+        area.height.saturating_sub(pending_height),
+    );
+    let pending_area = Rect::new(area.x, list_area.bottom(), area.width, pending_height);
     let ids = app.own_status_messages();
-    render_status_items(frame, app, area, ids, media_render_plan, visibility_plan);
+    render_status_items(
+        frame,
+        app,
+        list_area,
+        ids,
+        media_render_plan,
+        visibility_plan,
+    );
+    render_pending_tail(
+        frame,
+        app,
+        media_render_plan,
+        pending_area,
+        &pending,
+        MessageTextMode::Status,
+    );
 }
 
 fn render_status_items(

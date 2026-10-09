@@ -7,7 +7,15 @@ impl App<'_> {
             AppEvent::OutboundSendSucceeded {
                 local_send_id,
                 message,
-            } => self.complete_text_send(local_send_id, message),
+            } => {
+                if message.info.chat.0.as_ref()
+                    == crate::app::status_projection::STATUS_BROADCAST_CHAT
+                {
+                    self.complete_status_send(local_send_id, message)
+                } else {
+                    self.complete_text_send(local_send_id, message)
+                }
+            }
             AppEvent::OutboundSendFailed { local_send_id } => self.fail_text_send(local_send_id),
             AppEvent::StatusSendSucceeded => self.status_send_succeeded(),
             AppEvent::StatusSendFailed(result) => self.status_send_failed(result),

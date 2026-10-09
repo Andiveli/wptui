@@ -108,7 +108,7 @@ pub(super) fn render_statuses_with_plan(
                 warning,
             );
         }
-        if app.own_status_messages().is_empty() {
+        if app.own_status_messages().is_empty() && app.pending_outgoing_status.is_empty() {
             frame.render_widget(Paragraph::new("No statuses published yet"), statuses_area);
         } else {
             render_own_status_messages(
@@ -187,13 +187,87 @@ pub(super) fn render_statuses_with_plan(
 
 #[cfg(test)]
 mod tests {
-    use ratatui::{Terminal, backend::TestBackend, layout::Rect};
+    use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Modifier};
     use whatsrust as wr;
 
     use super::render_statuses_with_plan;
+    use crate::app::actions::StatusCompositionState;
     use crate::app::read_receipts::VisibilityPlan;
     use crate::app::status_projection::STATUS_BROADCAST_CHAT;
     use crate::app::test_support::TestApp;
+
+    #[test]
+    fn own_status_changes_from_subdued_pending_row_to_confirmed_row() {
+        let mut app = TestApp::new();
+        app.status_composition = StatusCompositionState::Submitting;
+        app.pending_outgoing_status
+            .push((42, wr::MessageContent::Text("QXYZ".into())));
+        let mut terminal = Terminal::new(TestBackend::new(60, 18)).unwrap();
+        let mut media_plan = crate::app::events::MediaRenderPlan::default();
+        let mut visibility_plan = VisibilityPlan::default();
+        terminal
+            .draw(|frame| {
+                render_statuses_with_plan(
+                    frame,
+                    &mut app,
+                    &mut media_plan,
+                    &mut visibility_plan,
+                    Rect::new(0, 0, 60, 18),
+                )
+            })
+            .unwrap();
+        let pending = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .find(|cell| cell.symbol() == "Q")
+            .expect("pending row");
+        assert!(pending.modifier.contains(Modifier::DIM));
+
+        let confirmed = wr::Message {
+            info: wr::MessageInfo {
+                id: "canonical-qxyz".into(),
+                chat: STATUS_BROADCAST_CHAT.to_owned().into(),
+                sender: "self@s.whatsapp.net".to_owned().into(),
+                mentions_self: false,
+                timestamp: 100,
+                is_from_me: true,
+                quote_id: None,
+                read_by: 0,
+                forwarding: Default::default(),
+            },
+            message: wr::MessageContent::Text("QXYZ".into()),
+        };
+        assert!(app.complete_status_send(42, confirmed));
+        app.status_composition = StatusCompositionState::Navigating;
+        let mut media_plan = crate::app::events::MediaRenderPlan::default();
+        let mut visibility_plan = VisibilityPlan::default();
+        terminal
+            .draw(|frame| {
+                render_statuses_with_plan(
+                    frame,
+                    &mut app,
+                    &mut media_plan,
+                    &mut visibility_plan,
+                    Rect::new(0, 0, 60, 18),
+                )
+            })
+            .unwrap();
+        let cells = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .filter(|cell| cell.symbol() == "Q")
+            .collect::<Vec<_>>();
+        assert_eq!(
+            cells.len(),
+            1,
+            "one confirmed row without an optimistic duplicate"
+        );
+        assert!(!cells[0].modifier.contains(Modifier::DIM));
+    }
 
     #[test]
     fn status_media_is_collected_for_post_draw_dispatch() {

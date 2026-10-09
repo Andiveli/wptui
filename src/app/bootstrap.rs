@@ -205,6 +205,8 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
             Box::new(crate::app::status_publish::WhatsAppStatusSendPort),
         ),
         pending_status_sends: 0,
+        pending_outgoing_status: Vec::new(),
+        status_batch_local_ids: Vec::new(),
         status_send_failure: None,
         status_retry_warning: false,
         pending_outgoing_text: HashMap::new(),

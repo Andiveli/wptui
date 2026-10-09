@@ -312,6 +312,8 @@ pub struct App<'a> {
     media_download_worker: Option<download_worker::Worker>,
     pub status_send_worker: status_publish::Worker,
     pub pending_status_sends: usize,
+    pub(crate) pending_outgoing_status: Vec<(u64, wr::MessageContent)>,
+    pub(crate) status_batch_local_ids: Vec<u64>,
     pub status_send_failure: Option<wr::StatusSendResult>,
     pub status_retry_warning: bool,
     pub pending_outgoing_text: HashMap<u64, optimistic_text_send::TextSendRequest>,

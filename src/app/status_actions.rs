@@ -148,15 +148,49 @@ impl App<'_> {
         }
 
         let count = messages.len();
-        if !self.status_send_worker.enqueue_batch(messages) {
+        let Some(local_ids) = self.allocate_local_send_ids(count) else {
+            self.composer.restore_status_draft();
+            self.unavailable("Could not queue status; nothing was published");
+            return;
+        };
+        let batch = local_ids
+            .iter()
+            .copied()
+            .zip(messages.iter().cloned())
+            .collect();
+        if !self.status_send_worker.enqueue_identified_batch(batch) {
             self.composer.restore_status_draft();
             self.unavailable("Could not queue status; nothing was published");
             return;
         }
+        self.pending_outgoing_status
+            .extend(local_ids.iter().copied().zip(messages));
+        self.status_batch_local_ids = local_ids;
         self.pending_status_sends = count;
         self.status_send_failure = None;
         self.status_retry_warning = false;
         self.status_composition = StatusCompositionState::Submitting;
+    }
+
+    pub(crate) fn complete_status_send(&mut self, local_id: u64, message: wr::Message) -> bool {
+        if message.info.chat.0.as_ref() != crate::app::status_projection::STATUS_BROADCAST_CHAT
+            || !message.info.is_from_me
+            || message.info.id.is_empty()
+        {
+            return false;
+        }
+        let Some(index) = self
+            .pending_outgoing_status
+            .iter()
+            .position(|(id, _)| *id == local_id)
+        else {
+            return false;
+        };
+        self.pending_outgoing_status.remove(index);
+        if !self.messages.contains_key(&message.info.id) {
+            self.process_message_with_lookup(message, false, |_| Default::default());
+        }
+        true
     }
 
     pub(crate) fn status_batch_finished(
@@ -175,6 +209,9 @@ impl App<'_> {
             return false;
         }
         self.pending_status_sends = 0;
+        let local_ids = std::mem::take(&mut self.status_batch_local_ids);
+        self.pending_outgoing_status
+            .retain(|(id, _)| !local_ids.contains(id));
         if let Some(result) = failure {
             self.composer.restore_status_draft_after(sent);
             self.status_composition = StatusCompositionState::Authoring;
@@ -187,10 +224,12 @@ impl App<'_> {
             self.unavailable(&format!("Could not publish status: {result:?}.{warning}"));
         } else {
             self.composer.status_draft = None;
-            self.status_composition = StatusCompositionState::Inactive;
+            self.status_composition = StatusCompositionState::Navigating;
+            self.focus_pane = FocusPane::Conversation;
             self.status_retry_warning = false;
-            self.composer.set_blocked(self.composer_blocked());
-            self.composer.end_status_context();
+            if self.status_message_count() > 0 {
+                self.message_list_state.select(Some(0));
+            }
             self.action_notice = Some(ActionNotice::StatusPublished);
         }
         true
@@ -224,10 +263,9 @@ impl App<'_> {
             self.unavailable(&format!("Could not publish status: {result:?}"));
         } else {
             self.composer.status_draft = None;
-            self.status_composition = StatusCompositionState::Inactive;
+            self.status_composition = StatusCompositionState::Navigating;
+            self.focus_pane = FocusPane::Conversation;
             self.status_retry_warning = false;
-            self.composer.set_blocked(self.composer_blocked());
-            self.composer.end_status_context();
             self.action_notice = Some(ActionNotice::StatusPublished);
         }
         true
@@ -366,6 +404,8 @@ mod tests {
                 app.composer.replace_text("public status");
                 app.dispatch_status_composer_action(ComposerAction::Submit);
                 assert!(app.status_batch_finished(1, None));
+                assert_eq!(app.status_composition, StatusCompositionState::Navigating);
+                app.cancel_status_composition();
             } else {
                 app.composer.replace_text("abandoned status");
                 app.cancel_status_composition();
@@ -459,12 +499,83 @@ mod tests {
     }
 
     #[test]
+    fn own_status_queue_transitions_from_pending_to_canonical_without_duplicate_echo() {
+        let mut app = TestApp::new();
+        app.status_composition = StatusCompositionState::Authoring;
+        app.composer.replace_text("hello status");
+        app.dispatch_status_composer_action(ComposerAction::Submit);
+        assert_eq!(app.status_composition, StatusCompositionState::Submitting);
+        let [local_id] = app.status_batch_local_ids.as_slice() else {
+            panic!("expected one correlated status");
+        };
+        let local_id = *local_id;
+        assert_eq!(app.pending_own_status_messages().len(), 1);
+        assert!(app.own_status_messages().is_empty());
+        let canonical = wr::Message {
+            info: wr::MessageInfo {
+                id: "canonical-status".into(),
+                chat: "status@broadcast".to_owned().into(),
+                sender: "self@s.whatsapp.net".to_owned().into(),
+                mentions_self: false,
+                timestamp: 100,
+                forwarding: Default::default(),
+                is_from_me: true,
+                quote_id: None,
+                read_by: 0,
+            },
+            message: wr::MessageContent::Text("hello status".into()),
+        };
+        let mut unrelated = canonical.clone();
+        unrelated.info.chat = "other@s.whatsapp.net".to_owned().into();
+        assert!(!app.complete_status_send(local_id, unrelated));
+        assert_eq!(app.pending_own_status_messages().len(), 1);
+        assert!(app.own_status_messages().is_empty());
+        assert!(app.complete_status_send(local_id, canonical.clone()));
+        assert!(app.pending_own_status_messages().is_empty());
+        assert_eq!(app.own_status_messages(), vec![canonical.info.id.clone()]);
+        assert!(app.status_batch_finished(1, None));
+        assert_eq!(app.status_composition, StatusCompositionState::Navigating);
+        assert_eq!(app.action_notice, Some(ActionNotice::StatusPublished));
+        app.add_message(canonical);
+        assert_eq!(app.own_status_messages().len(), 1);
+        assert!(app.pending_own_status_messages().is_empty());
+    }
+
+    #[test]
+    fn failed_status_keeps_confirmed_prefix_without_confirming_uncertain_items() {
+        let mut app = TestApp::new();
+        app.status_composition = StatusCompositionState::Authoring;
+        app.composer.replace_text("caption");
+        for path in ["one.png", "two.png"] {
+            app.composer
+                .pending
+                .push(crate::app::composer::PendingAttachment::new(
+                    path.into(),
+                    wr::FileKind::Image,
+                ));
+        }
+        app.dispatch_status_composer_action(ComposerAction::Submit);
+        let ids = app.status_batch_local_ids.clone();
+        assert_eq!(ids.len(), 3);
+        assert_eq!(app.pending_own_status_messages().len(), 3);
+        let mut confirmed = status_message("confirmed-status");
+        confirmed.info.is_from_me = true;
+        assert!(app.complete_status_send(ids[0], confirmed));
+        assert!(app.status_batch_finished(1, Some(wr::StatusSendResult::SendFailed)));
+        assert_eq!(app.own_status_messages().len(), 1);
+        assert!(app.pending_own_status_messages().is_empty());
+        assert_eq!(app.composer.pending.len(), 2);
+        assert!(app.status_retry_warning);
+        assert_eq!(app.status_composition, StatusCompositionState::Authoring);
+    }
+
+    #[test]
     fn typed_status_events_update_the_lifecycle_and_notice() {
         let mut app = TestApp::new();
         app.status_composition = StatusCompositionState::Submitting;
         app.pending_status_sends = 1;
         assert!(app.status_send_succeeded());
-        assert_eq!(app.status_composition, StatusCompositionState::Inactive);
+        assert_eq!(app.status_composition, StatusCompositionState::Navigating);
         assert_eq!(app.action_notice, Some(ActionNotice::StatusPublished));
 
         app.status_composition = StatusCompositionState::Submitting;

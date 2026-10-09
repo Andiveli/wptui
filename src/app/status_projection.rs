@@ -96,6 +96,27 @@ impl App<'_> {
             .collect()
     }
 
+    pub(crate) fn pending_own_status_messages(&self) -> Vec<wr::Message> {
+        let broadcast = wr::JID::from(STATUS_BROADCAST_CHAT.to_owned());
+        self.pending_outgoing_status
+            .iter()
+            .map(|(local_id, content)| wr::Message {
+                info: wr::MessageInfo {
+                    id: format!("local-send-{local_id}").into(),
+                    chat: broadcast.clone(),
+                    sender: broadcast.clone(),
+                    mentions_self: false,
+                    timestamp: self.now(),
+                    is_from_me: true,
+                    quote_id: None,
+                    read_by: 0,
+                    forwarding: Default::default(),
+                },
+                message: content.clone(),
+            })
+            .collect()
+    }
+
     pub fn status_latest_time(&self, contact: &wr::JID) -> Option<i64> {
         self.chat_messages
             .get(&wr::JID::from(STATUS_BROADCAST_CHAT.to_owned()))
