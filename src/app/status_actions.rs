@@ -546,7 +546,7 @@ mod tests {
         let mut app = TestApp::new();
         app.status_composition = StatusCompositionState::Authoring;
         app.composer.replace_text("caption");
-        for path in ["one.png", "two.png"] {
+        for path in ["one.png", "two.png", "three.png"] {
             app.composer
                 .pending
                 .push(crate::app::composer::PendingAttachment::new(
@@ -560,6 +560,12 @@ mod tests {
         assert_eq!(app.pending_own_status_messages().len(), 3);
         let mut confirmed = status_message("confirmed-status");
         confirmed.info.is_from_me = true;
+        confirmed.message = wr::MessageContent::File(wr::FileContent {
+            kind: wr::FileKind::Image,
+            path: "one.png".into(),
+            caption: Some("caption".into()),
+            ..Default::default()
+        });
         assert!(app.complete_status_send(ids[0], confirmed));
         assert!(app.status_batch_finished(1, Some(wr::StatusSendResult::SendFailed)));
         assert_eq!(app.own_status_messages().len(), 1);
