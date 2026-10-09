@@ -279,7 +279,11 @@ func sendStatusRequestWithLocalID(ctx context.Context, request statusSendRequest
 		LOG_WARN("status send failed: %v", err)
 		return statusSendResultSendFailed
 	}
-	if localSendID != 0 && response.ID != "" && onSent != nil {
+	if localSendID != 0 && response.ID == "" {
+		LOG_WARN("status send returned no canonical ID; outcome is uncertain")
+		return statusSendResultSendFailed
+	}
+	if localSendID != 0 && onSent != nil {
 		info := types.MessageInfo{
 			MessageSource: types.MessageSource{Chat: types.StatusBroadcastJID, Sender: *clientSnapshot.Store.ID, IsFromMe: true},
 			ID:            response.ID, Timestamp: response.Timestamp,

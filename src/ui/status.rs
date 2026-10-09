@@ -270,6 +270,54 @@ mod tests {
     }
 
     #[test]
+    fn queued_status_media_and_caption_are_subdued_without_download() {
+        for kind in [wr::FileKind::Image, wr::FileKind::Video] {
+            let mut app = TestApp::new();
+            app.status_composition = StatusCompositionState::Submitting;
+            app.pending_outgoing_status.push((
+                42,
+                wr::MessageContent::File(wr::FileContent {
+                    kind,
+                    path: "Qmedia.png".into(),
+                    caption: Some("Q caption".into()),
+                    ..Default::default()
+                }),
+            ));
+            let mut terminal = Terminal::new(TestBackend::new(60, 24)).unwrap();
+            let mut media_plan = crate::app::events::MediaRenderPlan::default();
+            let mut visibility_plan = VisibilityPlan::default();
+            terminal
+                .draw(|frame| {
+                    render_statuses_with_plan(
+                        frame,
+                        &mut app,
+                        &mut media_plan,
+                        &mut visibility_plan,
+                        Rect::new(0, 0, 60, 24),
+                    )
+                })
+                .unwrap();
+            let labels = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .filter(|cell| cell.symbol() == "Q")
+                .collect::<Vec<_>>();
+            assert!(!labels.is_empty(), "media path or caption must appear");
+            assert!(
+                labels
+                    .iter()
+                    .all(|cell| cell.modifier.contains(Modifier::DIM))
+            );
+            assert!(
+                media_plan.into_effects().is_empty(),
+                "pending local media must not trigger a download"
+            );
+        }
+    }
+
+    #[test]
     fn status_media_is_collected_for_post_draw_dispatch() {
         let mut app = TestApp::new();
         let contact: wr::JID = "status@example.test".to_owned().into();

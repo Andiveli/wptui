@@ -505,6 +505,7 @@ mod layout_contract_tests {
                         &mut media_render_plan,
                         Rect::new(0, 3, 24, 5),
                         &items,
+                        super::MessageTextMode::Chat,
                     ),
                     2
                 );
@@ -540,6 +541,7 @@ mod layout_contract_tests {
                     &mut narrow_media_render_plan,
                     Rect::new(0, 0, 12, 3),
                     &items,
+                    super::MessageTextMode::Chat,
                 );
             })
             .unwrap();
@@ -775,6 +777,9 @@ fn render_message(
                 alignment,
                 text_mode,
             );
+            if is_pending && text_mode == MessageTextMode::Status {
+                buf.set_style(content_area, Style::default().fg(Color::DarkGray).dim());
+            }
         }
         wr::MessageContent::ViewOnceUnavailable => {
             Paragraph::new(inline_content_lines(

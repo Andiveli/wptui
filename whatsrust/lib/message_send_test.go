@@ -171,10 +171,11 @@ func TestStatusSendCorrelatesCanonicalIDWithoutChangingLegacyResult(t *testing.T
 		localID  uint64
 		response whatsmeow.SendResponse
 		err      error
+		want     statusSendResult
 	}{
-		{name: "legacy send", localID: 0, response: response},
-		{name: "transport error", localID: 42, err: errors.New("unknown outcome")},
-		{name: "missing canonical ID", localID: 42},
+		{name: "legacy send", localID: 0, response: response, want: statusSendResultSent},
+		{name: "transport error", localID: 42, err: errors.New("unknown outcome"), want: statusSendResultSendFailed},
+		{name: "missing canonical ID", localID: 42, want: statusSendResultSendFailed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			callbacks = nil
@@ -185,8 +186,8 @@ func TestStatusSendCorrelatesCanonicalIDWithoutChangingLegacyResult(t *testing.T
 			if len(callbacks) != 0 {
 				t.Fatalf("unconfirmed send invoked callback: %+v", callbacks)
 			}
-			if tc.err != nil && result != statusSendResultSendFailed || tc.err == nil && result != statusSendResultSent {
-				t.Fatalf("result = %d, error = %v", result, tc.err)
+			if result != tc.want {
+				t.Fatalf("result = %d, want = %d, error = %v", result, tc.want, tc.err)
 			}
 		})
 	}
