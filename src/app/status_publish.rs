@@ -9,11 +9,19 @@ const MAX_QUEUED_STATUS_SENDS: usize = 64;
 
 enum Command {
     Send(wr::MessageContent),
-    Batch(Vec<wr::MessageContent>),
+    Batch(Vec<(u64, wr::MessageContent)>),
 }
 
 pub trait StatusSendPort: Send {
     fn send(&mut self, content: &wr::MessageContent) -> wr::StatusSendResult;
+
+    fn send_with_local_id(
+        &mut self,
+        content: &wr::MessageContent,
+        _local_id: u64,
+    ) -> wr::StatusSendResult {
+        self.send(content)
+    }
 }
 
 pub struct WhatsAppStatusSendPort;
@@ -21,6 +29,14 @@ pub struct WhatsAppStatusSendPort;
 impl StatusSendPort for WhatsAppStatusSendPort {
     fn send(&mut self, content: &wr::MessageContent) -> wr::StatusSendResult {
         wr::send_status(content)
+    }
+
+    fn send_with_local_id(
+        &mut self,
+        content: &wr::MessageContent,
+        local_id: u64,
+    ) -> wr::StatusSendResult {
+        wr::send_status_with_local_id(content, local_id)
     }
 }
 
@@ -42,6 +58,10 @@ impl Worker {
     }
 
     pub fn enqueue_batch(&self, content: Vec<wr::MessageContent>) -> bool {
+        self.enqueue_identified_batch(content.into_iter().map(|item| (0, item)).collect())
+    }
+
+    pub fn enqueue_identified_batch(&self, content: Vec<(u64, wr::MessageContent)>) -> bool {
         !content.is_empty()
             && content.len() <= MAX_QUEUED_STATUS_SENDS
             && self
@@ -61,8 +81,13 @@ fn run(rx: Receiver<Command>, app_tx: mpsc::Sender<AppInput>, mut port: Box<dyn 
             Command::Batch(contents) => {
                 let mut sent = 0;
                 let mut failure = None;
-                for content in &contents {
-                    match port.send(content) {
+                for (local_id, content) in &contents {
+                    let result = if *local_id == 0 {
+                        port.send(content)
+                    } else {
+                        port.send_with_local_id(content, *local_id)
+                    };
+                    match result {
                         wr::StatusSendResult::Sent => sent += 1,
                         result => {
                             failure = Some(result);
@@ -125,6 +150,40 @@ mod tests {
         assert!(
             matches!(&sent[2], wr::MessageContent::File(file) if file.kind.clone() as u8 == wr::FileKind::Video as u8)
         );
+    }
+
+    #[test]
+    fn identified_status_batch_passes_distinct_local_ids_in_order() {
+        struct IdentifiedPort(Arc<Mutex<Vec<u64>>>);
+        impl StatusSendPort for IdentifiedPort {
+            fn send(&mut self, _: &wr::MessageContent) -> wr::StatusSendResult {
+                panic!("identified batch must use the correlated route")
+            }
+
+            fn send_with_local_id(
+                &mut self,
+                _: &wr::MessageContent,
+                id: u64,
+            ) -> wr::StatusSendResult {
+                self.0.lock().unwrap().push(id);
+                wr::StatusSendResult::Sent
+            }
+        }
+        let (tx, rx) = mpsc::channel();
+        let ids = Arc::new(Mutex::new(Vec::new()));
+        let worker = Worker::new(tx, Box::new(IdentifiedPort(Arc::clone(&ids))));
+        assert!(worker.enqueue_identified_batch(vec![
+            (41, wr::MessageContent::Text("one".into())),
+            (42, wr::MessageContent::Text("two".into())),
+        ]));
+        assert!(matches!(
+            rx.recv_timeout(Duration::from_secs(1)),
+            Ok(AppInput::App(AppEvent::StatusBatchFinished {
+                sent: 2,
+                failure: None
+            }))
+        ));
+        assert_eq!(*ids.lock().unwrap(), vec![41, 42]);
     }
 
     #[test]

@@ -163,11 +163,16 @@ func C_SendOutboundMessage(cjid C.JID, messageType C.uint8_t, messageContent uns
 
 //export C_SendStatusMessage
 func C_SendStatusMessage(messageType C.uint8_t, messageContent unsafe.Pointer) C.uint8_t {
+	return C_SendStatusMessageWithLocalID(messageType, messageContent, 0)
+}
+
+//export C_SendStatusMessageWithLocalID
+func C_SendStatusMessageWithLocalID(messageType C.uint8_t, messageContent unsafe.Pointer, localSendID C.uint64_t) C.uint8_t {
 	request, result := statusSendRequestFromC(messageType, messageContent)
 	if result != statusSendResultSent {
 		return C.uint8_t(result)
 	}
-	return C.uint8_t(sendStatusMessage(request))
+	return C.uint8_t(sendStatusMessageWithLocalID(request, uint64(localSendID)))
 }
 
 func textSendRequestFromC(cjid C.JID, messageType C.uint8_t, messageContent unsafe.Pointer, quoteID *C.char, quoteSender C.JID, quoteChat C.JID, quoteMessageType C.uint8_t, quoteMessageContent unsafe.Pointer, localSendID uint64) (textSendRequest, bool) {
@@ -235,16 +240,20 @@ func statusSendRequestFromC(messageType C.uint8_t, messageContent unsafe.Pointer
 	}
 }
 
-func sendStatusMessage(request statusSendRequest) statusSendResult {
+func sendStatusMessageWithLocalID(request statusSendRequest, localSendID uint64) statusSendResult {
 	clientSnapshot := lifecycleState.clientSnapshot()
 	if clientSnapshot == nil || clientSnapshot.Store == nil || clientSnapshot.Store.ID == nil {
 		LOG_WARN("status send rejected: client is unavailable")
 		return statusSendResultClientUnavailable
 	}
-	return sendStatusRequest(context.Background(), request, clientSnapshot, clientSnapshot.Upload, requestSendMessage)
+	return sendStatusRequestWithLocalID(context.Background(), request, clientSnapshot, clientSnapshot.Upload, requestSendMessage, localSendID, HandleOptimisticTextSent)
 }
 
 func sendStatusRequest(ctx context.Context, request statusSendRequest, clientSnapshot *whatsmeow.Client, upload uploadMediaFunc, send sendMessageRequest) statusSendResult {
+	return sendStatusRequestWithLocalID(ctx, request, clientSnapshot, upload, send, 0, nil)
+}
+
+func sendStatusRequestWithLocalID(ctx context.Context, request statusSendRequest, clientSnapshot *whatsmeow.Client, upload uploadMediaFunc, send sendMessageRequest, localSendID uint64, onSent func(uint64, types.MessageInfo, *waE2E.Message)) statusSendResult {
 	var message *waE2E.Message
 	switch request.messageType {
 	case MessageTypeText:
@@ -265,9 +274,17 @@ func sendStatusRequest(ctx context.Context, request statusSendRequest, clientSna
 	default:
 		return statusSendResultUnsupportedContent
 	}
-	if _, err := send(clientSnapshot, ctx, types.StatusBroadcastJID, message); err != nil {
+	response, err := send(clientSnapshot, ctx, types.StatusBroadcastJID, message)
+	if err != nil {
 		LOG_WARN("status send failed: %v", err)
 		return statusSendResultSendFailed
+	}
+	if localSendID != 0 && response.ID != "" && onSent != nil {
+		info := types.MessageInfo{
+			MessageSource: types.MessageSource{Chat: types.StatusBroadcastJID, Sender: *clientSnapshot.Store.ID, IsFromMe: true},
+			ID:            response.ID, Timestamp: response.Timestamp,
+		}
+		onSent(localSendID, info, message)
 	}
 	return statusSendResultSent
 }

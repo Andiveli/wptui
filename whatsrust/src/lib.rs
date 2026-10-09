@@ -60,6 +60,11 @@ pub enum StatusSendResult {
 
 unsafe extern "C" {
     fn C_SendStatusMessage(message_type: u8, content: *const std::ffi::c_void) -> u8;
+    fn C_SendStatusMessageWithLocalID(
+        message_type: u8,
+        content: *const std::ffi::c_void,
+        local_send_id: u64,
+    ) -> u8;
 }
 
 fn status_content_allowed(content: &MessageContent) -> Result<(), StatusSendResult> {
@@ -101,6 +106,21 @@ pub fn send_status(content: &MessageContent) -> StatusSendResult {
     }
     let (message_type, pointer, _holder) = message_send::build_content_for_ffi(content, &[]);
     status_send_result_from_code(unsafe { C_SendStatusMessage(message_type, pointer) })
+}
+
+/// Send a status and report its canonical message through the existing
+/// optimistic-send callback, correlated by the caller's nonzero local ID.
+pub fn send_status_with_local_id(content: &MessageContent, local_send_id: u64) -> StatusSendResult {
+    if let Err(result) = status_content_allowed(content) {
+        return result;
+    }
+    if local_send_id == 0 {
+        return StatusSendResult::InvalidContent;
+    }
+    let (message_type, pointer, _holder) = message_send::build_content_for_ffi(content, &[]);
+    status_send_result_from_code(unsafe {
+        C_SendStatusMessageWithLocalID(message_type, pointer, local_send_id)
+    })
 }
 
 #[cfg(test)]

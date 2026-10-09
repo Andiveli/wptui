@@ -115,6 +115,83 @@ func TestSendStatusRequestReportsUploadAndSendFailures(t *testing.T) {
 	}
 }
 
+func TestStatusSendCorrelatesCanonicalIDWithoutChangingLegacyResult(t *testing.T) {
+	self := types.NewJID("self", types.DefaultUserServer)
+	client := &whatsmeow.Client{Store: &store.Device{ID: &self}}
+	request := statusSendRequest{messageType: MessageTypeText, text: "status"}
+	var callbacks []types.MessageInfo
+	onSent := func(localID uint64, info types.MessageInfo, message *waE2E.Message) {
+		if localID != 42 || message.GetExtendedTextMessage().GetText() != "status" {
+			t.Errorf("callback local ID = %d, message = %v", localID, message)
+		}
+		callbacks = append(callbacks, info)
+	}
+	response := whatsmeow.SendResponse{ID: "canonical-status", Timestamp: time.Now()}
+	result := sendStatusRequestWithLocalID(context.Background(), request, client, nil,
+		func(*whatsmeow.Client, context.Context, types.JID, *waE2E.Message) (whatsmeow.SendResponse, error) {
+			return response, nil
+		}, 42, onSent)
+	if result != statusSendResultSent || len(callbacks) != 1 || callbacks[0].ID != response.ID || callbacks[0].Chat != types.StatusBroadcastJID || !callbacks[0].IsFromMe || callbacks[0].Sender != self {
+		t.Fatalf("result = %d, canonical callbacks = %+v", result, callbacks)
+	}
+	for _, media := range []struct {
+		name string
+		kind uint8
+	}{
+		{name: "image", kind: FileTypeImage},
+		{name: "video", kind: FileTypeVideo},
+	} {
+		t.Run(media.name, func(t *testing.T) {
+			path := t.TempDir() + "/status-file"
+			if err := os.WriteFile(path, []byte("media"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			callbacks = nil
+			request := statusSendRequest{messageType: MessageTypeFile, fileKind: media.kind, filePath: path}
+			result := sendStatusRequestWithLocalID(context.Background(), request, client,
+				func(context.Context, []byte, whatsmeow.MediaType) (whatsmeow.UploadResponse, error) {
+					return whatsmeow.UploadResponse{URL: "https://example.test/status", DirectPath: "/status"}, nil
+				},
+				func(*whatsmeow.Client, context.Context, types.JID, *waE2E.Message) (whatsmeow.SendResponse, error) {
+					return response, nil
+				}, 42,
+				func(id uint64, info types.MessageInfo, message *waE2E.Message) {
+					if id != 42 || info.ID != response.ID || (media.kind == FileTypeImage && message.GetImageMessage() == nil) || (media.kind == FileTypeVideo && message.GetVideoMessage() == nil) {
+						t.Errorf("unexpected media callback: id=%d info=%+v", id, info)
+					}
+					callbacks = append(callbacks, info)
+				})
+			if result != statusSendResultSent || len(callbacks) != 1 {
+				t.Fatalf("result = %d, callbacks = %+v", result, callbacks)
+			}
+		})
+	}
+	for _, tc := range []struct {
+		name     string
+		localID  uint64
+		response whatsmeow.SendResponse
+		err      error
+	}{
+		{name: "legacy send", localID: 0, response: response},
+		{name: "transport error", localID: 42, err: errors.New("unknown outcome")},
+		{name: "missing canonical ID", localID: 42},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			callbacks = nil
+			result := sendStatusRequestWithLocalID(context.Background(), request, client, nil,
+				func(*whatsmeow.Client, context.Context, types.JID, *waE2E.Message) (whatsmeow.SendResponse, error) {
+					return tc.response, tc.err
+				}, tc.localID, onSent)
+			if len(callbacks) != 0 {
+				t.Fatalf("unconfirmed send invoked callback: %+v", callbacks)
+			}
+			if tc.err != nil && result != statusSendResultSendFailed || tc.err == nil && result != statusSendResultSent {
+				t.Fatalf("result = %d, error = %v", result, tc.err)
+			}
+		})
+	}
+}
+
 func ptr[T any](value T) *T {
 	return &value
 }
