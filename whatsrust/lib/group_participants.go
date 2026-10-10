@@ -91,7 +91,7 @@ func groupParticipantName(ctx context.Context, participant types.GroupParticipan
 				if name := nonNumericLocalContactName(contact); name != "" {
 					return name
 				}
-			} else if name := locallySavedContactName(contact); name != "" {
+			} else if name := locallySavedContactName(contact); name != "" && !phoneLikeName(name) {
 				return name
 			}
 			if !isSelf && pushName == "" {
@@ -100,15 +100,15 @@ func groupParticipantName(ctx context.Context, participant types.GroupParticipan
 		}
 	}
 	if isSelf {
-		return participantFallbackName(participant)
+		return participantFallbackName(ctx, participant, lids)
 	}
-	if name := plainContactName(participant.DisplayName); name != "" {
+	if name := plainContactName(participant.DisplayName); name != "" && !phoneLikeName(name) {
 		return name
 	}
-	if pushName != "" {
+	if pushName != "" && !phoneLikeName(pushName) {
 		return pushName
 	}
-	return participantFallbackName(participant)
+	return participantFallbackName(ctx, participant, lids)
 }
 
 func currentUserPushName(client *whatsmeow.Client) string {
@@ -127,9 +127,12 @@ func excludeSelfGroupParticipants(ctx context.Context, participants []types.Grou
 	return result
 }
 
-func participantFallbackName(participant types.GroupParticipant) string {
-	for _, jid := range []types.JID{participant.PhoneNumber, participant.JID, participant.LID} {
-		if !jid.IsEmpty() && jid.User != "" {
+func participantFallbackName(ctx context.Context, participant types.GroupParticipant, lids store.LIDStore) string {
+	if participant.PhoneNumber.Server == types.DefaultUserServer && participant.PhoneNumber.User != "" {
+		return participant.PhoneNumber.User
+	}
+	for _, jid := range participantJIDs(ctx, participant, lids) {
+		if jid.Server == types.DefaultUserServer && jid.User != "" {
 			return jid.User
 		}
 	}

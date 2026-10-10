@@ -18,6 +18,7 @@ import "C"
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"unsafe"
 
@@ -31,14 +32,35 @@ type contactEntry struct {
 	name string
 }
 
-// contactDisplayName follows the same fallback order as Rust get_contact_name.
+// Prefer a saved name, unless the phone stored in the address book is only
+// a numeric placeholder for the contact's WhatsApp profile name.
 func contactDisplayName(c types.ContactInfo) string {
-	for _, candidate := range []string{c.FullName, c.FirstName, c.PushName, c.BusinessName} {
+	name, _ := contactNameCandidate(c)
+	return name
+}
+
+// Higher ranks win when PN and LID contact records describe the same person.
+func contactNameCandidate(c types.ContactInfo) (string, int) {
+	var numericLocal string
+	for _, candidate := range []string{c.FullName, c.FirstName} {
 		if name := plainContactName(candidate); name != "" {
-			return name
+			if !phoneLikeName(name) {
+				return name, 3
+			}
+			if numericLocal == "" {
+				numericLocal = name
+			}
 		}
 	}
-	return ""
+	for _, candidate := range []string{c.PushName, c.BusinessName} {
+		if name := plainContactName(candidate); name != "" && !phoneLikeName(name) {
+			return name, 2
+		}
+	}
+	if numericLocal != "" {
+		return numericLocal, 1
+	}
+	return "", 0
 }
 
 func plainContactName(name string) string {
@@ -69,22 +91,66 @@ func lookupMentionContactEntries() []contactEntry {
 }
 
 func loadContactEntries(ctx context.Context, bridgeClient *whatsmeow.Client) ([]contactEntry, error) {
-	if bridgeClient == nil || bridgeClient.Store == nil || bridgeClient.Store.Contacts == nil {
+	if bridgeClient == nil || bridgeClient.Store == nil {
 		return nil, nil
 	}
-	contacts, err := bridgeClient.Store.Contacts.GetAllContacts(ctx)
-	if err != nil {
-		return nil, err
+	var contacts map[types.JID]types.ContactInfo
+	if bridgeClient.Store.Contacts != nil {
+		var err error
+		contacts, err = bridgeClient.Store.Contacts.GetAllContacts(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
-	entries := make([]contactEntry, 0, len(contacts))
+	type rankedName struct {
+		name string
+		rank int
+	}
+	resolved := make(map[types.JID]rankedName, len(contacts))
 	for jid, contact := range contacts {
-		name := contactDisplayName(contact)
+		aliases := contactJIDs(ctx, jid, bridgeClient.Store.LIDs)
+		name, rank := contactNameCandidate(contact)
+		if name == "" {
+			for _, alias := range aliases {
+				if alias.Server == types.DefaultUserServer && alias.User != "" {
+					name = alias.User
+					break
+				}
+			}
+		}
 		if name == "" {
 			continue
 		}
-		for _, alias := range contactJIDs(ctx, jid, bridgeClient.Store.LIDs) {
-			entries = append(entries, contactEntry{jid: alias, name: name})
+		for _, alias := range aliases {
+			previous := resolved[alias]
+			if rank > previous.rank || (rank == previous.rank && (previous.name == "" || name < previous.name)) {
+				resolved[alias] = rankedName{name: name, rank: rank}
+			}
 		}
+	}
+	// Authenticated self identity wins over a numeric address-book placeholder.
+	selfName := selfDisplayNameWithContacts(ctx, bridgeClient, bridgeClient.Store.Contacts)
+	if selfName == "" {
+		for _, jid := range selfIdentityJIDs(ctx, bridgeClient) {
+			if jid.Server == types.DefaultUserServer && jid.User != "" {
+				selfName = jid.User
+				break
+			}
+		}
+	}
+	if selfName != "" {
+		for _, jid := range selfIdentityJIDs(ctx, bridgeClient) {
+			resolved[jid] = rankedName{name: selfName, rank: 4}
+		}
+	}
+	jids := make([]types.JID, 0, len(resolved))
+	for jid := range resolved {
+		jids = append(jids, jid)
+	}
+	sort.Slice(jids, func(i, j int) bool { return jids[i].String() < jids[j].String() })
+	entries := make([]contactEntry, 0, len(jids))
+	for _, jid := range jids {
+		entries = append(entries, contactEntry{jid: jid, name: resolved[jid].name})
 	}
 	return entries, nil
 }

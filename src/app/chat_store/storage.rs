@@ -17,6 +17,15 @@ impl App<'_> {
         );
 
         let id = message.info.id.clone();
+        if let Some(name) = self.message_push_name.lookup_push_name(&id) {
+            let name = super::hydration::canonical_contact_name(&name);
+            if !name.is_empty()
+                && !(message.info.sender.0.ends_with("@lid")
+                    && super::hydration::phone_like_name(&name))
+            {
+                self.profile_names.insert(message.info.sender.clone(), name);
+            }
+        }
         let is_new = !self.messages.contains_key(&id);
         // Ownership is monotonic for a protocol message ID. A later echo or
         // history revision may improve content, but it must not erase a

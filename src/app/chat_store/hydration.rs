@@ -81,22 +81,38 @@ impl App<'_> {
         self.invalidate_chat_list();
     }
 
-    /// Display name for a JID (chat or sender). Falls back to the JID string if not in contacts.
+    /// Display name for a JID (chat or sender). A LID is not a phone number.
     pub fn contact_name(&self, jid: &wr::JID) -> Arc<str> {
         self.contacts
             .get(jid)
+            .filter(|name| !phone_like_name(name))
+            .or_else(|| self.profile_names.get(jid))
+            .or_else(|| self.contacts.get(jid))
             .map(|name| canonical_contact_name(name))
-            .unwrap_or_else(|| jid.0.clone())
+            .unwrap_or_else(|| {
+                let Some((user, server)) = jid.0.split_once('@') else {
+                    return jid.0.clone();
+                };
+                if server == "lid" {
+                    return Arc::from("");
+                }
+                if server == "s.whatsapp.net" && user.chars().all(|digit| digit.is_ascii_digit()) {
+                    return Arc::from(user);
+                }
+                jid.0.clone()
+            })
     }
 
     pub fn message_sender_name(&self, message: &wr::Message) -> Arc<str> {
         self.contacts
             .get(&message.info.sender)
+            .filter(|name| !phone_like_name(name))
             .map(|name| canonical_contact_name(name))
             .or_else(|| {
                 self.message_push_name
                     .lookup_push_name(&message.info.id)
                     .map(|name| canonical_contact_name(&name))
+                    .filter(|name| !phone_like_name(name))
             })
             .unwrap_or_else(|| self.contact_name(&message.info.sender))
     }
@@ -116,8 +132,21 @@ impl App<'_> {
         }
         if changed {
             self.invalidate_chat_list();
+            self.refresh_status_contacts();
         }
     }
+}
+
+pub(super) fn phone_like_name(name: &str) -> bool {
+    let mut digits = false;
+    for character in name.trim().chars() {
+        if character.is_ascii_digit() {
+            digits = true;
+        } else if !" +-().".contains(character) {
+            return false;
+        }
+    }
+    digits
 }
 
 pub(super) fn canonical_contact_name(name: &str) -> Arc<str> {
@@ -168,6 +197,44 @@ mod tests {
     }
 
     #[test]
+    fn unknown_lid_is_not_a_phone_number_but_known_lid_uses_its_contact_name() {
+        let mut app = TestApp::new();
+        let lid = wr::JID::from("99887766@lid".to_owned());
+        assert_eq!(app.contact_name(&lid).as_ref(), "");
+
+        app.contacts.insert(lid.clone(), "Saved Name".into());
+        assert_eq!(app.contact_name(&lid).as_ref(), "Saved Name");
+        assert_eq!(
+            app.contact_name(&wr::JID::from("15551234567@s.whatsapp.net".to_owned()))
+                .as_ref(),
+            "15551234567"
+        );
+    }
+
+    #[test]
+    fn profile_name_overrides_a_cached_verified_phone_but_not_a_saved_name() {
+        let mut app = TestApp::new();
+        let sender = wr::JID::from("99887766@lid".to_owned());
+        app.contacts.insert(sender.clone(), "15551234567".into());
+        app.profile_names.insert(sender.clone(), "Profile Name".into());
+        assert_eq!(app.contact_name(&sender).as_ref(), "Profile Name");
+
+        app.contacts.insert(sender.clone(), "Saved Name".into());
+        assert_eq!(app.contact_name(&sender).as_ref(), "Saved Name");
+    }
+
+    #[test]
+    fn message_profile_name_labels_an_unsaved_lid_after_ingestion() {
+        let sender = wr::JID::from("99887766@lid".to_owned());
+        let incoming = message("profile-from-message", sender.0.as_ref());
+        let mut app = TestApp::with_message_push_name(Box::new(
+            FakeMessagePushNamePort::with_name(incoming.info.id.clone(), "WhatsApp Profile"),
+        ));
+        app.add_message(incoming);
+        assert_eq!(app.contact_name(&sender).as_ref(), "WhatsApp Profile");
+    }
+
+    #[test]
     fn local_contact_name_wins_over_message_push_name() {
         let sender = wr::JID::from("123@s.whatsapp.net".to_owned());
         let message = message("local-name", sender.0.as_ref());
@@ -199,7 +266,7 @@ mod tests {
         let without_push = message("numeric-name", "456@s.whatsapp.net");
         assert_eq!(
             app.message_sender_name(&without_push).as_ref(),
-            "456@s.whatsapp.net"
+            "456"
         );
     }
 }

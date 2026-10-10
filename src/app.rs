@@ -221,6 +221,8 @@ pub struct App<'a> {
 
     // Maps JID to display name
     pub contacts: HashMap<wr::JID, Arc<str>>,
+    /// Profile names learned from message metadata, subordinate to saved contacts.
+    pub profile_names: HashMap<wr::JID, Arc<str>>,
 
     pub clipboard_reader: Box<dyn ClipboardReader>,
     pub clipboard_writer: Box<dyn ClipboardWriter>,

@@ -58,6 +58,29 @@ func TestGroupParticipantNameFallsBackToProtocolIdentity(t *testing.T) {
 	}
 }
 
+func TestGroupParticipantNameNeverUsesUnmappedLIDAsPhone(t *testing.T) {
+	lid := types.JID{User: "99887766", Server: types.HiddenUserServer}
+	phone := types.JID{User: "15551234567", Server: types.DefaultUserServer}
+	for _, tc := range []struct {
+		name        string
+		participant types.GroupParticipant
+		contacts    groupParticipantContacts
+		want        string
+	}{
+		{name: "verified phone", participant: types.GroupParticipant{JID: lid, PhoneNumber: phone}, want: phone.User},
+		{name: "unmapped LID", participant: types.GroupParticipant{JID: lid}, want: ""},
+		{name: "numeric LID display is not a phone", participant: types.GroupParticipant{JID: lid, DisplayName: lid.User}, want: ""},
+		{name: "numeric display with empty JID", participant: types.GroupParticipant{LID: lid, DisplayName: lid.User}, want: ""},
+		{name: "numeric local name with empty JID", participant: types.GroupParticipant{LID: lid}, contacts: groupParticipantContacts{contacts: map[types.JID]types.ContactInfo{lid: {FullName: lid.User}}}, want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := groupParticipantName(context.Background(), tc.participant, tc.contacts); got != tc.want {
+				t.Fatalf("groupParticipantName() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestGroupParticipantNameUsesPlainSavedAndPushNamesBeforeNumericFallback(t *testing.T) {
 	phone := types.JID{User: "123", Server: types.DefaultUserServer}
 	tests := []struct {

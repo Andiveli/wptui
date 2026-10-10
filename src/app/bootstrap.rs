@@ -114,6 +114,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         chats: HashMap::new(),
         group_permissions: HashMap::new(),
         contacts: HashMap::new(),
+        profile_names: HashMap::new(),
         clipboard_reader,
         clipboard_writer,
         chat_messages: HashMap::new(),
