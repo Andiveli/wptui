@@ -27,6 +27,16 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: "stable"
+          cache: ${{ startsWith(github.ref, 'refs/heads/preview/') }}
+          cache-dependency-path: whatsrust/lib/go.sum
+
+      # v2.9.2: cache dependent crates/target artifacts, not Cargo binaries.
+      - name: Cache Rust dependencies for preview
+        if: startsWith(github.ref, 'refs/heads/preview/')
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          cache-bin: "false"
+          cache-on-failure: "true"
 
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libwayland-dev libchafa-dev libglib2.0-dev
