@@ -45,10 +45,9 @@ fn draw(app: &mut TestApp, terminal: &mut Terminal<TestBackend>) {
 
 #[test]
 fn wheel_over_status_contacts_moves_only_that_visible_list() {
-    let mut app = TestApp::new();
+    let mut app = TestApp::with_settings("mouse=enable\n");
     app.selected_section = Section::Status;
     app.focus_pane = FocusPane::ChatList;
-    app.mouse_capture_enabled = true;
     let broadcast: JID = "status@broadcast".to_owned().into();
     for (index, name) in ["alice", "bob", "carol"].into_iter().enumerate() {
         let sender: JID = format!("{name}@s.whatsapp.net").into();
@@ -66,18 +65,32 @@ fn wheel_over_status_contacts_moves_only_that_visible_list() {
     assert_eq!(app.status_selection.selected(), Some(1));
     assert_eq!(app.focus_pane, FocusPane::ChatList);
     assert_eq!(app.selected_section, Section::Status);
+}
 
-    app.mouse_capture_enabled = false;
+#[test]
+fn mouse_disabled_by_default_ignores_injected_wheel_events() {
+    let mut app = TestApp::new();
+    app.selected_section = Section::Status;
+    let broadcast: JID = "status@broadcast".to_owned().into();
+    for (index, name) in ["alice", "bob"].into_iter().enumerate() {
+        let sender: JID = format!("{name}@s.whatsapp.net").into();
+        let mut status = message(&broadcast, name, (index + 1) as i64, name);
+        status.info.sender = sender;
+        app.add_message(status);
+    }
+    let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+    draw(&mut app, &mut terminal);
+    assert_eq!(app.status_selection.selected(), Some(0));
+
     app.on_terminal_event(mouse(MouseEventKind::ScrollDown, 20, 2));
-    assert_eq!(app.status_selection.selected(), Some(1));
+    assert_eq!(app.status_selection.selected(), Some(0));
 }
 
 #[test]
 fn wheel_over_messages_scrolls_rendered_rows_without_changing_selection() {
-    let mut app = TestApp::new();
+    let mut app = TestApp::with_settings("mouse=enable\n");
     let chat: JID = "wheel@example.test".to_owned().into();
     app.open_chat_by_jid(chat.clone());
-    app.mouse_capture_enabled = true;
     app.focus_pane = FocusPane::Conversation;
     for index in 0..12 {
         app.add_message(message(
@@ -120,11 +133,10 @@ fn wheel_over_messages_scrolls_rendered_rows_without_changing_selection() {
 
 #[test]
 fn clicking_a_rendered_variable_height_message_selects_that_exact_row() {
-    let mut app = TestApp::new();
+    let mut app = TestApp::with_settings("mouse=enable\n");
     let chat: JID = "click@example.test".to_owned().into();
     app.open_chat_by_jid(chat.clone());
     app.focus_pane = FocusPane::Conversation;
-    app.mouse_capture_enabled = true;
     for (id, time, text) in [
         ("old", 1, "OLDER-MESSAGE"),
         ("middle", 2, "MIDDLE-CLICK-TARGET"),

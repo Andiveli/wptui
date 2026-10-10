@@ -33,6 +33,15 @@ impl TestApp {
         Self { app, _dir: dir }
     }
 
+    /// Loads real settings from an isolated test directory before bootstrap.
+    pub fn with_settings(settings: &str) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("settings.conf"), settings).unwrap();
+        let app: App<'static> = App::with_data_dir(dir.path(), dir.path());
+        app.db_handler.init();
+        Self { app, _dir: dir }
+    }
+
     /// Builds an app whose `db_handler` targets the already-initialized
     /// database at `path`. The base app still lives in a private tempdir.
     pub fn with_database(path: &Path) -> Self {
