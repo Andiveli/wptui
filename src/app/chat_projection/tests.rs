@@ -344,6 +344,35 @@ fn one_unread_linked_group_opens_directly() {
     assert_eq!(app.community_detail, None);
 }
 #[test]
+fn restored_unread_group_filter_opens_the_only_unread_community_member() {
+    let mut app = TestApp::new();
+    let unread = jid("restored@g.us");
+    let quiet = jid("quiet@g.us");
+    for chat in [&unread, &quiet] {
+        add_chat(&mut app, chat);
+    }
+    app.sorted_chats = vec![unread.clone(), quiet.clone()];
+    app.communities = vec![CommunityNode {
+        jid: jid("community@g.us"),
+        name: "Project Team".into(),
+        is_root: true,
+        linked_groups: vec![unread.clone(), quiet],
+        is_joined: true,
+        is_default_subgroup: false,
+        is_announce: None,
+        participant_count: None,
+    }];
+    app.add_message(crate::app::test_support::message(&unread, "new", 2));
+    app.timeline.get_mut(&unread).unwrap().pending_new_messages = 0;
+    app.chat_filter = ChatFilter::Unread;
+    assert_eq!(app.visible_chat_rows().len(), 1);
+    app.chat_list_state.select(Some(0));
+    app.dispatch_action(crate::app::actions::AppAction::OpenChat);
+    assert_eq!(app.open_chat(), Some(unread));
+    assert_eq!(app.community_detail, None);
+}
+
+#[test]
 fn zero_unread_linked_groups_open_virtual_detail_rows() {
     let mut app = TestApp::new();
     let group = jid("group@g.us");
