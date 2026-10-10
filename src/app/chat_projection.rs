@@ -12,6 +12,7 @@ pub enum ChatFilter {
     All,
     Unread,
     Groups,
+    Archived,
 }
 
 impl ChatFilter {
@@ -19,7 +20,8 @@ impl ChatFilter {
         match self {
             Self::All => Self::Unread,
             Self::Unread => Self::Groups,
-            Self::Groups => Self::All,
+            Self::Groups => Self::Archived,
+            Self::Archived => Self::All,
         }
     }
 
@@ -28,6 +30,7 @@ impl ChatFilter {
             Self::All => "All",
             Self::Unread => "Unread",
             Self::Groups => "Groups",
+            Self::Archived => "Archived",
         }
     }
 }
@@ -40,6 +43,7 @@ pub struct ChatListViewModel {
     pub revision: u64,
     pub query: String,
     pub filter: ChatFilter,
+    pub archive_view: bool,
     pub detail_rows: Vec<ContactRow>,
     pub detail_items: Vec<crate::ui::contact_list::ContactListItem>,
     pub detail_jid: Option<wr::JID>,
@@ -219,6 +223,11 @@ impl App<'_> {
             .and_then(|index| self.visible_contact_rows().into_iter().nth(index))
     }
 
+    pub(crate) fn is_archived_chat(&self, jid: &wr::JID) -> bool {
+        let settings = self.chat_settings_query.get_chat_settings(jid);
+        settings.found && settings.archived
+    }
+
     pub fn community_detail_rows(&self) -> Vec<ContactRow> {
         let Some(root) = self.community_detail.as_ref().and_then(|jid| {
             dedupe_nodes(self.communities.iter().filter(|node| node.jid == *jid))
@@ -228,6 +237,13 @@ impl App<'_> {
             return Vec::new();
         };
         let mut groups = self.linked_group_nodes(root);
+        if self.selected_section == super::actions::Section::Chats {
+            let archive_view = self.chat_filter == ChatFilter::Archived;
+            groups.retain(|group| {
+                !self.chats.contains_key(&group.jid)
+                    || self.is_archived_chat(&group.jid) == archive_view
+            });
+        }
         groups.sort_by(|left, right| {
             left.name
                 .cmp(&right.name)
@@ -290,11 +306,13 @@ impl App<'_> {
         dedupe_nodes(self.communities.iter().filter(|node| node.is_root))
             .into_iter()
             .find(|root| {
+                let archive_view = self.chat_filter == ChatFilter::Archived;
                 let members = self
                     .linked_group_nodes(root)
                     .into_iter()
                     .filter(|group| self.chats.contains_key(&group.jid) && group.is_joined)
-                    .map(|group| group.jid);
+                    .map(|group| group.jid)
+                    .filter(|jid| self.is_archived_chat(jid) == archive_view);
                 row.label == root.name
                     && members.clone().count() == row.members.len()
                     && members.clone().all(|jid| row.members.contains(&jid))
@@ -355,6 +373,20 @@ impl App<'_> {
                     target: (*jid).clone(),
                 }),
         );
+        let archive_view = self.chat_filter == ChatFilter::Archived;
+        rows.retain_mut(|row| {
+            row.members
+                .retain(|jid| self.is_archived_chat(jid) == archive_view);
+            let Some(target) = row
+                .members
+                .iter()
+                .max_by_key(|jid| recency.get(*jid).copied().unwrap_or_default())
+            else {
+                return false;
+            };
+            row.target = target.clone();
+            true
+        });
         rows.sort_by(|left, right| {
             recency
                 .get(&right.target)
@@ -377,7 +409,7 @@ impl App<'_> {
             .enumerate()
             .filter(|(index, row)| {
                 let matches_filter = match self.chat_filter {
-                    ChatFilter::All => true,
+                    ChatFilter::All | ChatFilter::Archived => true,
                     ChatFilter::Unread => items[*index].unread,
                     ChatFilter::Groups => row.members.iter().any(Self::is_group_chat),
                 };
@@ -420,10 +452,10 @@ impl App<'_> {
 
     fn ensure_chat_list_view(&mut self) {
         let query = self.contact_search.input.to_lowercase();
-        let needs_semantic = self
-            .chat_list_view
-            .as_ref()
-            .is_none_or(|view| view.revision != self.chat_list_revision);
+        let needs_semantic = self.chat_list_view.as_ref().is_none_or(|view| {
+            view.revision != self.chat_list_revision
+                || view.archive_view != (self.chat_filter == ChatFilter::Archived)
+        });
         if needs_semantic {
             let started = std::time::Instant::now();
             let latest = self.latest_messages();
@@ -491,6 +523,7 @@ impl App<'_> {
                 revision: self.chat_list_revision,
                 query: "\0".into(),
                 filter: ChatFilter::All,
+                archive_view: self.chat_filter == ChatFilter::Archived,
                 detail_rows: Vec::new(),
                 detail_items: Vec::new(),
                 detail_jid: None,

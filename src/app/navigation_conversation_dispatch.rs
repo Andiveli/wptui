@@ -78,6 +78,11 @@ impl App<'_> {
                             node.linked_groups
                                 .iter()
                                 .filter(|jid| {
+                                    if self.is_archived_chat(jid)
+                                        != (self.chat_filter == ChatFilter::Archived)
+                                    {
+                                        return false;
+                                    }
                                     if self.chat_filter == ChatFilter::Unread {
                                         self.pending_chat_activity(jid).0 > 0
                                     } else {

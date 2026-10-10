@@ -57,6 +57,8 @@ mod tests {
         assert!(app.handle_chat_filter_input(Key::k(KeyCode::Tab)));
         assert_eq!(app.chat_filter, crate::app::ChatFilter::Groups);
         assert!(app.handle_chat_filter_input(Key::k(KeyCode::Tab)));
+        assert_eq!(app.chat_filter, crate::app::ChatFilter::Archived);
+        assert!(app.handle_chat_filter_input(Key::k(KeyCode::Tab)));
         assert_eq!(app.chat_filter, crate::app::ChatFilter::All);
 
         app.selected_section = Section::Communities;

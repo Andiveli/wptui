@@ -21,6 +21,7 @@ pub(crate) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
             crate::app::ChatFilter::All,
             crate::app::ChatFilter::Unread,
             crate::app::ChatFilter::Groups,
+            crate::app::ChatFilter::Archived,
         ];
         let text = filters
             .iter()
@@ -130,7 +131,7 @@ mod tests {
             .unwrap();
         let buffer = terminal.backend().buffer();
         let first_line = (0..50).map(|x| buffer[(x, 0)].symbol()).collect::<String>();
-        assert!(first_line.contains("All  [Unread]  Groups  (Tab)"));
+        assert!(first_line.contains("All  [Unread]  Groups  Archived  (Tab)"));
         let search_line = (0..50).map(|x| buffer[(x, 1)].symbol()).collect::<String>();
         assert!(search_line.starts_with("/x"));
     }
