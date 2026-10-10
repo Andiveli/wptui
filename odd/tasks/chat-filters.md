@@ -11,12 +11,15 @@ S5. "Sí, commits locales" — "Cierro cada filtro verificado con un commit en l
 S6. "No tienes que usar cargo acá, usa github actions para poder usar el build o los test"
 S7. "Sí, separados como en WhatsApp" — "«Todos» excluye archivados; «Archivados» los muestra."
 S8. "Falló, y los grupos de los comunidades no se pueden archivar"
+S9. "Okay, ya probé el binario y me agrada, pero en cuestió de UI habría que mejorar un poco, yo creo que desplazar hacia abajo todo, no solo contactos, para que así no se vea montado, me explico?"
+S10. "Toda la interfaz (recomendado)"
 
 ## Tasks
 T1 [S1,S3,S4,S5,S6] DONE Inline: All/Unread/Groups chat-list filters, navigation, tests and usage docs; commits: 7b4f59413aefc30366ab3974bec9dae610eaa205, 639435eadbca40700e41c887313713a97e721d1e, aa8d92ab43b2cbe4e6db389b7cde9a7d6549d6de, 1869db09e0c7a140f4746bee9054bbe59ea912cf.
 T2 [S1,S3,S4,S5,S6,S7] DONE Inline: project synced archive settings into All/Archived views (including mixed community rows), test and document; verified in Actions 38024106477; commits: b84968676ee763eb2e40d1488ae16ce117da3869, 381be64893a3139ee4065bdc2bfc6832e3626462, f60f74a9c71fed4df6e34b4fb7795f153ffe4c30, d9e98e87779c172489f2a00b9b9c7390aa2f3369, f20611a309d1cef885f1c79bd1c43cad5272341a, 8c7292daaf3c17afc09b34bd8e0567c537483af5, 6591d508dc80f78cef898e874ceefc677fe65b47.
 T3 [S1,S3,S4,S5,S6,S7,S8] DONE Inline: bridge live WhatsApp archive changes to refresh the view without switching filters, test and document; verified in Actions 38055223368; commits: 1dedeb23b3486fd32e29fdc8ded567eb554fa3f7, b9194c1309f8435d300366ead6072438de93de45, a9f3673f6fa6e0bbeadcadbd37b6acc856dceb86, 0116e2ad8b99d2889750af86dc8353b40546053f, 4735ea51012bad1a602a6344a204aef2334d0643.
 T4 [S1,S2,S3] DROPPED from this slice: investigate favorite and personal custom-list cross-device sync as a later feature; commit: n/a.
+T5 [S6,S9,S10] IN_PROGRESS Inline: place the Chats filter row across the full UI width, shift Sections/Contacts/conversation together, keep other sections unchanged, and verify in GitHub Actions; commit: pending.
 
 ## Log
 L1. Ya, quiero empezar a agrupar los chats, archivados, unread, favoritos, grupos, y las categorias que el usuario puede crear y agregar chats a esas categorias
@@ -55,3 +58,6 @@ L33. GitHub Actions 38054238357 on test-only 0116e2ad8b99d2889750af86dc8353b4054
 L34. ArchiveChanged now invalidates the Chats projection on every event, but reanchors selection from Chats rows only while Chats is selected; Communities/Status retain their own selection. Full GREEN Actions pending.
 L35. Scoped read-only independent verifier rechecked correction 4735ea51012bad1a602a6344a204aef2334d0643 and found no reproducible issue. It confirmed the realistic fixture archives only an ordinary DM, preserves the community selection without changing the Chats refresh path, and leaves Status selection separate. No local tests/builds were run; full Actions GREEN remained unverified at review time.
 L36. GitHub Actions run 38055223368 on 4735ea51012bad1a602a6344a204aef2334d0643 completed successfully: Go bridge checks, rustfmt, 491 Rust unit tests, all integration tests (including 27 architecture tests), Linux release build, and preview artifact 11671695940. Non-fatal cache/runner-image annotations only. T3 complete; no local Cargo, no PR or beta changes. Favorites and WhatsApp-synced personal lists remain deferred.
+L37. Okay, ya probé el binario y me agrada, pero en cuestió de UI habría que mejorar un poco, yo creo que desplazar hacia abajo todo, no solo contactos, para que así no se vea montado, me explico?
+L38. User selected "Toda la interfaz (recomendado)": the Chats filter row should span Sections, Contacts, and conversation; all three start below it together. Preserve Status/Communities placement. Existing contacts.rs renders filters only in the contacts area, while navigation_areas starts all panes at the same y.
+L39. T5 test-first checks the public draw_with_plan TestBackend buffer: filter text starts at the full interface edge and Sections, Contacts, conversation begin together one row below; Status retains its original top row. Test-only Actions RED pending. No local Cargo.

@@ -667,6 +667,66 @@ mod composer_focus_tests {
 }
 
 #[cfg(test)]
+mod chat_filter_layout_tests {
+    use super::draw_with_plan;
+    use crate::app::{
+        actions::Section, events::MediaRenderPlan, read_receipts::VisibilityPlan,
+        test_support::TestApp,
+    };
+    use ratatui::{Terminal, backend::TestBackend};
+
+    #[test]
+    fn chats_filter_row_sits_above_sections_contacts_and_conversation() {
+        let mut app = TestApp::new();
+        let mut terminal = Terminal::new(TestBackend::new(100, 18)).unwrap();
+        let mut media = MediaRenderPlan::default();
+        let mut visibility = VisibilityPlan::default();
+
+        terminal
+            .draw(|frame| draw_with_plan(frame, &mut app.app, &mut media, &mut visibility))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let first_line = (0..100)
+            .map(|x| buffer[(x, 0)].symbol())
+            .collect::<String>();
+        assert!(
+            first_line.starts_with("[All]  Unread  Groups  Archived  (Tab)"),
+            "filter row must start at the full interface edge: {first_line:?}"
+        );
+        for x in [0, 14, 44] {
+            assert_eq!(
+                buffer[(x, 1)].symbol(),
+                "┌",
+                "pane at x={x} must start below filters"
+            );
+        }
+    }
+
+    #[test]
+    fn status_panes_keep_their_existing_top_row() {
+        let mut app = TestApp::new();
+        app.selected_section = Section::Status;
+        let mut terminal = Terminal::new(TestBackend::new(100, 18)).unwrap();
+        let mut media = MediaRenderPlan::default();
+        let mut visibility = VisibilityPlan::default();
+
+        terminal
+            .draw(|frame| draw_with_plan(frame, &mut app.app, &mut media, &mut visibility))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        for x in [0, 14, 44] {
+            assert_eq!(
+                buffer[(x, 0)].symbol(),
+                "┌",
+                "status pane at x={x} must not move"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
 mod update_notice_tests {
     use super::empty_chat_lines;
 
