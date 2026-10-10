@@ -1,9 +1,13 @@
 use ratatui::crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{Terminal, backend::TestBackend};
+use std::collections::HashMap;
+use std::fs;
 use whatsrust::{JID, Message, MessageContent, MessageInfo};
+use wp_tui::app::SharePicker;
 use wp_tui::app::actions::{FocusPane, Section};
 use wp_tui::app::events::MediaRenderPlan;
 use wp_tui::app::read_receipts::VisibilityPlan;
+use wp_tui::file_picker::FilePickerState;
 use wp_tui::ui;
 
 mod common;
@@ -190,4 +194,96 @@ fn clicking_a_rendered_variable_height_message_selects_that_exact_row() {
         app.message_list_state.get_selected_message().as_deref(),
         Some("middle")
     );
+}
+
+#[test]
+fn wheel_in_rendered_picker_lists_moves_only_the_active_picker() {
+    let directory = tempfile::tempdir().unwrap();
+    for index in 0..18 {
+        fs::write(
+            directory.path().join(format!("file-{index:02}.txt")),
+            "fixture",
+        )
+        .unwrap();
+    }
+
+    for picker in ["share", "url", "file"] {
+        let mut app = TestApp::with_settings("mouse=enable\n");
+        app.selected_section = Section::Status;
+        let broadcast: JID = "status@broadcast".to_owned().into();
+        for (index, name) in ["alice", "bob"].into_iter().enumerate() {
+            let sender: JID = format!("{name}@s.whatsapp.net").into();
+            app.contacts.insert(sender.clone(), name.into());
+            let mut status = message(&broadcast, name, (index + 1) as i64, name);
+            status.info.sender = sender;
+            app.add_message(status);
+        }
+        let needle = match picker {
+            "share" => {
+                let contacts = (0..18)
+                    .map(|index| format!("recipient-{index:02}@example.test").into())
+                    .collect();
+                app.share_picker = Some(SharePicker::new(contacts, HashMap::new(), HashMap::new()));
+                "recipient-00"
+            }
+            "url" => {
+                app.url_picker = Some((
+                    (0..18)
+                        .map(|index| format!("https://example.test/{index}"))
+                        .collect(),
+                    0,
+                ));
+                "https://example.test/0"
+            }
+            "file" => {
+                app.file_picker = Some(FilePickerState::open(directory.path()).unwrap());
+                "file-00.txt"
+            }
+            _ => unreachable!(),
+        };
+        let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+        draw(&mut app, &mut terminal);
+        let buffer = terminal.backend().buffer();
+        let (column, row) = (0..20)
+            .flat_map(|y| (0..100).map(move |x| (x, y)))
+            .find(|&(x, y)| {
+                x + needle.len() <= 100
+                    && (0..needle.len())
+                        .map(|dx| buffer[(x as u16 + dx as u16, y as u16)].symbol())
+                        .collect::<String>()
+                        == needle
+            })
+            .unwrap_or_else(|| panic!("{picker} list must be painted"));
+        assert_eq!(app.status_selection.selected(), Some(0));
+
+        app.on_terminal_event(mouse(MouseEventKind::ScrollDown, column as u16, row as u16));
+        let selected = match picker {
+            "share" => app.share_picker.as_ref().unwrap().selected,
+            "url" => app.url_picker.as_ref().unwrap().1,
+            "file" => app.file_picker.as_ref().unwrap().selected,
+            _ => unreachable!(),
+        };
+        assert_eq!(selected, 1, "wheel must move the {picker} cursor");
+        assert_eq!(
+            app.status_selection.selected(),
+            Some(0),
+            "base pane must not move"
+        );
+
+        draw(&mut app, &mut terminal);
+        app.on_terminal_event(mouse(MouseEventKind::ScrollDown, 14, row as u16));
+        app.on_terminal_event(mouse(MouseEventKind::ScrollDown, 10, row as u16));
+        let selected = match picker {
+            "share" => app.share_picker.as_ref().unwrap().selected,
+            "url" => app.url_picker.as_ref().unwrap().1,
+            "file" => app.file_picker.as_ref().unwrap().selected,
+            _ => unreachable!(),
+        };
+        assert_eq!(selected, 1, "border/outside must not scroll the {picker}");
+        assert_eq!(
+            app.status_selection.selected(),
+            Some(0),
+            "modal must shield the base pane"
+        );
+    }
 }
