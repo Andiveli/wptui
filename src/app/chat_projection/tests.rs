@@ -92,7 +92,7 @@ fn all_view_excludes_archived_chat_but_keeps_active_chat() {
         add_chat(&mut app, chat);
     }
     app.sorted_chats = vec![archived.clone(), active.clone()];
-    app.set_chat_settings_query(Box::new(ArchiveSettings(HashSet::from([archived]))));
+    app.set_chat_settings_query(Box::new(ArchiveSettings(HashSet::from([archived.clone()]))));
 
     let rows = app.visible_chat_rows();
     assert_eq!(rows.len(), 1);
