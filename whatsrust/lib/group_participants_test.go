@@ -70,6 +70,10 @@ func TestGroupParticipantNameNeverUsesUnmappedLIDAsPhone(t *testing.T) {
 		{name: "verified phone", participant: types.GroupParticipant{JID: lid, PhoneNumber: phone}, want: phone.User},
 		{name: "unmapped LID", participant: types.GroupParticipant{JID: lid}, want: ""},
 		{name: "numeric LID display is not a phone", participant: types.GroupParticipant{JID: lid, DisplayName: lid.User}, want: ""},
+		{name: "raw LID display is not a name", participant: types.GroupParticipant{JID: lid, DisplayName: lid.String()}, want: ""},
+		{name: "raw LID display falls back to verified phone", participant: types.GroupParticipant{JID: lid, PhoneNumber: phone, DisplayName: lid.String()}, want: phone.User},
+		{name: "raw saved name falls back to verified phone", participant: types.GroupParticipant{JID: lid, PhoneNumber: phone}, contacts: groupParticipantContacts{contacts: map[types.JID]types.ContactInfo{lid: {FullName: lid.String()}}}, want: phone.User},
+		{name: "raw push name falls back to verified phone", participant: types.GroupParticipant{JID: lid, PhoneNumber: phone}, contacts: groupParticipantContacts{contacts: map[types.JID]types.ContactInfo{lid: {PushName: lid.String()}}}, want: phone.User},
 		{name: "numeric display with empty JID", participant: types.GroupParticipant{LID: lid, DisplayName: lid.User}, want: ""},
 		{name: "numeric local name with empty JID", participant: types.GroupParticipant{LID: lid}, contacts: groupParticipantContacts{contacts: map[types.JID]types.ContactInfo{lid: {FullName: lid.User}}}, want: ""},
 	} {

@@ -254,6 +254,30 @@ mod tests {
     }
 
     #[test]
+    fn raw_lid_metadata_never_overrides_a_verified_phone() {
+        let lid = wr::JID::from("99887766@lid".to_owned());
+        let incoming = message("raw-lid-name", lid.0.as_ref());
+        let mut app = TestApp::with_message_push_name(Box::new(
+            FakeMessagePushNamePort::with_name(incoming.info.id.clone(), lid.0.as_ref()),
+        ));
+        app.contacts.insert(lid.clone(), lid.0.clone());
+        app.profile_names.insert(lid.clone(), lid.0.clone());
+        app.verified_phones
+            .insert(lid.clone(), "15551234567".into());
+
+        assert_eq!(app.contact_name(&lid).as_ref(), "15551234567");
+        assert_eq!(app.message_sender_name(&incoming).as_ref(), "15551234567");
+
+        app.verified_phones.remove(&lid);
+        assert_eq!(app.contact_name(&lid).as_ref(), "");
+        assert_eq!(app.message_sender_name(&incoming).as_ref(), "");
+
+        let phone = wr::JID::from("15551234567@s.whatsapp.net".to_owned());
+        app.contacts.insert(phone.clone(), lid.0.clone());
+        assert_eq!(app.contact_name(&phone).as_ref(), "15551234567");
+    }
+
+    #[test]
     fn profile_name_overrides_a_cached_verified_phone_but_not_a_saved_name() {
         let mut app = TestApp::new();
         let sender = wr::JID::from("99887766@lid".to_owned());
