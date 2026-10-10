@@ -66,6 +66,21 @@ impl App<'_> {
             .map(|index| self.status_contacts[index].clone())
     }
 
+    /// Only canonical published statuses determine whether this contact row
+    /// is ours; pending local-send rows never identify the account.
+    pub(crate) fn selected_status_contact_is_own(&self) -> bool {
+        let Some(contact) = self.selected_status_contact() else {
+            return false;
+        };
+        let ids = self.status_messages(&contact);
+        !ids.is_empty()
+            && ids.iter().all(|id| {
+                self.messages
+                    .get(id)
+                    .is_some_and(|message| message.info.is_from_me)
+            })
+    }
+
     /// The statuses of `contact` from the `status@broadcast` chat in
     /// ascending order (newest last, as `sort_chat_messages` leaves it).
     pub fn status_messages(&self, contact: &wr::JID) -> Vec<wr::MessageId> {

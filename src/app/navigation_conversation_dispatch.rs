@@ -50,12 +50,24 @@ impl App<'_> {
             AppAction::EditMessage => self.start_message_edit(),
             AppAction::OpenChat => {
                 if self.selected_section == Section::Status {
-                    let opened = self.selected_status_contact().is_some();
-                    if opened {
-                        self.open_selected_status();
-                        self.focus_pane = FocusPane::Conversation;
-                        if self.status_message_count() > 0 {
+                    if self.focus_pane == FocusPane::ChatList
+                        && self.selected_status_contact_is_own()
+                    {
+                        self.start_status_composition();
+                        if self.status_composition == StatusCompositionState::Authoring {
+                            self.open_status_contact = None;
+                            self.status_composition = StatusCompositionState::Navigating;
+                            self.focus_pane = FocusPane::Conversation;
                             self.message_list_state.select(Some(0));
+                        }
+                    } else {
+                        let opened = self.selected_status_contact().is_some();
+                        if opened {
+                            self.open_selected_status();
+                            self.focus_pane = FocusPane::Conversation;
+                            if self.status_message_count() > 0 {
+                                self.message_list_state.select(Some(0));
+                            }
                         }
                     }
                 } else if self.selected_section == Section::Communities

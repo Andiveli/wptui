@@ -40,6 +40,8 @@ impl App<'_> {
 
     pub(crate) fn cancel_status_composition(&mut self) {
         self.status_composition = StatusCompositionState::Inactive;
+        self.focus_pane = FocusPane::ChatList;
+        self.open_status_contact = None;
         self.file_picker = None;
         self.composer.replace_text("");
         self.composer.apply(ComposerAction::CancelReply);

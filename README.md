@@ -173,8 +173,10 @@ or editor state.
 | Open message actions | `Enter` |
 
 Use `j`/`k` or the arrow keys inside menus, then press `Enter` to confirm. Available actions depend
-on the selected message. In Status, press `Esc` while composing to navigate your own published
-statuses, select one with `j`/`k`, then press `d` to revoke it. Pending drafts and other contacts'
+on the selected message. In Status, press `Enter` on your own contact to open the Create status
+pane in navigation. Select one published update with `j`/`k`, then press `d` to revoke it; `i`
+starts writing and `Esc` returns to the contact list. `Space`, `a`, `c` still opens Create status
+directly in authoring mode; `Esc` there enters navigation. Pending drafts and other contacts'
 statuses cannot be deleted this way. A failed revoke leaves the item visible; a successful send
 removes the local row, but does not itself prove removal from every recipient's device.
 

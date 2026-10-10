@@ -133,7 +133,7 @@ pub(super) fn render_statuses_with_plan(
                         " Ctrl+O "
                     }
                 } else if navigating {
-                    " Status draft (navigation: i edit, d delete selected published status, Esc cancel) "
+                    " Status draft (navigation: i edit, d delete selected published status, Esc back to list) "
                 } else {
                     " Status update (Enter publish, Esc navigate, Ctrl+O attach) "
                 },
