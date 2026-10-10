@@ -1,6 +1,20 @@
 use super::super::{Chat, ChatFilter, ChatRow, CommunityNode, ContactRow, test_support::TestApp};
+use crate::app::ChatSettingsQueryPort;
 use crate::ui::contact_list::ContactListItem;
+use std::collections::HashSet;
 use whatsrust as wr;
+
+struct ArchiveSettings(HashSet<wr::JID>);
+
+impl ChatSettingsQueryPort for ArchiveSettings {
+    fn get_chat_settings(&self, jid: &wr::JID) -> wr::ChatSettings {
+        wr::ChatSettings {
+            found: true,
+            archived: self.0.contains(jid),
+            ..Default::default()
+        }
+    }
+}
 
 fn jid(value: &str) -> wr::JID {
     wr::JID::from(value.to_owned())
@@ -67,6 +81,22 @@ fn groups_filter_keeps_group_chats_but_not_individuals() {
     assert!(app.visible_chat_rows().is_empty());
     app.contact_search.clean();
     assert_eq!(app.visible_chat_rows()[0].target, group);
+}
+
+#[test]
+fn all_view_excludes_archived_chat_but_keeps_active_chat() {
+    let mut app = TestApp::new();
+    let archived = jid("archived@s.whatsapp.net");
+    let active = jid("active@s.whatsapp.net");
+    for chat in [&archived, &active] {
+        add_chat(&mut app, chat);
+    }
+    app.sorted_chats = vec![archived.clone(), active.clone()];
+    app.set_chat_settings_query(Box::new(ArchiveSettings(HashSet::from([archived]))));
+
+    let rows = app.visible_chat_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].target, active);
 }
 
 #[test]
