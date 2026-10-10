@@ -23,6 +23,24 @@ fn message(chat: &wr::JID, id: &str, timestamp: i64) -> wr::Message {
 }
 
 #[test]
+fn first_sort_projects_the_loaded_chat_when_the_list_is_rendered() {
+    let mut app = app();
+    let jid = wr::JID::from("loaded@example.test".to_owned());
+    app.chats.insert(
+        jid.clone(),
+        crate::app::Chat {
+            jid: jid.clone(),
+            last_message_time: Some(1),
+        },
+    );
+
+    app.sort_chats();
+
+    assert_eq!(app.visible_chat_rows().len(), 1);
+    assert_eq!(app.visible_chat_rows()[0].target, jid);
+}
+
+#[test]
 fn out_of_order_history_is_sorted_oldest_first() {
     let mut app = app();
     let chat = wr::JID::from("chat@example.test".to_owned());

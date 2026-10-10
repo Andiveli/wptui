@@ -35,7 +35,8 @@ Unread, and Groups exclude archived chats; Archived shows only archived chats.
 Archive status comes from the linked device's WhatsApp settings. Search narrows
 the selected view. Switching views does not change messages or read status;
 a community row contains only groups in that view. Until archive-change events
-are wired, switch views or restart to refresh changes made on your phone.
+are wired, switch to Archived and back or restart to refresh changes made on
+your phone.
 
 ## Data
 
