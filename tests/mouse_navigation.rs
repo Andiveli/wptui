@@ -199,6 +199,35 @@ fn clicking_a_rendered_variable_height_message_selects_that_exact_row() {
 }
 
 #[test]
+fn wrapped_urls_do_not_hide_the_wheel_selected_link() {
+    let mut app = TestApp::with_settings("mouse=enable\n");
+    app.url_picker = Some((
+        (0..18)
+            .map(|index| format!("https://example.test/{index}/{}", "segment/".repeat(12)))
+            .collect(),
+        0,
+    ));
+    let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+    draw(&mut app, &mut terminal);
+    for _ in 0..15 {
+        app.on_terminal_event(mouse(MouseEventKind::ScrollDown, 25, 4));
+    }
+    assert_eq!(app.url_picker.as_ref().unwrap().1, 15);
+    draw(&mut app, &mut terminal);
+    let buffer = terminal.backend().buffer();
+    let selected_is_painted = (0..20).any(|y| {
+        (0..100)
+            .map(|x| buffer[(x, y)].symbol())
+            .collect::<String>()
+            .contains("> https://example.test/15/")
+    });
+    assert!(
+        selected_is_painted,
+        "wrapped URLs above the selection must not hide its marker"
+    );
+}
+
+#[test]
 fn long_url_picker_keeps_wheel_selected_link_painted() {
     let mut app = TestApp::with_settings("mouse=enable\n");
     app.url_picker = Some((
