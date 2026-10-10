@@ -320,6 +320,113 @@ fn status_composition_enters_only_from_the_status_chat_list() {
 }
 
 #[test]
+fn opening_my_status_contact_uses_the_own_shell_and_deletes_the_selected_status() {
+    let me = JID::from("me@s.whatsapp.net".to_owned());
+    let other = JID::from("other@s.whatsapp.net".to_owned());
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let mut app = TestApp::new();
+    for (id, time) in [("own-old", unix_now() - 2), ("own-new", unix_now() - 1)] {
+        let mut item = status_message(&me, id, time, id);
+        item.info.is_from_me = true;
+        app.add_message(item);
+    }
+    app.add_message(status_message(&other, "foreign", unix_now(), "not mine"));
+    app.message_revoker = Box::new(FakeStatusRevoker {
+        calls: calls.clone(),
+        result: Ok(()),
+    });
+    app.selected_section = Section::Status;
+    app.focus_pane = FocusPane::ChatList;
+    let own_row = app
+        .status_contacts
+        .iter()
+        .position(|contact| contact == &me)
+        .unwrap();
+    app.status_selection.select(Some(own_row));
+    let key = |app: &mut App, code| {
+        app.on_terminal_event(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)))
+    };
+
+    key(&mut app, KeyCode::Enter);
+    assert_eq!(app.status_composition, StatusCompositionState::Navigating);
+    assert_eq!(app.focus_pane, FocusPane::Conversation);
+    let output = render(&mut app, 100, 20);
+    assert!(output.contains("Create status") && output.contains("navigation"));
+    assert!(output.contains("own-old") && output.contains("own-new"));
+    assert!(!output.contains("not mine"));
+    key(&mut app, KeyCode::Char('k'));
+    render(&mut app, 100, 20);
+    assert_eq!(
+        app.message_list_state.get_selected_message().as_deref(),
+        Some("own-old")
+    );
+    key(&mut app, KeyCode::Char('d'));
+    assert_eq!(
+        calls.borrow().as_slice(),
+        &[(
+            "status@broadcast".into(),
+            me.0.to_string(),
+            "own-old".into()
+        )]
+    );
+    assert!(app.message_status(&"own-old".into()).deleted);
+    assert_eq!(app.own_status_messages(), vec!["own-new".into()]);
+    assert_eq!(app.status_messages(&other), vec!["foreign".into()]);
+
+    key(&mut app, KeyCode::Esc);
+    assert_eq!(app.status_composition, StatusCompositionState::Inactive);
+    assert_eq!(app.focus_pane, FocusPane::ChatList);
+}
+
+#[test]
+fn opening_another_status_contact_stays_read_only_and_create_keeps_authoring() {
+    let me = JID::from("me@s.whatsapp.net".to_owned());
+    let other = JID::from("other@s.whatsapp.net".to_owned());
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let mut app = TestApp::new();
+    let mut own = status_message(&me, "mine", unix_now() - 1, "mine");
+    own.info.is_from_me = true;
+    app.add_message(own);
+    app.add_message(status_message(
+        &other,
+        "foreign",
+        unix_now(),
+        "contact status",
+    ));
+    app.message_revoker = Box::new(FakeStatusRevoker {
+        calls: calls.clone(),
+        result: Ok(()),
+    });
+    app.selected_section = Section::Status;
+    app.focus_pane = FocusPane::ChatList;
+    let foreign_row = app
+        .status_contacts
+        .iter()
+        .position(|contact| contact == &other)
+        .unwrap();
+    app.status_selection.select(Some(foreign_row));
+    let key = |app: &mut App, code| {
+        app.on_terminal_event(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)))
+    };
+
+    key(&mut app, KeyCode::Enter);
+    assert_eq!(app.status_composition, StatusCompositionState::Inactive);
+    assert_eq!(app.focus_pane, FocusPane::Conversation);
+    assert!(render(&mut app, 100, 20).contains("contact status"));
+    key(&mut app, KeyCode::Char('d'));
+    assert!(calls.borrow().is_empty());
+    assert!(!app.message_status(&"foreign".into()).deleted);
+
+    key(&mut app, KeyCode::Esc);
+    assert_eq!(app.focus_pane, FocusPane::ChatList);
+    key(&mut app, KeyCode::Char(' '));
+    key(&mut app, KeyCode::Char('a'));
+    key(&mut app, KeyCode::Char('c'));
+    assert_eq!(app.status_composition, StatusCompositionState::Authoring);
+    assert!(render(&mut app, 100, 20).contains("Create status"));
+}
+
+#[test]
 fn escape_navigates_then_cancels_and_resets_status_composition() {
     let mut app = TestApp::new();
     app.selected_section = Section::Status;
