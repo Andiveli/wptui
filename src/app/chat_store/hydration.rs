@@ -337,7 +337,8 @@ mod tests {
         let mut app = TestApp::new();
         let sender = wr::JID::from("99887766@lid".to_owned());
         app.contacts.insert(sender.clone(), "Old Saved Name".into());
-        app.profile_names.insert(sender.clone(), "Current Profile".into());
+        app.profile_names
+            .insert(sender.clone(), "Current Profile".into());
         app.apply_contact_refresh(vec![]);
 
         assert_eq!(app.contacts[&sender].as_ref(), "Old Saved Name");

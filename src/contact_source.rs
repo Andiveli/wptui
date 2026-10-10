@@ -15,12 +15,9 @@ impl ContactSourcePort for WhatsRustContactSource {
             return None;
         }
         wr::resolve_dm_chat(lid).filter(|phone| {
-            phone
-                .0
-                .strip_suffix("@s.whatsapp.net")
-                .is_some_and(|user| {
-                    !user.is_empty() && user.bytes().all(|byte| byte.is_ascii_digit())
-                })
+            phone.0.strip_suffix("@s.whatsapp.net").is_some_and(|user| {
+                !user.is_empty() && user.bytes().all(|byte| byte.is_ascii_digit())
+            })
         })
     }
 }
