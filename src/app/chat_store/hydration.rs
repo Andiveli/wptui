@@ -93,10 +93,14 @@ impl App<'_> {
     pub fn contact_name(&self, jid: &wr::JID) -> Arc<str> {
         let saved = self.fresh_contact_name(jid);
         saved
-            .filter(|name| !phone_like_name(name))
-            .or_else(|| self.profile_names.get(jid))
+            .filter(|name| !phone_like_name(name) && !raw_lid_name(name))
+            .or_else(|| {
+                self.profile_names
+                    .get(jid)
+                    .filter(|name| !raw_lid_name(name))
+            })
             .or_else(|| self.verified_phones.get(jid))
-            .or_else(|| saved.filter(|_| !jid.0.ends_with("@lid")))
+            .or_else(|| saved.filter(|name| !jid.0.ends_with("@lid") && !raw_lid_name(name)))
             .map(|name| canonical_contact_name(name))
             .unwrap_or_else(|| {
                 let Some((user, server)) = jid.0.split_once('@') else {
@@ -114,13 +118,13 @@ impl App<'_> {
 
     pub fn message_sender_name(&self, message: &wr::Message) -> Arc<str> {
         self.fresh_contact_name(&message.info.sender)
-            .filter(|name| !phone_like_name(name))
+            .filter(|name| !phone_like_name(name) && !raw_lid_name(name))
             .map(|name| canonical_contact_name(name))
             .or_else(|| {
                 self.message_push_name
                     .lookup_push_name(&message.info.id)
                     .map(|name| canonical_contact_name(&name))
-                    .filter(|name| !phone_like_name(name))
+                    .filter(|name| !phone_like_name(name) && !raw_lid_name(name))
             })
             .unwrap_or_else(|| self.contact_name(&message.info.sender))
     }
@@ -189,6 +193,13 @@ pub(super) fn phone_like_name(name: &str) -> bool {
         }
     }
     digits
+}
+
+pub(super) fn raw_lid_name(name: &str) -> bool {
+    let canonical = canonical_contact_name(name);
+    canonical.split_once('@').is_some_and(|(user, server)| {
+        server.eq_ignore_ascii_case("lid") && !user.chars().any(char::is_whitespace)
+    })
 }
 
 pub(super) fn canonical_contact_name(name: &str) -> Arc<str> {
