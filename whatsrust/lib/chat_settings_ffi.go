@@ -30,6 +30,10 @@ func chatSettingsPayloadToC(payload chatSettingsPayload) C.ChatSettings {
 //export C_GetChatSettings
 func C_GetChatSettings(cjid C.JID) C.ChatSettings {
 	clientSnapshot := lifecycleState.clientSnapshot()
+	// Persisted chats can be projected before the WhatsApp client is created.
+	if clientSnapshot == nil || clientSnapshot.Store == nil || clientSnapshot.Store.ChatSettings == nil || clientSnapshot.Store.LIDs == nil {
+		return C.ChatSettings{}
+	}
 	ctx := context.Background()
 	jid := cToJid(cjid).ToNonAD()
 	settings, err := lookupChatSettings(
