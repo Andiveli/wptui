@@ -1,4 +1,4 @@
-use super::{App, Chat, MessageAction, MessageActionKind};
+use super::{App, Chat, MessageAction, MessageActionKind, actions::Section};
 use crate::app::chat_store::write_port::PersistChat;
 use whatsrust as wr;
 
@@ -11,9 +11,14 @@ pub(crate) fn handle(app: &mut App<'_>, event: wr::Event) -> bool {
             true
         }
         wr::Event::ArchiveChanged => {
-            let selected = app.get_selected_chat();
-            app.invalidate_chat_list();
-            app.update_filtered_chats(selected);
+            if app.selected_section == Section::Chats {
+                let selected = app.get_selected_chat();
+                app.invalidate_chat_list();
+                app.update_filtered_chats(selected);
+            } else {
+                // Communities shares the selection state with Chats, not its rows.
+                app.invalidate_chat_list();
+            }
             true
         }
         wr::Event::Chat {
