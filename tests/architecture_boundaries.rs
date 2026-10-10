@@ -973,8 +973,9 @@ fn chat_settings_query_stays_at_its_port_and_root_adapter_boundaries() {
         {
             assert!(
                 path == root.join("src/app/test_support.rs")
-                    || path == root.join("src/app/message_ingestion/tests.rs"),
-                "{} may replace ChatSettingsQueryPort only in message-ingestion tests",
+                    || path == root.join("src/app/message_ingestion/tests.rs")
+                    || path == root.join("src/app/chat_projection/tests.rs"),
+                "{} may replace ChatSettingsQueryPort only in test support or its consumer tests",
                 path.strip_prefix(root).unwrap().display()
             );
         }
