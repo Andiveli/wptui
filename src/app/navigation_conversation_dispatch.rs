@@ -1,5 +1,5 @@
-use crate::app::{App, ChatFilter};
 use crate::app::actions::{AppAction, ConversationMode, FocusPane, Section};
+use crate::app::{App, ChatFilter};
 
 impl App<'_> {
     pub(crate) fn dispatch_navigation_conversation_action(
