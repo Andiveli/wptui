@@ -6,6 +6,32 @@ use super::{
 };
 use whatsrust as wr;
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ChatFilter {
+    #[default]
+    All,
+    Unread,
+    Groups,
+}
+
+impl ChatFilter {
+    pub fn next(self) -> Self {
+        match self {
+            Self::All => Self::Unread,
+            Self::Unread => Self::Groups,
+            Self::Groups => Self::All,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::Unread => "Unread",
+            Self::Groups => "Groups",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ChatListViewModel {
     pub rows: Vec<ChatRow>,
@@ -13,6 +39,7 @@ pub struct ChatListViewModel {
     pub visible_indices: Vec<usize>,
     pub revision: u64,
     pub query: String,
+    pub filter: ChatFilter,
     pub detail_rows: Vec<ContactRow>,
     pub detail_items: Vec<crate::ui::contact_list::ContactListItem>,
     pub detail_jid: Option<wr::JID>,
@@ -340,16 +367,27 @@ impl App<'_> {
         rows
     }
 
-    fn build_visible_chat_indices(&self, rows: &[ChatRow], query: &str) -> Vec<usize> {
+    fn build_visible_chat_indices(
+        &self,
+        rows: &[ChatRow],
+        items: &[crate::ui::contact_list::ContactListItem],
+        query: &str,
+    ) -> Vec<usize> {
         rows.iter()
             .enumerate()
-            .filter(|(_, row)| {
-                query.is_empty()
-                    || row.label.to_lowercase().contains(query)
-                    || row
-                        .members
-                        .iter()
-                        .any(|jid| self.contact_name(jid).to_lowercase().contains(query))
+            .filter(|(index, row)| {
+                let matches_filter = match self.chat_filter {
+                    ChatFilter::All => true,
+                    ChatFilter::Unread => items[*index].unread,
+                    ChatFilter::Groups => row.members.iter().any(Self::is_group_chat),
+                };
+                matches_filter
+                    && (query.is_empty()
+                        || row.label.to_lowercase().contains(query)
+                        || row
+                            .members
+                            .iter()
+                            .any(|jid| self.contact_name(jid).to_lowercase().contains(query)))
             })
             .map(|(index, _)| index)
             .collect()
@@ -452,6 +490,7 @@ impl App<'_> {
                 visible_indices: Vec::new(),
                 revision: self.chat_list_revision,
                 query: "\0".into(),
+                filter: ChatFilter::All,
                 detail_rows: Vec::new(),
                 detail_items: Vec::new(),
                 detail_jid: None,
@@ -461,22 +500,17 @@ impl App<'_> {
         } else {
             self.runtime_diagnostics.record_chat_view_cache_hit();
         }
-        let query_changed = self
+        let visibility_changed = self
             .chat_list_view
             .as_ref()
-            .is_none_or(|view| view.query != query);
-        if query_changed {
-            let indices = self.build_visible_chat_indices(
-                &self
-                    .chat_list_view
-                    .as_ref()
-                    .expect("chat view is built")
-                    .rows,
-                &query,
-            );
+            .is_none_or(|view| view.query != query || view.filter != self.chat_filter);
+        if visibility_changed {
+            let view = self.chat_list_view.as_ref().expect("chat view is built");
+            let indices = self.build_visible_chat_indices(&view.rows, &view.items, &query);
             let view = self.chat_list_view.as_mut().expect("chat view is built");
             view.visible_indices = indices;
             view.query = query;
+            view.filter = self.chat_filter;
         }
     }
 

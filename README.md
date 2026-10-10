@@ -30,6 +30,11 @@ https://github.com/user-attachments/assets/f08d20f9-6051-45e2-a1d2-b0a512242e9c
 - Contextual, Vim-inspired keybindings
 - Andiveli welcome mark in the chat panel before any conversation is opened
 
+The Chats list has an **All** view, an **Unread** view based on the app's read
+cursor, and a **Groups** view. Search narrows the selected view. Switching views
+does not change messages or read status; a community row remains one row when
+its linked groups match the view.
+
 ## Data
 
 Your WhatsApp data — database, media, and session — lives in `~/.local/share/wptui/` on your
@@ -155,6 +160,7 @@ or editor state.
 | Jump to first / last item | `g g` / `G` |
 | Move half a page | `Ctrl+U` / `Ctrl+D` |
 | Search chats | `/` |
+| Cycle chat filters (All, Unread, Groups) | `Tab` in the Chats list |
 
 ### Messages
 

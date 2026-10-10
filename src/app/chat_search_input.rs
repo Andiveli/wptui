@@ -5,6 +5,21 @@ use super::actions::{FocusPane, Section};
 use crate::input_key::Key;
 
 impl App<'_> {
+    pub(crate) fn handle_chat_filter_input(&mut self, key: Key) -> bool {
+        if self.focus_pane != FocusPane::ChatList
+            || self.selected_section != Section::Chats
+            || self.contact_search_active
+            || self.community_detail.is_some()
+            || key.code != KeyCode::Tab
+        {
+            return false;
+        }
+        let selected = self.get_selected_chat();
+        self.chat_filter = self.chat_filter.next();
+        self.update_filtered_chats(selected);
+        true
+    }
+
     pub(crate) fn handle_chat_search_input(&mut self, key: Key) -> bool {
         if self.focus_pane == FocusPane::ChatList && self.contact_search_active {
             self.handle_chat_search_key(key);
@@ -31,6 +46,23 @@ impl App<'_> {
 mod tests {
     use super::*;
     use crate::app::test_support::TestApp;
+
+    #[test]
+    fn tab_cycles_chat_filter_only_when_chats_list_is_focused() {
+        let mut app = TestApp::new();
+        app.focus_pane = FocusPane::ChatList;
+        app.selected_section = Section::Chats;
+        assert!(app.handle_chat_filter_input(Key::k(KeyCode::Tab)));
+        assert_eq!(app.chat_filter, crate::app::ChatFilter::Unread);
+        assert!(app.handle_chat_filter_input(Key::k(KeyCode::Tab)));
+        assert_eq!(app.chat_filter, crate::app::ChatFilter::Groups);
+        assert!(app.handle_chat_filter_input(Key::k(KeyCode::Tab)));
+        assert_eq!(app.chat_filter, crate::app::ChatFilter::All);
+
+        app.selected_section = Section::Communities;
+        assert!(!app.handle_chat_filter_input(Key::k(KeyCode::Tab)));
+        assert_eq!(app.chat_filter, crate::app::ChatFilter::All);
+    }
 
     #[test]
     fn slash_starts_chat_search_only_in_the_chats_list() {

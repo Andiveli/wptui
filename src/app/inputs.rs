@@ -179,6 +179,7 @@ impl App<'_> {
                     }
                 }
             } else if self.handle_chat_search_input(key.clone()) {
+            } else if self.handle_chat_filter_input(key.clone()) {
             } else if self.focus_pane == FocusPane::ChatList
                 && self.community_detail.is_some()
                 && key == Key::k(KeyCode::Esc)
