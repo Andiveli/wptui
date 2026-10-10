@@ -1,4 +1,6 @@
-use ratatui::crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::{Terminal, backend::TestBackend};
 use std::collections::HashMap;
 use std::fs;
@@ -232,6 +234,16 @@ fn long_url_picker_keeps_wheel_selected_link_painted() {
             .iter()
             .any(|row| row.contains("> https://example.test/15")),
         "wheel-selected URL must remain visible, not scroll off the modal"
+    );
+
+    // Existing arrow navigation still moves by one and paints its selection.
+    app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)));
+    assert_eq!(app.url_picker.as_ref().unwrap().1, 14);
+    draw(&mut app, &mut terminal);
+    assert!(
+        rendered_rows(&terminal)
+            .iter()
+            .any(|row| row.contains("> https://example.test/14"))
     );
 }
 

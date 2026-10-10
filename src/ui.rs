@@ -928,10 +928,19 @@ fn render_url_picker(frame: &mut Frame, app: &mut App) {
     let Some((urls, selected)) = app.url_picker.as_ref() else {
         return;
     };
-    let items = urls.iter().enumerate().map(|(index, url)| {
-        let marker = if index == *selected { "> " } else { "  " };
-        Line::from(format!("{marker}{url}"))
-    });
+    // Follow the selected row once the URL list is taller than its painted
+    // viewport; the stored index remains relative to the complete list.
+    let first_visible = selected
+        .saturating_add(1)
+        .saturating_sub(list_area.height as usize);
+    let items = urls
+        .iter()
+        .enumerate()
+        .skip(first_visible)
+        .map(|(index, url)| {
+            let marker = if index == *selected { "> " } else { "  " };
+            Line::from(format!("{marker}{url}"))
+        });
     frame.render_widget(Clear, modal);
     frame.render_widget(block, modal);
     frame.render_widget(
