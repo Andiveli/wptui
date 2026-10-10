@@ -12,7 +12,7 @@ S6. "No tienes que usar cargo acá, usa github actions para poder usar el build 
 S7. "Sí, separados como en WhatsApp" — "«Todos» excluye archivados; «Archivados» los muestra."
 
 ## Tasks
-T1 [S1,S3,S4,S5,S6] Inline: add All/Unread/Groups chat-list filters, navigation, tests and usage docs; verify via GitHub Actions; commit: pending.
+T1 [S1,S3,S4,S5,S6] DONE Inline: All/Unread/Groups chat-list filters, navigation, tests and usage docs; commits: 7b4f59413aefc30366ab3974bec9dae610eaa205, 639435eadbca40700e41c887313713a97e721d1e, aa8d92ab43b2cbe4e6db389b7cde9a7d6549d6de, 1869db09e0c7a140f4746bee9054bbe59ea912cf.
 T2 [S1,S3,S4,S5,S6,S7] Route: connect archive metadata and live archive-change events to All/Archived views, test and document; verify via GitHub Actions; commit: pending.
 T3 [S1,S2,S3] DROPPED from this slice: investigate favorite and personal custom-list cross-device sync as a later feature; commit: n/a.
 
@@ -29,4 +29,5 @@ L9. User authorized renaming to preview/chat-filters and pushing this branch to 
 L10. Independent verifier found the restored-unread community navigation mismatch; regression test commit 639435eadbca40700e41c887313713a97e721d1e was pushed. GitHub Actions run 38014687591 observed RED: 483 tests passed, restored_unread_group_filter_opens_the_only_unread_community_member failed (open_chat None vs expected restored@g.us), format and Go bridge checks passed.
 L11. Scoped correction uses durable pending_chat_activity only in the Unread filter's community-opening path; other views retain the prior transient counter. Commit aa8d92ab43b2cbe4e6db389b7cde9a7d6549d6de pushed; GREEN CI pending.
 L12. User selected "Sí, separados como en WhatsApp" for archived behavior: "«Todos» excluye archivados; «Archivados» los muestra."
-L13. GitHub Actions run 38016732426 for aa8d92a passed Go bridge checks but stopped at Rust formatting before tests: rustfmt requires the navigation module's two imports in the reverse order. Corrected the import order; GREEN CI remains pending.
+L13. GitHub Actions run 38016732426 for aa8d92a passed Go bridge checks but stopped at Rust formatting before tests: rustfmt requires the navigation module's two imports in the reverse order. Corrected by commit 1869db09e0c7a140f4746bee9054bbe59ea912cf.
+L14. GitHub Actions run 38017549726 on 1869db0 passed Go vet/tests, Rust format, 484 Rust unit tests plus integration tests, release build and artifact upload (artifact 11656699208). Independent verifier rechecked and cleared the restored-unread finding. T1 complete; no push or PR beyond the authorized preview branch.
