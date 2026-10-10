@@ -216,7 +216,8 @@ mod tests {
         let mut app = TestApp::new();
         let sender = wr::JID::from("99887766@lid".to_owned());
         app.contacts.insert(sender.clone(), "15551234567".into());
-        app.profile_names.insert(sender.clone(), "Profile Name".into());
+        app.profile_names
+            .insert(sender.clone(), "Profile Name".into());
         assert_eq!(app.contact_name(&sender).as_ref(), "Profile Name");
 
         app.contacts.insert(sender.clone(), "Saved Name".into());
@@ -264,9 +265,6 @@ mod tests {
 
         let app = TestApp::new();
         let without_push = message("numeric-name", "456@s.whatsapp.net");
-        assert_eq!(
-            app.message_sender_name(&without_push).as_ref(),
-            "456"
-        );
+        assert_eq!(app.message_sender_name(&without_push).as_ref(), "456");
     }
 }
