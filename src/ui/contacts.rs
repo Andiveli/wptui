@@ -5,30 +5,41 @@ use crate::app::contact_avatars::AvatarTarget;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Position, Rect},
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, Paragraph, StatefulWidget, Widget},
 };
 use ratatui_image::StatefulImage;
 
-pub(crate) fn render_chat_filters(frame: &mut Frame, app: &App, area: Rect) {
+pub(crate) fn render_chat_filters(frame: &mut Frame, app: &mut App, area: Rect) {
     let filters = [
         crate::app::ChatFilter::All,
         crate::app::ChatFilter::Unread,
         crate::app::ChatFilter::Groups,
         crate::app::ChatFilter::Archived,
     ];
-    let text = filters
-        .iter()
-        .map(|filter| {
-            if *filter == app.chat_filter {
-                format!("[{}]", filter.label())
-            } else {
-                filter.label().to_owned()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("  ");
-    frame.render_widget(Paragraph::new(format!("{text}  (Tab)")), area);
+    let archived_attention = app.archived_group_attention();
+    let mut labels = Vec::new();
+    for (index, filter) in filters.into_iter().enumerate() {
+        if index > 0 {
+            labels.push(Span::raw("  "));
+        }
+        if filter == crate::app::ChatFilter::Archived && archived_attention {
+            labels.push(Span::styled(
+                "@ ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
+        labels.push(Span::raw(if filter == app.chat_filter {
+            format!("[{}]", filter.label())
+        } else {
+            filter.label().to_owned()
+        }));
+    }
+    labels.push(Span::raw("  (Tab)"));
+    frame.render_widget(Paragraph::new(Line::from(labels)), area);
 }
 
 pub(crate) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {

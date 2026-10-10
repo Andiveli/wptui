@@ -35,7 +35,10 @@ Unread, and Groups exclude archived chats; Archived shows only archived chats.
 Archive status comes from the linked device's WhatsApp settings. Search narrows
 the selected view. Switching views does not change messages or read status;
 a community row contains only groups in that view. Archive changes received
-from WhatsApp refresh the current view without switching filters.
+from WhatsApp refresh the current view without switching filters. A yellow `@`
+before **Archived** signals an unread mention or reply to your message in an
+archived group; ordinary archived chats and other group messages do not trigger
+it. Reading that group clears the alert.
 
 ## Data
 
