@@ -12,15 +12,11 @@ use crate::app::events::AppEvent;
 use crate::app::runtime_diagnostics::Phase;
 use crate::ui::communities::community_avatar_targets;
 use crate::ui::contact_list::visible_contact_rows;
-use crate::ui::navigation_areas;
+use crate::ui::{chat_filter_areas, navigation_areas, show_chat_filter_header};
 
 fn contact_avatar_targets(app: &mut App, area: Rect) -> Vec<AvatarTarget> {
     let (rows, items) = app.cached_contact_view();
     let mut list_area = area;
-    if app.selected_section == Section::Chats && app.community_detail.is_none() {
-        [_, list_area] =
-            Layout::vertical([Constraint::Length(1), Constraint::Percentage(100)]).areas(list_area);
-    }
     if !app.contact_search.input.is_empty() || app.contact_search_active {
         [_, list_area] =
             Layout::vertical([Constraint::Length(1), Constraint::Percentage(100)]).areas(list_area);
@@ -67,9 +63,10 @@ impl App<'_> {
         } else {
             terminal_area
         };
+        let (_, body_area) = chat_filter_areas(content_area, show_chat_filter_header(self));
         let targets = if self.rail_on_logout || self.selected_section == Section::Status {
             Vec::new()
-        } else if let Some(area) = navigation_areas(content_area, self.pane_visibility).chat_list {
+        } else if let Some(area) = navigation_areas(body_area, self.pane_visibility).chat_list {
             match self.selected_section {
                 Section::Chats => contact_avatar_targets(self, area),
                 Section::Communities if self.community_detail.is_some() => {

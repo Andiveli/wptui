@@ -16,7 +16,8 @@ pub use layout::{
     viewer_preview_layout,
 };
 pub(crate) use layout::{
-    composer_viewport_width, composer_visual_layout_with_direction, truncate_with_ellipsis,
+    chat_filter_areas, composer_viewport_width, composer_visual_layout_with_direction,
+    truncate_with_ellipsis,
 };
 
 use crate::app::App;
@@ -25,7 +26,7 @@ use crate::app::events::{ViewerPreviewKey, ViewerPreviewState, ViewerStatus};
 use crate::app::read_receipts::VisibilityPlan;
 use crate::app::runtime_diagnostics::Phase;
 use crate::keybindings::canonical_shortcuts;
-use contacts::render_contacts;
+use contacts::{render_chat_filters, render_contacts};
 use message_list::{get_quoted_text, render_messages_with_plan};
 use navigation::{
     render_logout_placeholder, render_logs, render_section_rail, render_structural_placeholder,
@@ -41,6 +42,13 @@ use ratatui::{
 use ratatui_image::{Resize, StatefulImage};
 use status::{render_status_contacts, render_statuses_with_plan};
 use whatsrust as wr;
+
+pub(crate) fn show_chat_filter_header(app: &App) -> bool {
+    app.selected_section == Section::Chats
+        && app.community_detail.is_none()
+        && app.pane_visibility.chat_list
+        && !app.rail_on_logout
+}
 
 /// Draws one frame and records deferred media and visibility effects for the runtime.
 pub fn draw_with_plan(
@@ -58,7 +66,11 @@ pub fn draw_with_plan(
     } else {
         frame.area()
     };
-    let areas = navigation_areas(content_area, app.pane_visibility);
+    let (filter_area, body_area) = chat_filter_areas(content_area, show_chat_filter_header(app));
+    if let Some(area) = filter_area {
+        render_chat_filters(frame, app, area);
+    }
+    let areas = navigation_areas(body_area, app.pane_visibility);
 
     if let Some(area) = areas.section_rail {
         render_section_rail(frame, app, area);
