@@ -82,12 +82,21 @@ impl App<'_> {
     }
 
     /// Display name for a JID (chat or sender). A LID is not a phone number.
+    fn fresh_contact_name(&self, jid: &wr::JID) -> Option<&Arc<str>> {
+        self.fresh_contact_jids
+            .as_ref()
+            .is_none_or(|fresh| fresh.contains(jid))
+            .then(|| self.contacts.get(jid))
+            .flatten()
+    }
+
     pub fn contact_name(&self, jid: &wr::JID) -> Arc<str> {
-        self.contacts
-            .get(jid)
+        let saved = self.fresh_contact_name(jid);
+        saved
             .filter(|name| !phone_like_name(name))
             .or_else(|| self.profile_names.get(jid))
-            .or_else(|| self.contacts.get(jid))
+            .or_else(|| self.verified_phones.get(jid))
+            .or_else(|| saved.filter(|_| !jid.0.ends_with("@lid")))
             .map(|name| canonical_contact_name(name))
             .unwrap_or_else(|| {
                 let Some((user, server)) = jid.0.split_once('@') else {
@@ -104,8 +113,7 @@ impl App<'_> {
     }
 
     pub fn message_sender_name(&self, message: &wr::Message) -> Arc<str> {
-        self.contacts
-            .get(&message.info.sender)
+        self.fresh_contact_name(&message.info.sender)
             .filter(|name| !phone_like_name(name))
             .map(|name| canonical_contact_name(name))
             .or_else(|| {
@@ -120,10 +128,44 @@ impl App<'_> {
     pub(crate) fn get_contacts(&mut self) {
         let contacts = self.contact_source.get_contacts();
         self.apply_contact_refresh(contacts);
+        let lids = self
+            .chats
+            .keys()
+            .chain(self.messages.values().map(|message| &message.info.sender))
+            .filter(|jid| jid.0.ends_with("@lid"))
+            .cloned()
+            .collect::<std::collections::HashSet<_>>();
+        let mut changed = false;
+        for lid in lids {
+            changed |= self.remember_verified_phone(&lid);
+        }
+        if changed {
+            self.invalidate_chat_list();
+            self.refresh_status_contacts();
+        }
+    }
+
+    pub(crate) fn remember_verified_phone(&mut self, jid: &wr::JID) -> bool {
+        if !jid.0.ends_with("@lid") || self.verified_phones.contains_key(jid) {
+            return false;
+        }
+        let Some(phone) = self.contact_source.verified_phone_for_lid(jid) else {
+            return false;
+        };
+        let Some(user) = phone.0.strip_suffix("@s.whatsapp.net") else {
+            return false;
+        };
+        if user.is_empty() || !user.bytes().all(|byte| byte.is_ascii_digit()) {
+            return false;
+        }
+        self.verified_phones.insert(jid.clone(), Arc::from(user));
+        true
     }
 
     pub(crate) fn apply_contact_refresh(&mut self, contacts: Vec<(wr::JID, Arc<str>)>) {
-        let mut changed = false;
+        let fresh = contacts.iter().map(|(jid, _)| jid.clone()).collect();
+        let mut changed = self.fresh_contact_jids.as_ref() != Some(&fresh);
+        self.fresh_contact_jids = Some(fresh);
         for (jid, name) in contacts {
             changed |= self.contacts.get(&jid) != Some(&name);
             self.contacts.insert(jid.clone(), name.clone());
@@ -162,7 +204,7 @@ pub(super) fn canonical_contact_name(name: &str) -> Arc<str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::test_support::{FakeMessagePushNamePort, TestApp};
+    use crate::app::test_support::{FakeContactSource, FakeMessagePushNamePort, TestApp};
     use whatsrust as wr;
 
     fn message(id: &str, sender: &str) -> wr::Message {
@@ -233,6 +275,81 @@ mod tests {
         ));
         app.add_message(incoming);
         assert_eq!(app.contact_name(&sender).as_ref(), "WhatsApp Profile");
+    }
+
+    #[test]
+    fn verified_phone_labels_group_lid_without_any_contact_row() {
+        let mut app = TestApp::new();
+        let source = FakeContactSource::default();
+        let sender = wr::JID::from("99887766@lid".to_owned());
+        let phone = wr::JID::from("15551234567@s.whatsapp.net".to_owned());
+        source
+            .verified_phones
+            .lock()
+            .unwrap()
+            .insert(sender.clone(), phone);
+        app.set_contact_source(Box::new(source));
+        let mut incoming = message("group-phone", sender.0.as_ref());
+        incoming.info.chat = wr::JID::from("team@g.us".to_owned());
+
+        app.add_message(incoming.clone());
+        assert_eq!(app.contact_name(&sender).as_ref(), "15551234567");
+        assert_eq!(app.message_sender_name(&incoming).as_ref(), "15551234567");
+    }
+
+    #[test]
+    fn non_phone_resolution_cannot_be_displayed_as_a_verified_number() {
+        let mut app = TestApp::new();
+        let source = FakeContactSource::default();
+        let sender = wr::JID::from("99887766@lid".to_owned());
+        source
+            .verified_phones
+            .lock()
+            .unwrap()
+            .insert(sender.clone(), sender.clone());
+        app.set_contact_source(Box::new(source));
+        app.add_message(message("unverified", sender.0.as_ref()));
+        assert_eq!(app.contact_name(&sender).as_ref(), "");
+        assert!(!app.verified_phones.contains_key(&sender));
+    }
+
+    #[test]
+    fn history_lid_phone_is_retried_after_contact_sync() {
+        let mut app = TestApp::new();
+        let source = FakeContactSource::default();
+        let sender = wr::JID::from("99887766@lid".to_owned());
+        app.set_contact_source(Box::new(source.clone()));
+        let mut incoming = message("history-phone", sender.0.as_ref());
+        incoming.info.chat = wr::JID::from("team@g.us".to_owned());
+        app.add_message_without_sort(incoming);
+        assert_eq!(app.contact_name(&sender).as_ref(), "");
+
+        source.verified_phones.lock().unwrap().insert(
+            sender.clone(),
+            wr::JID::from("15551234567@s.whatsapp.net".to_owned()),
+        );
+        app.get_contacts();
+        assert_eq!(app.contact_name(&sender).as_ref(), "15551234567");
+    }
+
+    #[test]
+    fn refresh_keeps_cached_name_without_displaying_it_over_current_profile() {
+        let mut app = TestApp::new();
+        let sender = wr::JID::from("99887766@lid".to_owned());
+        app.contacts.insert(sender.clone(), "Old Saved Name".into());
+        app.profile_names.insert(sender.clone(), "Current Profile".into());
+        app.apply_contact_refresh(vec![]);
+
+        assert_eq!(app.contacts[&sender].as_ref(), "Old Saved Name");
+        assert_eq!(app.contact_name(&sender).as_ref(), "Current Profile");
+        assert_eq!(
+            app.message_sender_name(&message("stale-profile", sender.0.as_ref()))
+                .as_ref(),
+            "Current Profile"
+        );
+
+        app.apply_contact_refresh(vec![(sender.clone(), "New Saved Name".into())]);
+        assert_eq!(app.contact_name(&sender).as_ref(), "New Saved Name");
     }
 
     #[test]

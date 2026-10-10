@@ -65,12 +65,17 @@ pub(crate) struct RecordingNotifier {
 pub(crate) struct FakeContactSource {
     pub(crate) rows: Arc<Mutex<Vec<(wr::JID, Arc<str>)>>>,
     pub(crate) calls: Arc<Mutex<usize>>,
+    pub(crate) verified_phones: Arc<Mutex<HashMap<wr::JID, wr::JID>>>,
 }
 
 impl ContactSourcePort for FakeContactSource {
     fn get_contacts(&self) -> Vec<(wr::JID, Arc<str>)> {
         *self.calls.lock().unwrap() += 1;
         self.rows.lock().unwrap().clone()
+    }
+
+    fn verified_phone_for_lid(&self, lid: &wr::JID) -> Option<wr::JID> {
+        self.verified_phones.lock().unwrap().get(lid).cloned()
     }
 }
 

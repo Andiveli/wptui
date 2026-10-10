@@ -11,7 +11,7 @@ S6. "No debería existir ese caso, el ultimo caso sería solo mostrar el numero"
 S7. "Sí" (answer to temporarily hiding entries with no name and no verified number).
 
 ## Tasks
-T1 [S1-S7] inline: add regression tests, implement bridge and view resolution, verify via preview/** push GitHub Actions (no local cargo, no PR), one work-unit commit pending.
+T1 [S1-S7] inline: bridge and view fix + regression tests, commits e947163/37efcaf/96461f6; CI green 38072772932 for partial behavior; complete verifier findings for verified group PN without contact row and stale names without DB deletion, then rerun preview Actions. No PR.
 
 ## Log
 L1. Quiero que revisemos varias cosas que me fallan: Ahora mismo vinculé mi celular y mi nombre no sale, sale mi numero. Luego, a ciertos contactos los está mostrando con el lid, y quiero que nunca muestre el lid, pues el whatsapp del celular no lo hace. Lo de los lid son a unos cuantos contactos
@@ -34,4 +34,8 @@ L15. Correction: .github/workflows/preview.yml runs on pushes to beta and previe
 L16. Local branch renamed preview/contact-identity-display. Independent read-only verification found incomplete profile-over-number precedence, nondeterministic PN/LID aliases, missing self PN fallback, and numeric group LID leaks; code and synthetic tests were corrected. Go files gofmt-formatted; `git diff --check` passed. Neither local Cargo nor GitHub Actions has run.
 L17. User authorized a commit and push of only preview/contact-identity-display to origin for GitHub Actions, with no PR or merge. Work-unit commit e947163f5c5f20e060ac14f05d8528f4acb32b37 (fix(contacts): resolve profile names and verified phone aliases).
 L18. GitHub Actions preview run 38060445357 on 048608d failed `TestNormalAndOptimisticProductionRoutesHaveWireAndCallbackParity`: callback text had @111 instead of the saved self name; Rust checks did not run. Cause: self PN numeric fallback rank 4 overwrote the saved GetAllContacts name when GetContact had no name. Correction preserves ranked saved aliases and adds a regression test in commit 37efcaf5fc6daf3c6b7ad0dba202b4354fe78d81.
-L19. GitHub Actions preview run 38060811256 on 37efcaf passed Go bridge, failed Rust formatting on two exact lines in src/app/chat_store/hydration.rs; Rust tests/build did not run. Applied CI-specified formatting only; rerun pending.
+L19. GitHub Actions preview run 38060811256 on 37efcaf passed Go bridge, failed Rust formatting on two exact lines in src/app/chat_store/hydration.rs; Rust tests/build did not run. Applied CI-specified formatting only in commit 96461f66580da985d30f4ff0ecde9f022055d523.
+L20. GitHub Actions preview run 38072772932 on 96461f6 succeeded: Go vet/test, Rust fmt/test, release build, package and upload artifact. Local Cargo was never run. A nonfatal setup-go cache warning appeared.
+L21. Final independent read-only verifier found S4-S6 incomplete: group sender LID with verified PN mapping but no GetAllContacts row still displays blank; and persisted stale contact name is kept on refresh, outranking current profile. src/app/chat_store/tests.rs explicitly preserves stale contact behavior. No real-account validation.
+L22. Sí, completá ambos casos (authorizes same branch, no DB deletion, push preview/** for Actions, no PR).
+L23. Draft follow-up uses existing resolve_dm_chat verified LID→PN lookup through ContactSourcePort for encountered live/history senders and retries at contact sync; last-refresh JID set controls display authority without deleting persisted contacts. Added synthetic group, history, invalid mapping, and stale-cache/profile tests. No local Cargo or new Actions run yet.
