@@ -197,6 +197,45 @@ fn clicking_a_rendered_variable_height_message_selects_that_exact_row() {
 }
 
 #[test]
+fn long_url_picker_keeps_wheel_selected_link_painted() {
+    let mut app = TestApp::with_settings("mouse=enable\n");
+    app.url_picker = Some((
+        (0..18)
+            .map(|index| format!("https://example.test/{index}"))
+            .collect(),
+        0,
+    ));
+    let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+    draw(&mut app, &mut terminal);
+    let rendered_rows = |terminal: &Terminal<TestBackend>| {
+        let buffer = terminal.backend().buffer();
+        (0..20)
+            .map(|y| {
+                (0..100)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        rendered_rows(&terminal)
+            .iter()
+            .any(|row| row.contains("> https://example.test/0"))
+    );
+    for _ in 0..15 {
+        app.on_terminal_event(mouse(MouseEventKind::ScrollDown, 25, 4));
+    }
+    assert_eq!(app.url_picker.as_ref().unwrap().1, 15);
+    draw(&mut app, &mut terminal);
+    assert!(
+        rendered_rows(&terminal)
+            .iter()
+            .any(|row| row.contains("> https://example.test/15")),
+        "wheel-selected URL must remain visible, not scroll off the modal"
+    );
+}
+
+#[test]
 fn wheel_in_rendered_picker_lists_moves_only_the_active_picker() {
     let directory = tempfile::tempdir().unwrap();
     for index in 0..18 {
