@@ -1,6 +1,8 @@
 use super::*;
 use crate::app::{
+    actions::Section,
     chat_store::write_port::{ChatStoreWritePort, PersistChat, PersistChatMessage, PersistMessage},
+    community_hierarchy::CommunityNode,
     test_support::{
         FakeChatReadCursorPort, FakeCommunityQuery, FakeStatusCursorPort, TestApp, message,
     },
@@ -106,6 +108,53 @@ fn archive_event_refreshes_current_chat_filter_without_switching_views() {
     assert!(app.visible_chat_rows().is_empty());
     app.chat_filter = crate::app::ChatFilter::All;
     assert_eq!(app.visible_chat_rows()[0].target, jid);
+}
+
+#[test]
+fn archive_event_does_not_clear_the_selected_community_when_chats_are_hidden() {
+    let mut app = TestApp::new();
+    let root = wr::JID::from("community@g.us".to_owned());
+    let group = wr::JID::from("archived@g.us".to_owned());
+    app.chats.insert(
+        group.clone(),
+        Chat {
+            jid: group.clone(),
+            last_message_time: Some(1),
+        },
+    );
+    app.sorted_chats = vec![group.clone()];
+    app.communities = vec![
+        CommunityNode {
+            jid: root,
+            name: "Community".into(),
+            is_root: true,
+            linked_groups: vec![group.clone()],
+            is_joined: true,
+            is_default_subgroup: false,
+            is_announce: None,
+            participant_count: None,
+        },
+        CommunityNode {
+            jid: group.clone(),
+            name: "Group".into(),
+            is_root: false,
+            linked_groups: Vec::new(),
+            is_joined: true,
+            is_default_subgroup: false,
+            is_announce: None,
+            participant_count: None,
+        },
+    ];
+    let archived = Arc::new(Mutex::new(HashSet::from([group.clone()])));
+    app.set_chat_settings_query(Box::new(MutableArchiveSettings(archived)));
+    app.selected_section = Section::Communities;
+    app.select_community_node(Some(group.clone()));
+    assert!(app.visible_chat_rows().is_empty());
+    assert_eq!(app.get_selected_community(), Some(group.clone()));
+
+    assert!(app.handle_whatsapp_event(wr::Event::ArchiveChanged));
+    assert_eq!(app.get_selected_community(), Some(group));
+    assert_eq!(app.chat_list_state.selected(), Some(0));
 }
 
 #[test]
