@@ -928,11 +928,30 @@ fn render_url_picker(frame: &mut Frame, app: &mut App) {
     let Some((urls, selected)) = app.url_picker.as_ref() else {
         return;
     };
-    // Follow the selected row once the URL list is taller than its painted
-    // viewport; the stored index remains relative to the complete list.
-    let first_visible = selected
-        .saturating_add(1)
-        .saturating_sub(list_area.height as usize);
+    // A URL can wrap across multiple painted rows. Reserve space for the
+    // selected entry and fit predecessors by display width, not item count.
+    // The stored index still refers to the complete URL list.
+    let width = usize::from(list_area.width.max(1));
+    let rows_for = |url: &str| {
+        let rows = Line::from(format!("  {url}"))
+            .width()
+            .div_ceil(width)
+            .max(1);
+        rows + usize::from(url.chars().any(char::is_whitespace))
+    };
+    let mut used_rows = urls
+        .get(*selected)
+        .map(|url| rows_for(url).min(list_area.height as usize))
+        .unwrap_or(0);
+    let mut first_visible = (*selected).min(urls.len());
+    while first_visible > 0 {
+        let previous_rows = rows_for(&urls[first_visible - 1]);
+        if used_rows.saturating_add(previous_rows) > list_area.height as usize {
+            break;
+        }
+        used_rows += previous_rows;
+        first_visible -= 1;
+    }
     let items = urls
         .iter()
         .enumerate()
