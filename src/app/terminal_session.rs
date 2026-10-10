@@ -10,7 +10,13 @@ use ratatui::crossterm::{
 use crate::app::events::AppInput;
 use crate::app::input_reader::InputReader;
 
-/// Owns one terminal-wide mouse capture transition and always releases it.
+// Disabling capture is idempotent. Retry once if the first write was interrupted
+// or failed after sending only part of the terminal escape sequence.
+fn disable_mouse_with_retry(writer: &mut impl Write) -> io::Result<()> {
+    execute!(writer, DisableMouseCapture).or_else(|_| execute!(writer, DisableMouseCapture))
+}
+
+/// Owns one terminal-wide mouse capture transition and attempts to release it.
 struct MouseCapture<W: Write> {
     writer: W,
     enabled: bool,
@@ -21,7 +27,14 @@ impl<W: Write> MouseCapture<W> {
         if enabled {
             if let Err(error) = execute!(writer, EnableMouseCapture) {
                 // An interrupted write may already have changed terminal modes.
-                let _ = execute!(writer, DisableMouseCapture);
+                if let Err(restore_error) = disable_mouse_with_retry(&mut writer) {
+                    return Err(io::Error::new(
+                        error.kind(),
+                        format!(
+                            "mouse capture failed: {error}; mouse restoration uncertain: {restore_error}; run `reset` if your terminal remains in mouse mode"
+                        ),
+                    ));
+                }
                 return Err(error);
             }
         }
@@ -30,7 +43,7 @@ impl<W: Write> MouseCapture<W> {
 
     fn stop(&mut self) -> io::Result<()> {
         if self.enabled {
-            execute!(self.writer, DisableMouseCapture)?;
+            disable_mouse_with_retry(&mut self.writer)?;
             self.enabled = false;
         }
         Ok(())
@@ -84,13 +97,21 @@ impl TerminalSession {
     }
 
     fn restore_terminal(&mut self) {
+        let mut capture_uncertain = false;
         if let Some(mut capture) = self.mouse_capture.take() {
             if let Err(error) = capture.stop() {
+                // Drop makes one further bounded attempt before Ratatui restores.
                 error!("Failed to release terminal mouse capture: {error}");
+                capture_uncertain = true;
             }
         }
         if self.terminal.take().is_some() {
             ratatui::restore();
+        }
+        if capture_uncertain {
+            eprintln!(
+                "Mouse mode restoration is uncertain; run `reset` if your terminal remains in mouse mode."
+            );
         }
     }
 }
@@ -140,6 +161,87 @@ mod tests {
         }
     }
 
+    struct InterruptedCaptureWriter {
+        output: Arc<Mutex<Vec<u8>>>,
+        stage: u8,
+    }
+
+    impl Write for InterruptedCaptureWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            if self.stage == 0 && bytes.starts_with(b"\x1b[?1000h") {
+                self.stage = 1;
+                self.output.lock().unwrap().extend_from_slice(&bytes[..3]);
+                return Ok(3);
+            }
+            if self.stage == 1 {
+                self.stage = 2;
+                return Err(io::Error::other("partial enable"));
+            }
+            if self.stage == 2 && bytes.starts_with(b"\x1b[?1000l") {
+                self.stage = 3;
+                return Err(io::Error::other("first disable failed"));
+            }
+            self.output.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn partial_enable_and_failed_first_disable_retry_restoration() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let writer = InterruptedCaptureWriter {
+            output: Arc::clone(&output),
+            stage: 0,
+        };
+        assert!(MouseCapture::new(writer, true).is_err());
+        assert!(
+            output
+                .lock()
+                .unwrap()
+                .windows(8)
+                .any(|part| part == b"\x1b[?1000l")
+        );
+    }
+
+    struct FailFirstDisableWriter {
+        output: Arc<Mutex<Vec<u8>>>,
+        failed: bool,
+    }
+
+    impl Write for FailFirstDisableWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            if !self.failed && bytes.starts_with(b"\x1b[?1000l") {
+                self.failed = true;
+                return Err(io::Error::other("first disable failed"));
+            }
+            self.output.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn failed_first_shutdown_disable_retries_before_restoration() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let writer = FailFirstDisableWriter {
+            output: Arc::clone(&output),
+            failed: false,
+        };
+        let mut capture = MouseCapture::new(writer, true).unwrap();
+        capture.stop().unwrap();
+        let released = output.lock().unwrap().clone();
+        assert!(released.windows(8).any(|part| part == b"\x1b[?1000l"));
+        drop(capture);
+        assert_eq!(*output.lock().unwrap(), released);
+    }
+
     #[test]
     fn failed_enable_attempts_to_restore_mouse_mode() {
         let output = Arc::new(Mutex::new(Vec::new()));
@@ -155,6 +257,37 @@ mod tests {
                 .windows(8)
                 .any(|part| part == b"\x1b[?1000l")
         );
+    }
+
+    struct FailedRecoveryWriter {
+        failed_enable: bool,
+    }
+
+    impl Write for FailedRecoveryWriter {
+        fn write(&mut self, _bytes: &[u8]) -> io::Result<usize> {
+            if !self.failed_enable {
+                self.failed_enable = true;
+                return Err(io::Error::other("enable failed"));
+            }
+            Err(io::Error::other("terminal output unavailable"))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn unrecoverable_enable_error_reports_manual_terminal_reset() {
+        let error = MouseCapture::new(
+            FailedRecoveryWriter {
+                failed_enable: false,
+            },
+            true,
+        )
+        .err()
+        .expect("capture should fail when terminal output fails");
+        assert!(error.to_string().contains("run `reset`"));
     }
 
     #[test]
