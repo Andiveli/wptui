@@ -16,7 +16,7 @@ use wp_tui::{
 mod common;
 use common::TestApp;
 
-fn draw_top_row(width: u16, setup: impl FnOnce(&mut App)) -> String {
+fn draw_chat_header_row(width: u16, setup: impl FnOnce(&mut App)) -> String {
     let mut app = TestApp::new();
     let chat = JID::from("chat@example.test".to_owned());
     app.contacts.insert(chat.clone(), "Alice".into());
@@ -45,7 +45,7 @@ fn draw_top_row(width: u16, setup: impl FnOnce(&mut App)) -> String {
         .buffer()
         .content()
         .chunks(width as usize)
-        .next()
+        .nth(1) // Chats reserves the first full-width row for its filters.
         .unwrap_or_default()
         .iter()
         .map(|cell| cell.symbol())
@@ -494,7 +494,7 @@ fn navigation_layout_remains_valid_in_narrow_terminals() {
 
 #[test]
 fn chat_border_keeps_contact_name_when_no_notice_is_active() {
-    let row = draw_top_row(80, |_| {});
+    let row = draw_chat_header_row(80, |_| {});
 
     assert!(row.contains("Alice"), "missing left-aligned name: {row:?}");
     assert!(
@@ -505,7 +505,7 @@ fn chat_border_keeps_contact_name_when_no_notice_is_active() {
 
 #[test]
 fn chat_border_places_action_notice_right_next_to_the_contact_name() {
-    let row = draw_top_row(80, |app| {
+    let row = draw_chat_header_row(80, |app| {
         app.action_notice = Some(wp_tui::app::actions::ActionNotice::CopiedText(
             "hello".into(),
         ));
@@ -522,7 +522,7 @@ fn chat_border_places_action_notice_right_next_to_the_contact_name() {
 #[test]
 fn chat_border_truncates_long_action_notice_with_ellipsis() {
     let payload = "x".repeat(120);
-    let row = draw_top_row(60, |app| {
+    let row = draw_chat_header_row(60, |app| {
         app.action_notice = Some(wp_tui::app::actions::ActionNotice::CopiedText(payload));
     });
 
@@ -533,7 +533,7 @@ fn chat_border_truncates_long_action_notice_with_ellipsis() {
 #[test]
 fn chat_border_truncates_unicode_action_notice_within_cell_width() {
     let payload = "界".repeat(60);
-    let row = draw_top_row(100, |app| {
+    let row = draw_chat_header_row(100, |app| {
         app.action_notice = Some(wp_tui::app::actions::ActionNotice::CopiedText(payload));
     });
 
