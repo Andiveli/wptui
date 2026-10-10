@@ -5,8 +5,8 @@ use std::rc::Rc;
 use whatsrust::{FileContent, FileKind, JID, Message, MessageContent, MessageInfo};
 
 use wp_tui::app::actions::{
-    ActionNotice, AppAction, ConversationMode, FocusPane, MessageReactor, PaneVisibility, Section,
-    StatusCompositionState,
+    ActionNotice, AppAction, ConversationMode, FocusPane, MessageReactor, MessageRevoker,
+    PaneVisibility, Section, StatusCompositionState,
 };
 use wp_tui::app::contextual_actions::{ContextualAction, RowStyle};
 use wp_tui::app::unix_now;
@@ -52,6 +52,27 @@ impl MessageReactor for FakeMessageReactor {
             sender.0.to_string(),
             message_id.to_string(),
             reaction.to_owned(),
+        ));
+        self.result.clone()
+    }
+}
+
+struct FakeStatusRevoker {
+    calls: Rc<RefCell<Vec<(String, String, String)>>>,
+    result: Result<(), whatsrust::MessageActionFailed>,
+}
+
+impl MessageRevoker for FakeStatusRevoker {
+    fn revoke_message(
+        &self,
+        chat: &JID,
+        sender: &JID,
+        message_id: &whatsrust::MessageId,
+    ) -> Result<(), whatsrust::MessageActionFailed> {
+        self.calls.borrow_mut().push((
+            chat.0.to_string(),
+            sender.0.to_string(),
+            message_id.to_string(),
         ));
         self.result.clone()
     }
@@ -371,6 +392,147 @@ fn own_status_navigation_preserves_draft_and_excludes_other_contacts() {
     assert_eq!(app.status_composition, StatusCompositionState::Authoring);
     assert_eq!(app.composer.text(), "saved draft");
     assert_eq!(app.composer.pending.len(), 2);
+}
+
+#[test]
+fn deleting_one_selected_own_status_revokes_its_canonical_id_and_hides_only_that_item() {
+    let me = JID::from("me@s.whatsapp.net".to_owned());
+    let other = JID::from("other@s.whatsapp.net".to_owned());
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let mut app = TestApp::new();
+    for mut item in [
+        status_message(&me, "own-text", unix_now() - 2, "keep"),
+        status_media_message(&me, "own-media", unix_now() - 1, "photo.png"),
+    ] {
+        item.info.is_from_me = true;
+        app.add_message(item);
+    }
+    app.add_message(status_message(&other, "foreign", unix_now(), "other"));
+    app.message_revoker = Box::new(FakeStatusRevoker {
+        calls: calls.clone(),
+        result: Ok(()),
+    });
+    app.selected_section = Section::Status;
+    app.dispatch_action(AppAction::StartStatusComposition);
+    app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+    render(&mut app, 100, 20);
+    app.message_list_state
+        .set_selected_message("own-media".into());
+    app.on_terminal_event(Event::Key(KeyEvent::new(
+        KeyCode::Char('d'),
+        KeyModifiers::NONE,
+    )));
+
+    assert_eq!(
+        calls.borrow().as_slice(),
+        &[(
+            "status@broadcast".into(),
+            me.0.to_string(),
+            "own-media".into()
+        )]
+    );
+    assert_eq!(app.action_notice, Some(ActionNotice::DeletedMessage));
+    assert!(app.message_status(&"own-media".into()).deleted);
+    assert_eq!(app.own_status_messages(), vec!["own-text".into()]);
+    assert_eq!(app.status_messages(&me), vec!["own-text".into()]);
+    assert_eq!(app.status_messages(&other), vec!["foreign".into()]);
+    assert_eq!(app.status_composition, StatusCompositionState::Navigating);
+
+    let before = calls.borrow().len();
+    app.message_list_state
+        .set_selected_message("own-media".into());
+    app.dispatch_action(AppAction::DeleteMessage);
+    assert_eq!(
+        calls.borrow().len(),
+        before,
+        "already deleted status must not be revoked twice"
+    );
+
+    app.message_list_state
+        .set_selected_message("foreign".into());
+    app.dispatch_action(AppAction::DeleteMessage);
+    assert_eq!(
+        calls.borrow().len(),
+        before,
+        "foreign status must not be revoked"
+    );
+    assert!(!app.message_status(&"foreign".into()).deleted);
+
+    let mut pending = status_message(&me, "pending", unix_now(), "not published");
+    pending.info.is_from_me = true;
+    app.messages.insert(pending.info.id.clone(), pending);
+    app.message_list_state
+        .set_selected_message("pending".into());
+    app.dispatch_action(AppAction::DeleteMessage);
+    assert_eq!(
+        calls.borrow().len(),
+        before,
+        "unpublished status must not be revoked"
+    );
+    assert!(!app.message_status(&"pending".into()).deleted);
+}
+
+#[test]
+fn failed_own_status_delete_keeps_the_published_item_and_reports_failure() {
+    let me = JID::from("me@s.whatsapp.net".to_owned());
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let mut app = TestApp::new();
+    let mut item = status_message(&me, "own-text", unix_now(), "keep on failure");
+    item.info.is_from_me = true;
+    app.add_message(item);
+    app.selected_section = Section::Status;
+    app.status_composition = StatusCompositionState::Navigating;
+    app.focus_pane = FocusPane::Conversation;
+    app.message_list_state
+        .set_selected_message("own-text".into());
+    app.message_revoker = Box::new(FakeStatusRevoker {
+        calls: calls.clone(),
+        result: Err(whatsrust::MessageActionFailed),
+    });
+
+    app.dispatch_action(AppAction::DeleteMessage);
+
+    assert_eq!(
+        calls.borrow().as_slice(),
+        &[(
+            "status@broadcast".into(),
+            me.0.to_string(),
+            "own-text".into()
+        )]
+    );
+    assert!(!app.message_status(&"own-text".into()).deleted);
+    assert_eq!(app.own_status_messages(), vec!["own-text".into()]);
+    assert_eq!(
+        app.action_notice,
+        Some(ActionNotice::Unavailable("Could not delete message".into()))
+    );
+}
+
+#[test]
+fn contact_status_view_still_rejects_delete_without_mutating_the_item() {
+    let contact = JID::from("other@s.whatsapp.net".to_owned());
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let mut app = TestApp::new();
+    app.add_message(status_message(
+        &contact,
+        "contact-status",
+        unix_now(),
+        "untouched",
+    ));
+    app.selected_section = Section::Status;
+    app.focus_pane = FocusPane::Conversation;
+    app.message_list_state
+        .set_selected_message("contact-status".into());
+    app.message_revoker = Box::new(FakeStatusRevoker {
+        calls: calls.clone(),
+        result: Ok(()),
+    });
+
+    app.dispatch_action(AppAction::DeleteMessage);
+
+    assert!(calls.borrow().is_empty());
+    assert!(!app.message_status(&"contact-status".into()).deleted);
+    assert_eq!(app.status_messages(&contact), vec!["contact-status".into()]);
 }
 
 #[test]
