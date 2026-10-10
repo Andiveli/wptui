@@ -259,6 +259,7 @@ impl App<'_> {
                     | AppAction::HalfPageDown
                     | AppAction::HalfPageUp
                     | AppAction::CancelStatusComposition
+                    | AppAction::DeleteMessage
                     | AppAction::Quit
                     | AppAction::ToggleLogs
             )

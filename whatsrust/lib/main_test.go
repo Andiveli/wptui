@@ -19,6 +19,7 @@ import (
 	"go.mau.fi/whatsmeow/proto/waCommon"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/proto/waWeb"
+	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 )
@@ -126,6 +127,25 @@ func TestPinnedWhatsmeowMessageActionBuilders(t *testing.T) {
 			t.Fatal("revoke builder did not preserve protocol target")
 		}
 	})
+}
+
+func TestOwnStatusRevokeUsesCanonicalBroadcastKey(t *testing.T) {
+	self := types.NewJID("15551234567", types.DefaultUserServer)
+	client := &whatsmeow.Client{Store: &store.Device{ID: &self}}
+	id := types.MessageID("published-status-id")
+
+	message, err := buildOrdinaryRevoke(client, types.StatusBroadcastJID, self, id)
+	if err != nil {
+		t.Fatalf("build status revoke: %v", err)
+	}
+	protocol := message.GetProtocolMessage()
+	if protocol.GetType() != waE2E.ProtocolMessage_REVOKE {
+		t.Fatalf("unexpected status action: %v", protocol.GetType())
+	}
+	key := protocol.GetKey()
+	if key.GetRemoteJID() != types.StatusBroadcastJID.String() || !key.GetFromMe() || key.GetID() != id {
+		t.Fatalf("status revoke must target one published own ID in status@broadcast: %v", key)
+	}
 }
 
 func TestMessageActionEventFromIncomingMessage(t *testing.T) {

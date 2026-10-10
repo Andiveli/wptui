@@ -1,5 +1,7 @@
 use crate::app::App;
-use crate::app::actions::{AppAction, ConversationMode, FocusPane, Section};
+use crate::app::actions::{
+    AppAction, ConversationMode, FocusPane, Section, StatusCompositionState,
+};
 
 impl App<'_> {
     pub(crate) fn dispatch_navigation_conversation_action(
@@ -36,7 +38,15 @@ impl App<'_> {
                     self.open_reaction_picker();
                 }
             }
-            AppAction::DeleteMessage => self.delete_selected_message(),
+            AppAction::DeleteMessage => {
+                if self.selected_section == Section::Status {
+                    if self.status_composition == StatusCompositionState::Navigating {
+                        self.delete_selected_own_status();
+                    }
+                } else {
+                    self.delete_selected_message();
+                }
+            }
             AppAction::EditMessage => self.start_message_edit(),
             AppAction::OpenChat => {
                 if self.selected_section == Section::Status {

@@ -167,12 +167,16 @@ or editor state.
 | Reply | `R` |
 | Edit your text message | `e` |
 | Delete your text message | `d` |
+| Delete one selected, published own status (text, image, or video) | `d` in Status navigation |
 | Open downloaded media | `x` |
 | View selected image or video | `v` |
 | Open message actions | `Enter` |
 
 Use `j`/`k` or the arrow keys inside menus, then press `Enter` to confirm. Available actions depend
-on the selected message.
+on the selected message. In Status, press `Esc` while composing to navigate your own published
+statuses, select one with `j`/`k`, then press `d` to revoke it. Pending drafts and other contacts'
+statuses cannot be deleted this way. A failed revoke leaves the item visible; a successful send
+removes the local row, but does not itself prove removal from every recipient's device.
 
 ### Composer and media
 

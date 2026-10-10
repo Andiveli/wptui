@@ -536,6 +536,36 @@ fn contact_status_view_still_rejects_delete_without_mutating_the_item() {
 }
 
 #[test]
+fn ordinary_chat_text_delete_still_revokes_the_selected_message() {
+    let chat = JID::from("friend@s.whatsapp.net".to_owned());
+    let me = JID::from("me@s.whatsapp.net".to_owned());
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let mut app = TestApp::new();
+    let mut item = status_message(&me, "chat-text", unix_now(), "original");
+    item.info.chat = chat.clone();
+    item.info.is_from_me = true;
+    app.add_message(item);
+    app.open_chat_by_jid(chat.clone());
+    app.selected_section = Section::Chats;
+    app.focus_pane = FocusPane::Conversation;
+    app.message_list_state
+        .set_selected_message("chat-text".into());
+    app.message_revoker = Box::new(FakeStatusRevoker {
+        calls: calls.clone(),
+        result: Ok(()),
+    });
+
+    app.dispatch_action(AppAction::DeleteMessage);
+
+    assert_eq!(
+        calls.borrow().as_slice(),
+        &[(chat.0.to_string(), me.0.to_string(), "chat-text".into())]
+    );
+    assert_eq!(app.action_notice, Some(ActionNotice::DeletedMessage));
+    assert!(app.message_status(&"chat-text".into()).deleted);
+}
+
+#[test]
 fn authoring_picker_ignores_unrelated_group_permissions_and_cancel_preserves_draft() {
     let mut app = TestApp::new();
     let group = JID::from("123@g.us".to_owned());

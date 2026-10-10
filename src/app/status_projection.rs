@@ -29,6 +29,7 @@ impl App<'_> {
             .flatten()
         {
             if let Some(message) = self.messages.get(id)
+                && !self.message_status(id).deleted
                 && message.info.timestamp
                     > latest
                         .get(&message.info.sender)
@@ -73,9 +74,9 @@ impl App<'_> {
             .into_iter()
             .flatten()
             .filter(|id| {
-                self.messages
-                    .get(*id)
-                    .is_some_and(|message| &message.info.sender == contact)
+                self.messages.get(*id).is_some_and(|message| {
+                    &message.info.sender == contact && !self.message_status(id).deleted
+                })
             })
             .cloned()
             .collect()
@@ -88,9 +89,9 @@ impl App<'_> {
             .into_iter()
             .flatten()
             .filter(|id| {
-                self.messages
-                    .get(*id)
-                    .is_some_and(|message| message.info.is_from_me)
+                self.messages.get(*id).is_some_and(|message| {
+                    message.info.is_from_me && !self.message_status(id).deleted
+                })
             })
             .cloned()
             .collect()
@@ -122,6 +123,7 @@ impl App<'_> {
             .get(&wr::JID::from(STATUS_BROADCAST_CHAT.to_owned()))
             .into_iter()
             .flatten()
+            .filter(|id| !self.message_status(id).deleted)
             .filter_map(|id| self.messages.get(id))
             .filter(|message| &message.info.sender == contact)
             .map(|message| message.info.timestamp)

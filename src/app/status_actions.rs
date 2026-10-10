@@ -71,6 +71,7 @@ impl App<'_> {
                                 | crate::app::actions::AppAction::JumpBottom
                                 | crate::app::actions::AppAction::HalfPageDown
                                 | crate::app::actions::AppAction::HalfPageUp
+                                | crate::app::actions::AppAction::DeleteMessage
                                 | crate::app::actions::AppAction::Quit
                                 | crate::app::actions::AppAction::ToggleLogs
                         ) =>
@@ -97,6 +98,40 @@ impl App<'_> {
             self.dispatch_status_composer_action(composer_action_for_editing_key(&key));
         }
         true
+    }
+
+    pub(crate) fn delete_selected_own_status(&mut self) {
+        if self.selected_section != Section::Status
+            || self.status_composition != StatusCompositionState::Navigating
+            || self.focus_pane != FocusPane::Conversation
+        {
+            return;
+        }
+        let Some(message) = self.selected_message().cloned() else {
+            return self.unavailable("Delete is not available");
+        };
+        if self.message_status(&message.info.id).deleted {
+            return self.unavailable("This message was deleted.");
+        }
+        if message.info.id.is_empty()
+            || message.info.chat.0.as_ref() != crate::app::status_projection::STATUS_BROADCAST_CHAT
+            || message.info.sender.0.is_empty()
+            || !message.info.is_from_me
+            || !status_content_is_supported(&message.message)
+            || !self.own_status_messages().contains(&message.info.id)
+        {
+            return self.unavailable("Delete is not available");
+        }
+        if self
+            .message_revoker
+            .revoke_message(&message.info.chat, &message.info.sender, &message.info.id)
+            .is_err()
+        {
+            return self.unavailable("Could not delete message");
+        }
+        self.record_local_message_delete(&message);
+        self.refresh_status_contacts();
+        self.action_notice = Some(ActionNotice::DeletedMessage);
     }
 
     pub(crate) fn dispatch_status_composer_action(&mut self, action: ComposerAction) {
