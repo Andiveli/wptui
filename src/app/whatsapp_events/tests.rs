@@ -6,9 +6,22 @@ use crate::app::{
     },
 };
 use std::{
+    collections::HashSet,
     panic::AssertUnwindSafe,
     sync::{Arc, Mutex},
 };
+
+struct MutableArchiveSettings(Arc<Mutex<HashSet<wr::JID>>>);
+
+impl crate::app::ChatSettingsQueryPort for MutableArchiveSettings {
+    fn get_chat_settings(&self, jid: &wr::JID) -> wr::ChatSettings {
+        wr::ChatSettings {
+            found: true,
+            archived: self.0.lock().unwrap().contains(jid),
+            ..Default::default()
+        }
+    }
+}
 
 struct RecordingChatStoreWritePort(Arc<Mutex<Vec<Chat>>>);
 
@@ -60,6 +73,39 @@ fn connection_and_sync_complete_each_query_communities_once() {
     assert_eq!(*query.calls.lock().unwrap(), 1);
     app.handle_whatsapp_event(wr::Event::AppStateSyncComplete);
     assert_eq!(*query.calls.lock().unwrap(), 2);
+}
+
+#[test]
+fn archive_event_refreshes_current_chat_filter_without_switching_views() {
+    let mut app = TestApp::new();
+    let jid = wr::JID::from("archive@s.whatsapp.net".to_owned());
+    app.chats.insert(
+        jid.clone(),
+        Chat {
+            jid: jid.clone(),
+            last_message_time: Some(1),
+        },
+    );
+    app.sorted_chats = vec![jid.clone()];
+    let archived = Arc::new(Mutex::new(HashSet::new()));
+    app.set_chat_settings_query(Box::new(MutableArchiveSettings(archived.clone())));
+    app.update_filtered_chats(Some(jid.clone()));
+    assert_eq!(app.visible_chat_rows().len(), 1);
+    assert_eq!(app.filtered_chats, vec![jid.clone()]);
+
+    archived.lock().unwrap().insert(jid.clone());
+    assert!(app.handle_whatsapp_event(wr::Event::ArchiveChanged));
+    assert!(app.visible_chat_rows().is_empty());
+    assert!(app.filtered_chats.is_empty());
+    assert_eq!(app.chat_list_state.selected(), None);
+
+    app.chat_filter = crate::app::ChatFilter::Archived;
+    assert_eq!(app.visible_chat_rows()[0].target, jid);
+    archived.lock().unwrap().clear();
+    assert!(app.handle_whatsapp_event(wr::Event::ArchiveChanged));
+    assert!(app.visible_chat_rows().is_empty());
+    app.chat_filter = crate::app::ChatFilter::All;
+    assert_eq!(app.visible_chat_rows()[0].target, jid);
 }
 
 #[test]
