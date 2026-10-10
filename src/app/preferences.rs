@@ -92,6 +92,24 @@ mod tests {
     }
 
     #[test]
+    fn updating_composer_direction_preserves_other_settings() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = settings_path(directory.path());
+        fs::write(
+            &path,
+            "mouse=disable\ncomposer_direction=auto\ncustom=preserve\n",
+        )
+        .unwrap();
+
+        save_composer_direction(&path, ComposerDirection::Rtl).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(path).unwrap(),
+            "mouse=disable\ncomposer_direction=rtl\ncustom=preserve\n"
+        );
+    }
+
+    #[test]
     fn bootstrap_restores_composer_direction_from_the_data_directory() {
         let directory = tempfile::tempdir().unwrap();
         let mut app = crate::app::App::with_data_dir(directory.path(), directory.path());
