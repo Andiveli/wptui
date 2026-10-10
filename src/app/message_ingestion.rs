@@ -79,9 +79,7 @@ impl App<'_> {
                     message: message_for_persistence,
                 });
 
-            let chat_jid = app.get_selected_chat();
             app.sort_chats();
-            app.select_chat(chat_jid);
             !is_sync
         })
     }

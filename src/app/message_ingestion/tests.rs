@@ -101,6 +101,28 @@ fn notification_eligibility_and_ingestion_continuation_are_preserved() {
 }
 
 #[test]
+fn process_message_preserves_selected_chat_after_sorting() {
+    let mut app = TestApp::new();
+    let first = wr::JID::from("first@g.us".to_owned());
+    let selected = wr::JID::from("selected@g.us".to_owned());
+    for jid in [&first, &selected] {
+        app.chats.insert(
+            jid.clone(),
+            Chat {
+                jid: jid.clone(),
+                last_message_time: Some(1),
+            },
+        );
+    }
+    app.sorted_chats = vec![first.clone(), selected.clone()];
+    app.select_chat(Some(selected.clone()));
+
+    app.process_message(message(&first, "new", 2), false);
+
+    assert_eq!(app.get_selected_chat(), Some(selected));
+}
+
+#[test]
 fn process_message_queries_the_port_once_then_notifies_and_persists() {
     let chat = wr::JID::from("chat@g.us".to_owned());
     let fake = FakeChatSettingsQuery::default();
