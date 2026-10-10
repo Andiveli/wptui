@@ -50,6 +50,24 @@ func appStateSyncComplete(evt *events.AppStateSyncComplete) bool {
 	return evt != nil && evt.Name == appstate.WAPatchRegular
 }
 
+func archiveRefreshEvent(rawEvt any) bool {
+	switch evt := rawEvt.(type) {
+	case *events.Archive:
+		return evt != nil
+	case *events.AppStateSyncComplete:
+		return evt != nil && evt.Name == appstate.WAPatchRegularLow
+	default:
+		return false
+	}
+}
+
+func dispatchArchiveRefresh() {
+	C.callSyncEventCallback(eventHandler, &C.Event{
+		kind: C.uint8_t(EventTypeArchiveChanged),
+		data: nil,
+	})
+}
+
 func chatSyncEventFromConversation(conversation *waHistorySync.Conversation) (chatSyncEvent, bool) {
 	if conversation == nil {
 		return chatSyncEvent{}, false

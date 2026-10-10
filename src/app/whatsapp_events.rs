@@ -10,6 +10,12 @@ pub(crate) fn handle(app: &mut App<'_>, event: wr::Event) -> bool {
             app.sort_chats();
             true
         }
+        wr::Event::ArchiveChanged => {
+            let selected = app.get_selected_chat();
+            app.invalidate_chat_list();
+            app.update_filtered_chats(selected);
+            true
+        }
         wr::Event::Chat {
             jid,
             last_message_time,

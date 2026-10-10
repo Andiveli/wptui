@@ -138,6 +138,7 @@ pub enum MessageActionKind {
 pub enum Event {
     SyncProgress(u8),
     AppStateSyncComplete,
+    ArchiveChanged,
     Receipt {
         kind: ReceiptKind,
         chat: JID,

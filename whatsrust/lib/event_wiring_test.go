@@ -79,6 +79,17 @@ func TestEventWiringOwnsRegistrationAndDispatchCases(t *testing.T) {
 	}
 }
 
+func TestEventFamilyRoutesArchiveRefreshBeforeOtherHandlers(t *testing.T) {
+	source, err := os.ReadFile("event_dispatch.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, ok := extractFunctionBody(string(source), "func dispatchEventFamily(")
+	if !ok || !strings.Contains(body, "archiveRefreshEvent(rawEvt)") || !strings.Contains(body, "dispatchArchiveRefresh()") {
+		t.Fatal("event family must forward archive changes and regular_low completion")
+	}
+}
+
 func TestViewOnceUnavailableDispatcherDeduplicatesByMessageID(t *testing.T) {
 	dispatched := 0
 	dispatcher := newViewOnceUnavailableDispatcher(func(types.MessageInfo, bool) {

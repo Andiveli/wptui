@@ -11,4 +11,5 @@ const (
 	EventTypeChat           = 7
 	EventTypeLogoutResult   = 8
 	EventTypeMarkChatAsRead = 9
+	EventTypeArchiveChanged = 10
 )

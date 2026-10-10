@@ -16,6 +16,7 @@ impl CallbackTranslator<*const CEvent> for Event {
                 Event::SyncProgress(percent)
             }
             EventType::AppStateSyncComplete => Event::AppStateSyncComplete,
+            EventType::ArchiveChanged => Event::ArchiveChanged,
             EventType::Receipt => {
                 let receipt = unsafe { &(*(event.data as *const CReceipt)) };
                 let chat: JID = (&receipt.chat).into();
@@ -130,3 +131,20 @@ setup_handler!(
     C_SetEventHandler,
     event: *const CEvent => Event
 );
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn payloadless_archive_refresh_translates_from_ffi() {
+        let raw = CEvent {
+            event_type: EventType::ArchiveChanged as u8,
+            data: std::ptr::null(),
+        };
+
+        let event = unsafe { Event::to_rust(&raw as *const CEvent) };
+
+        assert!(matches!(event, Event::ArchiveChanged));
+    }
+}
