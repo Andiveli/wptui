@@ -70,7 +70,7 @@ impl App<'_> {
         }
     }
 
-    fn move_chat_selection(&mut self, delta: isize) {
+    pub(crate) fn move_chat_selection(&mut self, delta: isize) {
         match self.selected_section {
             Section::Status => {
                 if delta > 0 {

@@ -28,6 +28,7 @@ pub(super) fn render_status_contacts(frame: &mut Frame, app: &mut App, area: Rec
             }),
         );
     let list_area = block.inner(area);
+    app.mouse_hit_map.chat_list = Some(list_area);
     block.render(area, frame.buffer_mut());
 
     if items.is_empty() {

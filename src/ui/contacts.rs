@@ -43,6 +43,7 @@ pub(crate) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
             }),
         );
     let contacts_area = block.inner(list_area);
+    app.mouse_hit_map.chat_list = Some(contacts_area);
     block.render(list_area, frame.buffer_mut());
     frame.render_stateful_widget(
         ContactList::new(&items),

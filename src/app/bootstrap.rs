@@ -131,6 +131,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         status_last_seen: HashMap::new(),
         status_composition: StatusCompositionState::default(),
         message_list_state: MessageListState::default(),
+        mouse_hit_map: Default::default(),
         timeline: unread_messages::Timeline::default(),
         metadata: HashMap::new(),
         history_sync_percent: None,

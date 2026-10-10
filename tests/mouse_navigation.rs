@@ -48,6 +48,7 @@ fn wheel_over_status_contacts_moves_only_that_visible_list() {
     let mut app = TestApp::new();
     app.selected_section = Section::Status;
     app.focus_pane = FocusPane::ChatList;
+    app.mouse_capture_enabled = true;
     let broadcast: JID = "status@broadcast".to_owned().into();
     for (index, name) in ["alice", "bob", "carol"].into_iter().enumerate() {
         let sender: JID = format!("{name}@s.whatsapp.net").into();
@@ -65,6 +66,56 @@ fn wheel_over_status_contacts_moves_only_that_visible_list() {
     assert_eq!(app.status_selection.selected(), Some(1));
     assert_eq!(app.focus_pane, FocusPane::ChatList);
     assert_eq!(app.selected_section, Section::Status);
+
+    app.mouse_capture_enabled = false;
+    app.on_terminal_event(mouse(MouseEventKind::ScrollDown, 20, 2));
+    assert_eq!(app.status_selection.selected(), Some(1));
+}
+
+#[test]
+fn wheel_over_messages_scrolls_rendered_rows_without_changing_selection() {
+    let mut app = TestApp::new();
+    let chat: JID = "wheel@example.test".to_owned().into();
+    app.open_chat_by_jid(chat.clone());
+    app.mouse_capture_enabled = true;
+    app.focus_pane = FocusPane::Conversation;
+    for index in 0..12 {
+        app.add_message(message(
+            &chat,
+            &format!("item-{index}"),
+            index,
+            &format!("MESSAGE-{index}"),
+        ));
+    }
+    app.message_list_state.select(Some(0));
+    let mut terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
+    draw(&mut app, &mut terminal);
+    let selected = app.message_list_state.get_selected_message();
+
+    app.on_terminal_event(mouse(MouseEventKind::ScrollUp, 60, 3));
+    assert_eq!(app.message_list_state.offset, 3);
+    draw(&mut app, &mut terminal);
+    assert_eq!(app.message_list_state.get_selected_message(), selected);
+
+    app.on_terminal_event(mouse(MouseEventKind::ScrollDown, 60, 3));
+    assert_eq!(app.message_list_state.offset, 0);
+    assert_eq!(app.message_list_state.get_selected_message(), selected);
+
+    for _ in 0..20 {
+        app.on_terminal_event(mouse(MouseEventKind::ScrollUp, 60, 3));
+        draw(&mut app, &mut terminal);
+    }
+    let rendered = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+    assert!(
+        rendered.contains("MESSAGE-0"),
+        "wheel overscrolled beyond oldest message"
+    );
 }
 
 #[test]
@@ -73,6 +124,7 @@ fn clicking_a_rendered_variable_height_message_selects_that_exact_row() {
     let chat: JID = "click@example.test".to_owned().into();
     app.open_chat_by_jid(chat.clone());
     app.focus_pane = FocusPane::Conversation;
+    app.mouse_capture_enabled = true;
     for (id, time, text) in [
         ("old", 1, "OLDER-MESSAGE"),
         ("middle", 2, "MIDDLE-CLICK-TARGET"),
@@ -88,15 +140,19 @@ fn clicking_a_rendered_variable_height_message_selects_that_exact_row() {
     let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
     draw(&mut app, &mut terminal);
     let buffer = terminal.backend().buffer();
-    let target = (0..20)
-        .flat_map(|y| (0..74).map(move |x| (x, y)))
-        .find(|&(x, y)| {
-            (0..6)
-                .map(|dx| buffer[(x + dx, y)].symbol())
-                .collect::<String>()
-                == "MIDDLE"
-        })
-        .expect("middle message must actually be rendered in the test viewport");
+    let find_rendered = |needle: &str| {
+        (0..20)
+            .flat_map(|y| (0..74).map(move |x| (x, y)))
+            .find(|&(x, y)| {
+                (0..needle.len())
+                    .map(|dx| buffer[(x + dx as u16, y)].symbol())
+                    .collect::<String>()
+                    == needle
+            })
+            .expect("message must actually be rendered in the test viewport")
+    };
+    let target = find_rendered("MIDDLE");
+    let other_target = find_rendered("NEWEST");
 
     app.on_terminal_event(mouse(
         MouseEventKind::Down(MouseButton::Left),
@@ -106,6 +162,18 @@ fn clicking_a_rendered_variable_height_message_selects_that_exact_row() {
     draw(&mut app, &mut terminal);
 
     assert_eq!(app.message_list_state.selected, Some(1));
+    assert_eq!(
+        app.message_list_state.get_selected_message().as_deref(),
+        Some("middle")
+    );
+
+    app.shortcut_popup = true;
+    draw(&mut app, &mut terminal);
+    app.on_terminal_event(mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        other_target.0,
+        other_target.1,
+    ));
     assert_eq!(
         app.message_list_state.get_selected_message().as_deref(),
         Some("middle")

@@ -49,6 +49,13 @@ pub fn draw_with_plan(
     media_render_plan: &mut crate::app::events::MediaRenderPlan,
     visibility_plan: &mut VisibilityPlan,
 ) {
+    app.mouse_hit_map = crate::app::mouse_input::MouseHitMap {
+        section: app.selected_section,
+        chat: app.open_chat(),
+        status_contact: app.open_status_contact(),
+        status_composition: app.status_composition,
+        ..Default::default()
+    };
     let content_area = if app.show_logs {
         let [content_area, logs_area] =
             Layout::horizontal([Constraint::Percentage(67), Constraint::Percentage(33)])
@@ -99,6 +106,7 @@ pub fn draw_with_plan(
                     contacts::render_contacts(frame, app, area)
                 });
             } else {
+                app.mouse_hit_map.chat_list = Some(Block::bordered().inner(area));
                 app.record_phase(Phase::CommunityDetailList, |app| {
                     communities::render(frame, app, area)
                 });
