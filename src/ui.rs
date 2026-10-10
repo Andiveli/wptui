@@ -862,6 +862,10 @@ fn render_share_picker(frame: &mut Frame, app: &mut App) {
         Constraint::Length(2),
     ])
     .areas(inner);
+    app.mouse_hit_map.picker = Some(crate::app::mouse_input::PickerHit {
+        kind: crate::app::mouse_input::PickerKind::Share,
+        list: list_area,
+    });
     if let Some(picker) = app.share_picker.as_mut() {
         picker.set_viewport_height(list_area.height as usize);
     }
@@ -895,7 +899,7 @@ fn render_share_picker(frame: &mut Frame, app: &mut App) {
     );
     frame.render_widget(
         Paragraph::new(
-            "Type to search  ↑/↓ or j/k select  Space toggle  Enter forward  Esc cancel",
+            "Type to search  ↑/↓, j/k or wheel select  Space toggle  Enter forward  Esc cancel",
         )
         .dark_gray()
         .wrap(Wrap { trim: true }),
@@ -903,10 +907,10 @@ fn render_share_picker(frame: &mut Frame, app: &mut App) {
     );
 }
 
-fn render_url_picker(frame: &mut Frame, app: &App) {
-    let Some((urls, selected)) = app.url_picker.as_ref() else {
+fn render_url_picker(frame: &mut Frame, app: &mut App) {
+    if app.url_picker.is_none() {
         return;
-    };
+    }
     let modal = centered_modal_layout(frame.area());
     if modal.is_empty() {
         return;
@@ -917,6 +921,13 @@ fn render_url_picker(frame: &mut Frame, app: &App) {
     let inner = block.inner(modal);
     let [list_area, hint_area] =
         Layout::vertical([Constraint::Min(1), Constraint::Length(2)]).areas(inner);
+    app.mouse_hit_map.picker = Some(crate::app::mouse_input::PickerHit {
+        kind: crate::app::mouse_input::PickerKind::Url,
+        list: list_area,
+    });
+    let Some((urls, selected)) = app.url_picker.as_ref() else {
+        return;
+    };
     let items = urls.iter().enumerate().map(|(index, url)| {
         let marker = if index == *selected { "> " } else { "  " };
         Line::from(format!("{marker}{url}"))
@@ -928,7 +939,7 @@ fn render_url_picker(frame: &mut Frame, app: &App) {
         list_area,
     );
     frame.render_widget(
-        Paragraph::new("↑/↓ or j/k select  Enter open  Esc cancel")
+        Paragraph::new("↑/↓, j/k or wheel select  Enter open  Esc cancel")
             .dark_gray()
             .wrap(Wrap { trim: true }),
         hint_area,
@@ -953,6 +964,10 @@ fn render_file_picker(frame: &mut Frame, app: &mut App) {
         Constraint::Length(2),
     ])
     .areas(inner);
+    app.mouse_hit_map.picker = Some(crate::app::mouse_input::PickerHit {
+        kind: crate::app::mouse_input::PickerKind::File,
+        list: list_area,
+    });
     picker.set_viewport_height(list_area.height as usize);
     let visible = picker.visible_entries();
     let viewport = picker.viewport();
@@ -989,9 +1004,11 @@ fn render_file_picker(frame: &mut Frame, app: &mut App) {
         list_area,
     );
     frame.render_widget(
-        Paragraph::new("j/k select  h/← up  l/→ open  Spc mark  Enter attach  / search  Esc close")
-            .dark_gray()
-            .wrap(Wrap { trim: true }),
+        Paragraph::new(
+            "j/k or wheel select  h/← up  l/→ open  Spc mark  Enter attach  / search  Esc close",
+        )
+        .dark_gray()
+        .wrap(Wrap { trim: true }),
         hint_area,
     );
 }
