@@ -130,7 +130,9 @@ func loadContactEntries(ctx context.Context, bridgeClient *whatsmeow.Client) ([]
 	}
 	// Authenticated self identity wins over a numeric address-book placeholder.
 	selfName := selfDisplayNameWithContacts(ctx, bridgeClient, bridgeClient.Store.Contacts)
+	selfRank := 4
 	if selfName == "" {
+		selfRank = 0
 		for _, jid := range selfIdentityJIDs(ctx, bridgeClient) {
 			if jid.Server == types.DefaultUserServer && jid.User != "" {
 				selfName = jid.User
@@ -140,7 +142,9 @@ func loadContactEntries(ctx context.Context, bridgeClient *whatsmeow.Client) ([]
 	}
 	if selfName != "" {
 		for _, jid := range selfIdentityJIDs(ctx, bridgeClient) {
-			resolved[jid] = rankedName{name: selfName, rank: 4}
+			if previous := resolved[jid]; previous.name == "" || selfRank > previous.rank {
+				resolved[jid] = rankedName{name: selfName, rank: selfRank}
+			}
 		}
 	}
 	jids := make([]types.JID, 0, len(resolved))

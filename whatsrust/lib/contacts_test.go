@@ -96,6 +96,32 @@ func TestLoadContactEntriesSavedNameWinsOverMappedLIDPhone(t *testing.T) {
 	}
 }
 
+func TestLoadContactEntriesDoesNotReplaceSavedSelfAliasWithPhone(t *testing.T) {
+	pn := types.NewJID("15550000001", types.DefaultUserServer)
+	lid := types.NewJID("9999", types.HiddenUserServer)
+	client := &whatsmeow.Client{Store: &store.Device{
+		ID: &pn, LID: lid,
+		Contacts: parityContactStore{contacts: map[types.JID]types.ContactInfo{
+			pn: {FullName: "Saved Self Name"},
+		}},
+		LIDs: participantIdentityLIDStore{
+			pnByLID: map[types.JID]types.JID{lid: pn},
+			lidByPN: map[types.JID]types.JID{pn: lid},
+		},
+	}}
+	entries, err := loadContactEntries(context.Background(), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(map[types.JID]string)
+	for _, entry := range entries {
+		got[entry.jid] = entry.name
+	}
+	if got[pn] != "Saved Self Name" || got[lid] != "Saved Self Name" {
+		t.Fatalf("self aliases = %q, %q, want saved self name", got[pn], got[lid])
+	}
+}
+
 func TestLoadContactEntriesSelfVerifiedPhoneWhenNoName(t *testing.T) {
 	pn := types.NewJID("15550000001", types.DefaultUserServer)
 	lid := types.NewJID("9999", types.HiddenUserServer)
