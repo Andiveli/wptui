@@ -161,7 +161,7 @@ fn execute_terminal_initialization_failure(
 /// worker and delegates each event family to its focused runtime owner.
 pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
     let download_tx = download_worker.sender();
-    let mut terminal_session = match TerminalSession::try_new() {
+    let mut terminal_session = match TerminalSession::try_new(app.mouse_capture_enabled) {
         Ok(session) => session,
         Err(e) => {
             error!("Failed to initialize terminal UI: {e}");

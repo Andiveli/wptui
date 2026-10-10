@@ -36,6 +36,12 @@ Your WhatsApp data — database, media, and session — lives in `~/.local/share
 machine. It is not uploaded anywhere; the client only exchanges data with the WhatsApp servers
 when it links or syncs, like any official client.
 
+Mouse capture is opt-in during the pointer-support preview: add `mouse=enable` to
+`~/.local/share/wptui/settings.conf` and restart to enable terminal-wide capture. Use
+`mouse=disable` (or remove the setting for now) to keep terminal-native selection. When capture
+is on, Shift+drag may allow native text selection depending on your terminal; it cannot be enabled
+for individual panes. Wheel and click handling are still being developed in this preview.
+
 ## Requirements
 
 ### Runtime dependencies

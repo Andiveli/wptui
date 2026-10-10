@@ -260,6 +260,7 @@ pub struct App<'a> {
 
     pub composer: Composer<'a>,
     pub(crate) composer_direction: ComposerDirection,
+    pub(crate) mouse_capture_enabled: bool,
     pub(crate) composer_viewport_width: u16,
     pub(crate) preferences_path: PathBuf,
     pub message_list_state: MessageListState,
