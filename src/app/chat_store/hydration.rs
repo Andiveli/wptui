@@ -149,7 +149,7 @@ impl App<'_> {
         if !jid.0.ends_with("@lid") || self.verified_phones.contains_key(jid) {
             return false;
         }
-        let Some(phone) = self.contact_source.verified_phone_for_lid(jid) else {
+        let Some(phone) = self.dm_resolver.resolve_dm_chat(jid) else {
             return false;
         };
         let Some(user) = phone.0.strip_suffix("@s.whatsapp.net") else {
@@ -204,7 +204,7 @@ pub(super) fn canonical_contact_name(name: &str) -> Arc<str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::test_support::{FakeContactSource, FakeMessagePushNamePort, TestApp};
+    use crate::app::test_support::{FakeDmResolver, FakeMessagePushNamePort, TestApp};
     use whatsrust as wr;
 
     fn message(id: &str, sender: &str) -> wr::Message {
@@ -279,16 +279,9 @@ mod tests {
 
     #[test]
     fn verified_phone_labels_group_lid_without_any_contact_row() {
-        let mut app = TestApp::new();
-        let source = FakeContactSource::default();
         let sender = wr::JID::from("99887766@lid".to_owned());
         let phone = wr::JID::from("15551234567@s.whatsapp.net".to_owned());
-        source
-            .verified_phones
-            .lock()
-            .unwrap()
-            .insert(sender.clone(), phone);
-        app.set_contact_source(Box::new(source));
+        let mut app = TestApp::with_dm_resolver(Box::new(FakeDmResolver::with_result(Some(phone))));
         let mut incoming = message("group-phone", sender.0.as_ref());
         incoming.info.chat = wr::JID::from("team@g.us".to_owned());
 
@@ -299,15 +292,9 @@ mod tests {
 
     #[test]
     fn non_phone_resolution_cannot_be_displayed_as_a_verified_number() {
-        let mut app = TestApp::new();
-        let source = FakeContactSource::default();
         let sender = wr::JID::from("99887766@lid".to_owned());
-        source
-            .verified_phones
-            .lock()
-            .unwrap()
-            .insert(sender.clone(), sender.clone());
-        app.set_contact_source(Box::new(source));
+        let mut app =
+            TestApp::with_dm_resolver(Box::new(FakeDmResolver::with_result(Some(sender.clone()))));
         app.add_message(message("unverified", sender.0.as_ref()));
         assert_eq!(app.contact_name(&sender).as_ref(), "");
         assert!(!app.verified_phones.contains_key(&sender));
@@ -315,19 +302,16 @@ mod tests {
 
     #[test]
     fn history_lid_phone_is_retried_after_contact_sync() {
-        let mut app = TestApp::new();
-        let source = FakeContactSource::default();
+        let resolver = FakeDmResolver::default();
+        let mut app = TestApp::with_dm_resolver(Box::new(resolver.clone()));
         let sender = wr::JID::from("99887766@lid".to_owned());
-        app.set_contact_source(Box::new(source.clone()));
         let mut incoming = message("history-phone", sender.0.as_ref());
         incoming.info.chat = wr::JID::from("team@g.us".to_owned());
         app.add_message_without_sort(incoming);
         assert_eq!(app.contact_name(&sender).as_ref(), "");
 
-        source.verified_phones.lock().unwrap().insert(
-            sender.clone(),
-            wr::JID::from("15551234567@s.whatsapp.net".to_owned()),
-        );
+        *resolver.result.lock().unwrap() =
+            Some(wr::JID::from("15551234567@s.whatsapp.net".to_owned()));
         app.get_contacts();
         assert_eq!(app.contact_name(&sender).as_ref(), "15551234567");
     }

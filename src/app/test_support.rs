@@ -65,17 +65,12 @@ pub(crate) struct RecordingNotifier {
 pub(crate) struct FakeContactSource {
     pub(crate) rows: Arc<Mutex<Vec<(wr::JID, Arc<str>)>>>,
     pub(crate) calls: Arc<Mutex<usize>>,
-    pub(crate) verified_phones: Arc<Mutex<HashMap<wr::JID, wr::JID>>>,
 }
 
 impl ContactSourcePort for FakeContactSource {
     fn get_contacts(&self) -> Vec<(wr::JID, Arc<str>)> {
         *self.calls.lock().unwrap() += 1;
         self.rows.lock().unwrap().clone()
-    }
-
-    fn verified_phone_for_lid(&self, lid: &wr::JID) -> Option<wr::JID> {
-        self.verified_phones.lock().unwrap().get(lid).cloned()
     }
 }
 
@@ -471,6 +466,12 @@ impl RawPresenceDiagnosticsPort for EmptyRawPresenceDiagnostics {
 impl TestApp {
     pub(crate) fn new() -> Self {
         Self::with_presence_subscription(Box::new(AcceptedPresenceSubscription))
+    }
+
+    pub(crate) fn with_dm_resolver(dm_resolver: Box<dyn DmResolverPort>) -> Self {
+        let mut test_app = Self::new();
+        test_app.app.set_dm_resolver(dm_resolver);
+        test_app
     }
 
     pub(crate) fn with_message_push_name(message_push_name: Box<dyn MessagePushNamePort>) -> Self {
