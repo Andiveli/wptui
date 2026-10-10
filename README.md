@@ -150,8 +150,8 @@ or editor state.
 | Toggle logs | `Ctrl+Shift+L` |
 | Toggle section rail | `Space`, then `1` |
 | Toggle chat list | `Space`, then `2` |
-| Focus previous / next pane | `h` / `l` |
-| Select previous / next item | `k` / `j` |
+| Focus previous / next pane | `h` / `l` or `←` / `→` |
+| Select previous / next item | `k` / `j` or `↑` / `↓` |
 | Jump to first / last item | `g g` / `G` |
 | Move half a page | `Ctrl+U` / `Ctrl+D` |
 | Search chats | `/` |
@@ -174,7 +174,7 @@ or editor state.
 
 Use `j`/`k` or the arrow keys inside menus, then press `Enter` to confirm. Available actions depend
 on the selected message. In Status, press `Enter` on your own contact to open the Create status
-pane in navigation. Select one published update with `j`/`k`, then press `d` to revoke it; `i`
+pane in navigation. Select one published update with `j`/`k` or `↓`/`↑`, then press `d` to revoke it; `i`
 starts writing and `Esc` returns to the contact list. `Space`, `a`, `c` still opens Create status
 directly in authoring mode; `Esc` there enters navigation. Pending drafts and other contacts'
 statuses cannot be deleted this way. A failed revoke leaves the item visible; a successful send
