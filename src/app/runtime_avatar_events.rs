@@ -16,13 +16,15 @@ use crate::ui::navigation_areas;
 
 fn contact_avatar_targets(app: &mut App, area: Rect) -> Vec<AvatarTarget> {
     let (rows, items) = app.cached_contact_view();
-    let list_area = if app.contact_search.input.is_empty() && !app.contact_search_active {
-        area
-    } else {
-        let [_, list_area] =
-            Layout::vertical([Constraint::Length(1), Constraint::Percentage(100)]).areas(area);
-        list_area
-    };
+    let mut list_area = area;
+    if app.selected_section == Section::Chats && app.community_detail.is_none() {
+        [_, list_area] =
+            Layout::vertical([Constraint::Length(1), Constraint::Percentage(100)]).areas(list_area);
+    }
+    if !app.contact_search.input.is_empty() || app.contact_search_active {
+        [_, list_area] =
+            Layout::vertical([Constraint::Length(1), Constraint::Percentage(100)]).areas(list_area);
+    }
     let contacts_area = Block::bordered().inner(list_area);
     let visible = visible_contact_rows(&items, app.chat_list_state.offset(), contacts_area.height);
     let row_targets = rows

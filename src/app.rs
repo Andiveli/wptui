@@ -100,7 +100,7 @@ use crate::app::actions::{
     StatusCompositionState, SystemClipboardReader, SystemClipboardWriter, SystemUrlOpener,
     UnavailableClipboardReader, UnavailableClipboardWriter, UrlOpener,
 };
-pub use crate::app::chat_projection::{ChatRow, ContactRow};
+pub use crate::app::chat_projection::{ChatFilter, ChatRow, ContactRow};
 pub use crate::app::chat_read_sync_port::ChatReadSyncPort;
 pub use crate::app::chat_settings_query_port::ChatSettingsQueryPort;
 pub use crate::app::chat_store::{ChatReadCursorPort, StoreChatReadCursor};
@@ -326,6 +326,7 @@ pub struct App<'a> {
 
     pub contact_search_active: bool,
     pub contact_search: TextInput,
+    pub chat_filter: ChatFilter,
     pub filtered_chats: Vec<wr::JID>,
 
     pub should_quit: bool,

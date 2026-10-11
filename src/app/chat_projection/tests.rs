@@ -1,4 +1,4 @@
-use super::super::{Chat, ChatRow, CommunityNode, ContactRow, test_support::TestApp};
+use super::super::{Chat, ChatFilter, ChatRow, CommunityNode, ContactRow, test_support::TestApp};
 use crate::ui::contact_list::ContactListItem;
 use whatsrust as wr;
 
@@ -31,6 +31,42 @@ fn unread_message(
     message.info.mentions_self = mentions_self;
     message.info.quote_id = quote_id.map(Into::into);
     message
+}
+
+#[test]
+fn unread_filter_shows_only_chats_with_pending_activity_and_all_restores_the_list() {
+    let mut app = TestApp::new();
+    let unread = jid("unread@s.whatsapp.net");
+    let read = jid("read@s.whatsapp.net");
+    for chat in [&unread, &read] {
+        add_chat(&mut app, chat);
+    }
+    app.sorted_chats = vec![unread.clone(), read.clone()];
+    app.add_message(message(&unread, "new", 2));
+
+    app.chat_filter = ChatFilter::Unread;
+    assert_eq!(app.visible_chat_rows().len(), 1);
+    assert_eq!(app.visible_chat_rows()[0].target, unread);
+    app.chat_filter = ChatFilter::All;
+    assert_eq!(app.visible_chat_rows().len(), 2);
+}
+
+#[test]
+fn groups_filter_keeps_group_chats_but_not_individuals() {
+    let mut app = TestApp::new();
+    let group = jid("team@g.us");
+    let direct = jid("alice@s.whatsapp.net");
+    for chat in [&group, &direct] {
+        add_chat(&mut app, chat);
+    }
+    app.sorted_chats = vec![group.clone(), direct];
+    app.chat_filter = ChatFilter::Groups;
+    assert_eq!(app.visible_chat_rows().len(), 1);
+    assert_eq!(app.visible_chat_rows()[0].target, group);
+    app.contact_search.enter_char('z');
+    assert!(app.visible_chat_rows().is_empty());
+    app.contact_search.clean();
+    assert_eq!(app.visible_chat_rows()[0].target, group);
 }
 
 #[test]
@@ -307,6 +343,35 @@ fn one_unread_linked_group_opens_directly() {
     assert_eq!(app.open_chat(), Some(unread));
     assert_eq!(app.community_detail, None);
 }
+#[test]
+fn restored_unread_group_filter_opens_the_only_unread_community_member() {
+    let mut app = TestApp::new();
+    let unread = jid("restored@g.us");
+    let quiet = jid("quiet@g.us");
+    for chat in [&unread, &quiet] {
+        add_chat(&mut app, chat);
+    }
+    app.sorted_chats = vec![unread.clone(), quiet.clone()];
+    app.communities = vec![CommunityNode {
+        jid: jid("community@g.us"),
+        name: "Project Team".into(),
+        is_root: true,
+        linked_groups: vec![unread.clone(), quiet],
+        is_joined: true,
+        is_default_subgroup: false,
+        is_announce: None,
+        participant_count: None,
+    }];
+    app.add_message(crate::app::test_support::message(&unread, "new", 2));
+    app.timeline.get_mut(&unread).unwrap().pending_new_messages = 0;
+    app.chat_filter = ChatFilter::Unread;
+    assert_eq!(app.visible_chat_rows().len(), 1);
+    app.chat_list_state.select(Some(0));
+    app.dispatch_action(crate::app::actions::AppAction::OpenChat);
+    assert_eq!(app.open_chat(), Some(unread));
+    assert_eq!(app.community_detail, None);
+}
+
 #[test]
 fn zero_unread_linked_groups_open_virtual_detail_rows() {
     let mut app = TestApp::new();

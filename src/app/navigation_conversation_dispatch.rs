@@ -1,7 +1,7 @@
-use crate::app::App;
 use crate::app::actions::{
     AppAction, ConversationMode, FocusPane, Section, StatusCompositionState,
 };
+use crate::app::{App, ChatFilter};
 
 impl App<'_> {
     pub(crate) fn dispatch_navigation_conversation_action(
@@ -99,7 +99,13 @@ impl App<'_> {
                         .map(|node| {
                             node.linked_groups
                                 .iter()
-                                .filter(|jid| self.pending_new_messages(jid) > 0)
+                                .filter(|jid| {
+                                    if self.chat_filter == ChatFilter::Unread {
+                                        self.pending_chat_activity(jid).0 > 0
+                                    } else {
+                                        self.pending_new_messages(jid) > 0
+                                    }
+                                })
                                 .cloned()
                                 .collect::<Vec<_>>()
                         })

@@ -1,6 +1,6 @@
 use super::contact_list::{AVATAR_HEIGHT, AVATAR_WIDTH, ContactList, visible_contact_rows};
 use crate::app::App;
-use crate::app::actions::FocusPane;
+use crate::app::actions::{FocusPane, Section};
 use crate::app::contact_avatars::AvatarTarget;
 use ratatui::{
     Frame,
@@ -13,9 +13,31 @@ use ratatui_image::StatefulImage;
 pub(crate) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
     let (rows, items) = app.cached_contact_view();
     let mut list_area = area;
+    if app.selected_section == Section::Chats && app.community_detail.is_none() {
+        let [filter_area, new_list_area] =
+            Layout::vertical([Constraint::Length(1), Constraint::Percentage(100)]).areas(list_area);
+        list_area = new_list_area;
+        let filters = [
+            crate::app::ChatFilter::All,
+            crate::app::ChatFilter::Unread,
+            crate::app::ChatFilter::Groups,
+        ];
+        let text = filters
+            .iter()
+            .map(|filter| {
+                if *filter == app.chat_filter {
+                    format!("[{}]", filter.label())
+                } else {
+                    filter.label().to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("  ");
+        frame.render_widget(Paragraph::new(format!("{text}  (Tab)")), filter_area);
+    }
     if !app.contact_search.input.is_empty() || app.contact_search_active {
         let [search_area, new_list_area] =
-            Layout::vertical([Constraint::Length(1), Constraint::Percentage(100)]).areas(area);
+            Layout::vertical([Constraint::Length(1), Constraint::Percentage(100)]).areas(list_area);
         list_area = new_list_area;
 
         let text = format!("/{}", app.contact_search.input);
@@ -95,6 +117,22 @@ mod tests {
         fn now_us(&self) -> u64 {
             1
         }
+    }
+
+    #[test]
+    fn chats_filter_bar_shows_current_view_above_search_and_list() {
+        let mut app = TestApp::new();
+        app.chat_filter = crate::app::ChatFilter::Unread;
+        app.contact_search.enter_char('x');
+        let mut terminal = Terminal::new(TestBackend::new(50, 10)).unwrap();
+        terminal
+            .draw(|frame| render_contacts(frame, &mut app.app, frame.area()))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let first_line = (0..50).map(|x| buffer[(x, 0)].symbol()).collect::<String>();
+        assert!(first_line.contains("All  [Unread]  Groups  (Tab)"));
+        let search_line = (0..50).map(|x| buffer[(x, 1)].symbol()).collect::<String>();
+        assert!(search_line.starts_with("/x"));
     }
 
     #[test]

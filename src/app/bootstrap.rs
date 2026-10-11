@@ -215,6 +215,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         kh: KeybindHandler::default(),
         contact_search_active: false,
         contact_search: TextInput::new(),
+        chat_filter: super::ChatFilter::All,
         filtered_chats: Vec::new(),
         show_logs: false,
         should_quit: false,
