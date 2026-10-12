@@ -1,6 +1,20 @@
 use super::super::{Chat, ChatFilter, ChatRow, CommunityNode, ContactRow, test_support::TestApp};
+use crate::app::ChatSettingsQueryPort;
 use crate::ui::contact_list::ContactListItem;
+use std::collections::HashSet;
 use whatsrust as wr;
+
+struct ArchiveSettings(HashSet<wr::JID>);
+
+impl ChatSettingsQueryPort for ArchiveSettings {
+    fn get_chat_settings(&self, jid: &wr::JID) -> wr::ChatSettings {
+        wr::ChatSettings {
+            found: true,
+            archived: self.0.contains(jid),
+            ..Default::default()
+        }
+    }
+}
 
 fn jid(value: &str) -> wr::JID {
     wr::JID::from(value.to_owned())
@@ -67,6 +81,99 @@ fn groups_filter_keeps_group_chats_but_not_individuals() {
     assert!(app.visible_chat_rows().is_empty());
     app.contact_search.clean();
     assert_eq!(app.visible_chat_rows()[0].target, group);
+}
+
+#[test]
+fn all_view_excludes_archived_chat_but_keeps_active_chat() {
+    let mut app = TestApp::new();
+    let archived = jid("archived@s.whatsapp.net");
+    let active = jid("active@s.whatsapp.net");
+    for chat in [&archived, &active] {
+        add_chat(&mut app, chat);
+    }
+    app.sorted_chats = vec![archived.clone(), active.clone()];
+    app.set_chat_settings_query(Box::new(ArchiveSettings(HashSet::from([archived.clone()]))));
+
+    let rows = app.visible_chat_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].target, active);
+    app.add_message(crate::app::test_support::message(&archived, "new", 2));
+    app.chat_filter = ChatFilter::Unread;
+    assert!(app.visible_chat_rows().is_empty());
+}
+
+#[test]
+fn archived_view_shows_archived_chat_and_switching_back_restores_active_chat() {
+    let mut app = TestApp::new();
+    let archived = jid("archived@s.whatsapp.net");
+    let active = jid("active@s.whatsapp.net");
+    for chat in [&archived, &active] {
+        add_chat(&mut app, chat);
+    }
+    app.sorted_chats = vec![archived.clone(), active.clone()];
+    app.set_chat_settings_query(Box::new(ArchiveSettings(HashSet::from([archived.clone()]))));
+
+    app.chat_filter = ChatFilter::Archived;
+    let rows = app.visible_chat_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].target, archived);
+    app.chat_filter = ChatFilter::All;
+    let rows = app.visible_chat_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].target, active);
+}
+
+#[test]
+fn mixed_community_shows_only_members_from_the_selected_archive_view() {
+    let mut app = TestApp::new();
+    let archived = jid("archived@g.us");
+    let active = jid("active@g.us");
+    let root = jid("community@g.us");
+    for chat in [&archived, &active] {
+        add_chat(&mut app, chat);
+    }
+    app.sorted_chats = vec![archived.clone(), active.clone()];
+    app.communities = vec![CommunityNode {
+        jid: root.clone(),
+        name: "Project Team".into(),
+        is_root: true,
+        linked_groups: vec![archived.clone(), active.clone()],
+        is_joined: true,
+        is_default_subgroup: false,
+        is_announce: None,
+        participant_count: None,
+    }];
+    app.set_chat_settings_query(Box::new(ArchiveSettings(HashSet::from([archived.clone()]))));
+
+    let rows = app.visible_chat_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].members, vec![active.clone()]);
+    assert_eq!(rows[0].target, active.clone());
+    app.chat_filter = ChatFilter::Groups;
+    assert_eq!(app.visible_chat_rows()[0].members, vec![active.clone()]);
+    app.chat_filter = ChatFilter::All;
+    app.chat_list_state.select(Some(0));
+    assert_eq!(app.selected_community_contact(), Some(root.clone()));
+    app.open_community_detail(root.clone());
+    let detail = app.visible_contact_rows();
+    assert!(detail.iter().any(|row| row.target() == Some(&active)));
+    assert!(!detail.iter().any(|row| row.target() == Some(&archived)));
+    app.close_community_detail();
+    app.add_message(crate::app::test_support::message(&active, "new", 2));
+
+    app.chat_filter = ChatFilter::Archived;
+    let rows = app.visible_chat_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].members, vec![archived.clone()]);
+    assert_eq!(rows[0].target, archived.clone());
+    app.chat_list_state.select(Some(0));
+    assert_eq!(app.selected_community_contact(), Some(root.clone()));
+    app.dispatch_action(crate::app::actions::AppAction::OpenChat);
+    assert_eq!(app.open_chat(), None);
+    assert_eq!(app.community_detail, Some(root));
+    let detail = app.visible_contact_rows();
+    assert!(detail.iter().any(|row| row.target() == Some(&archived)));
+    assert!(!detail.iter().any(|row| row.target() == Some(&active)));
 }
 
 #[test]
