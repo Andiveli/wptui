@@ -126,6 +126,15 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let selected = app.chat_list_state.selected();
     for (row, row_area, selectable_index) in community_layout(&rows, selected, inner) {
+        if let Some(index) = selectable_index {
+            app.mouse_hit_map
+                .contact_rows
+                .push(crate::app::mouse_input::ContactHit {
+                    area: row_area,
+                    index,
+                    target: crate::app::mouse_input::ContactTarget::Community(row.clone()),
+                });
+        }
         let selected = selectable_index == selected;
         let base = if selected {
             Style::default().fg(Color::Green).bg(Color::DarkGray)

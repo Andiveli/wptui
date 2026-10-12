@@ -94,6 +94,26 @@ pub(crate) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
     );
 
     let visible = visible_contact_rows(&items, app.chat_list_state.offset(), contacts_area.height);
+    for (position, &(index, relative_y)) in visible.iter().enumerate() {
+        if !matches!(rows[index], crate::app::ContactRow::Header(_)) {
+            let next_y = visible
+                .get(position + 1)
+                .map(|(_, y)| *y)
+                .unwrap_or(contacts_area.height);
+            app.mouse_hit_map
+                .contact_rows
+                .push(crate::app::mouse_input::ContactHit {
+                    area: Rect::new(
+                        contacts_area.x,
+                        contacts_area.y + relative_y,
+                        contacts_area.width,
+                        next_y.saturating_sub(relative_y),
+                    ),
+                    index,
+                    target: crate::app::mouse_input::ContactTarget::Chat(rows[index].clone()),
+                });
+        }
+    }
     for (index, relative_y) in visible {
         let y = contacts_area.y.saturating_add(relative_y);
         let avatar_area = Rect::new(
