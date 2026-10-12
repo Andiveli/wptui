@@ -100,7 +100,7 @@ use crate::app::actions::{
     StatusCompositionState, SystemClipboardReader, SystemClipboardWriter, SystemUrlOpener,
     UnavailableClipboardReader, UnavailableClipboardWriter, UrlOpener,
 };
-pub use crate::app::chat_projection::{ChatRow, ContactRow};
+pub use crate::app::chat_projection::{ChatFilter, ChatRow, ContactRow};
 pub use crate::app::chat_read_sync_port::ChatReadSyncPort;
 pub use crate::app::chat_settings_query_port::ChatSettingsQueryPort;
 pub use crate::app::chat_store::{ChatReadCursorPort, StoreChatReadCursor};
@@ -326,6 +326,7 @@ pub struct App<'a> {
 
     pub contact_search_active: bool,
     pub contact_search: TextInput,
+    pub chat_filter: ChatFilter,
     pub filtered_chats: Vec<wr::JID>,
 
     pub should_quit: bool,
@@ -358,6 +359,7 @@ pub struct App<'a> {
     pub(crate) runtime_diagnostics: RuntimeDiagnostics,
     pub(crate) chat_list_view: Option<chat_projection::ChatListViewModel>,
     pub(crate) chat_list_revision: u64,
+    pub(crate) archived_group_attention_cache: Option<(u64, bool)>,
     pub(crate) chat_list_mutation_depth: usize,
     pub(crate) chat_list_mutation_pending: bool,
 }
@@ -435,6 +437,7 @@ impl App<'_> {
     #[cfg(test)]
     pub(crate) fn set_chat_settings_query(&mut self, port: Box<dyn ChatSettingsQueryPort>) {
         self.chat_settings_query = port;
+        self.archived_group_attention_cache = None;
     }
 
     #[cfg(test)]

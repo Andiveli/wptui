@@ -30,6 +30,16 @@ https://github.com/user-attachments/assets/f08d20f9-6051-45e2-a1d2-b0a512242e9c
 - Contextual, Vim-inspired keybindings
 - Andiveli welcome mark in the chat panel before any conversation is opened
 
+The Chats list has **All**, **Unread**, **Groups**, and **Archived** views. All,
+Unread, and Groups exclude archived chats; Archived shows only archived chats.
+Archive status comes from the linked device's WhatsApp settings. Search narrows
+the selected view. Switching views does not change messages or read status;
+a community row contains only groups in that view. Archive changes received
+from WhatsApp refresh the current view without switching filters. A yellow `@`
+and yellow **Archived** label signal an unread mention or reply to your message
+in an archived group; ordinary archived chats and other group messages do not
+trigger it. Reading that group clears the alert.
+
 ## Data
 
 Your WhatsApp data — database, media, and session — lives in `~/.local/share/wptui/` on your
@@ -155,6 +165,7 @@ or editor state.
 | Jump to first / last item | `g g` / `G` |
 | Move half a page | `Ctrl+U` / `Ctrl+D` |
 | Search chats | `/` |
+| Cycle chat filters (All, Unread, Groups, Archived) | `Tab` in the Chats list |
 
 ### Messages
 

@@ -9,6 +9,9 @@ import (
 // dispatchEventFamily keeps registration orchestration separate from the
 // cohesive handlers for each event family.
 func dispatchEventFamily(rawEvt any, client *whatsmeow.Client, dispatchViewOnce func(types.MessageInfo, bool)) {
+	if archiveRefreshEvent(rawEvt) {
+		dispatchArchiveRefresh()
+	}
 	switch evt := rawEvt.(type) {
 	case *events.Connected:
 		dispatchConnectionFamily(client)

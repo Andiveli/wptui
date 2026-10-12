@@ -215,6 +215,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         kh: KeybindHandler::default(),
         contact_search_active: false,
         contact_search: TextInput::new(),
+        chat_filter: super::ChatFilter::All,
         filtered_chats: Vec::new(),
         show_logs: false,
         should_quit: false,
@@ -228,6 +229,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         runtime_diagnostics: RuntimeDiagnostics::from_environment(cache_dir),
         chat_list_view: None,
         chat_list_revision: 0,
+        archived_group_attention_cache: None,
         chat_list_mutation_depth: 0,
         chat_list_mutation_pending: false,
     };
