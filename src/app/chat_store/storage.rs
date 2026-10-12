@@ -16,12 +16,17 @@ impl App<'_> {
             },
         );
 
+        let sender_phone_changed = self.remember_verified_phone(&message.info.sender);
+        let chat_phone_changed = self.remember_verified_phone(&chat_jid);
+        if sender_phone_changed || chat_phone_changed {
+            self.invalidate_chat_list();
+        }
         let id = message.info.id.clone();
         if let Some(name) = self.message_push_name.lookup_push_name(&id) {
             let name = super::hydration::canonical_contact_name(&name);
             if !name.is_empty()
-                && !(message.info.sender.0.ends_with("@lid")
-                    && super::hydration::phone_like_name(&name))
+                && !super::hydration::raw_lid_name(&name)
+                && !super::hydration::phone_like_name(&name)
             {
                 self.profile_names.insert(message.info.sender.clone(), name);
             }

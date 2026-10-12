@@ -82,9 +82,13 @@ pub(crate) fn handle(app: &mut App<'_>, event: wr::Event) -> bool {
         }
         wr::Event::Connected => {
             app.set_read_receipt_readiness(crate::app::read_receipts::Readiness::Connected);
-            // Connected is emitted again after reconnects. The first
-            // probe may race group metadata hydration, so AppStateSyncComplete
-            // below remains the authoritative follow-up refresh.
+            // Own names are available from the authenticated store even before
+            // group metadata is queryable; a partial refresh must not hide
+            // cached names for other contacts or groups.
+            app.refresh_self_contacts();
+            // Connected is emitted again after reconnects. The first group
+            // probe may race metadata hydration, so AppStateSyncComplete
+            // below remains the authoritative full follow-up refresh.
             app.load_communities();
             app.mark_presence_ready();
             true

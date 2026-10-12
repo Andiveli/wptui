@@ -9,4 +9,8 @@ impl ContactSourcePort for WhatsRustContactSource {
     fn get_contacts(&self) -> Vec<(wr::JID, Arc<str>)> {
         wr::get_contacts()
     }
+
+    fn get_self_contacts(&self) -> Vec<(wr::JID, Arc<str>)> {
+        wr::get_self_contacts()
+    }
 }

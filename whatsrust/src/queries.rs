@@ -7,7 +7,7 @@ use super::{
 use crate::abi::{
     C_FreeCommunities, C_FreeContacts, C_FreeGroupParticipants, C_FreeResolveDmChatId,
     C_GetChatSettings, C_GetCommunities, C_GetContacts, C_GetGroupInfo, C_GetGroupParticipants,
-    C_ResolveDmChatId, CContactEntry, CGetContactsResult,
+    C_GetSelfContacts, C_ResolveDmChatId, CContactEntry, CGetContactsResult,
 };
 use crate::models::CJIDOwner;
 
@@ -21,9 +21,16 @@ fn contact_entries(result: &CGetContactsResult) -> &[CContactEntry] {
 }
 
 pub fn get_contacts() -> Vec<(JID, Arc<str>)> {
-    let result = unsafe { C_GetContacts() };
-    let entries = contact_entries(&result);
+    copy_contact_entries(unsafe { C_GetContacts() })
+}
 
+/// Reads only authenticated self aliases; never queries joined groups.
+pub fn get_self_contacts() -> Vec<(JID, Arc<str>)> {
+    copy_contact_entries(unsafe { C_GetSelfContacts() })
+}
+
+fn copy_contact_entries(result: CGetContactsResult) -> Vec<(JID, Arc<str>)> {
+    let entries = contact_entries(&result);
     let contacts = entries
         .iter()
         .map(|e| {
