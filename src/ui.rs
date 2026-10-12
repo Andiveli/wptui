@@ -33,11 +33,12 @@ use navigation::{
 };
 use ratatui::{
     Frame,
+    buffer::Buffer,
     layout::{Alignment, Constraint, Layout, Rect, Size},
     style::{Style, Stylize},
     symbols,
     text::{Line, Span},
-    widgets::{Block, Clear, Paragraph, StatefulWidget, Wrap},
+    widgets::{Block, Clear, Paragraph, StatefulWidget, Widget, Wrap},
 };
 use ratatui_image::{Resize, StatefulImage};
 use status::{render_status_contacts, render_statuses_with_plan};
@@ -1071,6 +1072,10 @@ fn render_share_picker(frame: &mut Frame, app: &mut App) {
         Constraint::Length(2),
     ])
     .areas(inner);
+    app.mouse_hit_map.picker = Some(crate::app::mouse_input::PickerHit {
+        kind: crate::app::mouse_input::PickerKind::Share,
+        list: list_area,
+    });
     if let Some(picker) = app.share_picker.as_mut() {
         picker.set_viewport_height(list_area.height as usize);
     }
@@ -1079,19 +1084,19 @@ fn render_share_picker(frame: &mut Frame, app: &mut App) {
     };
     let visible = picker.visible_contacts();
     let viewport = picker.viewport();
-    let items = visible[viewport.clone()]
-        .iter()
-        .enumerate()
-        .map(|(row, jid)| {
-            let index = viewport.start + row;
-            let marker = if picker.is_selected(jid) {
-                "[x]"
-            } else {
-                "[ ]"
-            };
-            let cursor = if index == picker.selected { ">" } else { " " };
-            Line::from(format!("{cursor} {marker} {}", app.contact_name(jid)))
-        });
+    let line_for = |index: usize| {
+        let jid = visible[index];
+        let marker = if picker.is_selected(jid) {
+            "[x]"
+        } else {
+            "[ ]"
+        };
+        let cursor = if index == picker.selected { ">" } else { " " };
+        Line::from(format!("{cursor} {marker} {}", app.contact_name(jid)))
+    };
+    let first_visible =
+        wrapped_picker_first_visible(picker.selected, viewport.clone(), list_area, &line_for);
+    let items = (first_visible..viewport.end).map(line_for);
     frame.render_widget(Clear, modal);
     frame.render_widget(block, modal);
     frame.render_widget(
@@ -1104,7 +1109,7 @@ fn render_share_picker(frame: &mut Frame, app: &mut App) {
     );
     frame.render_widget(
         Paragraph::new(
-            "Type to search  ↑/↓ or j/k select  Space toggle  Enter forward  Esc cancel",
+            "Type to search  ↑/↓, j/k or wheel select  Space toggle  Enter forward  Esc cancel",
         )
         .dark_gray()
         .wrap(Wrap { trim: true }),
@@ -1112,10 +1117,10 @@ fn render_share_picker(frame: &mut Frame, app: &mut App) {
     );
 }
 
-fn render_url_picker(frame: &mut Frame, app: &App) {
-    let Some((urls, selected)) = app.url_picker.as_ref() else {
+fn render_url_picker(frame: &mut Frame, app: &mut App) {
+    if app.url_picker.is_none() {
         return;
-    };
+    }
     let modal = centered_modal_layout(frame.area());
     if modal.is_empty() {
         return;
@@ -1126,10 +1131,20 @@ fn render_url_picker(frame: &mut Frame, app: &App) {
     let inner = block.inner(modal);
     let [list_area, hint_area] =
         Layout::vertical([Constraint::Min(1), Constraint::Length(2)]).areas(inner);
-    let items = urls.iter().enumerate().map(|(index, url)| {
-        let marker = if index == *selected { "> " } else { "  " };
-        Line::from(format!("{marker}{url}"))
+    app.mouse_hit_map.picker = Some(crate::app::mouse_input::PickerHit {
+        kind: crate::app::mouse_input::PickerKind::Url,
+        list: list_area,
     });
+    let Some((urls, selected)) = app.url_picker.as_ref() else {
+        return;
+    };
+    let line_for = |index: usize| {
+        let marker = if index == *selected { "> " } else { "  " };
+        Line::from(format!("{marker}{}", urls[index]))
+    };
+    let first_visible =
+        wrapped_picker_first_visible(*selected, 0..urls.len(), list_area, &line_for);
+    let items = (first_visible..urls.len()).map(line_for);
     frame.render_widget(Clear, modal);
     frame.render_widget(block, modal);
     frame.render_widget(
@@ -1137,7 +1152,7 @@ fn render_url_picker(frame: &mut Frame, app: &App) {
         list_area,
     );
     frame.render_widget(
-        Paragraph::new("↑/↓ or j/k select  Enter open  Esc cancel")
+        Paragraph::new("↑/↓, j/k or wheel select  Enter open  Esc cancel")
             .dark_gray()
             .wrap(Wrap { trim: true }),
         hint_area,
@@ -1162,22 +1177,26 @@ fn render_file_picker(frame: &mut Frame, app: &mut App) {
         Constraint::Length(2),
     ])
     .areas(inner);
+    app.mouse_hit_map.picker = Some(crate::app::mouse_input::PickerHit {
+        kind: crate::app::mouse_input::PickerKind::File,
+        list: list_area,
+    });
     picker.set_viewport_height(list_area.height as usize);
     let visible = picker.visible_entries();
     let viewport = picker.viewport();
-    let items = visible[viewport.clone()]
-        .iter()
-        .enumerate()
-        .map(|(row, entry)| {
-            let index = viewport.start + row;
-            let cursor = if index == picker.selected { ">" } else { " " };
-            let mark = if !entry.is_dir && picker.is_selected(&entry.path) {
-                "[x]"
-            } else {
-                "   "
-            };
-            Line::from(format!("{cursor}{mark} {}", entry.display_name()))
-        });
+    let line_for = |index: usize| {
+        let entry = visible[index];
+        let cursor = if index == picker.selected { ">" } else { " " };
+        let mark = if !entry.is_dir && picker.is_selected(&entry.path) {
+            "[x]"
+        } else {
+            "   "
+        };
+        Line::from(format!("{cursor}{mark} {}", entry.display_name()))
+    };
+    let first_visible =
+        wrapped_picker_first_visible(picker.selected, viewport.clone(), list_area, &line_for);
+    let items = (first_visible..viewport.end).map(line_for);
     frame.render_widget(Clear, modal);
     frame.render_widget(block, modal);
     let filter_line = if picker.searching {
@@ -1198,11 +1217,45 @@ fn render_file_picker(frame: &mut Frame, app: &mut App) {
         list_area,
     );
     frame.render_widget(
-        Paragraph::new("j/k select  h/← up  l/→ open  Spc mark  Enter attach  / search  Esc close")
-            .dark_gray()
-            .wrap(Wrap { trim: true }),
+        Paragraph::new(
+            "j/k or wheel select  h/← up  l/→ open  Spc mark  Enter attach  / search  Esc close",
+        )
+        .dark_gray()
+        .wrap(Wrap { trim: true }),
         hint_area,
     );
+}
+
+fn wrapped_picker_first_visible(
+    selected: usize,
+    viewport: std::ops::Range<usize>,
+    area: Rect,
+    line_for: impl Fn(usize) -> Line<'static>,
+) -> usize {
+    if area.is_empty() || selected < viewport.start || selected >= viewport.end {
+        return viewport.start;
+    }
+    // Test the exact wrapped widget output, bounded by the painted viewport.
+    // Long entries may use several rows even though selection counts entries.
+    let scratch_area = Rect::new(0, 0, area.width, area.height);
+    let mut first = selected;
+    while first > viewport.start {
+        let candidate = first - 1;
+        let items = (candidate..=selected).map(&line_for).collect::<Vec<_>>();
+        let mut scratch = Buffer::empty(scratch_area);
+        Paragraph::new(items)
+            .wrap(Wrap { trim: true })
+            .render(scratch_area, &mut scratch);
+        let cursor_painted = (0..area.height).any(|y| {
+            scratch[(0, y)].symbol() == ">"
+                && (area.width == 1 || matches!(scratch[(1, y)].symbol(), " " | "["))
+        });
+        if !cursor_painted {
+            break;
+        }
+        first = candidate;
+    }
+    first
 }
 
 #[cfg(test)]

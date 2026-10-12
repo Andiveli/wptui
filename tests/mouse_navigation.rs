@@ -1,9 +1,15 @@
-use ratatui::crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::{Terminal, backend::TestBackend};
+use std::collections::HashMap;
+use std::fs;
 use whatsrust::{JID, Message, MessageContent, MessageInfo};
+use wp_tui::app::SharePicker;
 use wp_tui::app::actions::{FocusPane, Section};
 use wp_tui::app::events::MediaRenderPlan;
 use wp_tui::app::read_receipts::VisibilityPlan;
+use wp_tui::file_picker::FilePickerState;
 use wp_tui::ui;
 
 mod common;
@@ -190,4 +196,341 @@ fn clicking_a_rendered_variable_height_message_selects_that_exact_row() {
         app.message_list_state.get_selected_message().as_deref(),
         Some("middle")
     );
+}
+
+#[test]
+fn wrapped_share_and_file_entries_keep_the_wheel_cursor_painted() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(
+        directory
+            .path()
+            .join(format!("a-file-{}", "longpart".repeat(29))),
+        "fixture",
+    )
+    .unwrap();
+    fs::write(directory.path().join("b-file.txt"), "fixture").unwrap();
+
+    for kind in ["share", "file"] {
+        let mut app = TestApp::with_settings("mouse=enable\n");
+        if kind == "share" {
+            let contacts: Vec<JID> = ["a@example.test", "b@example.test"]
+                .into_iter()
+                .map(|jid| jid.to_owned().into())
+                .collect();
+            let labels = HashMap::from([
+                (contacts[0].clone(), "long label ".repeat(40)),
+                (contacts[1].clone(), "target recipient".into()),
+            ]);
+            for (jid, label) in &labels {
+                app.contacts.insert(jid.clone(), label.clone().into());
+            }
+            let mut picker = SharePicker::new(contacts, labels, HashMap::new());
+            picker.query = "example.test".into();
+            app.share_picker = Some(picker);
+        } else {
+            let mut picker = FilePickerState::open(directory.path()).unwrap();
+            picker.enter_search();
+            for character in "file".chars() {
+                picker.push_query(character);
+            }
+            app.file_picker = Some(picker);
+        }
+        let mut terminal = Terminal::new(TestBackend::new(48, 9)).unwrap();
+        draw(&mut app, &mut terminal);
+        let initially_painted = (0..9).any(|row| {
+            (0..48)
+                .map(|column| terminal.backend().buffer()[(column, row)].symbol())
+                .collect::<String>()
+                .contains(if kind == "share" {
+                    "long label"
+                } else {
+                    "a-file-"
+                })
+        });
+        assert!(
+            initially_painted,
+            "{kind} long entry must really be painted"
+        );
+        app.on_terminal_event(mouse(MouseEventKind::ScrollDown, 10, 2));
+        let (selected, query) = if kind == "share" {
+            let picker = app.share_picker.as_ref().unwrap();
+            (picker.selected, picker.query.as_str())
+        } else {
+            let picker = app.file_picker.as_ref().unwrap();
+            (picker.selected, picker.query.as_str())
+        };
+        assert_eq!(selected, 1, "{kind} wheel must move to the next entry");
+        assert_eq!(
+            query,
+            if kind == "share" {
+                "example.test"
+            } else {
+                "file"
+            }
+        );
+        draw(&mut app, &mut terminal);
+        let buffer = terminal.backend().buffer();
+        let cursor_visible = (2..6).any(|row| buffer[(1, row)].symbol() == ">");
+        assert!(
+            cursor_visible,
+            "{kind} selected entry must be painted after wheel"
+        );
+
+        if kind == "share" {
+            app.share_picker.as_mut().unwrap().move_selection(-1);
+        } else {
+            let picker = app.file_picker.as_mut().unwrap();
+            picker.move_selection(-1);
+            picker.end_search(); // Navigation keys are intentionally text while searching.
+        }
+        draw(&mut app, &mut terminal);
+        app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)));
+        draw(&mut app, &mut terminal);
+        let selected = if kind == "share" {
+            app.share_picker.as_ref().unwrap().selected
+        } else {
+            app.file_picker.as_ref().unwrap().selected
+        };
+        assert_eq!(selected, 1, "{kind} keyboard cursor must still move");
+        assert!(
+            (2..6).any(|row| terminal.backend().buffer()[(1, row)].symbol() == ">"),
+            "{kind} keyboard-selected entry must also be painted"
+        );
+    }
+}
+
+#[test]
+fn clicking_a_clipped_message_selects_only_its_painted_rows() {
+    let mut app = TestApp::with_settings("mouse=enable\n");
+    let chat: JID = "clipped@example.test".to_owned().into();
+    app.open_chat_by_jid(chat.clone());
+    app.focus_pane = FocusPane::Conversation;
+    app.add_message(message(
+        &chat,
+        "clipped",
+        1,
+        &format!("TARGET-BEGIN {}", "TARGET-CLIPPED ".repeat(40)),
+    ));
+    app.add_message(message(&chat, "newest", 2, "NEWEST-VISIBLE"));
+    app.message_list_state.set_selected_message("newest".into());
+    let mut terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
+    draw(&mut app, &mut terminal);
+    assert_eq!(
+        app.message_list_state.get_selected_message().as_deref(),
+        Some("newest")
+    );
+    let rendered_rows = |terminal: &Terminal<TestBackend>| {
+        let buffer = terminal.backend().buffer();
+        (0..12)
+            .map(|y| (0..80).map(|x| buffer[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+    };
+    let rows = rendered_rows(&terminal);
+    assert!(
+        rows.iter().all(|row| !row.contains("TARGET-BEGIN")),
+        "the first target row must be clipped"
+    );
+    let (column, row) = rows
+        .iter()
+        .enumerate()
+        .find_map(|(row, text)| {
+            text.find("TARGET-CLIPPED")
+                .map(|column| (column as u16, row as u16))
+        })
+        .expect("a lower, clipped target row must still be painted");
+
+    app.on_terminal_event(mouse(MouseEventKind::Down(MouseButton::Left), column, row));
+    assert_eq!(
+        app.message_list_state.get_selected_message().as_deref(),
+        Some("clipped")
+    );
+
+    app.message_list_state.set_selected_message("newest".into());
+    app.url_picker = Some((vec!["https://example.test".into()], 0));
+    draw(&mut app, &mut terminal);
+    assert_eq!(
+        app.message_list_state.get_selected_message().as_deref(),
+        Some("newest")
+    );
+    app.on_terminal_event(mouse(MouseEventKind::Down(MouseButton::Left), column, row));
+    assert_eq!(
+        app.message_list_state.get_selected_message().as_deref(),
+        Some("newest")
+    );
+}
+
+#[test]
+fn wrapped_urls_do_not_hide_the_wheel_selected_link() {
+    let mut app = TestApp::with_settings("mouse=enable\n");
+    app.url_picker = Some((
+        (0..18)
+            .map(|index| format!("https://example.test/{index}/{}", "segment/".repeat(12)))
+            .collect(),
+        0,
+    ));
+    let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+    draw(&mut app, &mut terminal);
+    for _ in 0..15 {
+        app.on_terminal_event(mouse(MouseEventKind::ScrollDown, 25, 4));
+    }
+    assert_eq!(app.url_picker.as_ref().unwrap().1, 15);
+    draw(&mut app, &mut terminal);
+    let buffer = terminal.backend().buffer();
+    // The URL itself may wrap before its prefix is contiguous on one row.
+    // Only the selected item paints a cursor at the modal list's left edge.
+    let list_x = ui::centered_modal_layout(ratatui::layout::Rect::new(0, 0, 100, 20)).x + 1;
+    let selected_is_painted = (3..15).any(|y| buffer[(list_x, y)].symbol() == ">");
+    let painted_rows = (0..20)
+        .map(|y| {
+            (0..100)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        selected_is_painted,
+        "wrapped URLs above the selection must not hide its marker; painted:\n{}",
+        painted_rows.join("\n")
+    );
+}
+
+#[test]
+fn long_url_picker_keeps_wheel_selected_link_painted() {
+    let mut app = TestApp::with_settings("mouse=enable\n");
+    app.url_picker = Some((
+        (0..18)
+            .map(|index| format!("https://example.test/{index}"))
+            .collect(),
+        0,
+    ));
+    let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+    draw(&mut app, &mut terminal);
+    let rendered_rows = |terminal: &Terminal<TestBackend>| {
+        let buffer = terminal.backend().buffer();
+        (0..20)
+            .map(|y| {
+                (0..100)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        rendered_rows(&terminal)
+            .iter()
+            .any(|row| row.contains("> https://example.test/0"))
+    );
+    for _ in 0..15 {
+        app.on_terminal_event(mouse(MouseEventKind::ScrollDown, 25, 4));
+    }
+    assert_eq!(app.url_picker.as_ref().unwrap().1, 15);
+    draw(&mut app, &mut terminal);
+    assert!(
+        rendered_rows(&terminal)
+            .iter()
+            .any(|row| row.contains("> https://example.test/15")),
+        "wheel-selected URL must remain visible, not scroll off the modal"
+    );
+
+    // Existing arrow navigation still moves by one and paints its selection.
+    app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)));
+    assert_eq!(app.url_picker.as_ref().unwrap().1, 14);
+    draw(&mut app, &mut terminal);
+    assert!(
+        rendered_rows(&terminal)
+            .iter()
+            .any(|row| row.contains("> https://example.test/14"))
+    );
+}
+
+#[test]
+fn wheel_in_rendered_picker_lists_moves_only_the_active_picker() {
+    let directory = tempfile::tempdir().unwrap();
+    for index in 0..18 {
+        fs::write(
+            directory.path().join(format!("file-{index:02}.txt")),
+            "fixture",
+        )
+        .unwrap();
+    }
+
+    for picker in ["share", "url", "file"] {
+        let mut app = TestApp::with_settings("mouse=enable\n");
+        app.selected_section = Section::Status;
+        let broadcast: JID = "status@broadcast".to_owned().into();
+        for (index, name) in ["alice", "bob"].into_iter().enumerate() {
+            let sender: JID = format!("{name}@s.whatsapp.net").into();
+            app.contacts.insert(sender.clone(), name.into());
+            let mut status = message(&broadcast, name, (index + 1) as i64, name);
+            status.info.sender = sender;
+            app.add_message(status);
+        }
+        let needle = match picker {
+            "share" => {
+                let contacts = (0..18)
+                    .map(|index| format!("recipient-{index:02}@example.test").into())
+                    .collect();
+                app.share_picker = Some(SharePicker::new(contacts, HashMap::new(), HashMap::new()));
+                "recipient-00"
+            }
+            "url" => {
+                app.url_picker = Some((
+                    (0..18)
+                        .map(|index| format!("https://example.test/{index}"))
+                        .collect(),
+                    0,
+                ));
+                "https://example.test/0"
+            }
+            "file" => {
+                app.file_picker = Some(FilePickerState::open(directory.path()).unwrap());
+                "file-00.txt"
+            }
+            _ => unreachable!(),
+        };
+        let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+        draw(&mut app, &mut terminal);
+        let buffer = terminal.backend().buffer();
+        let (column, row) = (0..20)
+            .flat_map(|y| (0..100).map(move |x| (x, y)))
+            .find(|&(x, y)| {
+                x + needle.len() <= 100
+                    && (0..needle.len())
+                        .map(|dx| buffer[(x as u16 + dx as u16, y as u16)].symbol())
+                        .collect::<String>()
+                        == needle
+            })
+            .unwrap_or_else(|| panic!("{picker} list must be painted"));
+        assert_eq!(app.status_selection.selected(), Some(0));
+
+        app.on_terminal_event(mouse(MouseEventKind::ScrollDown, column as u16, row as u16));
+        let selected = match picker {
+            "share" => app.share_picker.as_ref().unwrap().selected,
+            "url" => app.url_picker.as_ref().unwrap().1,
+            "file" => app.file_picker.as_ref().unwrap().selected,
+            _ => unreachable!(),
+        };
+        assert_eq!(selected, 1, "wheel must move the {picker} cursor");
+        assert_eq!(
+            app.status_selection.selected(),
+            Some(0),
+            "base pane must not move"
+        );
+
+        draw(&mut app, &mut terminal);
+        app.on_terminal_event(mouse(MouseEventKind::ScrollDown, 14, row as u16));
+        app.on_terminal_event(mouse(MouseEventKind::ScrollDown, 10, row as u16));
+        let selected = match picker {
+            "share" => app.share_picker.as_ref().unwrap().selected,
+            "url" => app.url_picker.as_ref().unwrap().1,
+            "file" => app.file_picker.as_ref().unwrap().selected,
+            _ => unreachable!(),
+        };
+        assert_eq!(selected, 1, "border/outside must not scroll the {picker}");
+        assert_eq!(
+            app.status_selection.selected(),
+            Some(0),
+            "modal must shield the base pane"
+        );
+    }
 }
