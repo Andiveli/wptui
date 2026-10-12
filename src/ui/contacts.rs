@@ -32,11 +32,21 @@ pub(crate) fn render_chat_filters(frame: &mut Frame, app: &mut App, area: Rect) 
                     .add_modifier(Modifier::BOLD),
             ));
         }
-        labels.push(Span::raw(if filter == app.chat_filter {
+        let label = if filter == app.chat_filter {
             format!("[{}]", filter.label())
         } else {
             filter.label().to_owned()
-        }));
+        };
+        if filter == crate::app::ChatFilter::Archived && archived_attention {
+            labels.push(Span::styled(
+                label,
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        } else {
+            labels.push(Span::raw(label));
+        }
     }
     labels.push(Span::raw("  (Tab)"));
     frame.render_widget(Paragraph::new(Line::from(labels)), area);
