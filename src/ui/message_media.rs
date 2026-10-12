@@ -183,6 +183,47 @@ pub fn render_file(
         },
     }
 
+    // Only the media/path region is actionable. Caption links have their own
+    // URL hits; neither the empty message background nor a sticker is a target.
+    if !matches!(status, Some(super::message_helpers::StatusLabel::Deleted))
+        && !App::is_pending_message_id(message_id)
+        && matches!(
+            data.kind,
+            FileKind::Image | FileKind::Video | FileKind::Audio | FileKind::Document
+        )
+    {
+        let painted_image = matches!(data.kind, FileKind::Image | FileKind::Video)
+            && render_image
+            && matches!(
+                app.metadata.get(message_id),
+                Some(Metadata::File(FileMeta::Loaded))
+            )
+            && app.image_cache.contains_key(&data.path);
+        for row in media_area.rows() {
+            let painted = row
+                .columns()
+                .filter(|&position| !buf[position].symbol().trim().is_empty())
+                .collect::<Vec<_>>();
+            let span = if painted_image {
+                Some(row)
+            } else {
+                painted
+                    .first()
+                    .zip(painted.last())
+                    .map(|(first, last)| Rect::new(first.x, row.y, last.x - first.x + 1, 1))
+            };
+            if let Some(area) = span {
+                app.mouse_hit_map
+                    .media
+                    .push(crate::app::mouse_input::MediaHit {
+                        area,
+                        id: message_id.clone(),
+                        kind: data.kind.clone(),
+                    });
+            }
+        }
+    }
+
     if data.caption.is_some() || status.is_some() {
         let mention_ranges = data
             .caption
@@ -197,6 +238,16 @@ pub fn render_file(
             text_mode,
         ))
         .render(caption_area, buf);
+        if let Some(caption) = data.caption.as_deref() {
+            super::record_url_hits(
+                app,
+                message_id,
+                caption,
+                status,
+                caption_area,
+                Alignment::Left,
+            );
+        }
     }
 }
 
