@@ -40,7 +40,7 @@ pub use models::{
 pub use presence::{SubscribePresenceResult, drain_raw_presence_diagnostics, subscribe_presence};
 pub use queries::{
     get_chat_settings, get_communities, get_contacts, get_group_info, get_group_participants,
-    resolve_dm_chat,
+    get_self_contacts, resolve_dm_chat,
 };
 pub use read_sync::{MarkAsReadError, ReadSyncWorker, mark_as_read, sync_chat_read};
 pub use registrations::{

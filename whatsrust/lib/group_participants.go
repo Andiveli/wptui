@@ -80,7 +80,7 @@ func groupParticipantName(ctx context.Context, participant types.GroupParticipan
 			return name
 		}
 	}
-	var pushName string
+	var savedName, pushName string
 	if contacts != nil {
 		for _, jid := range participantJIDs(ctx, participant, lids) {
 			contact, err := contacts.GetContact(ctx, jid)
@@ -91,21 +91,26 @@ func groupParticipantName(ctx context.Context, participant types.GroupParticipan
 				if name := nonNumericLocalContactName(contact); name != "" {
 					return name
 				}
-			} else if name := locallySavedContactName(contact); name != "" && !phoneLikeName(name) {
-				return name
-			}
-			if !isSelf && pushName == "" {
-				pushName = plainContactName(contact.PushName)
+			} else {
+				if name := locallySavedContactName(contact); name != "" && (savedName == "" || name < savedName) {
+					savedName = name
+				}
+				if name := plainContactName(contact.PushName); name != "" && !phoneLikeName(name) && (pushName == "" || name < pushName) {
+					pushName = name
+				}
 			}
 		}
 	}
 	if isSelf {
 		return participantFallbackName(ctx, participant, lids)
 	}
+	if savedName != "" {
+		return savedName
+	}
 	if name := plainContactName(participant.DisplayName); name != "" && !phoneLikeName(name) {
 		return name
 	}
-	if pushName != "" && !phoneLikeName(pushName) {
+	if pushName != "" {
 		return pushName
 	}
 	return participantFallbackName(ctx, participant, lids)
@@ -222,7 +227,7 @@ func participantJIDs(ctx context.Context, participant types.GroupParticipant, li
 
 func locallySavedContactName(contact types.ContactInfo) string {
 	for _, candidate := range []string{contact.FullName, contact.FirstName} {
-		if name := plainContactName(candidate); name != "" {
+		if name := plainContactName(candidate); name != "" && !phoneLikeName(name) {
 			return name
 		}
 	}

@@ -2,7 +2,8 @@ use super::*;
 use crate::app::{
     chat_store::write_port::{ChatStoreWritePort, PersistChat, PersistChatMessage, PersistMessage},
     test_support::{
-        FakeChatReadCursorPort, FakeCommunityQuery, FakeStatusCursorPort, TestApp, message,
+        FakeChatReadCursorPort, FakeCommunityQuery, FakeContactSource, FakeStatusCursorPort,
+        TestApp, message,
     },
 };
 use std::{
@@ -60,6 +61,76 @@ fn connection_and_sync_complete_each_query_communities_once() {
     assert_eq!(*query.calls.lock().unwrap(), 1);
     app.handle_whatsapp_event(wr::Event::AppStateSyncComplete);
     assert_eq!(*query.calls.lock().unwrap(), 2);
+}
+
+#[test]
+fn connected_refreshes_stale_self_message_sender_without_sync_complete() {
+    let self_jid = wr::JID::from("15550000001@s.whatsapp.net".to_owned());
+    let chat = wr::JID::from("chat@g.us".to_owned());
+    let source = FakeContactSource::default();
+    source
+        .rows
+        .lock()
+        .unwrap()
+        .push((self_jid.clone(), "Ada".into()));
+    let mut app = TestApp::with_contact_source(source.clone());
+    let community_query = FakeCommunityQuery::default();
+    community_query
+        .results
+        .lock()
+        .unwrap()
+        .extend([Err(wr::CommunitiesError::BridgeUnavailable)]);
+    app.set_community_query(Box::new(community_query));
+    app.contacts.insert(self_jid.clone(), "15550000001".into());
+    let other = wr::JID::from("15550000002@s.whatsapp.net".to_owned());
+    app.contacts
+        .insert(other.clone(), "Other Saved Name".into());
+    app.contacts.insert(chat.clone(), "Saved Group".into());
+    app.fresh_contact_jids = Some([other.clone(), chat.clone()].into());
+    let mut own_message = message(&chat, "own-message", 1);
+    own_message.info.sender = self_jid;
+    own_message.info.is_from_me = true;
+
+    assert_eq!(
+        app.message_sender_name(&own_message).as_ref(),
+        "15550000001"
+    );
+    assert_eq!(*source.calls.lock().unwrap(), 0);
+    assert!(app.handle_whatsapp_event(wr::Event::Connected));
+    assert_eq!(app.message_sender_name(&own_message).as_ref(), "Ada");
+    assert_eq!(app.contact_name(&other).as_ref(), "Other Saved Name");
+    assert_eq!(app.contact_name(&chat).as_ref(), "Saved Group");
+    assert_eq!(*source.self_calls.lock().unwrap(), 1);
+    assert_eq!(*source.calls.lock().unwrap(), 0);
+}
+
+#[test]
+fn connected_self_name_survives_restart_without_a_new_sync() {
+    let dir = tempfile::tempdir().unwrap();
+    let self_jid = wr::JID::from("15550000001@s.whatsapp.net".to_owned());
+    let chat = wr::JID::from("chat@g.us".to_owned());
+    let mut own_message = message(&chat, "own-message", 1);
+    own_message.info.sender = self_jid.clone();
+    own_message.info.is_from_me = true;
+
+    {
+        let source = FakeContactSource::default();
+        source.rows.lock().unwrap().push((self_jid, "Ada".into()));
+        let mut app = TestApp::with_database_contact_source(dir.path(), source);
+        let community_query = FakeCommunityQuery::default();
+        community_query
+            .results
+            .lock()
+            .unwrap()
+            .extend([Err(wr::CommunitiesError::BridgeUnavailable)]);
+        app.set_community_query(Box::new(community_query));
+        assert!(app.handle_whatsapp_event(wr::Event::Connected));
+        assert_eq!(app.message_sender_name(&own_message).as_ref(), "Ada");
+    }
+
+    let mut restarted = TestApp::with_database(dir.path());
+    restarted.load_data_from_db();
+    assert_eq!(restarted.message_sender_name(&own_message).as_ref(), "Ada");
 }
 
 #[test]
