@@ -682,10 +682,147 @@ mod composer_focus_tests {
 mod chat_filter_layout_tests {
     use super::draw_with_plan;
     use crate::app::{
-        actions::Section, events::MediaRenderPlan, read_receipts::VisibilityPlan,
+        Chat, actions::Section, events::MediaRenderPlan, read_receipts::VisibilityPlan,
         test_support::TestApp,
     };
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{
+        Terminal,
+        backend::TestBackend,
+        style::{Color, Modifier},
+    };
+    use whatsrust as wr;
+
+    fn filter_row(
+        app: &mut TestApp,
+        terminal: &mut Terminal<TestBackend>,
+    ) -> (String, Option<(Color, Modifier)>) {
+        let mut media = MediaRenderPlan::default();
+        let mut visibility = VisibilityPlan::default();
+        terminal
+            .draw(|frame| draw_with_plan(frame, &mut app.app, &mut media, &mut visibility))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let row = (0..terminal.size().unwrap().width)
+            .map(|x| buffer[(x, 0)].symbol())
+            .collect::<String>();
+        let marker_style = row.find('@').map(|x| {
+            let cell = &buffer[(x as u16, 0)];
+            (cell.fg, cell.modifier)
+        });
+        (row, marker_style)
+    }
+
+    #[test]
+    fn archived_filter_alerts_only_for_unread_archived_group_mentions_or_replies() {
+        let mut app = TestApp::new();
+        let archived_direct = wr::JID::from("archived-direct@s.whatsapp.net".to_owned());
+        let archived_group = wr::JID::from("archived-group@g.us".to_owned());
+        let active_group = wr::JID::from("active-group@g.us".to_owned());
+        for chat in [&archived_direct, &archived_group, &active_group] {
+            app.chats.insert(
+                chat.clone(),
+                Chat {
+                    jid: chat.clone(),
+                    last_message_time: Some(1),
+                },
+            );
+        }
+        app.sorted_chats = vec![
+            archived_direct.clone(),
+            archived_group.clone(),
+            active_group.clone(),
+        ];
+        app.set_archived_chat_settings([archived_direct.clone(), archived_group.clone()]);
+        let mut terminal = Terminal::new(TestBackend::new(100, 18)).unwrap();
+        let plain = "[All]  Unread  Groups  Archived  (Tab)";
+        assert!(filter_row(&mut app, &mut terminal).0.starts_with(plain));
+
+        let mut direct = crate::app::test_support::message(&archived_direct, "direct", 2);
+        direct.info.mentions_self = true;
+        app.add_message(direct);
+        app.add_message(crate::app::test_support::message(
+            &archived_group,
+            "ordinary",
+            3,
+        ));
+        let mut active = crate::app::test_support::message(&active_group, "active", 4);
+        active.info.mentions_self = true;
+        app.add_message(active);
+        assert!(filter_row(&mut app, &mut terminal).0.starts_with(plain));
+
+        let mut mention = crate::app::test_support::message(&archived_group, "mention", 5);
+        mention.info.mentions_self = true;
+        app.add_message(mention);
+        let (row, color) = filter_row(&mut app, &mut terminal);
+        assert!(
+            row.starts_with("[All]  Unread  Groups  @ Archived  (Tab)"),
+            "{row:?}"
+        );
+        assert_eq!(color.map(|style| style.0), Some(Color::Yellow));
+        assert!(color.unwrap().1.contains(Modifier::BOLD));
+
+        app.mark_chat_read_at_latest(&archived_group);
+        app.chat_filter = crate::app::ChatFilter::Archived;
+        let (row, color) = filter_row(&mut app, &mut terminal);
+        assert!(
+            row.starts_with("All  Unread  Groups  [Archived]  (Tab)"),
+            "{row:?}"
+        );
+        assert_eq!(color, None);
+
+        let mut own = crate::app::test_support::message(&archived_group, "own", 6);
+        own.info.is_from_me = true;
+        app.add_message(own);
+        app.mark_chat_read_at_latest(&archived_group);
+        let mut reply = crate::app::test_support::message(&archived_group, "reply", 7);
+        reply.info.quote_id = Some("own".into());
+        app.add_message(reply);
+        let (row, color) = filter_row(&mut app, &mut terminal);
+        assert!(
+            row.starts_with("All  Unread  Groups  @ [Archived]  (Tab)"),
+            "{row:?}"
+        );
+        assert_eq!(color.map(|style| style.0), Some(Color::Yellow));
+        assert!(color.unwrap().1.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn archived_filter_colors_its_label_only_with_unread_group_attention() {
+        let mut app = TestApp::new();
+        let group = wr::JID::from("archived-attention@g.us".to_owned());
+        app.chats.insert(
+            group.clone(),
+            Chat {
+                jid: group.clone(),
+                last_message_time: Some(1),
+            },
+        );
+        app.sorted_chats.push(group.clone());
+        app.set_archived_chat_settings([group.clone()]);
+        let mut terminal = Terminal::new(TestBackend::new(100, 18)).unwrap();
+        let (row, _) = filter_row(&mut app, &mut terminal);
+        let label_x = row.find("Archived").unwrap() as u16;
+        assert_ne!(terminal.backend().buffer()[(label_x, 0)].fg, Color::Yellow);
+
+        let mut mention = crate::app::test_support::message(&group, "mention", 2);
+        mention.info.mentions_self = true;
+        app.add_message(mention);
+        let (row, _) = filter_row(&mut app, &mut terminal);
+        let label_x = row.find("Archived").unwrap() as u16;
+        let cell = &terminal.backend().buffer()[(label_x, 0)];
+        assert_eq!(cell.fg, Color::Yellow);
+        assert!(cell.modifier.contains(Modifier::BOLD));
+
+        app.chat_filter = crate::app::ChatFilter::Archived;
+        let (row, _) = filter_row(&mut app, &mut terminal);
+        let label_x = row.find("Archived").unwrap() as u16;
+        assert_eq!(terminal.backend().buffer()[(label_x, 0)].fg, Color::Yellow);
+
+        app.mark_chat_read_at_latest(&group);
+        let (row, _) = filter_row(&mut app, &mut terminal);
+        let label_x = row.find("Archived").unwrap() as u16;
+        assert_ne!(terminal.backend().buffer()[(label_x, 0)].fg, Color::Yellow);
+    }
 
     #[test]
     fn chats_filter_row_sits_above_sections_contacts_and_conversation() {

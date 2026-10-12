@@ -229,6 +229,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         runtime_diagnostics: RuntimeDiagnostics::from_environment(cache_dir),
         chat_list_view: None,
         chat_list_revision: 0,
+        archived_group_attention_cache: None,
         chat_list_mutation_depth: 0,
         chat_list_mutation_pending: false,
     };
