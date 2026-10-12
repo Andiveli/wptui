@@ -153,6 +153,67 @@ func TestLoadContactEntriesDoesNotInventPhoneForUnmappedLID(t *testing.T) {
 	}
 }
 
+func TestLoadContactEntriesDoesNotExportNumericNameForUnmappedLID(t *testing.T) {
+	lid := types.JID{User: "99887766", Server: types.HiddenUserServer}
+	client := &whatsmeow.Client{Store: &store.Device{Contacts: groupParticipantContacts{
+		contacts: map[types.JID]types.ContactInfo{lid: {FullName: lid.User}},
+	}}}
+	entries, err := loadContactEntries(context.Background(), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("unmapped numeric LID entries = %#v, want none", entries)
+	}
+}
+
+func TestLoadContactEntriesNumericLIDUsesVerifiedPN(t *testing.T) {
+	lid := types.JID{User: "99887766", Server: types.HiddenUserServer}
+	pn := types.JID{User: "15551234567", Server: types.DefaultUserServer}
+	client := &whatsmeow.Client{Store: &store.Device{
+		Contacts: groupParticipantContacts{contacts: map[types.JID]types.ContactInfo{
+			lid: {FullName: lid.User},
+		}},
+		LIDs: participantIdentityLIDStore{pnByLID: map[types.JID]types.JID{lid: pn}},
+	}}
+	entries, err := loadContactEntries(context.Background(), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(map[types.JID]string)
+	for _, entry := range entries {
+		got[entry.jid] = entry.name
+	}
+	if got[lid] != pn.User || got[pn] != pn.User {
+		t.Fatalf("mapped numeric LID aliases = %q, %q, want verified PN %q", got[lid], got[pn], pn.User)
+	}
+}
+
+func TestLoadContactEntriesPNPlaceholderCannotBecomeMappedLIDPhone(t *testing.T) {
+	pn := types.JID{User: "15551234567", Server: types.DefaultUserServer}
+	lid := types.JID{User: "99887766", Server: types.HiddenUserServer}
+	client := &whatsmeow.Client{Store: &store.Device{
+		Contacts: groupParticipantContacts{contacts: map[types.JID]types.ContactInfo{
+			pn: {FullName: lid.User},
+		}},
+		LIDs: participantIdentityLIDStore{
+			pnByLID: map[types.JID]types.JID{lid: pn},
+			lidByPN: map[types.JID]types.JID{pn: lid},
+		},
+	}}
+	entries, err := loadContactEntries(context.Background(), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(map[types.JID]string)
+	for _, entry := range entries {
+		got[entry.jid] = entry.name
+	}
+	if got[pn] != pn.User || got[lid] != pn.User {
+		t.Fatalf("placeholder aliases = %q, %q, want verified PN %q", got[pn], got[lid], pn.User)
+	}
+}
+
 func TestContactJIDsIncludesVerifiedPNLIDAndADAliases(t *testing.T) {
 	pn := types.JID{User: "141270097854639", Server: types.DefaultUserServer}
 	lid := types.JID{User: "269595130773675", Server: types.HiddenUserServer}

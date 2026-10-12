@@ -93,10 +93,20 @@ impl App<'_> {
     pub fn contact_name(&self, jid: &wr::JID) -> Arc<str> {
         let saved = self.fresh_contact_name(jid);
         saved
-            .filter(|name| !phone_like_name(name))
-            .or_else(|| self.profile_names.get(jid))
+            .filter(|name| !phone_like_name(name) && !raw_lid_name(name))
+            .or_else(|| {
+                self.profile_names
+                    .get(jid)
+                    .filter(|name| !phone_like_name(name) && !raw_lid_name(name))
+            })
             .or_else(|| self.verified_phones.get(jid))
-            .or_else(|| saved.filter(|_| !jid.0.ends_with("@lid")))
+            .or_else(|| {
+                saved.filter(|name| {
+                    !jid.0.ends_with("@lid")
+                        && !raw_lid_name(name)
+                        && (!jid.0.ends_with("@s.whatsapp.net") || !phone_like_name(name))
+                })
+            })
             .map(|name| canonical_contact_name(name))
             .unwrap_or_else(|| {
                 let Some((user, server)) = jid.0.split_once('@') else {
@@ -114,13 +124,19 @@ impl App<'_> {
 
     pub fn message_sender_name(&self, message: &wr::Message) -> Arc<str> {
         self.fresh_contact_name(&message.info.sender)
-            .filter(|name| !phone_like_name(name))
+            .filter(|name| !phone_like_name(name) && !raw_lid_name(name))
             .map(|name| canonical_contact_name(name))
+            .or_else(|| {
+                self.profile_names
+                    .get(&message.info.sender)
+                    .filter(|name| !phone_like_name(name) && !raw_lid_name(name))
+                    .map(|name| canonical_contact_name(name))
+            })
             .or_else(|| {
                 self.message_push_name
                     .lookup_push_name(&message.info.id)
                     .map(|name| canonical_contact_name(&name))
-                    .filter(|name| !phone_like_name(name))
+                    .filter(|name| !phone_like_name(name) && !raw_lid_name(name))
             })
             .unwrap_or_else(|| self.contact_name(&message.info.sender))
     }
@@ -191,6 +207,13 @@ pub(super) fn phone_like_name(name: &str) -> bool {
     digits
 }
 
+pub(super) fn raw_lid_name(name: &str) -> bool {
+    let canonical = canonical_contact_name(name);
+    canonical.split_once('@').is_some_and(|(user, server)| {
+        server.eq_ignore_ascii_case("lid") && !user.chars().any(char::is_whitespace)
+    })
+}
+
 pub(super) fn canonical_contact_name(name: &str) -> Arc<str> {
     let name = name.trim();
     ["~ ", "+ "]
@@ -251,6 +274,47 @@ mod tests {
                 .as_ref(),
             "15551234567"
         );
+    }
+
+    #[test]
+    fn raw_lid_metadata_never_overrides_a_verified_phone() {
+        let lid = wr::JID::from("99887766@lid".to_owned());
+        let incoming = message("raw-lid-name", lid.0.as_ref());
+        let mut app = TestApp::with_message_push_name(Box::new(
+            FakeMessagePushNamePort::with_name(incoming.info.id.clone(), lid.0.as_ref()),
+        ));
+        app.contacts.insert(lid.clone(), lid.0.clone());
+        app.profile_names.insert(lid.clone(), lid.0.clone());
+        app.verified_phones
+            .insert(lid.clone(), "15551234567".into());
+
+        assert_eq!(app.contact_name(&lid).as_ref(), "15551234567");
+        assert_eq!(app.message_sender_name(&incoming).as_ref(), "15551234567");
+
+        app.verified_phones.remove(&lid);
+        assert_eq!(app.contact_name(&lid).as_ref(), "");
+        assert_eq!(app.message_sender_name(&incoming).as_ref(), "");
+
+        let phone = wr::JID::from("15551234567@s.whatsapp.net".to_owned());
+        app.contacts.insert(phone.clone(), lid.0.clone());
+        assert_eq!(app.contact_name(&phone).as_ref(), "15551234567");
+    }
+
+    #[test]
+    fn numeric_pn_push_name_never_overrides_verified_number() {
+        let sender = wr::JID::from("15551234567@s.whatsapp.net".to_owned());
+        let incoming = message("unverified-push-phone", sender.0.as_ref());
+        let mut app = TestApp::with_message_push_name(Box::new(
+            FakeMessagePushNamePort::with_name(incoming.info.id.clone(), "99887766"),
+        ));
+
+        app.add_message(incoming.clone());
+        assert_eq!(app.contact_name(&sender).as_ref(), "15551234567");
+        assert_eq!(app.message_sender_name(&incoming).as_ref(), "15551234567");
+
+        app.contacts.insert(sender.clone(), "99887766".into());
+        assert_eq!(app.contact_name(&sender).as_ref(), "15551234567");
+        assert_eq!(app.message_sender_name(&incoming).as_ref(), "15551234567");
     }
 
     #[test]
@@ -350,6 +414,22 @@ mod tests {
         assert_eq!(
             app.message_sender_name(&message).as_ref(),
             "Saved Full Name"
+        );
+    }
+
+    #[test]
+    fn current_profile_name_wins_over_historical_message_push_name() {
+        let sender = wr::JID::from("99887766@lid".to_owned());
+        let incoming = message("historical-push", sender.0.as_ref());
+        let mut app = TestApp::with_message_push_name(Box::new(
+            FakeMessagePushNamePort::with_name(incoming.info.id.clone(), "Old Profile"),
+        ));
+        app.profile_names
+            .insert(sender.clone(), "Current Profile".into());
+
+        assert_eq!(
+            app.message_sender_name(&incoming).as_ref(),
+            "Current Profile"
         );
     }
 

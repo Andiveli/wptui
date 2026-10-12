@@ -67,8 +67,13 @@ func plainContactName(name string) string {
 	name = strings.TrimSpace(name)
 	for _, prefix := range []string{"~ ", "+ "} {
 		if strings.HasPrefix(name, prefix) {
-			return strings.TrimSpace(strings.TrimPrefix(name, prefix))
+			name = strings.TrimSpace(strings.TrimPrefix(name, prefix))
+			break
 		}
+	}
+	user, server, hasServer := strings.Cut(name, "@")
+	if hasServer && strings.EqualFold(server, types.HiddenUserServer) && !strings.ContainsAny(user, " \t\n\r") {
+		return ""
 	}
 	return name
 }
@@ -110,6 +115,9 @@ func loadContactEntries(ctx context.Context, bridgeClient *whatsmeow.Client) ([]
 	for jid, contact := range contacts {
 		aliases := contactJIDs(ctx, jid, bridgeClient.Store.LIDs)
 		name, rank := contactNameCandidate(contact)
+		if rank == 1 && (jid.Server == types.HiddenUserServer || jid.Server == types.DefaultUserServer) {
+			name, rank = "", 0
+		}
 		if name == "" {
 			for _, alias := range aliases {
 				if alias.Server == types.DefaultUserServer && alias.User != "" {
