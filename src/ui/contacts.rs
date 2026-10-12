@@ -5,17 +5,59 @@ use crate::app::contact_avatars::AvatarTarget;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Position, Rect},
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, Paragraph, StatefulWidget, Widget},
 };
 use ratatui_image::StatefulImage;
+
+pub(crate) fn render_chat_filters(frame: &mut Frame, app: &mut App, area: Rect) {
+    let filters = [
+        crate::app::ChatFilter::All,
+        crate::app::ChatFilter::Unread,
+        crate::app::ChatFilter::Groups,
+        crate::app::ChatFilter::Archived,
+    ];
+    let archived_attention = app.archived_group_attention();
+    let mut labels = Vec::new();
+    for (index, filter) in filters.into_iter().enumerate() {
+        if index > 0 {
+            labels.push(Span::raw("  "));
+        }
+        if filter == crate::app::ChatFilter::Archived && archived_attention {
+            labels.push(Span::styled(
+                "@ ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
+        let label = if filter == app.chat_filter {
+            format!("[{}]", filter.label())
+        } else {
+            filter.label().to_owned()
+        };
+        if filter == crate::app::ChatFilter::Archived && archived_attention {
+            labels.push(Span::styled(
+                label,
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        } else {
+            labels.push(Span::raw(label));
+        }
+    }
+    labels.push(Span::raw("  (Tab)"));
+    frame.render_widget(Paragraph::new(Line::from(labels)), area);
+}
 
 pub(crate) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
     let (rows, items) = app.cached_contact_view();
     let mut list_area = area;
     if !app.contact_search.input.is_empty() || app.contact_search_active {
         let [search_area, new_list_area] =
-            Layout::vertical([Constraint::Length(1), Constraint::Percentage(100)]).areas(area);
+            Layout::vertical([Constraint::Length(1), Constraint::Percentage(100)]).areas(list_area);
         list_area = new_list_area;
 
         let text = format!("/{}", app.contact_search.input);
@@ -76,8 +118,11 @@ pub(crate) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
 mod tests {
     use super::*;
     use crate::app::Chat;
+    use crate::app::events::MediaRenderPlan;
+    use crate::app::read_receipts::VisibilityPlan;
     use crate::app::runtime_diagnostics::{PerfClock, PerfEnvironment, RuntimeDiagnostics};
     use crate::app::test_support::TestApp;
+    use crate::ui;
     use ratatui::{Terminal, backend::TestBackend};
     use whatsrust as wr;
 
@@ -95,6 +140,26 @@ mod tests {
         fn now_us(&self) -> u64 {
             1
         }
+    }
+
+    #[test]
+    fn chats_filter_bar_shows_current_view_above_search_and_list() {
+        let mut app = TestApp::new();
+        app.chat_filter = crate::app::ChatFilter::Unread;
+        app.contact_search.enter_char('x');
+        let mut terminal = Terminal::new(TestBackend::new(50, 10)).unwrap();
+        let mut media = MediaRenderPlan::default();
+        let mut visibility = VisibilityPlan::default();
+        terminal
+            .draw(|frame| ui::draw_with_plan(frame, &mut app.app, &mut media, &mut visibility))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let first_line = (0..50).map(|x| buffer[(x, 0)].symbol()).collect::<String>();
+        assert!(first_line.starts_with("All  [Unread]  Groups  Archived  (Tab)"));
+        let search_line = (14..44)
+            .map(|x| buffer[(x, 1)].symbol())
+            .collect::<String>();
+        assert!(search_line.starts_with("/x"));
     }
 
     #[test]

@@ -20,7 +20,11 @@ impl App<'_> {
     }
 
     pub fn sort_chats(&mut self) {
-        let selected = self.get_selected_chat();
+        // Hydration and the first message can sort before the WhatsApp client is
+        // ready. Do not construct a semantic view (or query chat settings) just
+        // to preserve a selection when no view has been rendered yet.
+        let has_view = self.chat_list_view.is_some() || self.community_detail.is_some();
+        let selected = has_view.then(|| self.get_selected_chat()).flatten();
         let mut entries: Vec<_> = self.chats.values().cloned().collect();
         entries.sort_by(|a, b| {
             let a_time = a.last_message_time.unwrap_or_default();
@@ -33,7 +37,12 @@ impl App<'_> {
             .map(|chat| chat.jid.clone())
             .filter(|jid: &wr::JID| !jid.0.as_ref().ends_with("@broadcast"))
             .collect();
-        self.select_chat(selected);
+        if has_view {
+            self.select_chat(selected);
+        } else {
+            self.chat_list_state
+                .select((!self.sorted_chats.is_empty()).then_some(0));
+        }
     }
 
     pub(crate) fn sort_chat_messages(&mut self, chat_jid: wr::JID) {
