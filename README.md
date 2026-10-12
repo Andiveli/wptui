@@ -46,6 +46,16 @@ Your WhatsApp data — database, media, and session — lives in `~/.local/share
 machine. It is not uploaded anywhere; the client only exchanges data with the WhatsApp servers
 when it links or syncs, like any official client.
 
+Mouse capture is enabled by default during the pointer-support preview. Add `mouse=disable` to
+`~/.local/share/wptui/settings.conf` and restart to restore terminal-native selection, or use
+`mouse=enable` to explicitly enable terminal-wide capture. When capture is on, Shift+drag may
+allow native text selection depending on your terminal; it cannot be enabled for individual panes.
+In this preview, the wheel scrolls painted lists. Clicking a section enters its list, clicking
+a contact opens it, and clicking an ordinary text message selects it and opens its Enter actions.
+Clicking a painted URL opens that link, while clicking a file's painted media/path opens the
+image/video viewer or uses the existing downloaded document/audio action. Empty file-row space
+only selects. Mouse behavior still needs a fresh live-terminal check.
+
 ## Requirements
 
 ### Runtime dependencies
@@ -160,8 +170,8 @@ or editor state.
 | Toggle logs | `Ctrl+Shift+L` |
 | Toggle section rail | `Space`, then `1` |
 | Toggle chat list | `Space`, then `2` |
-| Focus previous / next pane | `h` / `l` |
-| Select previous / next item | `k` / `j` |
+| Focus previous / next pane | `h` / `l` or `←` / `→` |
+| Select previous / next item | `k` / `j` or `↑` / `↓` |
 | Jump to first / last item | `g g` / `G` |
 | Move half a page | `Ctrl+U` / `Ctrl+D` |
 | Search chats | `/` |
@@ -185,7 +195,7 @@ or editor state.
 
 Use `j`/`k` or the arrow keys inside menus, then press `Enter` to confirm. Available actions depend
 on the selected message. In Status, press `Enter` on your own contact to open the Create status
-pane in navigation. Select one published update with `j`/`k`, then press `d` to revoke it; `i`
+pane in navigation. Select one published update with `j`/`k` or `↓`/`↑`, then press `d` to revoke it; `i`
 starts writing and `Esc` returns to the contact list. `Space`, `a`, `c` still opens Create status
 directly in authoring mode; `Esc` there enters navigation. Pending drafts and other contacts'
 statuses cannot be deleted this way. A failed revoke leaves the item visible; a successful send

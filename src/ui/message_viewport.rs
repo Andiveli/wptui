@@ -53,6 +53,10 @@ pub(super) fn render(
 
         let bottom = y;
         let top = y - height;
+        if i + 1 == items.len() {
+            app.mouse_hit_map.scroll_up_remaining =
+                Some((list_area.top() as isize - top).max(0) as usize);
+        }
 
         if bottom <= list_area.top() as isize {
             break;
@@ -74,8 +78,25 @@ pub(super) fn render(
             counts.receipt_candidates = counts.receipt_candidates.saturating_add(1);
             viewport_anchor.get_or_insert((i, y));
             visibility_plan.record_visible_message(&item);
+            let visible_top = max(top, list_area.top() as isize) as u16;
+            let visible_bottom = min(bottom, list_area.bottom() as isize) as u16;
+            if visible_bottom > visible_top {
+                app.mouse_hit_map
+                    .messages
+                    .push(crate::app::mouse_input::MessageHit {
+                        area: Rect::new(
+                            list_area.left(),
+                            visible_top,
+                            list_area.width,
+                            visible_bottom - visible_top,
+                        ),
+                        id: item_id.clone(),
+                    });
+            }
             let too_low = top < list_area.top() as isize;
             let too_high = bottom > list_area.bottom() as isize;
+            let url_start = app.mouse_hit_map.urls.len();
+            let media_start = app.mouse_hit_map.media.len();
 
             if too_low || too_high {
                 let item_area = Rect::new(0, 0, width as u16, height as u16);
@@ -201,6 +222,20 @@ pub(super) fn render(
                     text_mode,
                 );
             }
+            if too_low || too_high {
+                // The clipped renderer painted into an origin-zero buffer.
+                // Retain only cells copied to this message's visible viewport.
+                let mut url_hits = app.mouse_hit_map.urls.split_off(url_start);
+                url_hits.retain_mut(|hit| {
+                    map_clipped_hit(&mut hit.area, list_area, top, visible_top, visible_bottom)
+                });
+                app.mouse_hit_map.urls.extend(url_hits);
+                let mut media_hits = app.mouse_hit_map.media.split_off(media_start);
+                media_hits.retain_mut(|hit| {
+                    map_clipped_hit(&mut hit.area, list_area, top, visible_top, visible_bottom)
+                });
+                app.mouse_hit_map.media.extend(media_hits);
+            }
         }
 
         y -= height
@@ -227,4 +262,25 @@ pub(super) fn render(
             bottom: list_area.bottom(),
         })
     })
+}
+
+fn map_clipped_hit(
+    area: &mut Rect,
+    list_area: Rect,
+    top: isize,
+    visible_top: u16,
+    visible_bottom: u16,
+) -> bool {
+    let Ok(screen_y) = u16::try_from(top + area.y as isize) else {
+        return false;
+    };
+    if screen_y < visible_top || screen_y >= visible_bottom {
+        return false;
+    }
+    let x = area.x.saturating_add(list_area.left());
+    let right = x.saturating_add(area.width).min(list_area.right());
+    area.x = x;
+    area.y = screen_y;
+    area.width = right.saturating_sub(x);
+    area.width != 0
 }

@@ -59,6 +59,7 @@ pub mod message_navigation;
 pub mod message_opening;
 pub mod message_push_name_port;
 pub mod message_reactions;
+pub(crate) mod mouse_input;
 pub mod navigation_conversation_dispatch;
 pub mod notifications;
 pub mod optimistic_text_send;
@@ -260,9 +261,11 @@ pub struct App<'a> {
 
     pub composer: Composer<'a>,
     pub(crate) composer_direction: ComposerDirection,
+    pub(crate) mouse_capture_enabled: bool,
     pub(crate) composer_viewport_width: u16,
     pub(crate) preferences_path: PathBuf,
     pub message_list_state: MessageListState,
+    pub(crate) mouse_hit_map: mouse_input::MouseHitMap,
     pub timeline: unread_messages::Timeline,
     pub metadata: HashMap<wr::MessageId, Metadata>,
     pub image_cache: HashMap<Arc<str>, StatefulProtocol>,

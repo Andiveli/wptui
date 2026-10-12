@@ -20,10 +20,13 @@ pub(crate) fn render_chat_filters(frame: &mut Frame, app: &mut App, area: Rect) 
     ];
     let archived_attention = app.archived_group_attention();
     let mut labels = Vec::new();
+    let mut offset = 0u16;
     for (index, filter) in filters.into_iter().enumerate() {
         if index > 0 {
             labels.push(Span::raw("  "));
+            offset = offset.saturating_add(2);
         }
+        let start = offset;
         if filter == crate::app::ChatFilter::Archived && archived_attention {
             labels.push(Span::styled(
                 "@ ",
@@ -31,12 +34,14 @@ pub(crate) fn render_chat_filters(frame: &mut Frame, app: &mut App, area: Rect) 
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
             ));
+            offset = offset.saturating_add(2);
         }
         let label = if filter == app.chat_filter {
             format!("[{}]", filter.label())
         } else {
             filter.label().to_owned()
         };
+        offset = offset.saturating_add(Span::raw(label.as_str()).width() as u16);
         if filter == crate::app::ChatFilter::Archived && archived_attention {
             labels.push(Span::styled(
                 label,
@@ -46,6 +51,19 @@ pub(crate) fn render_chat_filters(frame: &mut Frame, app: &mut App, area: Rect) 
             ));
         } else {
             labels.push(Span::raw(label));
+        }
+        if area.height > 0 && start < area.width {
+            app.mouse_hit_map
+                .filter_labels
+                .push(crate::app::mouse_input::FilterHit {
+                    area: Rect::new(
+                        area.x.saturating_add(start),
+                        area.y,
+                        offset.min(area.width).saturating_sub(start),
+                        1,
+                    ),
+                    filter,
+                });
         }
     }
     labels.push(Span::raw("  (Tab)"));
@@ -85,6 +103,7 @@ pub(crate) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
             }),
         );
     let contacts_area = block.inner(list_area);
+    app.mouse_hit_map.chat_list = Some(contacts_area);
     block.render(list_area, frame.buffer_mut());
     frame.render_stateful_widget(
         ContactList::new(&items),
@@ -93,6 +112,26 @@ pub(crate) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
     );
 
     let visible = visible_contact_rows(&items, app.chat_list_state.offset(), contacts_area.height);
+    for (position, &(index, relative_y)) in visible.iter().enumerate() {
+        if !matches!(rows[index], crate::app::ContactRow::Header(_)) {
+            let next_y = visible
+                .get(position + 1)
+                .map(|(_, y)| *y)
+                .unwrap_or(contacts_area.height);
+            app.mouse_hit_map
+                .contact_rows
+                .push(crate::app::mouse_input::ContactHit {
+                    area: Rect::new(
+                        contacts_area.x,
+                        contacts_area.y + relative_y,
+                        contacts_area.width,
+                        next_y.saturating_sub(relative_y),
+                    ),
+                    index,
+                    target: crate::app::mouse_input::ContactTarget::Chat(rows[index].clone()),
+                });
+        }
+    }
     for (index, relative_y) in visible {
         let y = contacts_area.y.saturating_add(relative_y);
         let avatar_area = Rect::new(

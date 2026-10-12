@@ -4,7 +4,7 @@ use chrono::{DateTime, Datelike, Local};
 use ratatui::{
     Frame,
     buffer::Buffer,
-    layout::{Constraint, Layout, Rect},
+    layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Style, Stylize},
     text::Line,
     widgets::{Paragraph, Widget},
@@ -606,6 +606,52 @@ mod layout_contract_tests {
 
 pub use message_layout_integration::message_height;
 
+/// Probe the exact wrapped/bidi paragraph into an offscreen buffer. Marking one
+/// source URL as a mention changes only style, not the rendered cell positions.
+/// The actual message is rendered unchanged; the probe's blue cells become hits.
+pub(super) fn record_url_hits(
+    app: &mut App,
+    id: &wr::MessageId,
+    body: &str,
+    status: Option<StatusLabel>,
+    area: Rect,
+    alignment: Alignment,
+) {
+    if area.is_empty() || matches!(status, Some(StatusLabel::Deleted)) {
+        return;
+    }
+    let mut search_from = 0;
+    for url in crate::url::extract_openable_urls(body) {
+        let Some(offset) = body[search_from..].find(&url) else {
+            continue;
+        };
+        let start = search_from + offset;
+        search_from = start + url.len();
+        let mut probe = Buffer::empty(Rect::new(0, 0, area.width, area.height));
+        Paragraph::new(inline_content_lines(
+            body,
+            &[start..search_from],
+            status,
+            area.width as usize,
+        ))
+        .alignment(alignment)
+        .render(Rect::new(0, 0, area.width, area.height), &mut probe);
+        for y in 0..area.height {
+            for x in 0..area.width {
+                if probe[(x, y)].fg == Color::Blue {
+                    app.mouse_hit_map
+                        .urls
+                        .push(crate::app::mouse_input::UrlHit {
+                            area: Rect::new(area.x + x, area.y + y, 1, 1),
+                            id: id.clone(),
+                            url: url.clone(),
+                        });
+                }
+            }
+        }
+    }
+}
+
 fn spacing_after_message(
     index: usize,
     author_groups: &[AuthorGroupContext],
@@ -763,6 +809,7 @@ fn render_message(
                 })
                 .alignment(alignment)
                 .render(content_area, buf);
+            record_url_hits(app, &message.info.id, text, status, content_area, alignment);
         }
         wr::MessageContent::File(data) => {
             render_file(
@@ -1139,6 +1186,7 @@ fn render_message_items(
         return Some(());
     }
 
+    app.mouse_hit_map.message_list = Some(list_area);
     let width = list_area.width as isize;
     let selection_started = app.message_list_phase_started();
     let (start_index, y) = message_list_reconciliation::reconcile(
