@@ -228,6 +228,21 @@ impl App<'_> {
         settings.found && settings.archived
     }
 
+    pub(crate) fn archived_group_attention(&mut self) -> bool {
+        if let Some((revision, attention)) = self.archived_group_attention_cache
+            && revision == self.chat_list_revision
+        {
+            return attention;
+        }
+        let attention = self.chats.keys().any(|jid| {
+            Self::is_group_chat(jid)
+                && self.is_archived_chat(jid)
+                && self.pending_chat_activity(jid).1
+        });
+        self.archived_group_attention_cache = Some((self.chat_list_revision, attention));
+        attention
+    }
+
     pub fn community_detail_rows(&self) -> Vec<ContactRow> {
         let Some(root) = self.community_detail.as_ref().and_then(|jid| {
             dedupe_nodes(self.communities.iter().filter(|node| node.jid == *jid))
