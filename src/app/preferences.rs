@@ -56,8 +56,7 @@ pub(crate) fn load_composer_direction(path: &Path) -> ComposerDirection {
 
 pub(crate) fn load_mouse_capture_enabled(path: &Path) -> bool {
     let Ok(contents) = fs::read_to_string(path) else {
-        // Keep capture opt-in until wheel and click handling are implemented.
-        return false;
+        return true;
     };
 
     contents
@@ -73,7 +72,7 @@ pub(crate) fn load_mouse_capture_enabled(path: &Path) -> bool {
                 _ => None,
             }
         })
-        .unwrap_or(false)
+        .unwrap_or(true)
 }
 
 pub(crate) fn save_composer_direction(path: &Path, direction: ComposerDirection) -> io::Result<()> {
@@ -161,10 +160,13 @@ mod tests {
     }
 
     #[test]
-    fn mouse_capture_stays_off_until_enabled_in_settings() {
+    fn mouse_capture_defaults_on_and_explicit_disable_preserves_native_selection() {
         let directory = tempfile::tempdir().unwrap();
         let path = settings_path(directory.path());
-        assert!(!load_mouse_capture_enabled(&path));
+        assert!(load_mouse_capture_enabled(&path));
+        let app = crate::app::App::with_data_dir(directory.path(), directory.path());
+        assert!(app.mouse_capture_enabled);
+        drop(app);
 
         fs::write(&path, "composer_direction=rtl\nmouse=disable\n").unwrap();
         assert!(!load_mouse_capture_enabled(&path));
@@ -180,7 +182,7 @@ mod tests {
         drop(app);
 
         fs::write(&path, "mouse=invalid\n").unwrap();
-        assert!(!load_mouse_capture_enabled(&path));
+        assert!(load_mouse_capture_enabled(&path));
     }
 
     #[test]
