@@ -50,10 +50,11 @@ Mouse capture is enabled by default during the pointer-support preview. Add `mou
 `~/.local/share/wptui/settings.conf` and restart to restore terminal-native selection, or use
 `mouse=enable` to explicitly enable terminal-wide capture. When capture is on, Shift+drag may
 allow native text selection depending on your terminal; it cannot be enabled for individual panes.
-In this preview, the wheel scrolls painted lists and a click selects a
-message; clicking a painted URL opens that link, while clicking a file's painted media/path opens
-the image/video viewer or uses the existing downloaded document/audio action. Empty message space
-only selects. Mouse behavior still needs combined cloud and live-terminal verification.
+In this preview, the wheel scrolls painted lists. Clicking a section enters its list, clicking
+a contact opens it, and clicking an ordinary text message selects it and opens its Enter actions.
+Clicking a painted URL opens that link, while clicking a file's painted media/path opens the
+image/video viewer or uses the existing downloaded document/audio action. Empty file-row space
+only selects. Mouse behavior still needs a fresh live-terminal check.
 
 ## Requirements
 

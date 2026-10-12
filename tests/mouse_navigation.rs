@@ -1,17 +1,17 @@
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
-use ratatui::{Terminal, backend::TestBackend};
+use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::rc::Rc;
 use whatsrust::{FileContent, FileKind, JID, Message, MessageContent, MessageInfo};
-use wp_tui::app::SharePicker;
 use wp_tui::app::actions::{ActionNotice, AppAction, FocusPane, Section, UrlOpener};
 use wp_tui::app::events::MediaRenderPlan;
 use wp_tui::app::read_receipts::VisibilityPlan;
+use wp_tui::app::{CommunityNode, SharePicker};
 use wp_tui::file_picker::FilePickerState;
 use wp_tui::ui;
 
@@ -50,6 +50,157 @@ fn draw(app: &mut TestApp, terminal: &mut Terminal<TestBackend>) {
     terminal
         .draw(|frame| ui::draw_with_plan(frame, app, &mut media, &mut visibility))
         .unwrap();
+}
+
+fn painted_in(terminal: &Terminal<TestBackend>, area: Rect, needle: &str) -> (u16, u16) {
+    let buffer = terminal.backend().buffer();
+    (area.top()..area.bottom())
+        .flat_map(|y| {
+            (area.left()..area.right().saturating_sub(needle.len() as u16)).map(move |x| (x, y))
+        })
+        .find(|&(x, y)| {
+            (0..needle.len())
+                .map(|dx| buffer[(x + dx as u16, y)].symbol())
+                .collect::<String>()
+                == needle
+        })
+        .expect("click target must be painted inside its pane")
+}
+
+#[test]
+fn clicking_a_painted_section_performs_its_enter_action() {
+    let mut app = TestApp::with_settings("mouse=enable\n");
+    let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+    draw(&mut app, &mut terminal);
+    let rail = ui::navigation_areas(terminal.backend().buffer().area, app.pane_visibility)
+        .section_rail
+        .unwrap();
+    let (x, y) = painted_in(&terminal, rail, "Status");
+
+    app.on_terminal_event(mouse(MouseEventKind::Down(MouseButton::Left), x, y));
+
+    assert_eq!(app.selected_section, Section::Status);
+    assert_eq!(app.focus_pane, FocusPane::ChatList);
+    assert!(!app.rail_on_logout);
+}
+
+#[test]
+fn clicking_a_painted_contact_opens_that_chat_like_enter() {
+    let mut app = TestApp::with_settings("mouse=enable\n");
+    let alice: JID = "alice-click@example.test".to_owned().into();
+    let bob: JID = "bob-click@example.test".to_owned().into();
+    app.contacts.insert(alice.clone(), "AliceClick".into());
+    app.contacts.insert(bob.clone(), "BobClick".into());
+    app.open_chat_by_jid(alice.clone());
+    app.open_chat_by_jid(bob.clone());
+    app.focus_pane = FocusPane::ChatList;
+    let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+    draw(&mut app, &mut terminal);
+    let contacts = ui::navigation_areas(terminal.backend().buffer().area, app.pane_visibility)
+        .chat_list
+        .unwrap();
+    let (x, y) = painted_in(&terminal, contacts, "AliceClick");
+    assert_eq!(app.open_chat(), Some(bob));
+
+    app.on_terminal_event(mouse(MouseEventKind::Down(MouseButton::Left), x, y));
+
+    assert_eq!(app.open_chat(), Some(alice));
+    assert_eq!(app.focus_pane, FocusPane::Conversation);
+}
+
+#[test]
+fn clicking_a_painted_status_contact_opens_that_status_like_enter() {
+    let mut app = TestApp::with_settings("mouse=enable\n");
+    app.selected_section = Section::Status;
+    let broadcast: JID = "status@broadcast".to_owned().into();
+    for (index, name) in ["alice", "bob"].into_iter().enumerate() {
+        let sender: JID = format!("{name}@s.whatsapp.net").into();
+        app.contacts
+            .insert(sender.clone(), format!("{name}Status").into());
+        let mut status = message(&broadcast, name, (index + 1) as i64, name);
+        status.info.sender = sender;
+        app.add_message(status);
+    }
+    let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+    draw(&mut app, &mut terminal);
+    let contacts = ui::navigation_areas(terminal.backend().buffer().area, app.pane_visibility)
+        .chat_list
+        .unwrap();
+    let (x, y) = painted_in(&terminal, contacts, "bobStatus");
+
+    app.on_terminal_event(mouse(MouseEventKind::Down(MouseButton::Left), x, y));
+
+    assert_eq!(
+        app.open_status_contact.as_ref().map(|jid| jid.0.as_ref()),
+        Some("bob@s.whatsapp.net")
+    );
+    assert_eq!(app.focus_pane, FocusPane::Conversation);
+}
+
+#[test]
+fn clicking_a_painted_community_root_enters_that_detail() {
+    let mut app = TestApp::with_settings("mouse=enable\n");
+    let group: JID = "second-group@g.us".to_owned().into();
+    app.open_chat_by_jid(group.clone());
+    app.selected_section = Section::Communities;
+    app.focus_pane = FocusPane::ChatList;
+    app.communities.push(CommunityNode {
+        jid: "second@g.us".to_owned().into(),
+        name: "SecondRoot".into(),
+        is_root: true,
+        linked_groups: vec![group.clone()],
+        is_joined: true,
+        is_default_subgroup: false,
+        is_announce: None,
+        participant_count: None,
+    });
+    app.communities.push(CommunityNode {
+        jid: group,
+        name: "SecondGroup".into(),
+        is_root: false,
+        linked_groups: Vec::new(),
+        is_joined: true,
+        is_default_subgroup: false,
+        is_announce: None,
+        participant_count: None,
+    });
+    let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+    draw(&mut app, &mut terminal);
+    let contacts = ui::navigation_areas(terminal.backend().buffer().area, app.pane_visibility)
+        .chat_list
+        .unwrap();
+    let (x, y) = painted_in(&terminal, contacts, "SecondRoot");
+
+    app.on_terminal_event(mouse(MouseEventKind::Down(MouseButton::Left), x, y));
+
+    assert_eq!(app.community_detail, Some("second@g.us".to_owned().into()));
+}
+
+#[test]
+fn clicking_a_painted_plain_message_opens_its_enter_actions() {
+    let mut app = TestApp::with_settings("mouse=enable\n");
+    let chat: JID = "click-enter@example.test".to_owned().into();
+    app.open_chat_by_jid(chat.clone());
+    app.add_message(message(&chat, "older", 1, "OLDER-CONTEXT"));
+    app.add_message(message(&chat, "target", 2, "TARGET-CONTEXT"));
+    app.message_list_state.set_selected_message("older".into());
+    app.focus_pane = FocusPane::Conversation;
+    let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+    draw(&mut app, &mut terminal);
+    let conversation =
+        ui::navigation_areas(terminal.backend().buffer().area, app.pane_visibility).conversation;
+    let (x, y) = painted_in(&terminal, conversation, "TARGET-CONTEXT");
+
+    app.on_terminal_event(mouse(MouseEventKind::Down(MouseButton::Left), x, y));
+
+    assert_eq!(
+        app.message_list_state.get_selected_message().as_deref(),
+        Some("target")
+    );
+    assert!(
+        app.contextual_menu.is_some(),
+        "plain message click must act like Enter"
+    );
 }
 
 #[derive(Clone, Default)]
@@ -116,8 +267,14 @@ fn clicking_only_a_painted_url_opens_the_clicked_message_not_the_previous_select
     );
     assert!(
         plans.borrow().is_empty(),
-        "non-actionable text must not open"
+        "non-actionable text must not open a URL"
     );
+    assert!(
+        app.contextual_menu.is_some(),
+        "plain text must follow Enter"
+    );
+    app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+    assert!(app.contextual_menu.is_none());
 
     app.message_list_state.set_selected_message("older".into());
     draw(&mut app, &mut terminal);
@@ -633,6 +790,12 @@ fn a_clipped_url_opens_only_from_its_painted_cells_and_not_beneath_a_modal() {
         point.1,
     ));
     assert!(plans.borrow().is_empty(), "blank space must not open a URL");
+    assert!(
+        app.contextual_menu.is_some(),
+        "text-row click now follows Enter"
+    );
+    app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+    assert!(app.contextual_menu.is_none());
     app.message_list_state.set_selected_message("newest".into());
     draw(&mut app, &mut terminal);
     app.on_terminal_event(mouse(

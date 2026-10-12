@@ -4,8 +4,8 @@ use ratatui::{
 };
 use whatsrust as wr;
 
-use super::App;
-use super::actions::{ConversationMode, FocusPane, Section, StatusCompositionState};
+use super::actions::{AppAction, ConversationMode, FocusPane, Section, StatusCompositionState};
+use super::{App, CommunityNavigationRow, ContactRow};
 
 /// Coordinates from the last completed draw, not a second approximation of layout.
 #[derive(Default)]
@@ -15,6 +15,8 @@ pub(crate) struct MouseHitMap {
     pub(crate) status_contact: Option<wr::JID>,
     pub(crate) status_composition: StatusCompositionState,
     pub(crate) chat_list: Option<Rect>,
+    pub(crate) section_rows: Vec<SectionHit>,
+    pub(crate) contact_rows: Vec<ContactHit>,
     pub(crate) message_list: Option<Rect>,
     pub(crate) picker: Option<PickerHit>,
     pub(crate) messages: Vec<MessageHit>,
@@ -22,6 +24,24 @@ pub(crate) struct MouseHitMap {
     pub(crate) media: Vec<MediaHit>,
     /// Remaining rows before the oldest message reaches the top, if measured.
     pub(crate) scroll_up_remaining: Option<usize>,
+}
+
+pub(crate) struct SectionHit {
+    pub(crate) area: Rect,
+    pub(crate) section: Option<Section>, // None is the Logout rail entry.
+}
+
+#[derive(Clone)]
+pub(crate) enum ContactTarget {
+    Chat(ContactRow),
+    Status(wr::JID),
+    Community(CommunityNavigationRow),
+}
+
+pub(crate) struct ContactHit {
+    pub(crate) area: Rect,
+    pub(crate) index: usize,
+    pub(crate) target: ContactTarget,
 }
 
 pub(crate) struct MessageHit {
@@ -137,6 +157,59 @@ impl App<'_> {
                 }
             }
             MouseEventKind::Down(MouseButton::Left) => {
+                if let Some(section) = self
+                    .mouse_hit_map
+                    .section_rows
+                    .iter()
+                    .find(|hit| hit.area.contains(point))
+                    .map(|hit| hit.section)
+                {
+                    self.focus_pane = FocusPane::SectionRail;
+                    if let Some(section) = section {
+                        self.selected_section = section;
+                        self.rail_on_logout = false;
+                        self.dispatch_action(AppAction::FocusPane(FocusPane::ChatList));
+                    } else {
+                        self.rail_on_logout = true;
+                        self.begin_logout_confirmation();
+                    }
+                    return;
+                }
+                if let Some((index, target)) = self
+                    .mouse_hit_map
+                    .contact_rows
+                    .iter()
+                    .find(|hit| hit.area.contains(point))
+                    .map(|hit| (hit.index, hit.target.clone()))
+                {
+                    let still_painted = match &target {
+                        ContactTarget::Chat(row) => self
+                            .cached_contact_view()
+                            .0
+                            .get(index)
+                            .is_some_and(|current| current == row),
+                        ContactTarget::Status(jid) => self.status_contacts.get(index) == Some(jid),
+                        ContactTarget::Community(row) => {
+                            self.community_navigation_rows()
+                                .into_iter()
+                                .filter(|row| !matches!(row, CommunityNavigationRow::Separator))
+                                .nth(index)
+                                .as_ref()
+                                == Some(row)
+                        }
+                    };
+                    if still_painted {
+                        match target {
+                            ContactTarget::Status(_) => self.status_selection.select(Some(index)),
+                            ContactTarget::Chat(_) | ContactTarget::Community(_) => {
+                                self.chat_list_state.select(Some(index));
+                            }
+                        }
+                        self.focus_pane = FocusPane::ChatList;
+                        self.dispatch_action(AppAction::OpenChat);
+                    }
+                    return;
+                }
                 if let Some(id) = self
                     .mouse_hit_map
                     .messages
@@ -150,6 +223,7 @@ impl App<'_> {
                     if self.conversation_mode == ConversationMode::ComposerEditing {
                         self.conversation_mode = ConversationMode::MessageNavigation;
                     }
+                    let mut activated = false;
                     if !self.selected_message_is_deleted() {
                         if let Some(url) = self
                             .mouse_hit_map
@@ -159,6 +233,7 @@ impl App<'_> {
                             .map(|hit| hit.url.clone())
                         {
                             self.launch_url(&url);
+                            activated = true;
                         } else if let Some(kind) = self
                             .mouse_hit_map
                             .media
@@ -174,7 +249,17 @@ impl App<'_> {
                                 wr::FileKind::Audio => self.plan_selected_media_launch(),
                                 wr::FileKind::Sticker => {} // There is no sticker viewer.
                             }
+                            activated = true;
                         }
+                    }
+                    if !activated && self.selected_section == Section::Status {
+                        self.dispatch_action(AppAction::ViewMessage);
+                    } else if !activated
+                        && self.messages.get(&id).is_some_and(|message| {
+                            matches!(&message.message, wr::MessageContent::Text(_))
+                        })
+                    {
+                        self.dispatch_action(AppAction::OpenContextualActions);
                     }
                 }
             }
