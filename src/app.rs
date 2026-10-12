@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     sync::Arc,
     sync::Mutex,
 };
@@ -223,6 +223,10 @@ pub struct App<'a> {
     pub contacts: HashMap<wr::JID, Arc<str>>,
     /// Profile names learned from message metadata, subordinate to saved contacts.
     pub profile_names: HashMap<wr::JID, Arc<str>>,
+    /// Latest authoritative refresh keys; persisted contact rows remain untouched.
+    pub fresh_contact_jids: Option<HashSet<wr::JID>>,
+    /// Verified PN aliases for LIDs encountered in chats or status messages.
+    pub verified_phones: HashMap<wr::JID, Arc<str>>,
 
     pub clipboard_reader: Box<dyn ClipboardReader>,
     pub clipboard_writer: Box<dyn ClipboardWriter>,

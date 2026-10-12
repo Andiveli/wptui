@@ -468,6 +468,12 @@ impl TestApp {
         Self::with_presence_subscription(Box::new(AcceptedPresenceSubscription))
     }
 
+    pub(crate) fn with_dm_resolver(dm_resolver: Box<dyn DmResolverPort>) -> Self {
+        let mut test_app = Self::new();
+        test_app.app.set_dm_resolver(dm_resolver);
+        test_app
+    }
+
     pub(crate) fn with_message_push_name(message_push_name: Box<dyn MessagePushNamePort>) -> Self {
         let mut test_app = Self::new();
         test_app.app.set_message_push_name(message_push_name);
