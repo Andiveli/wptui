@@ -18,6 +18,8 @@ pub(crate) struct MouseHitMap {
     pub(crate) message_list: Option<Rect>,
     pub(crate) picker: Option<PickerHit>,
     pub(crate) messages: Vec<MessageHit>,
+    pub(crate) urls: Vec<UrlHit>,
+    pub(crate) media: Vec<MediaHit>,
     /// Remaining rows before the oldest message reaches the top, if measured.
     pub(crate) scroll_up_remaining: Option<usize>,
 }
@@ -25,6 +27,18 @@ pub(crate) struct MouseHitMap {
 pub(crate) struct MessageHit {
     pub(crate) area: Rect,
     pub(crate) id: wr::MessageId,
+}
+
+pub(crate) struct UrlHit {
+    pub(crate) area: Rect,
+    pub(crate) id: wr::MessageId,
+    pub(crate) url: String,
+}
+
+pub(crate) struct MediaHit {
+    pub(crate) area: Rect,
+    pub(crate) id: wr::MessageId,
+    pub(crate) kind: wr::FileKind,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -131,10 +145,36 @@ impl App<'_> {
                     .map(|hit| hit.id.clone())
                     .filter(|id| self.messages.contains_key(id))
                 {
-                    self.message_list_state.set_selected_message(id);
+                    self.message_list_state.set_selected_message(id.clone());
                     self.focus_pane = FocusPane::Conversation;
                     if self.conversation_mode == ConversationMode::ComposerEditing {
                         self.conversation_mode = ConversationMode::MessageNavigation;
+                    }
+                    if !self.selected_message_is_deleted() {
+                        if let Some(url) = self
+                            .mouse_hit_map
+                            .urls
+                            .iter()
+                            .find(|hit| hit.id == id && hit.area.contains(point))
+                            .map(|hit| hit.url.clone())
+                        {
+                            self.launch_url(&url);
+                        } else if let Some(kind) = self
+                            .mouse_hit_map
+                            .media
+                            .iter()
+                            .find(|hit| hit.id == id && hit.area.contains(point))
+                            .map(|hit| hit.kind.clone())
+                        {
+                            match kind {
+                                wr::FileKind::Image | wr::FileKind::Video => {
+                                    self.open_attachment_viewer()
+                                }
+                                wr::FileKind::Document => self.open_selected_document(),
+                                wr::FileKind::Audio => self.plan_selected_media_launch(),
+                                wr::FileKind::Sticker => {} // There is no sticker viewer.
+                            }
+                        }
                     }
                 }
             }

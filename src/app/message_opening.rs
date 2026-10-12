@@ -19,7 +19,7 @@ impl App<'_> {
         }
     }
 
-    fn open_selected_document(&mut self) {
+    pub(crate) fn open_selected_document(&mut self) {
         let Some(message) = self.selected_message() else {
             return self.unavailable("Open is not available");
         };
@@ -86,7 +86,7 @@ impl App<'_> {
         }
     }
 
-    fn launch_url(&mut self, url: &str) {
+    pub(crate) fn launch_url(&mut self, url: &str) {
         let plan = crate::url::url_launch_plan(url);
         if self.url_opener.open(&plan).is_err() {
             self.unavailable("Could not open URL");

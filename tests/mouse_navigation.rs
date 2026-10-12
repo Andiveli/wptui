@@ -2,11 +2,14 @@ use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::{Terminal, backend::TestBackend};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
-use whatsrust::{JID, Message, MessageContent, MessageInfo};
+use std::io;
+use std::rc::Rc;
+use whatsrust::{FileContent, FileKind, JID, Message, MessageContent, MessageInfo};
 use wp_tui::app::SharePicker;
-use wp_tui::app::actions::{FocusPane, Section};
+use wp_tui::app::actions::{ActionNotice, AppAction, FocusPane, Section, UrlOpener};
 use wp_tui::app::events::MediaRenderPlan;
 use wp_tui::app::read_receipts::VisibilityPlan;
 use wp_tui::file_picker::FilePickerState;
@@ -47,6 +50,189 @@ fn draw(app: &mut TestApp, terminal: &mut Terminal<TestBackend>) {
     terminal
         .draw(|frame| ui::draw_with_plan(frame, app, &mut media, &mut visibility))
         .unwrap();
+}
+
+#[derive(Clone, Default)]
+struct RecordingUrlOpener(Rc<RefCell<Vec<wp_tui::url::UrlLaunchPlan>>>);
+
+impl UrlOpener for RecordingUrlOpener {
+    fn open(&mut self, plan: &wp_tui::url::UrlLaunchPlan) -> io::Result<()> {
+        self.0.borrow_mut().push(plan.clone());
+        Ok(())
+    }
+}
+
+#[test]
+fn clicking_only_a_painted_url_opens_the_clicked_message_not_the_previous_selection() {
+    let mut app = TestApp::with_settings("mouse=enable\n");
+    let chat: JID = "click-link@example.test".to_owned().into();
+    app.open_chat_by_jid(chat.clone());
+    app.focus_pane = FocusPane::Conversation;
+    app.add_message(message(
+        &chat,
+        "older",
+        1,
+        "https://wrong.example.test/path",
+    ));
+    app.add_message(message(
+        &chat,
+        "clicked",
+        2,
+        "plain https://clicked.example.test/path",
+    ));
+    app.message_list_state.set_selected_message("older".into());
+    let opener = RecordingUrlOpener::default();
+    let plans = opener.0.clone();
+    app.url_opener = Box::new(opener);
+    let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
+    draw(&mut app, &mut terminal);
+
+    let conversation =
+        ui::navigation_areas(terminal.backend().buffer().area, app.pane_visibility).conversation;
+    let painted = |needle: &str, terminal: &Terminal<TestBackend>| {
+        let buffer = terminal.backend().buffer();
+        (conversation.top()..conversation.bottom())
+            .flat_map(|y| {
+                (conversation.left()..conversation.right().saturating_sub(needle.len() as u16))
+                    .map(move |x| (x, y))
+            })
+            .find(|&(x, y)| {
+                (0..needle.len())
+                    .map(|dx| buffer[(x + dx as u16, y)].symbol())
+                    .collect::<String>()
+                    == needle
+            })
+            .expect("action target must be painted in the conversation pane")
+    };
+    let plain = painted("plain", &terminal);
+    app.on_terminal_event(mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        plain.0,
+        plain.1,
+    ));
+    assert_eq!(
+        app.message_list_state.get_selected_message().as_deref(),
+        Some("clicked")
+    );
+    assert!(
+        plans.borrow().is_empty(),
+        "non-actionable text must not open"
+    );
+
+    app.message_list_state.set_selected_message("older".into());
+    draw(&mut app, &mut terminal);
+    let link = painted("https://clicked.example.test/path", &terminal);
+    app.on_terminal_event(mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        link.0 + 8,
+        link.1,
+    ));
+    assert_eq!(
+        app.message_list_state.get_selected_message().as_deref(),
+        Some("clicked")
+    );
+    assert_eq!(
+        plans.borrow().as_slice(),
+        &[wp_tui::url::url_launch_plan(
+            "https://clicked.example.test/path"
+        )],
+        "clicking the painted URL must open that URL, never the older selected URL"
+    );
+}
+
+#[test]
+fn clicking_painted_attachment_and_caption_uses_the_clicked_file_region() {
+    let mut app = TestApp::with_settings("mouse=enable\n");
+    let chat: JID = "click-file@example.test".to_owned().into();
+    app.open_chat_by_jid(chat.clone());
+    app.focus_pane = FocusPane::Conversation;
+    let mut image = message(&chat, "image", 1, "");
+    image.message = MessageContent::File(FileContent {
+        kind: FileKind::Image,
+        path: "photo-click-target.png".into(),
+        ..Default::default()
+    });
+    let mut document = message(&chat, "document", 2, "");
+    document.message = MessageContent::File(FileContent {
+        kind: FileKind::Document,
+        path: "report-click-target.pdf".into(),
+        caption: Some("https://caption.example.test/open".into()),
+        ..Default::default()
+    });
+    app.add_message(image);
+    app.add_message(document);
+    app.message_list_state
+        .set_selected_message("document".into());
+    let opener = RecordingUrlOpener::default();
+    let plans = opener.0.clone();
+    app.url_opener = Box::new(opener);
+    let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
+    let conversation =
+        ui::navigation_areas(terminal.backend().buffer().area, app.pane_visibility).conversation;
+    let painted = |needle: &str, terminal: &Terminal<TestBackend>| {
+        let buffer = terminal.backend().buffer();
+        (conversation.top()..conversation.bottom())
+            .flat_map(|y| {
+                (conversation.left()..conversation.right().saturating_sub(needle.len() as u16))
+                    .map(move |x| (x, y))
+            })
+            .find(|&(x, y)| {
+                (0..needle.len())
+                    .map(|dx| buffer[(x + dx as u16, y)].symbol())
+                    .collect::<String>()
+                    == needle
+            })
+            .expect("file or caption must be painted in the conversation pane")
+    };
+    draw(&mut app, &mut terminal);
+    let image_path = painted("photo-click-target.png", &terminal);
+    app.on_terminal_event(mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        image_path.0 + 6,
+        image_path.1,
+    ));
+    assert_eq!(
+        app.attachment_viewer
+            .as_ref()
+            .map(|viewer| viewer.message_id.as_ref()),
+        Some("image"),
+        "clicking an image path should open the clicked image, not the selected document"
+    );
+    assert!(plans.borrow().is_empty());
+
+    app.dispatch_action(AppAction::CloseAttachmentViewer);
+    draw(&mut app, &mut terminal);
+    let document_path = painted("report-click-target.pdf", &terminal);
+    app.on_terminal_event(mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        document_path.0 + 6,
+        document_path.1,
+    ));
+    assert_eq!(
+        app.message_list_state.get_selected_message().as_deref(),
+        Some("document")
+    );
+    assert_eq!(
+        app.action_notice,
+        Some(ActionNotice::Unavailable("Media is not downloaded".into())),
+        "document path should follow document open, not its caption URL"
+    );
+    assert!(plans.borrow().is_empty());
+
+    draw(&mut app, &mut terminal);
+    let caption = painted("https://caption.example.test/open", &terminal);
+    app.on_terminal_event(mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        caption.0 + 8,
+        caption.1,
+    ));
+    assert_eq!(
+        plans.borrow().as_slice(),
+        &[wp_tui::url::url_launch_plan(
+            "https://caption.example.test/open"
+        )],
+        "the caption URL should open only when its painted cells are clicked"
+    );
 }
 
 #[test]
