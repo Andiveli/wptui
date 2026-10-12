@@ -43,6 +43,17 @@ fn status_contacts_are_sorted_by_latest_status_newest_first() {
 }
 
 #[test]
+fn unresolved_lid_status_is_hidden_until_a_name_is_available() {
+    let mut app = TestApp::new();
+    let sender = wr::JID::from("99887766@lid".to_owned());
+    app.add_message(status_message(&sender, "status", 100));
+    assert!(app.status_contacts.is_empty());
+
+    app.apply_contact_refresh(vec![(sender.clone(), "Saved Name".into())]);
+    assert_eq!(app.status_contacts, vec![sender]);
+}
+
+#[test]
 fn status_contacts_break_equal_recency_ties_by_jid() {
     let mut app = TestApp::new();
     let alice = wr::JID::from("alice@s.whatsapp.net".to_owned());

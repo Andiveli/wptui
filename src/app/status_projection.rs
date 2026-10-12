@@ -46,7 +46,11 @@ impl App<'_> {
                 .cmp(&left.1)
                 .then_with(|| left.0.0.as_ref().cmp(right.0.0.as_ref()))
         });
-        senders.into_iter().map(|(jid, _)| jid).collect()
+        senders
+            .into_iter()
+            .map(|(jid, _)| jid)
+            .filter(|jid| !self.contact_name(jid).is_empty())
+            .collect()
     }
 
     /// Keeps the status-list highlight valid: always selects a row when the

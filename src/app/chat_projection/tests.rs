@@ -226,6 +226,20 @@ fn community_rows_use_the_most_recent_linked_chat_as_target() {
 }
 
 #[test]
+fn unresolved_lid_chat_is_hidden_until_a_name_is_available() {
+    let mut app = TestApp::new();
+    let lid = jid("99887766@lid");
+    add_chat(&mut app, &lid);
+    app.sorted_chats = vec![lid.clone()];
+    assert!(app.chat_rows().is_empty());
+
+    app.apply_contact_refresh(vec![(lid.clone(), "Saved Name".into())]);
+    let rows = app.chat_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].label, "Saved Name");
+}
+
+#[test]
 fn selected_chat_follows_the_visible_row_target() {
     let mut app = TestApp::new();
     let chat = jid("alice@s.whatsapp.net");
