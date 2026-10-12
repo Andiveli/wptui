@@ -78,6 +78,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
     let (clipboard_reader, clipboard_writer) = open_clipboard_pair();
     let preferences_path = preferences::settings_path(data_dir);
     let composer_direction = preferences::load_composer_direction(&preferences_path);
+    let mouse_capture_enabled = preferences::load_mouse_capture_enabled(&preferences_path);
 
     let db_path = data_dir.join("whatsapp.db");
     let db_handler = DatabaseHandler::new(&db_path);
@@ -150,6 +151,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         default_protocol_type,
         composer: Composer::default(),
         composer_direction,
+        mouse_capture_enabled,
         composer_viewport_width: 80,
         preferences_path,
         picker: Arc::new(Mutex::new(picker)),
