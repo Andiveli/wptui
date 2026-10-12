@@ -200,23 +200,29 @@ pub fn render_file(
             )
             && app.image_cache.contains_key(&data.path);
         for row in media_area.rows() {
-            let painted = row
-                .columns()
-                .filter(|&position| !buf[position].symbol().trim().is_empty())
-                .collect::<Vec<_>>();
-            let span = if painted_image {
-                Some(row)
-            } else {
-                painted
-                    .first()
-                    .zip(painted.last())
-                    .map(|(first, last)| Rect::new(first.x, row.y, last.x - first.x + 1, 1))
-            };
-            if let Some(area) = span {
+            if painted_image {
                 app.mouse_hit_map
                     .media
                     .push(crate::app::mouse_input::MediaHit {
-                        area,
+                        area: row,
+                        id: message_id.clone(),
+                        kind: data.kind.clone(),
+                    });
+                continue;
+            }
+            for position in row.columns() {
+                let symbol = buf[position].symbol();
+                if symbol.trim().is_empty() {
+                    continue;
+                }
+                let width = Line::from(symbol)
+                    .width()
+                    .max(1)
+                    .min(usize::from(row.right() - position.x)) as u16;
+                app.mouse_hit_map
+                    .media
+                    .push(crate::app::mouse_input::MediaHit {
+                        area: Rect::new(position.x, position.y, width, 1),
                         id: message_id.clone(),
                         kind: data.kind.clone(),
                     });
