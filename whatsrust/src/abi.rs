@@ -237,6 +237,7 @@ pub(super) enum EventType {
     Chat = 7,
     LogoutResult = 8,
     MarkChatAsRead = 9,
+    ArchiveChanged = 10,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, FromRepr)]
