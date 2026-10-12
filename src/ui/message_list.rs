@@ -1139,6 +1139,7 @@ fn render_message_items(
         return Some(());
     }
 
+    app.mouse_hit_map.message_list = Some(list_area);
     let width = list_area.width as isize;
     let selection_started = app.message_list_phase_started();
     let (start_index, y) = message_list_reconciliation::reconcile(

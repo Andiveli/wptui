@@ -53,6 +53,10 @@ pub(super) fn render(
 
         let bottom = y;
         let top = y - height;
+        if i + 1 == items.len() {
+            app.mouse_hit_map.scroll_up_remaining =
+                Some((list_area.top() as isize - top).max(0) as usize);
+        }
 
         if bottom <= list_area.top() as isize {
             break;
@@ -74,6 +78,21 @@ pub(super) fn render(
             counts.receipt_candidates = counts.receipt_candidates.saturating_add(1);
             viewport_anchor.get_or_insert((i, y));
             visibility_plan.record_visible_message(&item);
+            let visible_top = max(top, list_area.top() as isize) as u16;
+            let visible_bottom = min(bottom, list_area.bottom() as isize) as u16;
+            if visible_bottom > visible_top {
+                app.mouse_hit_map
+                    .messages
+                    .push(crate::app::mouse_input::MessageHit {
+                        area: Rect::new(
+                            list_area.left(),
+                            visible_top,
+                            list_area.width,
+                            visible_bottom - visible_top,
+                        ),
+                        id: item_id.clone(),
+                    });
+            }
             let too_low = top < list_area.top() as isize;
             let too_high = bottom > list_area.bottom() as isize;
 

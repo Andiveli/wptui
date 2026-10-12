@@ -23,4 +23,6 @@ Push `beta` or a `preview/**` branch to run the Go and Rust checks on GitHub Act
 
 Every push to `beta` or a `preview/**` branch runs `go vet`, Go tests, Rust formatting, and the serial Rust test suite before producing a release-mode Linux binary. Future feature branches can start from `beta`, but only pushes to `beta` or `preview/**` trigger this workflow. If any check fails, there is no preview artifact. GitHub Actions sees only committed changes pushed to that branch, not local worktree edits.
 
+On `preview/**`, Actions caches the nested Go module and Cargo dependency/build artifacts for subsequent pushes to the same branch. The first run may be cold, and sibling preview branches do not share their branch-local cache. Caching can shorten compilation but does not skip the serial test suite; `beta` does not use these preview caches. The cache is not the downloadable binary artifact.
+
 The artifact expires after 14 days. A downloaded binary still needs compatible Linux system libraries (including Chafa, GLib, and Wayland) and local interactive validation. An Actions pass does not prove that live WhatsApp status publication works. Releases remain a separate, manual decision.
