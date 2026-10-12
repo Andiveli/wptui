@@ -60,6 +60,7 @@ pub fn draw_with_plan(
 ) {
     app.mouse_hit_map = crate::app::mouse_input::MouseHitMap {
         section: app.selected_section,
+        chat_filter: app.chat_filter,
         chat: app.open_chat(),
         status_contact: app.open_status_contact(),
         status_composition: app.status_composition,

@@ -20,10 +20,13 @@ pub(crate) fn render_chat_filters(frame: &mut Frame, app: &mut App, area: Rect) 
     ];
     let archived_attention = app.archived_group_attention();
     let mut labels = Vec::new();
+    let mut offset = 0u16;
     for (index, filter) in filters.into_iter().enumerate() {
         if index > 0 {
             labels.push(Span::raw("  "));
+            offset = offset.saturating_add(2);
         }
+        let start = offset;
         if filter == crate::app::ChatFilter::Archived && archived_attention {
             labels.push(Span::styled(
                 "@ ",
@@ -31,12 +34,14 @@ pub(crate) fn render_chat_filters(frame: &mut Frame, app: &mut App, area: Rect) 
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
             ));
+            offset = offset.saturating_add(2);
         }
         let label = if filter == app.chat_filter {
             format!("[{}]", filter.label())
         } else {
             filter.label().to_owned()
         };
+        offset = offset.saturating_add(Span::raw(label.as_str()).width() as u16);
         if filter == crate::app::ChatFilter::Archived && archived_attention {
             labels.push(Span::styled(
                 label,
@@ -46,6 +51,19 @@ pub(crate) fn render_chat_filters(frame: &mut Frame, app: &mut App, area: Rect) 
             ));
         } else {
             labels.push(Span::raw(label));
+        }
+        if area.height > 0 && start < area.width {
+            app.mouse_hit_map
+                .filter_labels
+                .push(crate::app::mouse_input::FilterHit {
+                    area: Rect::new(
+                        area.x.saturating_add(start),
+                        area.y,
+                        offset.min(area.width).saturating_sub(start),
+                        1,
+                    ),
+                    filter,
+                });
         }
     }
     labels.push(Span::raw("  (Tab)"));

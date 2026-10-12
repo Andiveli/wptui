@@ -11,7 +11,7 @@ use whatsrust::{FileContent, FileKind, JID, Message, MessageContent, MessageInfo
 use wp_tui::app::actions::{ActionNotice, AppAction, FocusPane, Section, UrlOpener};
 use wp_tui::app::events::MediaRenderPlan;
 use wp_tui::app::read_receipts::VisibilityPlan;
-use wp_tui::app::{CommunityNode, SharePicker};
+use wp_tui::app::{ChatFilter, CommunityNode, SharePicker};
 use wp_tui::file_picker::FilePickerState;
 use wp_tui::ui;
 
@@ -65,6 +65,91 @@ fn painted_in(terminal: &Terminal<TestBackend>, area: Rect, needle: &str) -> (u1
                 == needle
         })
         .expect("click target must be painted inside its pane")
+}
+
+#[test]
+fn clicking_each_painted_chat_filter_changes_the_view_without_opening_a_chat() {
+    for target in [
+        ChatFilter::Unread,
+        ChatFilter::Groups,
+        ChatFilter::Archived,
+        ChatFilter::All,
+    ] {
+        let mut app = TestApp::with_settings("mouse=enable\n");
+        let direct: JID = "filter-direct@s.whatsapp.net".to_owned().into();
+        let group: JID = "filter-group@g.us".to_owned().into();
+        app.contacts.insert(direct.clone(), "DirectClick".into());
+        app.contacts.insert(group.clone(), "GroupClick".into());
+        app.open_chat_by_jid(direct);
+        app.open_chat_by_jid(group.clone());
+        app.focus_pane = FocusPane::ChatList;
+        if target == ChatFilter::All {
+            for _ in 0..2 {
+                app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+            }
+            assert_eq!(app.chat_filter, ChatFilter::Groups, "Tab remains active");
+        }
+        let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+        draw(&mut app, &mut terminal);
+        let header = Rect::new(0, 0, 100, 1);
+        let (x, y) = painted_in(&terminal, header, target.label());
+        assert_eq!(y, 0, "filter must be in the painted full-width header");
+        let before = app.open_chat();
+
+        app.on_terminal_event(mouse(MouseEventKind::Down(MouseButton::Left), x, y));
+        draw(&mut app, &mut terminal);
+
+        assert_eq!(app.chat_filter, target, "clicked filter must be active");
+        assert_eq!(app.open_chat(), before, "filter click must not open a chat");
+        assert_eq!(app.focus_pane, FocusPane::ChatList);
+        let buffer = terminal.backend().buffer();
+        let painted = (0..100)
+            .map(|column| buffer[(column, 0)].symbol())
+            .collect::<String>();
+        assert!(
+            painted.contains(&format!("[{}]", target.label())),
+            "selected filter must be painted: {painted:?}"
+        );
+        let contacts = ui::navigation_areas(buffer.area, app.pane_visibility)
+            .chat_list
+            .unwrap();
+        let rows = (2..contacts.bottom())
+            .flat_map(|row| {
+                (contacts.left()..contacts.right())
+                    .map(move |column| buffer[(column, row)].symbol().to_owned())
+            })
+            .collect::<String>();
+        if target == ChatFilter::Groups {
+            assert!(rows.contains("GroupClick"));
+            assert!(!rows.contains("DirectClick"));
+        } else if target == ChatFilter::All {
+            assert!(rows.contains("GroupClick"));
+            assert!(rows.contains("DirectClick"));
+        } else {
+            assert!(!rows.contains("GroupClick"));
+            assert!(!rows.contains("DirectClick"));
+        }
+    }
+}
+
+#[test]
+fn filter_header_gaps_and_mouse_opt_out_do_not_change_the_filter() {
+    for settings in ["mouse=enable\n", "mouse=disable\n"] {
+        let mut app = TestApp::with_settings(settings);
+        let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+        draw(&mut app, &mut terminal);
+        let header = Rect::new(0, 0, 100, 1);
+        let (unread_x, y) = painted_in(&terminal, header, "Unread");
+        let (tab_x, _) = painted_in(&terminal, header, "(Tab)");
+        for x in [unread_x - 1, tab_x] {
+            app.on_terminal_event(mouse(MouseEventKind::Down(MouseButton::Left), x, y));
+            assert_eq!(app.chat_filter, ChatFilter::All, "gap/hint must not filter");
+        }
+        if settings == "mouse=disable\n" {
+            app.on_terminal_event(mouse(MouseEventKind::Down(MouseButton::Left), unread_x, y));
+            assert_eq!(app.chat_filter, ChatFilter::All, "opt-out must stay native");
+        }
+    }
 }
 
 #[test]
