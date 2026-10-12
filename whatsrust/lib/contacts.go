@@ -167,6 +167,16 @@ func loadContactEntries(ctx context.Context, bridgeClient *whatsmeow.Client) ([]
 	return entries, nil
 }
 
+// C_GetSelfContacts only reads authenticated self identities and names. It
+// intentionally avoids the joined-groups network query in C_GetContacts:
+// Connected can arrive before that query is available.
+//
+//export C_GetSelfContacts
+func C_GetSelfContacts() C.GetContactsResult {
+	clientSnapshot := lifecycleState.clientSnapshot()
+	return contactEntriesToC(selfMentionEntries(context.Background(), clientSnapshot))
+}
+
 //export C_GetContacts
 func C_GetContacts() C.GetContactsResult {
 	clientSnapshot := lifecycleState.clientSnapshot()
