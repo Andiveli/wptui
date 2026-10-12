@@ -233,6 +233,52 @@ func TestContactJIDsIncludesVerifiedPNLIDAndADAliases(t *testing.T) {
 	}
 }
 
+func TestConnectedSelfContactsExportOnlyAuthenticatedNamedAliases(t *testing.T) {
+	self := types.NewJID("15550000001", types.DefaultUserServer)
+	lid := types.NewJID("9999", types.HiddenUserServer)
+	other := types.NewJID("15550000002", types.DefaultUserServer)
+	for _, tt := range []struct {
+		name    string
+		profile string
+		want    string
+	}{
+		{name: "profile available", profile: "Ada", want: "Ada"},
+		{name: "numeric profile ignored", profile: "+1 555 000 0001"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &whatsmeow.Client{Store: &store.Device{
+				ID: &self, LID: lid, PushName: tt.profile,
+				Contacts: groupParticipantContacts{contacts: map[types.JID]types.ContactInfo{
+					self:  {FullName: "+1 555 000 0001"},
+					other: {FullName: "Other Saved Name"},
+				}},
+			}}
+			result := contactEntriesToC(selfMentionEntries(context.Background(), client))
+			defer C_FreeContacts(result)
+			if tt.want == "" {
+				if result.size != 0 {
+					t.Fatalf("numeric profile exported %d entries, want none", result.size)
+				}
+				return
+			}
+			if result.size != 2 {
+				t.Fatalf("self entries = %d, want PN and LID only", result.size)
+			}
+			seen := make(map[string]bool)
+			for _, entry := range unsafe.Slice(result.entries, int(result.size)) {
+				jid, name := contactEntryStrings(entry)
+				if name != tt.want {
+					t.Fatalf("self name = %q, want %q", name, tt.want)
+				}
+				seen[jid] = true
+			}
+			if !seen[self.String()] || !seen[lid.String()] || seen[other.String()] {
+				t.Fatalf("exported JID set is not restricted to authenticated self aliases")
+			}
+		})
+	}
+}
+
 func TestContactEntriesToCPreservesOrderAndEmptyOwnership(t *testing.T) {
 	entries := []contactEntry{
 		{jid: types.JID{User: "111", Server: types.DefaultUserServer}, name: "First"},

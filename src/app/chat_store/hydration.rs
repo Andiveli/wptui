@@ -141,6 +141,28 @@ impl App<'_> {
             .unwrap_or_else(|| self.contact_name(&message.info.sender))
     }
 
+    /// Refresh authenticated self names without treating a partial snapshot as
+    /// authority to hide unrelated cached contacts or group names.
+    pub(crate) fn refresh_self_contacts(&mut self) {
+        let mut changed = false;
+        for (jid, name) in self.contact_source.get_self_contacts() {
+            if phone_like_name(&name) || raw_lid_name(&name) || name.trim().is_empty() {
+                continue;
+            }
+            if let Some(fresh) = self.fresh_contact_jids.as_mut() {
+                changed |= fresh.insert(jid.clone());
+            }
+            changed |= self.contacts.get(&jid) != Some(&name);
+            self.contacts.insert(jid.clone(), name.clone());
+            self.contact_write
+                .persist(super::PersistContact { jid, name });
+        }
+        if changed {
+            self.invalidate_chat_list();
+            self.refresh_status_contacts();
+        }
+    }
+
     pub(crate) fn get_contacts(&mut self) {
         let contacts = self.contact_source.get_contacts();
         self.apply_contact_refresh(contacts);
