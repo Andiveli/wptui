@@ -16,6 +16,7 @@ pub(crate) struct MouseHitMap {
     pub(crate) status_composition: StatusCompositionState,
     pub(crate) chat_list: Option<Rect>,
     pub(crate) message_list: Option<Rect>,
+    pub(crate) picker: Option<PickerHit>,
     pub(crate) messages: Vec<MessageHit>,
     /// Remaining rows before the oldest message reaches the top, if measured.
     pub(crate) scroll_up_remaining: Option<usize>,
@@ -24,6 +25,19 @@ pub(crate) struct MouseHitMap {
 pub(crate) struct MessageHit {
     pub(crate) area: Rect,
     pub(crate) id: wr::MessageId,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PickerKind {
+    Share,
+    Url,
+    File,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct PickerHit {
+    pub(crate) kind: PickerKind,
+    pub(crate) list: Rect,
 }
 
 impl App<'_> {
@@ -35,9 +49,6 @@ impl App<'_> {
             || self.leader_menu.is_some()
             || self.contextual_menu.is_some()
             || self.attachment_viewer.is_some()
-            || self.url_picker.is_some()
-            || self.file_picker.is_some()
-            || self.share_picker.is_some()
             || self.reaction_picker.is_some()
             || self.message_menu.is_some()
             || self.composer.mention_picker_active()
@@ -49,6 +60,43 @@ impl App<'_> {
             return;
         }
         let point = Position::new(event.column, event.row);
+        let active_picker = if self.file_picker.is_some() {
+            Some(PickerKind::File)
+        } else if self.share_picker.is_some() {
+            Some(PickerKind::Share)
+        } else if self.url_picker.is_some() {
+            Some(PickerKind::Url)
+        } else {
+            None
+        };
+        if let Some(kind) = active_picker {
+            // The last draw owns the coordinates. No event may reach the pane
+            // behind a modal, including its border or an unpainted picker.
+            let Some(hit) = self.mouse_hit_map.picker else {
+                return;
+            };
+            if hit.kind != kind || !hit.list.contains(point) {
+                return;
+            }
+            let delta = match event.kind {
+                MouseEventKind::ScrollDown => 1,
+                MouseEventKind::ScrollUp => -1,
+                _ => return,
+            };
+            match kind {
+                PickerKind::Share => self.move_share_picker(delta),
+                PickerKind::Url => self.move_url_picker(delta),
+                PickerKind::File => {
+                    if let Some(picker) = self.file_picker.as_mut() {
+                        picker.move_selection(delta);
+                    }
+                }
+            }
+            return;
+        }
+        if self.mouse_hit_map.picker.is_some() {
+            return; // A picker closed since the last draw; do not use stale base hits.
+        }
         match event.kind {
             MouseEventKind::ScrollDown | MouseEventKind::ScrollUp => {
                 let down = event.kind == MouseEventKind::ScrollDown;
