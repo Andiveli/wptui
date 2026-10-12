@@ -11,11 +11,13 @@ use super::{App, CommunityNavigationRow, ContactRow};
 #[derive(Default)]
 pub(crate) struct MouseHitMap {
     pub(crate) section: Section,
+    pub(crate) chat_filter: crate::app::ChatFilter,
     pub(crate) chat: Option<wr::JID>,
     pub(crate) status_contact: Option<wr::JID>,
     pub(crate) status_composition: StatusCompositionState,
     pub(crate) chat_list: Option<Rect>,
     pub(crate) section_rows: Vec<SectionHit>,
+    pub(crate) filter_labels: Vec<FilterHit>,
     pub(crate) contact_rows: Vec<ContactHit>,
     pub(crate) message_list: Option<Rect>,
     pub(crate) picker: Option<PickerHit>,
@@ -29,6 +31,11 @@ pub(crate) struct MouseHitMap {
 pub(crate) struct SectionHit {
     pub(crate) area: Rect,
     pub(crate) section: Option<Section>, // None is the Logout rail entry.
+}
+
+pub(crate) struct FilterHit {
+    pub(crate) area: Rect,
+    pub(crate) filter: crate::app::ChatFilter,
 }
 
 #[derive(Clone)]
@@ -87,6 +94,7 @@ impl App<'_> {
             || self.message_menu.is_some()
             || self.composer.mention_picker_active()
             || self.mouse_hit_map.section != self.selected_section
+            || self.mouse_hit_map.chat_filter != self.chat_filter
             || self.mouse_hit_map.chat != self.open_chat()
             || self.mouse_hit_map.status_contact != self.open_status_contact()
             || self.mouse_hit_map.status_composition != self.status_composition
@@ -157,6 +165,21 @@ impl App<'_> {
                 }
             }
             MouseEventKind::Down(MouseButton::Left) => {
+                if let Some(filter) = self
+                    .mouse_hit_map
+                    .filter_labels
+                    .iter()
+                    .find(|hit| hit.area.contains(point))
+                    .map(|hit| hit.filter)
+                {
+                    if !self.contact_search_active {
+                        let selected = self.get_selected_chat();
+                        self.chat_filter = filter;
+                        self.update_filtered_chats(selected);
+                        self.focus_pane = FocusPane::ChatList;
+                    }
+                    return;
+                }
                 if let Some(section) = self
                     .mouse_hit_map
                     .section_rows
