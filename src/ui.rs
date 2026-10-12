@@ -787,6 +787,44 @@ mod chat_filter_layout_tests {
     }
 
     #[test]
+    fn archived_filter_colors_its_label_only_with_unread_group_attention() {
+        let mut app = TestApp::new();
+        let group = wr::JID::from("archived-attention@g.us".to_owned());
+        app.chats.insert(
+            group.clone(),
+            Chat {
+                jid: group.clone(),
+                last_message_time: Some(1),
+            },
+        );
+        app.sorted_chats.push(group.clone());
+        app.set_archived_chat_settings([group.clone()]);
+        let mut terminal = Terminal::new(TestBackend::new(100, 18)).unwrap();
+        let (row, _) = filter_row(&mut app, &mut terminal);
+        let label_x = row.find("Archived").unwrap() as u16;
+        assert_ne!(terminal.backend().buffer()[(label_x, 0)].fg, Color::Yellow);
+
+        let mut mention = crate::app::test_support::message(&group, "mention", 2);
+        mention.info.mentions_self = true;
+        app.add_message(mention);
+        let (row, _) = filter_row(&mut app, &mut terminal);
+        let label_x = row.find("Archived").unwrap() as u16;
+        let cell = &terminal.backend().buffer()[(label_x, 0)];
+        assert_eq!(cell.fg, Color::Yellow);
+        assert!(cell.modifier.contains(Modifier::BOLD));
+
+        app.chat_filter = crate::app::ChatFilter::Archived;
+        let (row, _) = filter_row(&mut app, &mut terminal);
+        let label_x = row.find("Archived").unwrap() as u16;
+        assert_eq!(terminal.backend().buffer()[(label_x, 0)].fg, Color::Yellow);
+
+        app.mark_chat_read_at_latest(&group);
+        let (row, _) = filter_row(&mut app, &mut terminal);
+        let label_x = row.find("Archived").unwrap() as u16;
+        assert_ne!(terminal.backend().buffer()[(label_x, 0)].fg, Color::Yellow);
+    }
+
+    #[test]
     fn chats_filter_row_sits_above_sections_contacts_and_conversation() {
         let mut app = TestApp::new();
         let mut terminal = Terminal::new(TestBackend::new(100, 18)).unwrap();
