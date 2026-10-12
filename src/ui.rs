@@ -16,7 +16,8 @@ pub use layout::{
     viewer_preview_layout,
 };
 pub(crate) use layout::{
-    composer_viewport_width, composer_visual_layout_with_direction, truncate_with_ellipsis,
+    chat_filter_areas, composer_viewport_width, composer_visual_layout_with_direction,
+    truncate_with_ellipsis,
 };
 
 use crate::app::App;
@@ -25,7 +26,7 @@ use crate::app::events::{ViewerPreviewKey, ViewerPreviewState, ViewerStatus};
 use crate::app::read_receipts::VisibilityPlan;
 use crate::app::runtime_diagnostics::Phase;
 use crate::keybindings::canonical_shortcuts;
-use contacts::render_contacts;
+use contacts::{render_chat_filters, render_contacts};
 use message_list::{get_quoted_text, render_messages_with_plan};
 use navigation::{
     render_logout_placeholder, render_logs, render_section_rail, render_structural_placeholder,
@@ -41,6 +42,13 @@ use ratatui::{
 use ratatui_image::{Resize, StatefulImage};
 use status::{render_status_contacts, render_statuses_with_plan};
 use whatsrust as wr;
+
+pub(crate) fn show_chat_filter_header(app: &App) -> bool {
+    app.selected_section == Section::Chats
+        && app.community_detail.is_none()
+        && app.pane_visibility.chat_list
+        && !app.rail_on_logout
+}
 
 /// Draws one frame and records deferred media and visibility effects for the runtime.
 pub fn draw_with_plan(
@@ -58,7 +66,11 @@ pub fn draw_with_plan(
     } else {
         frame.area()
     };
-    let areas = navigation_areas(content_area, app.pane_visibility);
+    let (filter_area, body_area) = chat_filter_areas(content_area, show_chat_filter_header(app));
+    if let Some(area) = filter_area {
+        render_chat_filters(frame, app, area);
+    }
+    let areas = navigation_areas(body_area, app.pane_visibility);
 
     if let Some(area) = areas.section_rail {
         render_section_rail(frame, app, area);
@@ -661,6 +673,66 @@ mod composer_focus_tests {
                 terminal.backend().buffer()[(0, 0)].fg,
                 expected,
                 "chat focus {focus:?}, mode {mode:?}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod chat_filter_layout_tests {
+    use super::draw_with_plan;
+    use crate::app::{
+        actions::Section, events::MediaRenderPlan, read_receipts::VisibilityPlan,
+        test_support::TestApp,
+    };
+    use ratatui::{Terminal, backend::TestBackend};
+
+    #[test]
+    fn chats_filter_row_sits_above_sections_contacts_and_conversation() {
+        let mut app = TestApp::new();
+        let mut terminal = Terminal::new(TestBackend::new(100, 18)).unwrap();
+        let mut media = MediaRenderPlan::default();
+        let mut visibility = VisibilityPlan::default();
+
+        terminal
+            .draw(|frame| draw_with_plan(frame, &mut app.app, &mut media, &mut visibility))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let first_line = (0..100)
+            .map(|x| buffer[(x, 0)].symbol())
+            .collect::<String>();
+        assert!(
+            first_line.starts_with("[All]  Unread  Groups  Archived  (Tab)"),
+            "filter row must start at the full interface edge: {first_line:?}"
+        );
+        for x in [0, 14, 44] {
+            assert_eq!(
+                buffer[(x, 1)].symbol(),
+                "┌",
+                "pane at x={x} must start below filters"
+            );
+        }
+    }
+
+    #[test]
+    fn status_panes_keep_their_existing_top_row() {
+        let mut app = TestApp::new();
+        app.selected_section = Section::Status;
+        let mut terminal = Terminal::new(TestBackend::new(100, 18)).unwrap();
+        let mut media = MediaRenderPlan::default();
+        let mut visibility = VisibilityPlan::default();
+
+        terminal
+            .draw(|frame| draw_with_plan(frame, &mut app.app, &mut media, &mut visibility))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        for x in [0, 14, 44] {
+            assert_eq!(
+                buffer[(x, 0)].symbol(),
+                "┌",
+                "status pane at x={x} must not move"
             );
         }
     }
