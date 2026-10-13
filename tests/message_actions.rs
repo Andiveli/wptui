@@ -261,10 +261,7 @@ fn reaction_picker_handles_modal_navigation_without_changing_focus() {
         KeyCode::Char('r'),
         KeyModifiers::NONE,
     )));
-    app.on_terminal_event(Event::Key(KeyEvent::new(
-        KeyCode::Down,
-        KeyModifiers::NONE,
-    )));
+    app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)));
     app.on_terminal_event(Event::Key(KeyEvent::new(
         KeyCode::Char('j'),
         KeyModifiers::NONE,
