@@ -1,6 +1,6 @@
 use super::super::{
     STATUS_BROADCAST_CHAT,
-    test_support::{FakeStatusCursorPort, TestApp},
+    test_support::{FakeDmResolver, FakeStatusCursorPort, TestApp},
 };
 use super::*;
 
@@ -51,6 +51,19 @@ fn unresolved_lid_status_is_hidden_until_a_name_is_available() {
 
     app.apply_contact_refresh(vec![(sender.clone(), "Saved Name".into())]);
     assert_eq!(app.status_contacts, vec![sender]);
+}
+
+#[test]
+fn saved_phone_contact_names_verified_lid_status() {
+    let sender = wr::JID::from("99887766@lid".to_owned());
+    let phone = wr::JID::from("15551234567@s.whatsapp.net".to_owned());
+    let mut app =
+        TestApp::with_dm_resolver(Box::new(FakeDmResolver::with_result(Some(phone.clone()))));
+    app.apply_contact_refresh(vec![(phone, "Alice".into())]);
+    app.add_message(status_message(&sender, "saved-contact-status", 100));
+
+    assert_eq!(app.status_contacts, vec![sender.clone()]);
+    assert_eq!(app.contact_name(&sender).as_ref(), "Alice");
 }
 
 #[test]
