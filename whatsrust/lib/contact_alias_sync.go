@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"sort"
+	"time"
 
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/types"
@@ -53,4 +54,59 @@ func savedPNsMissingAlias(ctx context.Context, contacts map[types.JID]types.Cont
 		}
 	}
 	return selected
+}
+
+const (
+	aliasLookupBatchSize   = 16
+	aliasLookupMaxContacts = 256
+	aliasLookupTimeout     = 8 * time.Second
+)
+
+// runSavedAliasLookup is called off the Connected callback by a per-client
+// worker. WhatsMeow stores returned server-confirmed mappings; the completion
+// notification only follows a verified local readback for a requested PN.
+func runSavedAliasLookup(
+	ctx context.Context,
+	contacts map[types.JID]types.ContactInfo,
+	lids store.LIDStore,
+	query func(context.Context, []string) ([]types.IsOnWhatsAppResponse, error),
+	notify func(),
+) {
+	if query == nil || lids == nil {
+		return
+	}
+	candidates := savedPNsMissingAlias(ctx, contacts, lids, aliasLookupMaxContacts)
+	changed := false
+	for start := 0; start < len(candidates) && ctx.Err() == nil; start += aliasLookupBatchSize {
+		end := min(start+aliasLookupBatchSize, len(candidates))
+		phones := make([]string, 0, end-start)
+		requested := make(map[types.JID]struct{}, end-start)
+		for _, pn := range candidates[start:end] {
+			phones = append(phones, "+"+pn.User)
+			requested[pn] = struct{}{}
+		}
+		batchCtx, cancel := context.WithTimeout(ctx, aliasLookupTimeout)
+		responses, err := query(batchCtx, phones)
+		cancel()
+		if err != nil {
+			break
+		}
+		for _, response := range responses {
+			pn := response.PhoneNumber.ToNonAD()
+			lid := response.JID.ToNonAD()
+			if pn.Server != types.DefaultUserServer || lid.Server != types.HiddenUserServer {
+				continue
+			}
+			if _, ok := requested[pn]; !ok {
+				continue
+			}
+			stored, err := lids.GetLIDForPN(ctx, pn)
+			if err == nil && !stored.IsEmpty() && stored.ToNonAD() == lid {
+				changed = true
+			}
+		}
+	}
+	if changed && ctx.Err() != context.Canceled && notify != nil {
+		notify()
+	}
 }
