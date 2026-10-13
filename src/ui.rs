@@ -44,6 +44,23 @@ use ratatui_image::{Resize, StatefulImage};
 use status::{render_status_contacts, render_statuses_with_plan};
 use whatsrust as wr;
 
+fn reaction_picker_lines(reactions: &[String], selected: usize) -> Vec<String> {
+    let rendered = reactions
+        .iter()
+        .enumerate()
+        .map(|(index, reaction)| {
+            format!(
+                "{} {} {}",
+                if index == selected { ">" } else { " " },
+                reaction,
+                if index == selected { "<" } else { " " }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("  ");
+    vec![rendered]
+}
+
 pub(crate) fn show_chat_filter_header(app: &App) -> bool {
     app.selected_section == Section::Chats
         && app.community_detail.is_none()
@@ -371,21 +388,7 @@ pub fn render_chats_with_plan(
                 .join(" | "),
         )
     } else if let Some((reactions, selected)) = &app.reaction_picker {
-        Some(
-            reactions
-                .iter()
-                .enumerate()
-                .map(|(index, reaction)| {
-                    format!(
-                        "{} {} {}",
-                        if index == *selected { ">" } else { " " },
-                        reaction,
-                        if index == *selected { "<" } else { " " }
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("  "),
-        )
+        Some(reaction_picker_lines(reactions, *selected).join(""))
     } else if let Some((actions, selected)) = &app.message_menu {
         Some(
             actions
@@ -1261,7 +1264,24 @@ fn wrapped_picker_first_visible(
 
 #[cfg(test)]
 mod mention_picker_tests {
-    use super::mention_picker_window;
+    use super::{mention_picker_window, reaction_picker_lines};
+
+    #[test]
+    fn reaction_picker_renders_each_original_reaction_on_its_own_selected_line() {
+        let reactions = ["👍", "❤️", "😂", "😮", "😢", "🙏"]
+            .map(str::to_owned)
+            .to_vec();
+        let first_selected = reaction_picker_lines(&reactions, 0);
+        assert_eq!(first_selected.len(), 6);
+        assert_eq!(
+            first_selected,
+            vec!["> 👍", "  ❤️", "  😂", "  😮", "  😢", "  🙏"]
+        );
+        assert_eq!(
+            reaction_picker_lines(&reactions, 3),
+            vec!["  👍", "  ❤️", "  😂", "> 😮", "  😢", "  🙏"]
+        );
+    }
 
     #[test]
     fn eight_candidates_use_six_rows_and_keep_each_selection_visible() {
