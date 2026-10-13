@@ -67,7 +67,7 @@ fn reply_privately_resolves_lid_to_pn_preserving_reply_state() {
 
     app.reply_privately();
 
-    assert_eq!(*resolver.calls.lock().unwrap(), vec![lid]);
+    assert_eq!(*resolver.calls.lock().unwrap(), vec![lid.clone(), lid]);
     assert_eq!(app.open_chat(), Some(pn.clone()));
     assert_eq!(
         app.composer.quote.as_ref().map(|m| &m.info.id),

@@ -65,11 +65,17 @@ pub(crate) struct RecordingNotifier {
 pub(crate) struct FakeContactSource {
     pub(crate) rows: Arc<Mutex<Vec<(wr::JID, Arc<str>)>>>,
     pub(crate) calls: Arc<Mutex<usize>>,
+    pub(crate) self_calls: Arc<Mutex<usize>>,
 }
 
 impl ContactSourcePort for FakeContactSource {
     fn get_contacts(&self) -> Vec<(wr::JID, Arc<str>)> {
         *self.calls.lock().unwrap() += 1;
+        self.rows.lock().unwrap().clone()
+    }
+
+    fn get_self_contacts(&self) -> Vec<(wr::JID, Arc<str>)> {
+        *self.self_calls.lock().unwrap() += 1;
         self.rows.lock().unwrap().clone()
     }
 }
@@ -468,6 +474,18 @@ impl TestApp {
         Self::with_presence_subscription(Box::new(AcceptedPresenceSubscription))
     }
 
+    pub(crate) fn with_contact_source(contact_source: FakeContactSource) -> Self {
+        let mut test_app = Self::new();
+        test_app.app.set_contact_source(Box::new(contact_source));
+        test_app
+    }
+
+    pub(crate) fn with_dm_resolver(dm_resolver: Box<dyn DmResolverPort>) -> Self {
+        let mut test_app = Self::new();
+        test_app.app.set_dm_resolver(dm_resolver);
+        test_app
+    }
+
     pub(crate) fn with_message_push_name(message_push_name: Box<dyn MessagePushNamePort>) -> Self {
         let mut test_app = Self::new();
         test_app.app.set_message_push_name(message_push_name);
@@ -492,6 +510,15 @@ impl TestApp {
         app.set_group_participants_query(Box::new(EmptyGroupParticipantsQuery));
         app.db_handler.init();
         Self { app, _dir: dir }
+    }
+
+    pub(crate) fn with_database_contact_source(
+        path: &Path,
+        contact_source: FakeContactSource,
+    ) -> Self {
+        let mut test_app = Self::with_database(path);
+        test_app.app.set_contact_source(Box::new(contact_source));
+        test_app
     }
 
     pub(crate) fn with_database(path: &Path) -> Self {

@@ -322,6 +322,7 @@ impl App<'_> {
                 .iter()
                 .filter(|jid| !grouped.contains(*jid))
                 .filter(|jid| !community_metadata.contains(*jid))
+                .filter(|jid| !self.contact_name(jid).is_empty())
                 .map(|jid| ChatRow {
                     label: self.contact_name(jid).to_string(),
                     members: vec![(*jid).clone()],
