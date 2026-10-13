@@ -90,10 +90,28 @@ impl App<'_> {
             .flatten()
     }
 
+    /// A verified LID→PN mapping may exist before the reverse contact alias
+    /// appears in the contact export. Reuse only the fresh saved PN name.
+    fn saved_display_name(&self, jid: &wr::JID) -> Option<&Arc<str>> {
+        self.fresh_contact_name(jid)
+            .filter(|name| !phone_like_name(name) && !raw_lid_name(name))
+            .or_else(|| {
+                if !jid.0.ends_with("@lid") {
+                    return None;
+                }
+                let phone = self.verified_phones.get(jid)?;
+                if phone.is_empty() || !phone.bytes().all(|digit| digit.is_ascii_digit()) {
+                    return None;
+                }
+                let pn = wr::JID::from(format!("{phone}@s.whatsapp.net"));
+                self.fresh_contact_name(&pn)
+                    .filter(|name| !phone_like_name(name) && !raw_lid_name(name))
+            })
+    }
+
     pub fn contact_name(&self, jid: &wr::JID) -> Arc<str> {
         let saved = self.fresh_contact_name(jid);
-        saved
-            .filter(|name| !phone_like_name(name) && !raw_lid_name(name))
+        self.saved_display_name(jid)
             .or_else(|| {
                 self.profile_names
                     .get(jid)
@@ -123,8 +141,7 @@ impl App<'_> {
     }
 
     pub fn message_sender_name(&self, message: &wr::Message) -> Arc<str> {
-        self.fresh_contact_name(&message.info.sender)
-            .filter(|name| !phone_like_name(name) && !raw_lid_name(name))
+        self.saved_display_name(&message.info.sender)
             .map(|name| canonical_contact_name(name))
             .or_else(|| {
                 self.profile_names
