@@ -4,4 +4,6 @@ use whatsrust as wr;
 
 pub trait ContactSourcePort {
     fn get_contacts(&self) -> Vec<(wr::JID, Arc<str>)>;
+    /// Authenticated self aliases only; safe before joined-group hydration.
+    fn get_self_contacts(&self) -> Vec<(wr::JID, Arc<str>)>;
 }
