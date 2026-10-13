@@ -46,6 +46,7 @@ impl CallbackTranslator<*const CEvent> for Event {
                 reaction_event_from_ffi(&*(event.data as *const CReactionEvent))
             },
             EventType::Connected => Event::Connected,
+            EventType::ContactAliasesUpdated => Event::ContactAliasesUpdated,
             EventType::MessageAction => unsafe {
                 message_action_event_from_ffi(&*(event.data as *const CMessageActionEvent))
             },

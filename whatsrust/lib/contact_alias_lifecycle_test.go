@@ -75,6 +75,56 @@ func TestAliasLifecycleCancelsRetiredClientWithoutStoppingReplacement(t *testing
 	}
 }
 
+func TestConnectedDispatchGatesPresenceAndUIAgainstStaleClient(t *testing.T) {
+	state := &clientLifecycleState{}
+	client := &whatsmeow.Client{}
+	state.publishClient(client)
+	defer state.publishClient(nil)
+	var presenceCalls, uiEvents atomic.Int32
+	send := func(context.Context, types.Presence) error {
+		presenceCalls.Add(1)
+		return nil
+	}
+	connected := func() { uiEvents.Add(1) }
+	warn := func(format string, _ ...any) { t.Errorf("unexpected presence warning: %s", format) }
+
+	state.pauseSavedAliasLookupFor(client)
+	if dispatchConnectedIfCurrent(state, client, send, connected, warn) {
+		t.Fatal("paused client emitted Connected")
+	}
+	if presenceCalls.Load() != 0 || uiEvents.Load() != 0 {
+		t.Fatalf("paused client effects: presence=%d, UI=%d; want both 0", presenceCalls.Load(), uiEvents.Load())
+	}
+
+	state.resumeSavedAliasLookupFor(client)
+	if !dispatchConnectedIfCurrent(state, client, send, connected, warn) {
+		t.Fatal("current active client did not emit Connected")
+	}
+	if presenceCalls.Load() != 1 || uiEvents.Load() != 1 {
+		t.Fatalf("active client effects: presence=%d, UI=%d; want both 1", presenceCalls.Load(), uiEvents.Load())
+	}
+
+	sendAndPause := func(context.Context, types.Presence) error {
+		presenceCalls.Add(1)
+		state.pauseSavedAliasLookupFor(client) // Disconnect while presence is in flight.
+		return nil
+	}
+	if dispatchConnectedIfCurrent(state, client, sendAndPause, connected, warn) {
+		t.Fatal("client paused during presence emitted Connected")
+	}
+	if presenceCalls.Load() != 2 || uiEvents.Load() != 1 {
+		t.Fatalf("in-flight disconnect effects: presence=%d, UI=%d; want 2 and 1", presenceCalls.Load(), uiEvents.Load())
+	}
+
+	state.publishClient(&whatsmeow.Client{})
+	if dispatchConnectedIfCurrent(state, client, send, connected, warn) {
+		t.Fatal("retired client emitted Connected")
+	}
+	if presenceCalls.Load() != 2 || uiEvents.Load() != 1 {
+		t.Fatalf("retired client effects: presence=%d, UI=%d; want 2 and 1", presenceCalls.Load(), uiEvents.Load())
+	}
+}
+
 func awaitAliasSignal[T any](t *testing.T, ch <-chan T, name string) T {
 	t.Helper()
 	select {

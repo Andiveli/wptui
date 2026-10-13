@@ -180,6 +180,30 @@ impl App<'_> {
         }
     }
 
+    /// Merge a partial local alias snapshot without treating it as authority
+    /// over cached groups or writing it to the app database. Only WhatsMeow's
+    /// server-confirmed PN/LID map may persist after the bounded lookup.
+    pub(crate) fn refresh_contact_aliases(&mut self) {
+        let mut changed = false;
+        for (jid, name) in self.contact_source.get_contact_aliases() {
+            if !(jid.0.ends_with("@s.whatsapp.net") || jid.0.ends_with("@lid"))
+                || name.trim().is_empty()
+                || raw_lid_name(&name)
+            {
+                continue;
+            }
+            if let Some(fresh) = self.fresh_contact_jids.as_mut() {
+                changed |= fresh.insert(jid.clone());
+            }
+            changed |= self.contacts.get(&jid) != Some(&name);
+            self.contacts.insert(jid, name);
+        }
+        if changed {
+            self.invalidate_chat_list();
+            self.refresh_status_contacts();
+        }
+    }
+
     pub(crate) fn get_contacts(&mut self) {
         let contacts = self.contact_source.get_contacts();
         self.apply_contact_refresh(contacts);

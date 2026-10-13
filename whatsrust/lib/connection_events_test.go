@@ -32,8 +32,14 @@ func TestConnectionEventDispatchLeavesMainHandlerAsRouter(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(source)
-	if !strings.Contains(body, "handleConnected(client.SendPresence, dispatchConnectedEvent, LOG_WARN)") {
-		t.Fatal("connection family does not delegate connected events")
+	for _, expected := range []string{
+		"dispatchConnectedIfCurrent(&lifecycleState, client, client.SendPresence, dispatchConnectedEvent, LOG_WARN)",
+		"handleConnected(sendPresence, func()",
+		"state.dispatchConnectedFor(client, connected)",
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("connection family does not delegate through guarded Connected event: missing %q", expected)
+		}
 	}
 	if strings.Contains(body, "func emitLogoutResult(status uint8)") {
 		t.Fatal("logout result conversion remains in event wiring")

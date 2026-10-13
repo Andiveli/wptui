@@ -247,6 +247,7 @@ impl RuntimeDiagnostics {
                 whatsrust::Event::AppStateSyncComplete
                 | whatsrust::Event::ArchiveChanged
                 | whatsrust::Event::Connected
+                | whatsrust::Event::ContactAliasesUpdated
                 | whatsrust::Event::SyncProgress(_) => 6,
                 whatsrust::Event::Receipt { .. } => 5,
                 whatsrust::Event::Chat { .. }
