@@ -207,7 +207,7 @@ removes the local row, but does not itself prove removal from every recipient's 
 |---|---|---|
 | Composer | Send | `Enter` |
 | Composer | Paste text, files, or an image | `Ctrl+V` |
-| Reaction picker | Move / confirm | `h`/`l` or arrows / `Enter` |
+| Reaction picker | Move / confirm | `j`/`k` or Up/Down arrows / `Enter` |
 | Media viewer | Previous / next | `h`/`l` or arrows |
 
 Pasted files are queued as attachments. When text is included, it becomes the caption of the first
