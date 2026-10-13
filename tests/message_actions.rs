@@ -262,20 +262,20 @@ fn reaction_picker_handles_modal_navigation_without_changing_focus() {
         KeyModifiers::NONE,
     )));
     app.on_terminal_event(Event::Key(KeyEvent::new(
-        KeyCode::Right,
+        KeyCode::Down,
         KeyModifiers::NONE,
     )));
     app.on_terminal_event(Event::Key(KeyEvent::new(
-        KeyCode::Char('l'),
+        KeyCode::Char('j'),
         KeyModifiers::NONE,
     )));
-    app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)));
+    app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)));
     app.on_terminal_event(Event::Key(KeyEvent::new(
-        KeyCode::Char('h'),
+        KeyCode::Char('k'),
         KeyModifiers::NONE,
     )));
     app.on_terminal_event(Event::Key(KeyEvent::new(
-        KeyCode::Char('l'),
+        KeyCode::Char('j'),
         KeyModifiers::NONE,
     )));
     assert_eq!(app.focus_pane, wp_tui::app::actions::FocusPane::ChatList);
