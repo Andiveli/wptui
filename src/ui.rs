@@ -1308,11 +1308,7 @@ mod mention_picker_tests {
             .unwrap();
         let buffer = terminal.backend().buffer();
         let rows = (0..14)
-            .map(|y| {
-                (0..40)
-                    .map(|x| buffer[(x, y)].symbol())
-                    .collect::<String>()
-            })
+            .map(|y| (0..40).map(|x| buffer[(x, y)].symbol()).collect::<String>())
             .collect::<Vec<_>>();
         for reaction in ["👍", "❤️", "😂", "😮", "😢", "🙏"] {
             assert_eq!(
