@@ -183,6 +183,53 @@ pub fn render_file(
         },
     }
 
+    // Only the media/path region is actionable. Caption links have their own
+    // URL hits; neither the empty message background nor a sticker is a target.
+    if !matches!(status, Some(super::message_helpers::StatusLabel::Deleted))
+        && !App::is_pending_message_id(message_id)
+        && matches!(
+            data.kind,
+            FileKind::Image | FileKind::Video | FileKind::Audio | FileKind::Document
+        )
+    {
+        let painted_image = matches!(data.kind, FileKind::Image | FileKind::Video)
+            && render_image
+            && matches!(
+                app.metadata.get(message_id),
+                Some(Metadata::File(FileMeta::Loaded))
+            )
+            && app.image_cache.contains_key(&data.path);
+        for row in media_area.rows() {
+            if painted_image {
+                app.mouse_hit_map
+                    .media
+                    .push(crate::app::mouse_input::MediaHit {
+                        area: row,
+                        id: message_id.clone(),
+                        kind: data.kind.clone(),
+                    });
+                continue;
+            }
+            for position in row.columns() {
+                let symbol = buf[position].symbol();
+                if symbol.trim().is_empty() {
+                    continue;
+                }
+                let width = Line::from(symbol)
+                    .width()
+                    .max(1)
+                    .min(usize::from(row.right() - position.x)) as u16;
+                app.mouse_hit_map
+                    .media
+                    .push(crate::app::mouse_input::MediaHit {
+                        area: Rect::new(position.x, position.y, width, 1),
+                        id: message_id.clone(),
+                        kind: data.kind.clone(),
+                    });
+            }
+        }
+    }
+
     if data.caption.is_some() || status.is_some() {
         let mention_ranges = data
             .caption
@@ -197,6 +244,16 @@ pub fn render_file(
             text_mode,
         ))
         .render(caption_area, buf);
+        if let Some(caption) = data.caption.as_deref() {
+            super::record_url_hits(
+                app,
+                message_id,
+                caption,
+                status,
+                caption_area,
+                Alignment::Left,
+            );
+        }
     }
 }
 

@@ -62,6 +62,10 @@ impl App<'_> {
     }
 
     pub fn on_terminal_event(&mut self, event: Event) {
+        if let Event::Mouse(mouse) = event {
+            self.on_mouse_event(mouse);
+            return;
+        }
         if let Some(key) = translate_terminal_event(&event) {
             if self.pending_logout {
                 if self.logout_in_progress {
@@ -179,6 +183,7 @@ impl App<'_> {
                     }
                 }
             } else if self.handle_chat_search_input(key.clone()) {
+            } else if self.handle_chat_filter_input(key.clone()) {
             } else if self.focus_pane == FocusPane::ChatList
                 && self.community_detail.is_some()
                 && key == Key::k(KeyCode::Esc)

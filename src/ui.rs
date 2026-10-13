@@ -16,7 +16,8 @@ pub use layout::{
     viewer_preview_layout,
 };
 pub(crate) use layout::{
-    composer_viewport_width, composer_visual_layout_with_direction, truncate_with_ellipsis,
+    chat_filter_areas, composer_viewport_width, composer_visual_layout_with_direction,
+    truncate_with_ellipsis,
 };
 
 use crate::app::App;
@@ -25,22 +26,30 @@ use crate::app::events::{ViewerPreviewKey, ViewerPreviewState, ViewerStatus};
 use crate::app::read_receipts::VisibilityPlan;
 use crate::app::runtime_diagnostics::Phase;
 use crate::keybindings::canonical_shortcuts;
-use contacts::render_contacts;
+use contacts::{render_chat_filters, render_contacts};
 use message_list::{get_quoted_text, render_messages_with_plan};
 use navigation::{
     render_logout_placeholder, render_logs, render_section_rail, render_structural_placeholder,
 };
 use ratatui::{
     Frame,
+    buffer::Buffer,
     layout::{Alignment, Constraint, Layout, Rect, Size},
     style::{Style, Stylize},
     symbols,
     text::{Line, Span},
-    widgets::{Block, Clear, Paragraph, StatefulWidget, Wrap},
+    widgets::{Block, Clear, Paragraph, StatefulWidget, Widget, Wrap},
 };
 use ratatui_image::{Resize, StatefulImage};
 use status::{render_status_contacts, render_statuses_with_plan};
 use whatsrust as wr;
+
+pub(crate) fn show_chat_filter_header(app: &App) -> bool {
+    app.selected_section == Section::Chats
+        && app.community_detail.is_none()
+        && app.pane_visibility.chat_list
+        && !app.rail_on_logout
+}
 
 /// Draws one frame and records deferred media and visibility effects for the runtime.
 pub fn draw_with_plan(
@@ -49,6 +58,14 @@ pub fn draw_with_plan(
     media_render_plan: &mut crate::app::events::MediaRenderPlan,
     visibility_plan: &mut VisibilityPlan,
 ) {
+    app.mouse_hit_map = crate::app::mouse_input::MouseHitMap {
+        section: app.selected_section,
+        chat_filter: app.chat_filter,
+        chat: app.open_chat(),
+        status_contact: app.open_status_contact(),
+        status_composition: app.status_composition,
+        ..Default::default()
+    };
     let content_area = if app.show_logs {
         let [content_area, logs_area] =
             Layout::horizontal([Constraint::Percentage(67), Constraint::Percentage(33)])
@@ -58,7 +75,11 @@ pub fn draw_with_plan(
     } else {
         frame.area()
     };
-    let areas = navigation_areas(content_area, app.pane_visibility);
+    let (filter_area, body_area) = chat_filter_areas(content_area, show_chat_filter_header(app));
+    if let Some(area) = filter_area {
+        render_chat_filters(frame, app, area);
+    }
+    let areas = navigation_areas(body_area, app.pane_visibility);
 
     if let Some(area) = areas.section_rail {
         render_section_rail(frame, app, area);
@@ -99,6 +120,7 @@ pub fn draw_with_plan(
                     contacts::render_contacts(frame, app, area)
                 });
             } else {
+                app.mouse_hit_map.chat_list = Some(Block::bordered().inner(area));
                 app.record_phase(Phase::CommunityDetailList, |app| {
                     communities::render(frame, app, area)
                 });
@@ -667,6 +689,203 @@ mod composer_focus_tests {
 }
 
 #[cfg(test)]
+mod chat_filter_layout_tests {
+    use super::draw_with_plan;
+    use crate::app::{
+        Chat, actions::Section, events::MediaRenderPlan, read_receipts::VisibilityPlan,
+        test_support::TestApp,
+    };
+    use ratatui::{
+        Terminal,
+        backend::TestBackend,
+        style::{Color, Modifier},
+    };
+    use whatsrust as wr;
+
+    fn filter_row(
+        app: &mut TestApp,
+        terminal: &mut Terminal<TestBackend>,
+    ) -> (String, Option<(Color, Modifier)>) {
+        let mut media = MediaRenderPlan::default();
+        let mut visibility = VisibilityPlan::default();
+        terminal
+            .draw(|frame| draw_with_plan(frame, &mut app.app, &mut media, &mut visibility))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let row = (0..terminal.size().unwrap().width)
+            .map(|x| buffer[(x, 0)].symbol())
+            .collect::<String>();
+        let marker_style = row.find('@').map(|x| {
+            let cell = &buffer[(x as u16, 0)];
+            (cell.fg, cell.modifier)
+        });
+        (row, marker_style)
+    }
+
+    #[test]
+    fn archived_filter_alerts_only_for_unread_archived_group_mentions_or_replies() {
+        let mut app = TestApp::new();
+        let archived_direct = wr::JID::from("archived-direct@s.whatsapp.net".to_owned());
+        let archived_group = wr::JID::from("archived-group@g.us".to_owned());
+        let active_group = wr::JID::from("active-group@g.us".to_owned());
+        for chat in [&archived_direct, &archived_group, &active_group] {
+            app.chats.insert(
+                chat.clone(),
+                Chat {
+                    jid: chat.clone(),
+                    last_message_time: Some(1),
+                },
+            );
+        }
+        app.sorted_chats = vec![
+            archived_direct.clone(),
+            archived_group.clone(),
+            active_group.clone(),
+        ];
+        app.set_archived_chat_settings([archived_direct.clone(), archived_group.clone()]);
+        let mut terminal = Terminal::new(TestBackend::new(100, 18)).unwrap();
+        let plain = "[All]  Unread  Groups  Archived  (Tab)";
+        assert!(filter_row(&mut app, &mut terminal).0.starts_with(plain));
+
+        let mut direct = crate::app::test_support::message(&archived_direct, "direct", 2);
+        direct.info.mentions_self = true;
+        app.add_message(direct);
+        app.add_message(crate::app::test_support::message(
+            &archived_group,
+            "ordinary",
+            3,
+        ));
+        let mut active = crate::app::test_support::message(&active_group, "active", 4);
+        active.info.mentions_self = true;
+        app.add_message(active);
+        assert!(filter_row(&mut app, &mut terminal).0.starts_with(plain));
+
+        let mut mention = crate::app::test_support::message(&archived_group, "mention", 5);
+        mention.info.mentions_self = true;
+        app.add_message(mention);
+        let (row, color) = filter_row(&mut app, &mut terminal);
+        assert!(
+            row.starts_with("[All]  Unread  Groups  @ Archived  (Tab)"),
+            "{row:?}"
+        );
+        assert_eq!(color.map(|style| style.0), Some(Color::Yellow));
+        assert!(color.unwrap().1.contains(Modifier::BOLD));
+
+        app.mark_chat_read_at_latest(&archived_group);
+        app.chat_filter = crate::app::ChatFilter::Archived;
+        let (row, color) = filter_row(&mut app, &mut terminal);
+        assert!(
+            row.starts_with("All  Unread  Groups  [Archived]  (Tab)"),
+            "{row:?}"
+        );
+        assert_eq!(color, None);
+
+        let mut own = crate::app::test_support::message(&archived_group, "own", 6);
+        own.info.is_from_me = true;
+        app.add_message(own);
+        app.mark_chat_read_at_latest(&archived_group);
+        let mut reply = crate::app::test_support::message(&archived_group, "reply", 7);
+        reply.info.quote_id = Some("own".into());
+        app.add_message(reply);
+        let (row, color) = filter_row(&mut app, &mut terminal);
+        assert!(
+            row.starts_with("All  Unread  Groups  @ [Archived]  (Tab)"),
+            "{row:?}"
+        );
+        assert_eq!(color.map(|style| style.0), Some(Color::Yellow));
+        assert!(color.unwrap().1.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn archived_filter_colors_its_label_only_with_unread_group_attention() {
+        let mut app = TestApp::new();
+        let group = wr::JID::from("archived-attention@g.us".to_owned());
+        app.chats.insert(
+            group.clone(),
+            Chat {
+                jid: group.clone(),
+                last_message_time: Some(1),
+            },
+        );
+        app.sorted_chats.push(group.clone());
+        app.set_archived_chat_settings([group.clone()]);
+        let mut terminal = Terminal::new(TestBackend::new(100, 18)).unwrap();
+        let (row, _) = filter_row(&mut app, &mut terminal);
+        let label_x = row.find("Archived").unwrap() as u16;
+        assert_ne!(terminal.backend().buffer()[(label_x, 0)].fg, Color::Yellow);
+
+        let mut mention = crate::app::test_support::message(&group, "mention", 2);
+        mention.info.mentions_self = true;
+        app.add_message(mention);
+        let (row, _) = filter_row(&mut app, &mut terminal);
+        let label_x = row.find("Archived").unwrap() as u16;
+        let cell = &terminal.backend().buffer()[(label_x, 0)];
+        assert_eq!(cell.fg, Color::Yellow);
+        assert!(cell.modifier.contains(Modifier::BOLD));
+
+        app.chat_filter = crate::app::ChatFilter::Archived;
+        let (row, _) = filter_row(&mut app, &mut terminal);
+        let label_x = row.find("Archived").unwrap() as u16;
+        assert_eq!(terminal.backend().buffer()[(label_x, 0)].fg, Color::Yellow);
+
+        app.mark_chat_read_at_latest(&group);
+        let (row, _) = filter_row(&mut app, &mut terminal);
+        let label_x = row.find("Archived").unwrap() as u16;
+        assert_ne!(terminal.backend().buffer()[(label_x, 0)].fg, Color::Yellow);
+    }
+
+    #[test]
+    fn chats_filter_row_sits_above_sections_contacts_and_conversation() {
+        let mut app = TestApp::new();
+        let mut terminal = Terminal::new(TestBackend::new(100, 18)).unwrap();
+        let mut media = MediaRenderPlan::default();
+        let mut visibility = VisibilityPlan::default();
+
+        terminal
+            .draw(|frame| draw_with_plan(frame, &mut app.app, &mut media, &mut visibility))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let first_line = (0..100)
+            .map(|x| buffer[(x, 0)].symbol())
+            .collect::<String>();
+        assert!(
+            first_line.starts_with("[All]  Unread  Groups  Archived  (Tab)"),
+            "filter row must start at the full interface edge: {first_line:?}"
+        );
+        for x in [0, 14, 44] {
+            assert_eq!(
+                buffer[(x, 1)].symbol(),
+                "┌",
+                "pane at x={x} must start below filters"
+            );
+        }
+    }
+
+    #[test]
+    fn status_panes_keep_their_existing_top_row() {
+        let mut app = TestApp::new();
+        app.selected_section = Section::Status;
+        let mut terminal = Terminal::new(TestBackend::new(100, 18)).unwrap();
+        let mut media = MediaRenderPlan::default();
+        let mut visibility = VisibilityPlan::default();
+
+        terminal
+            .draw(|frame| draw_with_plan(frame, &mut app.app, &mut media, &mut visibility))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        for x in [0, 14, 44] {
+            assert_eq!(
+                buffer[(x, 0)].symbol(),
+                "┌",
+                "status pane at x={x} must not move"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
 mod update_notice_tests {
     use super::empty_chat_lines;
 
@@ -854,6 +1073,10 @@ fn render_share_picker(frame: &mut Frame, app: &mut App) {
         Constraint::Length(2),
     ])
     .areas(inner);
+    app.mouse_hit_map.picker = Some(crate::app::mouse_input::PickerHit {
+        kind: crate::app::mouse_input::PickerKind::Share,
+        list: list_area,
+    });
     if let Some(picker) = app.share_picker.as_mut() {
         picker.set_viewport_height(list_area.height as usize);
     }
@@ -862,19 +1085,19 @@ fn render_share_picker(frame: &mut Frame, app: &mut App) {
     };
     let visible = picker.visible_contacts();
     let viewport = picker.viewport();
-    let items = visible[viewport.clone()]
-        .iter()
-        .enumerate()
-        .map(|(row, jid)| {
-            let index = viewport.start + row;
-            let marker = if picker.is_selected(jid) {
-                "[x]"
-            } else {
-                "[ ]"
-            };
-            let cursor = if index == picker.selected { ">" } else { " " };
-            Line::from(format!("{cursor} {marker} {}", app.contact_name(jid)))
-        });
+    let line_for = |index: usize| {
+        let jid = visible[index];
+        let marker = if picker.is_selected(jid) {
+            "[x]"
+        } else {
+            "[ ]"
+        };
+        let cursor = if index == picker.selected { ">" } else { " " };
+        Line::from(format!("{cursor} {marker} {}", app.contact_name(jid)))
+    };
+    let first_visible =
+        wrapped_picker_first_visible(picker.selected, viewport.clone(), list_area, &line_for);
+    let items = (first_visible..viewport.end).map(line_for);
     frame.render_widget(Clear, modal);
     frame.render_widget(block, modal);
     frame.render_widget(
@@ -887,7 +1110,7 @@ fn render_share_picker(frame: &mut Frame, app: &mut App) {
     );
     frame.render_widget(
         Paragraph::new(
-            "Type to search  ↑/↓ or j/k select  Space toggle  Enter forward  Esc cancel",
+            "Type to search  ↑/↓, j/k or wheel select  Space toggle  Enter forward  Esc cancel",
         )
         .dark_gray()
         .wrap(Wrap { trim: true }),
@@ -895,10 +1118,10 @@ fn render_share_picker(frame: &mut Frame, app: &mut App) {
     );
 }
 
-fn render_url_picker(frame: &mut Frame, app: &App) {
-    let Some((urls, selected)) = app.url_picker.as_ref() else {
+fn render_url_picker(frame: &mut Frame, app: &mut App) {
+    if app.url_picker.is_none() {
         return;
-    };
+    }
     let modal = centered_modal_layout(frame.area());
     if modal.is_empty() {
         return;
@@ -909,10 +1132,20 @@ fn render_url_picker(frame: &mut Frame, app: &App) {
     let inner = block.inner(modal);
     let [list_area, hint_area] =
         Layout::vertical([Constraint::Min(1), Constraint::Length(2)]).areas(inner);
-    let items = urls.iter().enumerate().map(|(index, url)| {
-        let marker = if index == *selected { "> " } else { "  " };
-        Line::from(format!("{marker}{url}"))
+    app.mouse_hit_map.picker = Some(crate::app::mouse_input::PickerHit {
+        kind: crate::app::mouse_input::PickerKind::Url,
+        list: list_area,
     });
+    let Some((urls, selected)) = app.url_picker.as_ref() else {
+        return;
+    };
+    let line_for = |index: usize| {
+        let marker = if index == *selected { "> " } else { "  " };
+        Line::from(format!("{marker}{}", urls[index]))
+    };
+    let first_visible =
+        wrapped_picker_first_visible(*selected, 0..urls.len(), list_area, &line_for);
+    let items = (first_visible..urls.len()).map(line_for);
     frame.render_widget(Clear, modal);
     frame.render_widget(block, modal);
     frame.render_widget(
@@ -920,7 +1153,7 @@ fn render_url_picker(frame: &mut Frame, app: &App) {
         list_area,
     );
     frame.render_widget(
-        Paragraph::new("↑/↓ or j/k select  Enter open  Esc cancel")
+        Paragraph::new("↑/↓, j/k or wheel select  Enter open  Esc cancel")
             .dark_gray()
             .wrap(Wrap { trim: true }),
         hint_area,
@@ -945,22 +1178,26 @@ fn render_file_picker(frame: &mut Frame, app: &mut App) {
         Constraint::Length(2),
     ])
     .areas(inner);
+    app.mouse_hit_map.picker = Some(crate::app::mouse_input::PickerHit {
+        kind: crate::app::mouse_input::PickerKind::File,
+        list: list_area,
+    });
     picker.set_viewport_height(list_area.height as usize);
     let visible = picker.visible_entries();
     let viewport = picker.viewport();
-    let items = visible[viewport.clone()]
-        .iter()
-        .enumerate()
-        .map(|(row, entry)| {
-            let index = viewport.start + row;
-            let cursor = if index == picker.selected { ">" } else { " " };
-            let mark = if !entry.is_dir && picker.is_selected(&entry.path) {
-                "[x]"
-            } else {
-                "   "
-            };
-            Line::from(format!("{cursor}{mark} {}", entry.display_name()))
-        });
+    let line_for = |index: usize| {
+        let entry = visible[index];
+        let cursor = if index == picker.selected { ">" } else { " " };
+        let mark = if !entry.is_dir && picker.is_selected(&entry.path) {
+            "[x]"
+        } else {
+            "   "
+        };
+        Line::from(format!("{cursor}{mark} {}", entry.display_name()))
+    };
+    let first_visible =
+        wrapped_picker_first_visible(picker.selected, viewport.clone(), list_area, &line_for);
+    let items = (first_visible..viewport.end).map(line_for);
     frame.render_widget(Clear, modal);
     frame.render_widget(block, modal);
     let filter_line = if picker.searching {
@@ -981,11 +1218,45 @@ fn render_file_picker(frame: &mut Frame, app: &mut App) {
         list_area,
     );
     frame.render_widget(
-        Paragraph::new("j/k select  h/← up  l/→ open  Spc mark  Enter attach  / search  Esc close")
-            .dark_gray()
-            .wrap(Wrap { trim: true }),
+        Paragraph::new(
+            "j/k or wheel select  h/← up  l/→ open  Spc mark  Enter attach  / search  Esc close",
+        )
+        .dark_gray()
+        .wrap(Wrap { trim: true }),
         hint_area,
     );
+}
+
+fn wrapped_picker_first_visible(
+    selected: usize,
+    viewport: std::ops::Range<usize>,
+    area: Rect,
+    line_for: impl Fn(usize) -> Line<'static>,
+) -> usize {
+    if area.is_empty() || selected < viewport.start || selected >= viewport.end {
+        return viewport.start;
+    }
+    // Test the exact wrapped widget output, bounded by the painted viewport.
+    // Long entries may use several rows even though selection counts entries.
+    let scratch_area = Rect::new(0, 0, area.width, area.height);
+    let mut first = selected;
+    while first > viewport.start {
+        let candidate = first - 1;
+        let items = (candidate..=selected).map(&line_for).collect::<Vec<_>>();
+        let mut scratch = Buffer::empty(scratch_area);
+        Paragraph::new(items)
+            .wrap(Wrap { trim: true })
+            .render(scratch_area, &mut scratch);
+        let cursor_painted = (0..area.height).any(|y| {
+            scratch[(0, y)].symbol() == ">"
+                && (area.width == 1 || matches!(scratch[(1, y)].symbol(), " " | "["))
+        });
+        if !cursor_painted {
+            break;
+        }
+        first = candidate;
+    }
+    first
 }
 
 #[cfg(test)]

@@ -59,6 +59,7 @@ pub mod message_navigation;
 pub mod message_opening;
 pub mod message_push_name_port;
 pub mod message_reactions;
+pub(crate) mod mouse_input;
 pub mod navigation_conversation_dispatch;
 pub mod notifications;
 pub mod optimistic_text_send;
@@ -100,7 +101,7 @@ use crate::app::actions::{
     StatusCompositionState, SystemClipboardReader, SystemClipboardWriter, SystemUrlOpener,
     UnavailableClipboardReader, UnavailableClipboardWriter, UrlOpener,
 };
-pub use crate::app::chat_projection::{ChatRow, ContactRow};
+pub use crate::app::chat_projection::{ChatFilter, ChatRow, ContactRow};
 pub use crate::app::chat_read_sync_port::ChatReadSyncPort;
 pub use crate::app::chat_settings_query_port::ChatSettingsQueryPort;
 pub use crate::app::chat_store::{ChatReadCursorPort, StoreChatReadCursor};
@@ -266,9 +267,11 @@ pub struct App<'a> {
 
     pub composer: Composer<'a>,
     pub(crate) composer_direction: ComposerDirection,
+    pub(crate) mouse_capture_enabled: bool,
     pub(crate) composer_viewport_width: u16,
     pub(crate) preferences_path: PathBuf,
     pub message_list_state: MessageListState,
+    pub(crate) mouse_hit_map: mouse_input::MouseHitMap,
     pub timeline: unread_messages::Timeline,
     pub metadata: HashMap<wr::MessageId, Metadata>,
     pub image_cache: HashMap<Arc<str>, StatefulProtocol>,
@@ -332,6 +335,7 @@ pub struct App<'a> {
 
     pub contact_search_active: bool,
     pub contact_search: TextInput,
+    pub chat_filter: ChatFilter,
     pub filtered_chats: Vec<wr::JID>,
 
     pub should_quit: bool,
@@ -364,6 +368,7 @@ pub struct App<'a> {
     pub(crate) runtime_diagnostics: RuntimeDiagnostics,
     pub(crate) chat_list_view: Option<chat_projection::ChatListViewModel>,
     pub(crate) chat_list_revision: u64,
+    pub(crate) archived_group_attention_cache: Option<(u64, bool)>,
     pub(crate) chat_list_mutation_depth: usize,
     pub(crate) chat_list_mutation_pending: bool,
 }
@@ -441,6 +446,7 @@ impl App<'_> {
     #[cfg(test)]
     pub(crate) fn set_chat_settings_query(&mut self, port: Box<dyn ChatSettingsQueryPort>) {
         self.chat_settings_query = port;
+        self.archived_group_attention_cache = None;
     }
 
     #[cfg(test)]

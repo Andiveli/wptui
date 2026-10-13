@@ -18,6 +18,7 @@ func TestAppStateSyncCompleteOnlyAcceptsRegularPatch(t *testing.T) {
 		want      bool
 	}{
 		{caseName: "regular", patchName: appstate.WAPatchRegular, want: true},
+		{caseName: "regular low", patchName: appstate.WAPatchRegularLow, want: false},
 		{caseName: "critical", patchName: appstate.WAPatchCriticalBlock, want: false},
 	}
 	for _, tc := range cases {
@@ -29,6 +30,28 @@ func TestAppStateSyncCompleteOnlyAcceptsRegularPatch(t *testing.T) {
 	}
 	if appStateSyncComplete(nil) {
 		t.Fatal("nil app-state event must be ignored")
+	}
+}
+
+func TestArchiveRefreshRecognizesArchiveAndRegularLowCompletion(t *testing.T) {
+	cases := []struct {
+		name  string
+		event any
+		want  bool
+	}{
+		{name: "archive", event: &events.Archive{}, want: true},
+		{name: "regular low completion", event: &events.AppStateSyncComplete{Name: appstate.WAPatchRegularLow}, want: true},
+		{name: "regular completion", event: &events.AppStateSyncComplete{Name: appstate.WAPatchRegular}},
+		{name: "nil archive", event: (*events.Archive)(nil)},
+		{name: "nil completion", event: (*events.AppStateSyncComplete)(nil)},
+		{name: "unrelated", event: &events.Connected{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := archiveRefreshEvent(tc.event); got != tc.want {
+				t.Fatalf("archiveRefreshEvent() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

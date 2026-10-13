@@ -78,6 +78,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
     let (clipboard_reader, clipboard_writer) = open_clipboard_pair();
     let preferences_path = preferences::settings_path(data_dir);
     let composer_direction = preferences::load_composer_direction(&preferences_path);
+    let mouse_capture_enabled = preferences::load_mouse_capture_enabled(&preferences_path);
 
     let db_path = data_dir.join("whatsapp.db");
     let db_handler = DatabaseHandler::new(&db_path);
@@ -133,6 +134,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         status_last_seen: HashMap::new(),
         status_composition: StatusCompositionState::default(),
         message_list_state: MessageListState::default(),
+        mouse_hit_map: Default::default(),
         timeline: unread_messages::Timeline::default(),
         metadata: HashMap::new(),
         history_sync_percent: None,
@@ -153,6 +155,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         default_protocol_type,
         composer: Composer::default(),
         composer_direction,
+        mouse_capture_enabled,
         composer_viewport_width: 80,
         preferences_path,
         picker: Arc::new(Mutex::new(picker)),
@@ -218,6 +221,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         kh: KeybindHandler::default(),
         contact_search_active: false,
         contact_search: TextInput::new(),
+        chat_filter: super::ChatFilter::All,
         filtered_chats: Vec::new(),
         show_logs: false,
         should_quit: false,
@@ -231,6 +235,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         runtime_diagnostics: RuntimeDiagnostics::from_environment(cache_dir),
         chat_list_view: None,
         chat_list_revision: 0,
+        archived_group_attention_cache: None,
         chat_list_mutation_depth: 0,
         chat_list_mutation_pending: false,
     };

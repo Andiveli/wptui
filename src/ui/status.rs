@@ -28,6 +28,7 @@ pub(super) fn render_status_contacts(frame: &mut Frame, app: &mut App, area: Rec
             }),
         );
     let list_area = block.inner(area);
+    app.mouse_hit_map.chat_list = Some(list_area);
     block.render(area, frame.buffer_mut());
 
     if items.is_empty() {
@@ -39,6 +40,25 @@ pub(super) fn render_status_contacts(frame: &mut Frame, app: &mut App, area: Rec
         list_area,
         &mut app.status_selection,
     );
+    for (visible_y, index) in (app.status_selection.offset()..items.len())
+        .take(usize::from(list_area.height))
+        .enumerate()
+    {
+        if let Some(jid) = app.status_contacts.get(index) {
+            app.mouse_hit_map
+                .contact_rows
+                .push(crate::app::mouse_input::ContactHit {
+                    area: Rect::new(
+                        list_area.x,
+                        list_area.y + visible_y as u16,
+                        list_area.width,
+                        1,
+                    ),
+                    index,
+                    target: crate::app::mouse_input::ContactTarget::Status(jid.clone()),
+                });
+        }
+    }
 }
 
 pub(super) fn render_statuses_with_plan(

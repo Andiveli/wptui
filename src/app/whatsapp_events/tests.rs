@@ -1,15 +1,30 @@
 use super::*;
 use crate::app::{
+    actions::Section,
     chat_store::write_port::{ChatStoreWritePort, PersistChat, PersistChatMessage, PersistMessage},
+    community_hierarchy::CommunityNode,
     test_support::{
         FakeChatReadCursorPort, FakeCommunityQuery, FakeContactSource, FakeStatusCursorPort,
         TestApp, message,
     },
 };
 use std::{
+    collections::HashSet,
     panic::AssertUnwindSafe,
     sync::{Arc, Mutex},
 };
+
+struct MutableArchiveSettings(Arc<Mutex<HashSet<wr::JID>>>);
+
+impl crate::app::ChatSettingsQueryPort for MutableArchiveSettings {
+    fn get_chat_settings(&self, jid: &wr::JID) -> wr::ChatSettings {
+        wr::ChatSettings {
+            found: true,
+            archived: self.0.lock().unwrap().contains(jid),
+            ..Default::default()
+        }
+    }
+}
 
 struct RecordingChatStoreWritePort(Arc<Mutex<Vec<Chat>>>);
 
@@ -131,6 +146,103 @@ fn connected_self_name_survives_restart_without_a_new_sync() {
     let mut restarted = TestApp::with_database(dir.path());
     restarted.load_data_from_db();
     assert_eq!(restarted.message_sender_name(&own_message).as_ref(), "Ada");
+}
+
+#[test]
+fn archive_event_refreshes_current_chat_filter_without_switching_views() {
+    let mut app = TestApp::new();
+    let jid = wr::JID::from("archive@s.whatsapp.net".to_owned());
+    app.chats.insert(
+        jid.clone(),
+        Chat {
+            jid: jid.clone(),
+            last_message_time: Some(1),
+        },
+    );
+    app.sorted_chats = vec![jid.clone()];
+    let archived = Arc::new(Mutex::new(HashSet::new()));
+    app.set_chat_settings_query(Box::new(MutableArchiveSettings(archived.clone())));
+    app.update_filtered_chats(Some(jid.clone()));
+    assert_eq!(app.visible_chat_rows().len(), 1);
+    assert_eq!(app.filtered_chats, vec![jid.clone()]);
+
+    archived.lock().unwrap().insert(jid.clone());
+    assert!(app.handle_whatsapp_event(wr::Event::ArchiveChanged));
+    assert!(app.visible_chat_rows().is_empty());
+    assert!(app.filtered_chats.is_empty());
+    assert_eq!(app.chat_list_state.selected(), None);
+
+    app.chat_filter = crate::app::ChatFilter::Archived;
+    assert_eq!(app.visible_chat_rows()[0].target, jid);
+    archived.lock().unwrap().clear();
+    assert!(app.handle_whatsapp_event(wr::Event::ArchiveChanged));
+    assert!(app.visible_chat_rows().is_empty());
+    app.chat_filter = crate::app::ChatFilter::All;
+    assert_eq!(app.visible_chat_rows()[0].target, jid);
+}
+
+#[test]
+fn archiving_an_ordinary_chat_keeps_the_selected_community_group() {
+    let mut app = TestApp::new();
+    let root = wr::JID::from("community@g.us".to_owned());
+    let first = wr::JID::from("first@g.us".to_owned());
+    let selected = wr::JID::from("second@g.us".to_owned());
+    let ordinary = wr::JID::from("private@s.whatsapp.net".to_owned());
+    for jid in [&first, &selected, &ordinary] {
+        app.chats.insert(
+            (*jid).clone(),
+            Chat {
+                jid: (*jid).clone(),
+                last_message_time: Some(1),
+            },
+        );
+    }
+    app.sorted_chats = vec![ordinary.clone(), first.clone(), selected.clone()];
+    app.communities = vec![
+        CommunityNode {
+            jid: root,
+            name: "Community".into(),
+            is_root: true,
+            linked_groups: vec![first.clone(), selected.clone()],
+            is_joined: true,
+            is_default_subgroup: false,
+            is_announce: None,
+            participant_count: None,
+        },
+        CommunityNode {
+            jid: first,
+            name: "First".into(),
+            is_root: false,
+            linked_groups: Vec::new(),
+            is_joined: true,
+            is_default_subgroup: false,
+            is_announce: None,
+            participant_count: None,
+        },
+        CommunityNode {
+            jid: selected.clone(),
+            name: "Second".into(),
+            is_root: false,
+            linked_groups: Vec::new(),
+            is_joined: true,
+            is_default_subgroup: false,
+            is_announce: None,
+            participant_count: None,
+        },
+    ];
+    let archived = Arc::new(Mutex::new(HashSet::new()));
+    app.set_chat_settings_query(Box::new(MutableArchiveSettings(archived.clone())));
+    app.selected_section = Section::Communities;
+    app.select_community_node(Some(selected.clone()));
+    assert_eq!(app.visible_chat_rows().len(), 2);
+    assert_eq!(app.get_selected_community(), Some(selected.clone()));
+    assert_eq!(app.chat_list_state.selected(), Some(1));
+
+    archived.lock().unwrap().insert(ordinary);
+    assert!(app.handle_whatsapp_event(wr::Event::ArchiveChanged));
+    assert_eq!(app.visible_chat_rows().len(), 1);
+    assert_eq!(app.get_selected_community(), Some(selected));
+    assert_eq!(app.chat_list_state.selected(), Some(1));
 }
 
 #[test]

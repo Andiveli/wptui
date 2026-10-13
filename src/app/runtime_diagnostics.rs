@@ -245,6 +245,7 @@ impl RuntimeDiagnostics {
             AppInput::Presence(_) => 4,
             AppInput::WhatsApp(event) => match event {
                 whatsrust::Event::AppStateSyncComplete
+                | whatsrust::Event::ArchiveChanged
                 | whatsrust::Event::Connected
                 | whatsrust::Event::SyncProgress(_) => 6,
                 whatsrust::Event::Receipt { .. } => 5,

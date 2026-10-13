@@ -13,7 +13,7 @@ use crate::db::{
 };
 use std::path::Path;
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     sync::{Arc, Mutex},
 };
 use whatsrust as wr;
@@ -196,6 +196,18 @@ impl ChatSettingsQueryPort for FakeChatSettingsQuery {
     fn get_chat_settings(&self, jid: &wr::JID) -> wr::ChatSettings {
         self.jids.lock().unwrap().push(jid.clone());
         self.settings.lock().unwrap().clone()
+    }
+}
+
+struct ArchivedChatSettingsQuery(HashSet<wr::JID>);
+
+impl ChatSettingsQueryPort for ArchivedChatSettingsQuery {
+    fn get_chat_settings(&self, jid: &wr::JID) -> wr::ChatSettings {
+        wr::ChatSettings {
+            found: true,
+            archived: self.0.contains(jid),
+            ..Default::default()
+        }
     }
 }
 
@@ -484,6 +496,16 @@ impl TestApp {
         let mut test_app = Self::new();
         test_app.app.set_dm_resolver(dm_resolver);
         test_app
+    }
+
+    pub(crate) fn set_archived_chat_settings(
+        &mut self,
+        archived: impl IntoIterator<Item = wr::JID>,
+    ) {
+        self.app
+            .set_chat_settings_query(Box::new(ArchivedChatSettingsQuery(
+                archived.into_iter().collect(),
+            )));
     }
 
     pub(crate) fn with_message_push_name(message_push_name: Box<dyn MessagePushNamePort>) -> Self {
