@@ -64,6 +64,7 @@ pub(crate) struct RecordingNotifier {
 #[derive(Clone, Default)]
 pub(crate) struct FakeContactSource {
     pub(crate) rows: Arc<Mutex<Vec<(wr::JID, Arc<str>)>>>,
+    pub(crate) self_rows: Arc<Mutex<Option<Vec<(wr::JID, Arc<str>)>>>>,
     pub(crate) calls: Arc<Mutex<usize>>,
     pub(crate) self_calls: Arc<Mutex<usize>>,
 }
@@ -76,6 +77,14 @@ impl ContactSourcePort for FakeContactSource {
 
     fn get_self_contacts(&self) -> Vec<(wr::JID, Arc<str>)> {
         *self.self_calls.lock().unwrap() += 1;
+        self.self_rows
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| self.rows.lock().unwrap().clone())
+    }
+
+    fn get_contact_aliases(&self) -> Vec<(wr::JID, Arc<str>)> {
         self.rows.lock().unwrap().clone()
     }
 }

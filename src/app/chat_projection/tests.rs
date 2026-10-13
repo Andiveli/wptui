@@ -1,4 +1,7 @@
-use super::super::{Chat, ChatFilter, ChatRow, CommunityNode, ContactRow, test_support::TestApp};
+use super::super::{
+    Chat, ChatFilter, ChatRow, CommunityNode, ContactRow,
+    test_support::{FakeDmResolver, TestApp},
+};
 use crate::app::ChatSettingsQueryPort;
 use crate::ui::contact_list::ContactListItem;
 use std::collections::HashSet;
@@ -380,6 +383,24 @@ fn unresolved_lid_chat_is_hidden_until_a_name_is_available() {
     let rows = app.chat_rows();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].label, "Saved Name");
+}
+
+#[test]
+fn saved_phone_contact_is_searchable_by_name_in_verified_lid_chat() {
+    let lid = jid("99887766@lid");
+    let phone = jid("15551234567@s.whatsapp.net");
+    let mut app =
+        TestApp::with_dm_resolver(Box::new(FakeDmResolver::with_result(Some(phone.clone()))));
+    app.apply_contact_refresh(vec![(phone, "Alice".into())]);
+    add_chat(&mut app, &lid);
+    app.sorted_chats = vec![lid.clone()];
+    app.add_message(message(&lid, "lid-chat-message", 10));
+    app.contact_search.input = "alice".into();
+
+    let rows = app.visible_chat_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].label, "Alice");
+    assert_eq!(rows[0].target, lid);
 }
 
 #[test]

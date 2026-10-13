@@ -152,6 +152,7 @@ pub enum Event {
         is_from_me: bool,
     },
     Connected,
+    ContactAliasesUpdated,
     MessageAction {
         action_id: Arc<str>,
         target_message_id: MessageId,

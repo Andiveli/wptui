@@ -91,12 +91,17 @@ pub(crate) fn handle(app: &mut App<'_>, event: wr::Event) -> bool {
             app.apply_reaction(&target_message_id, participant, text);
             true
         }
+        wr::Event::ContactAliasesUpdated => {
+            app.refresh_contact_aliases();
+            true
+        }
         wr::Event::Connected => {
             app.set_read_receipt_readiness(crate::app::read_receipts::Readiness::Connected);
             // Own names are available from the authenticated store even before
             // group metadata is queryable; a partial refresh must not hide
             // cached names for other contacts or groups.
             app.refresh_self_contacts();
+            app.refresh_contact_aliases();
             // Connected is emitted again after reconnects. The first group
             // probe may race metadata hydration, so AppStateSyncComplete
             // below remains the authoritative full follow-up refresh.

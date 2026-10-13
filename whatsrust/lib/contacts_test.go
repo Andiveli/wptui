@@ -69,6 +69,28 @@ func TestLoadContactEntriesUsesSelfProfileAndVerifiedPhoneFallback(t *testing.T)
 	}
 }
 
+func TestContactAliasesForClientReadsSavedMappingWithoutGroupQuery(t *testing.T) {
+	pn := types.NewJID("15550000002", types.DefaultUserServer)
+	lid := types.NewJID("8888", types.HiddenUserServer)
+	client := &whatsmeow.Client{Store: &store.Device{
+		Contacts: groupParticipantContacts{contacts: map[types.JID]types.ContactInfo{
+			pn: {FullName: "Saved Name"},
+		}},
+		LIDs: participantIdentityLIDStore{
+			pnByLID: map[types.JID]types.JID{lid: pn},
+			lidByPN: map[types.JID]types.JID{pn: lid},
+		},
+	}}
+	entries := contactAliasesForClient(client)
+	got := make(map[types.JID]string)
+	for _, entry := range entries {
+		got[entry.jid] = entry.name
+	}
+	if got[pn] != "Saved Name" || got[lid] != "Saved Name" {
+		t.Fatalf("contact-only aliases = %q, %q, want saved name for PN and LID", got[pn], got[lid])
+	}
+}
+
 func TestLoadContactEntriesSavedNameWinsOverMappedLIDPhone(t *testing.T) {
 	pn := types.NewJID("15550000002", types.DefaultUserServer)
 	lid := types.NewJID("8888", types.HiddenUserServer)

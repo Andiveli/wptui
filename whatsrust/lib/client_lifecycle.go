@@ -44,6 +44,8 @@ type clientLifecycleState struct {
 	logoutGeneration     uint64
 	logoutCallbackActive bool
 	resetInProgress      bool
+	aliasLookupPaused    bool
+	aliasSync            contactAliasSyncState
 }
 
 var lifecycleState clientLifecycleState
@@ -60,11 +62,15 @@ func (state *clientLifecycleState) clientSnapshot() *whatsmeow.Client {
 func (state *clientLifecycleState) publishClient(newClient *whatsmeow.Client) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
+	state.aliasSync.stop()
 	state.client = newClient
+	state.aliasLookupPaused = false
 }
 
 func (state *clientLifecycleState) reset() {
 	state.mu.Lock()
+	state.aliasSync.stop()
+	state.aliasLookupPaused = true
 	state.resetInProgress = true
 	state.logoutGeneration++
 	for state.logoutDone != nil {
@@ -91,6 +97,8 @@ func (state *clientLifecycleState) reset() {
 // caller receives a client to disconnect.
 func (state *clientLifecycleState) retire(disconnect func(*whatsmeow.Client)) {
 	state.mu.Lock()
+	state.aliasSync.stop()
+	state.aliasLookupPaused = true
 	retiredClient := state.client
 	if retiredClient == nil {
 		state.mu.Unlock()
@@ -127,6 +135,8 @@ func (state *clientLifecycleState) beginLogout() (logoutReservation, bool) {
 	if reservation.client == nil || state.logoutDone != nil || state.logoutCallbackActive || state.resetInProgress {
 		return reservation, false
 	}
+	state.aliasLookupPaused = true
+	state.aliasSync.stop()
 	reservation.generation = state.logoutGeneration
 	reservation.done = make(chan struct{})
 	state.logoutDone = reservation.done
@@ -222,6 +232,7 @@ func requestFullHistorySync() {
 func C_Connect(handler C.QrCallback, data unsafe.Pointer) {
 	AddEventHandlers()
 	clientSnapshot := lifecycleState.clientSnapshot()
+	lifecycleState.resumeSavedAliasLookupFor(clientSnapshot)
 	if clientSnapshot.Store.ID == nil {
 		LOG_INFO(
 			"Pairing: DeviceProps require_full_sync=%t days_limit=%d size_mb=%d platform=%s",
@@ -276,6 +287,7 @@ func C_FreePairPhoneResult(result *C.char) {
 //export C_Disconnect
 func C_Disconnect() {
 	clientSnapshot := lifecycleState.clientSnapshot()
+	lifecycleState.pauseSavedAliasLookupFor(clientSnapshot)
 	clientSnapshot.Disconnect()
 	clearAuthenticatedPushNameCache()
 }

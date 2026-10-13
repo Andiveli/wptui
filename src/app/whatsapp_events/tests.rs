@@ -246,6 +246,75 @@ fn archiving_an_ordinary_chat_keeps_the_selected_community_group() {
 }
 
 #[test]
+fn alias_completion_restores_saved_contact_in_chat_search_and_status() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = FakeContactSource::default();
+    let pn = wr::JID::from("15550000001@s.whatsapp.net".to_owned());
+    let lid = wr::JID::from("99887766@lid".to_owned());
+    let other = wr::JID::from("15550000002@s.whatsapp.net".to_owned());
+    let group = wr::JID::from("club@g.us".to_owned());
+    source.rows.lock().unwrap().push((pn, "Alice".into()));
+    let mut app = TestApp::with_database_contact_source(dir.path(), source.clone());
+    app.contacts.insert(other.clone(), "Bob".into());
+    app.contacts.insert(group.clone(), "Study Group".into());
+    app.handle_whatsapp_event(wr::Event::Chat {
+        jid: lid.clone(),
+        last_message_time: 1,
+    });
+    app.add_message(status_message(&lid, "alias-status", 1));
+    app.contact_search.input = "alice".into();
+    assert!(app.visible_chat_rows().is_empty());
+    assert!(app.status_contacts.is_empty());
+
+    source
+        .rows
+        .lock()
+        .unwrap()
+        .push((lid.clone(), "Alice".into()));
+    assert!(app.handle_whatsapp_event(wr::Event::ContactAliasesUpdated));
+    let rows = app.visible_chat_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].label, "Alice");
+    assert_eq!(rows[0].target, lid.clone());
+    assert_eq!(app.status_contacts, vec![lid.clone()]);
+    assert_eq!(app.contact_name(&other).as_ref(), "Bob");
+    assert_eq!(app.contact_name(&group).as_ref(), "Study Group");
+    assert_eq!(*source.calls.lock().unwrap(), 0);
+
+    drop(app);
+    let mut restarted = TestApp::with_database(dir.path());
+    restarted.load_data_from_db();
+    assert_eq!(restarted.contact_name(&lid).as_ref(), "");
+}
+
+#[test]
+fn connected_reads_existing_alias_without_a_group_contact_query() {
+    let source = FakeContactSource::default();
+    let lid = wr::JID::from("99887766@lid".to_owned());
+    source
+        .rows
+        .lock()
+        .unwrap()
+        .push((lid.clone(), "Alice".into()));
+    *source.self_rows.lock().unwrap() = Some(vec![]);
+    let mut app = TestApp::with_contact_source(source.clone());
+    let communities = FakeCommunityQuery::default();
+    communities
+        .results
+        .lock()
+        .unwrap()
+        .push_back(Err(wr::CommunitiesError::BridgeUnavailable));
+    app.set_community_query(Box::new(communities));
+    app.add_message(status_message(&lid, "restarted-status", 1));
+    assert!(app.status_contacts.is_empty());
+
+    assert!(app.handle_whatsapp_event(wr::Event::Connected));
+    assert_eq!(app.contact_name(&lid).as_ref(), "Alice");
+    assert_eq!(app.status_contacts, vec![lid]);
+    assert_eq!(*source.calls.lock().unwrap(), 0);
+}
+
+#[test]
 fn chat_event_updates_memory_and_persists_each_current_canonical_chat() {
     let mut app = TestApp::new();
     let jid = wr::JID::from("chat@example.test".to_owned());
