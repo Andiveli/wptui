@@ -44,6 +44,17 @@ use ratatui_image::{Resize, StatefulImage};
 use status::{render_status_contacts, render_statuses_with_plan};
 use whatsrust as wr;
 
+fn reaction_picker_lines(reactions: &[String], selected: usize) -> Vec<String> {
+    reactions
+        .iter()
+        .enumerate()
+        .map(|(index, reaction)| {
+            let marker = if index == selected { ">" } else { " " };
+            format!("{marker} {reaction}")
+        })
+        .collect()
+}
+
 pub(crate) fn show_chat_filter_header(app: &App) -> bool {
     app.selected_section == Section::Chats
         && app.community_detail.is_none()
@@ -166,6 +177,30 @@ fn render_keybind_overlays(frame: &mut Frame, app: &App) {
             Paragraph::new(lines).block(
                 Block::bordered()
                     .title("Keyboard shortcuts")
+                    .style(Style::default().bg(ratatui::style::Color::Black)),
+            ),
+            area,
+        );
+        return;
+    }
+    if let Some((reactions, selected)) = &app.reaction_picker {
+        let lines = reaction_picker_lines(reactions, *selected)
+            .into_iter()
+            .map(Line::raw)
+            .collect::<Vec<_>>();
+        let width = 18.min(frame.area().width.saturating_sub(2));
+        let height = (lines.len() as u16 + 2).min(frame.area().height.saturating_sub(2));
+        let area = Rect::new(
+            frame.area().x + frame.area().width.saturating_sub(width) / 2,
+            frame.area().y + frame.area().height.saturating_sub(height) / 2,
+            width,
+            height,
+        );
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Paragraph::new(lines).block(
+                Block::bordered()
+                    .title("React")
                     .style(Style::default().bg(ratatui::style::Color::Black)),
             ),
             area,
@@ -369,22 +404,6 @@ pub fn render_chats_with_plan(
                 })
                 .collect::<Vec<_>>()
                 .join(" | "),
-        )
-    } else if let Some((reactions, selected)) = &app.reaction_picker {
-        Some(
-            reactions
-                .iter()
-                .enumerate()
-                .map(|(index, reaction)| {
-                    format!(
-                        "{} {} {}",
-                        if index == *selected { ">" } else { " " },
-                        reaction,
-                        if index == *selected { "<" } else { " " }
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("  "),
         )
     } else if let Some((actions, selected)) = &app.message_menu {
         Some(
@@ -1261,7 +1280,45 @@ fn wrapped_picker_first_visible(
 
 #[cfg(test)]
 mod mention_picker_tests {
-    use super::mention_picker_window;
+    use super::{mention_picker_window, reaction_picker_lines, render_keybind_overlays};
+    use crate::app::test_support::TestApp;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    #[test]
+    fn reaction_picker_renders_each_original_reaction_on_its_own_selected_line() {
+        let reactions = ["👍", "❤️", "😂", "😮", "😢", "🙏"]
+            .map(str::to_owned)
+            .to_vec();
+        let first_selected = reaction_picker_lines(&reactions, 0);
+        assert_eq!(first_selected.len(), 6);
+        assert_eq!(
+            first_selected,
+            vec!["> 👍", "  ❤️", "  😂", "  😮", "  😢", "  🙏"]
+        );
+        assert_eq!(
+            reaction_picker_lines(&reactions, 3),
+            vec!["  👍", "  ❤️", "  😂", "> 😮", "  😢", "  🙏"]
+        );
+
+        let mut app = TestApp::new();
+        app.reaction_picker = Some((reactions, 2));
+        let mut terminal = Terminal::new(TestBackend::new(40, 14)).unwrap();
+        terminal
+            .draw(|frame| render_keybind_overlays(frame, &app.app))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let rows = (0..14)
+            .map(|y| (0..40).map(|x| buffer[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>();
+        for reaction in ["👍", "❤️", "😂", "😮", "😢", "🙏"] {
+            assert_eq!(
+                rows.iter().filter(|row| row.contains(reaction)).count(),
+                1,
+                "reaction {reaction} should occupy its own visible row"
+            );
+        }
+        assert!(rows.iter().any(|row| row.contains("> 😂")));
+    }
 
     #[test]
     fn eight_candidates_use_six_rows_and_keep_each_selection_visible() {
