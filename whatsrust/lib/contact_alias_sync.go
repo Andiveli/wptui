@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"sort"
+	"sync"
 	"time"
 
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/types"
 )
@@ -108,5 +110,105 @@ func runSavedAliasLookup(
 	}
 	if changed && ctx.Err() != context.Canceled && notify != nil {
 		notify()
+	}
+}
+
+type contactAliasSyncState struct {
+	mu         sync.Mutex
+	cancel     context.CancelFunc
+	generation uint64
+}
+
+func (state *contactAliasSyncState) start(
+	load func(context.Context) (map[types.JID]types.ContactInfo, error),
+	lids store.LIDStore,
+	query func(context.Context, []string) ([]types.IsOnWhatsAppResponse, error),
+	notify func(),
+) {
+	if load == nil || lids == nil || query == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	state.mu.Lock()
+	if state.cancel != nil {
+		state.mu.Unlock()
+		cancel()
+		return
+	}
+	state.cancel = cancel
+	state.generation++
+	generation := state.generation
+	state.mu.Unlock()
+
+	go func() {
+		defer cancel()
+		contacts, err := load(ctx)
+		if err != nil || ctx.Err() != nil {
+			return
+		}
+		runSavedAliasLookup(ctx, contacts, lids, query, func() {
+			// A completion and stop must be ordered: this callback only enqueues
+			// the payload-free event, without reading the client or waiting for UI.
+			state.mu.Lock()
+			defer state.mu.Unlock()
+			if state.generation == generation && state.cancel != nil && ctx.Err() == nil && notify != nil {
+				notify()
+			}
+		})
+	}()
+}
+
+func (state *contactAliasSyncState) stop() {
+	state.mu.Lock()
+	if state.cancel != nil {
+		state.cancel()
+		state.cancel = nil
+	}
+	state.generation++
+	state.mu.Unlock()
+}
+
+// The lifecycle lock orders a captured client's start/stop against replacement,
+// logout and explicit disconnect. An old client's late event cannot stop a new worker.
+func (state *clientLifecycleState) startSavedAliasLookupFor(
+	client *whatsmeow.Client,
+	load func(context.Context) (map[types.JID]types.ContactInfo, error),
+	lids store.LIDStore,
+	query func(context.Context, []string) ([]types.IsOnWhatsAppResponse, error),
+	notify func(),
+) bool {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if client == nil || state.client != client || state.aliasLookupPaused || state.resetInProgress || state.logoutDone != nil {
+		return false
+	}
+	state.aliasSync.start(load, lids, query, notify)
+	return true
+}
+
+// A server websocket disconnect permits a later automatic reconnect.
+func (state *clientLifecycleState) stopSavedAliasLookupFor(client *whatsmeow.Client) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if client != nil && state.client == client {
+		state.aliasSync.stop()
+	}
+}
+
+// An explicit disconnect blocks stale Connected events until C_Connect resumes.
+func (state *clientLifecycleState) pauseSavedAliasLookupFor(client *whatsmeow.Client) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if client != nil && state.client == client {
+		state.aliasLookupPaused = true
+		state.aliasSync.stop()
+	}
+}
+
+func (state *clientLifecycleState) resumeSavedAliasLookupFor(client *whatsmeow.Client) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if client != nil && state.client == client && state.logoutDone == nil && !state.resetInProgress {
+		state.aliasLookupPaused = false
 	}
 }

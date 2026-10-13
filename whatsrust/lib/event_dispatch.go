@@ -15,6 +15,8 @@ func dispatchEventFamily(rawEvt any, client *whatsmeow.Client, dispatchViewOnce 
 	switch evt := rawEvt.(type) {
 	case *events.Connected:
 		dispatchConnectionFamily(client)
+	case *events.Disconnected:
+		lifecycleState.stopSavedAliasLookupFor(client)
 	case *events.Presence:
 		dispatchPresenceFamily(evt, client)
 	case *events.MarkChatAsRead:

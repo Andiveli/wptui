@@ -20,6 +20,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"time"
 	"unsafe"
 
 	"go.mau.fi/whatsmeow"
@@ -165,6 +166,24 @@ func loadContactEntries(ctx context.Context, bridgeClient *whatsmeow.Client) ([]
 		entries = append(entries, contactEntry{jid: jid, name: resolved[jid].name})
 	}
 	return entries, nil
+}
+
+// contactAliasesForClient reads only the local saved-contact alias cache.
+// A partial failure must never hide names already displayed in Rust.
+func contactAliasesForClient(clientSnapshot *whatsmeow.Client) []contactEntry {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	entries, err := loadContactEntries(ctx, clientSnapshot)
+	if err != nil {
+		LOG_WARN("Contact-only alias cache lookup unavailable")
+		return nil
+	}
+	return entries
+}
+
+//export C_GetContactAliases
+func C_GetContactAliases() C.GetContactsResult {
+	return contactEntriesToC(contactAliasesForClient(lifecycleState.clientSnapshot()))
 }
 
 // C_GetSelfContacts only reads authenticated self identities and names. It
