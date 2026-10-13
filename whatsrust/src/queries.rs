@@ -6,8 +6,9 @@ use super::{
 };
 use crate::abi::{
     C_FreeCommunities, C_FreeContacts, C_FreeGroupParticipants, C_FreeResolveDmChatId,
-    C_GetChatSettings, C_GetCommunities, C_GetContacts, C_GetGroupInfo, C_GetGroupParticipants,
-    C_GetSelfContacts, C_ResolveDmChatId, CContactEntry, CGetContactsResult,
+    C_GetChatSettings, C_GetCommunities, C_GetContactAliases, C_GetContacts, C_GetGroupInfo,
+    C_GetGroupParticipants, C_GetSelfContacts, C_ResolveDmChatId, CContactEntry,
+    CGetContactsResult,
 };
 use crate::models::CJIDOwner;
 
@@ -22,6 +23,11 @@ fn contact_entries(result: &CGetContactsResult) -> &[CContactEntry] {
 
 pub fn get_contacts() -> Vec<(JID, Arc<str>)> {
     copy_contact_entries(unsafe { C_GetContacts() })
+}
+
+/// Reads local contact aliases without joined-group hydration.
+pub fn get_contact_aliases() -> Vec<(JID, Arc<str>)> {
+    copy_contact_entries(unsafe { C_GetContactAliases() })
 }
 
 /// Reads only authenticated self aliases; never queries joined groups.

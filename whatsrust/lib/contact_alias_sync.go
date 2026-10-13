@@ -168,8 +168,30 @@ func (state *contactAliasSyncState) stop() {
 	state.mu.Unlock()
 }
 
-// The lifecycle lock orders a captured client's start/stop against replacement,
-// logout and explicit disconnect. An old client's late event cannot stop a new worker.
+// The lifecycle lock orders a captured client's event/start against replacement,
+// logout and explicit disconnect. The caller must hold state.mu.
+func (state *clientLifecycleState) allowsConnectedLocked(client *whatsmeow.Client) bool {
+	return client != nil && state.client == client && !state.aliasLookupPaused && !state.resetInProgress && state.logoutDone == nil
+}
+
+func (state *clientLifecycleState) allowsConnectedFor(client *whatsmeow.Client) bool {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	return state.allowsConnectedLocked(client)
+}
+
+func (state *clientLifecycleState) dispatchConnectedFor(client *whatsmeow.Client, connected connectedReadyFunc) bool {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if !state.allowsConnectedLocked(client) {
+		return false
+	}
+	// The registered Rust callback only sends to an unbounded channel; keeping
+	// the lock until it returns linearizes UI ingress with disconnect/logout.
+	connected()
+	return true
+}
+
 func (state *clientLifecycleState) startSavedAliasLookupFor(
 	client *whatsmeow.Client,
 	load func(context.Context) (map[types.JID]types.ContactInfo, error),
@@ -179,7 +201,7 @@ func (state *clientLifecycleState) startSavedAliasLookupFor(
 ) bool {
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	if client == nil || state.client != client || state.aliasLookupPaused || state.resetInProgress || state.logoutDone != nil {
+	if !state.allowsConnectedLocked(client) {
 		return false
 	}
 	state.aliasSync.start(load, lids, query, notify)

@@ -48,6 +48,7 @@ unsafe extern "C" {
         forward_source_len: usize,
     ) -> CForwardResult;
     pub(super) fn C_GetContacts() -> CGetContactsResult;
+    pub(super) fn C_GetContactAliases() -> CGetContactsResult;
     pub(super) fn C_GetSelfContacts() -> CGetContactsResult;
     pub(super) fn C_FreeContacts(result: CGetContactsResult);
     pub(super) fn C_GetCommunities() -> CGetCommunitiesResult;
@@ -239,6 +240,7 @@ pub(super) enum EventType {
     LogoutResult = 8,
     MarkChatAsRead = 9,
     ArchiveChanged = 10,
+    ContactAliasesUpdated = 11,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, FromRepr)]
