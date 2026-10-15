@@ -4,7 +4,7 @@ use chrono::{DateTime, Datelike, Local};
 use ratatui::{
     Frame,
     buffer::Buffer,
-    layout::{Constraint, Layout, Rect},
+    layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Style, Stylize},
     text::Line,
     widgets::{Paragraph, Widget},
@@ -12,6 +12,8 @@ use ratatui::{
 use whatsrust as wr;
 
 use crate::app::App;
+use crate::app::events::MediaRenderPlan;
+use crate::app::read_receipts::VisibilityPlan;
 
 #[path = "message_formatting.rs"]
 mod message_formatting;
@@ -222,6 +224,7 @@ mod layout_contract_tests {
 
     use super::MessageTextMode;
     use super::message_list_state::ViewportAnchor;
+    use crate::app::events::MediaRenderPlan;
 
     #[test]
     fn rendered_cells_receive_visual_text_once() {
@@ -360,6 +363,7 @@ mod layout_contract_tests {
         };
         let backend = TestBackend::new(40, 8);
         let mut terminal = Terminal::new(backend).unwrap();
+        let mut media_render_plan = MediaRenderPlan::default();
         terminal
             .draw(|frame| {
                 super::render_message(
@@ -369,6 +373,7 @@ mod layout_contract_tests {
                     super::AuthorGroupContext::STARTS_GROUP,
                     &mut test_app,
                     Rect::new(0, 0, 40, 8),
+                    &mut media_render_plan,
                     false,
                     MessageTextMode::Chat,
                 );
@@ -402,6 +407,7 @@ mod layout_contract_tests {
         };
         let backend = TestBackend::new(60, 4);
         let mut terminal = Terminal::new(backend).unwrap();
+        let mut media_render_plan = MediaRenderPlan::default();
         terminal
             .draw(|frame| {
                 super::render_message(
@@ -411,6 +417,7 @@ mod layout_contract_tests {
                     super::AuthorGroupContext::STARTS_GROUP,
                     &mut test_app,
                     Rect::new(0, 0, 60, 4),
+                    &mut media_render_plan,
                     false,
                     MessageTextMode::Chat,
                 );
@@ -482,6 +489,7 @@ mod layout_contract_tests {
             .collect::<Vec<_>>();
         let backend = TestBackend::new(24, 8);
         let mut terminal = Terminal::new(backend).unwrap();
+        let mut media_render_plan = MediaRenderPlan::default();
         terminal
             .draw(|frame| {
                 frame.buffer_mut().set_string(
@@ -494,8 +502,10 @@ mod layout_contract_tests {
                     super::render_pending_tail(
                         frame,
                         &mut test_app,
+                        &mut media_render_plan,
                         Rect::new(0, 3, 24, 5),
                         &items,
+                        super::MessageTextMode::Chat,
                     ),
                     2
                 );
@@ -522,9 +532,17 @@ mod layout_contract_tests {
 
         let narrow = TestBackend::new(12, 3);
         let mut narrow_terminal = Terminal::new(narrow).unwrap();
+        let mut narrow_media_render_plan = MediaRenderPlan::default();
         narrow_terminal
             .draw(|frame| {
-                super::render_pending_tail(frame, &mut test_app, Rect::new(0, 0, 12, 3), &items);
+                super::render_pending_tail(
+                    frame,
+                    &mut test_app,
+                    &mut narrow_media_render_plan,
+                    Rect::new(0, 0, 12, 3),
+                    &items,
+                    super::MessageTextMode::Chat,
+                );
             })
             .unwrap();
         assert_eq!(test_app.message_list_state, state_before);
@@ -588,6 +606,52 @@ mod layout_contract_tests {
 
 pub use message_layout_integration::message_height;
 
+/// Probe the exact wrapped/bidi paragraph into an offscreen buffer. Marking one
+/// source URL as a mention changes only style, not the rendered cell positions.
+/// The actual message is rendered unchanged; the probe's blue cells become hits.
+pub(super) fn record_url_hits(
+    app: &mut App,
+    id: &wr::MessageId,
+    body: &str,
+    status: Option<StatusLabel>,
+    area: Rect,
+    alignment: Alignment,
+) {
+    if area.is_empty() || matches!(status, Some(StatusLabel::Deleted)) {
+        return;
+    }
+    let mut search_from = 0;
+    for url in crate::url::extract_openable_urls(body) {
+        let Some(offset) = body[search_from..].find(&url) else {
+            continue;
+        };
+        let start = search_from + offset;
+        search_from = start + url.len();
+        let mut probe = Buffer::empty(Rect::new(0, 0, area.width, area.height));
+        Paragraph::new(inline_content_lines(
+            body,
+            &[start..search_from],
+            status,
+            area.width as usize,
+        ))
+        .alignment(alignment)
+        .render(Rect::new(0, 0, area.width, area.height), &mut probe);
+        for y in 0..area.height {
+            for x in 0..area.width {
+                if probe[(x, y)].fg == Color::Blue {
+                    app.mouse_hit_map
+                        .urls
+                        .push(crate::app::mouse_input::UrlHit {
+                            area: Rect::new(area.x + x, area.y + y, 1, 1),
+                            id: id.clone(),
+                            url: url.clone(),
+                        });
+                }
+            }
+        }
+    }
+}
+
 fn spacing_after_message(
     index: usize,
     author_groups: &[AuthorGroupContext],
@@ -610,6 +674,7 @@ fn render_message(
     author_group: AuthorGroupContext,
     app: &mut App,
     area: Rect,
+    media_render_plan: &mut MediaRenderPlan,
     render_image: bool,
     text_mode: MessageTextMode,
 ) {
@@ -744,6 +809,7 @@ fn render_message(
                 })
                 .alignment(alignment)
                 .render(content_area, buf);
+            record_url_hits(app, &message.info.id, text, status, content_area, alignment);
         }
         wr::MessageContent::File(data) => {
             render_file(
@@ -752,11 +818,15 @@ fn render_message(
                 data,
                 status,
                 app,
+                media_render_plan,
                 content_area,
                 render_image,
                 alignment,
                 text_mode,
             );
+            if is_pending && text_mode == MessageTextMode::Status {
+                buf.set_style(content_area, Style::default().fg(Color::DarkGray).dim());
+            }
         }
         wr::MessageContent::ViewOnceUnavailable => {
             Paragraph::new(inline_content_lines(
@@ -779,7 +849,13 @@ fn render_message(
     }
 }
 
-pub fn render_messages(frame: &mut Frame, app: &mut App, area: Rect) -> Option<()> {
+pub fn render_messages_with_plan(
+    frame: &mut Frame,
+    app: &mut App,
+    media_render_plan: &mut MediaRenderPlan,
+    visibility_plan: &mut VisibilityPlan,
+    area: Rect,
+) -> Option<()> {
     crate::crash_diagnostics::breadcrumb("first-message-render", "start");
     let chat_jid = app.open_chat()?;
     if area.is_empty() {
@@ -847,10 +923,19 @@ pub fn render_messages(frame: &mut Frame, app: &mut App, area: Rect) -> Option<(
         sequence_rebuilt,
         author_groups_built,
         unread_count,
+        visibility_plan,
         MessageTextMode::Chat,
+        media_render_plan,
     );
     let pending_started = app.message_list_phase_started();
-    let pending_rows_rendered = render_pending_tail(frame, app, optimistic_area, &optimistic_items);
+    let pending_rows_rendered = render_pending_tail(
+        frame,
+        app,
+        media_render_plan,
+        optimistic_area,
+        &optimistic_items,
+        MessageTextMode::Chat,
+    );
     app.record_message_list_counts(crate::app::runtime_diagnostics::MessageListCounts {
         pending_rows_rendered: pending_rows_rendered as u64,
         ..Default::default()
@@ -906,8 +991,10 @@ fn pending_tail_height(app: &mut App, items: &[wr::Message], width: usize) -> u1
 fn render_pending_tail(
     frame: &mut Frame,
     app: &mut App,
+    media_render_plan: &mut MediaRenderPlan,
     area: Rect,
     items: &[wr::Message],
+    text_mode: MessageTextMode,
 ) -> usize {
     if area.is_empty() || items.is_empty() {
         return 0;
@@ -954,8 +1041,9 @@ fn render_pending_tail(
             groups[index],
             app,
             Rect::new(area.x, y, area.width, render_height),
+            media_render_plan,
             false,
-            MessageTextMode::Chat,
+            text_mode,
         );
         rendered_rows += 1;
         y = y.saturating_add(heights[index] as u16);
@@ -965,16 +1053,67 @@ fn render_pending_tail(
 
 /// Read-only statuses of the opened status contact, rendered with the
 /// same machinery as chats (media previews, timestamps, sender header).
-pub fn render_status_messages(frame: &mut Frame, app: &mut App, area: Rect) {
+pub fn render_status_messages_with_plan(
+    frame: &mut Frame,
+    app: &mut App,
+    media_render_plan: &mut MediaRenderPlan,
+    visibility_plan: &mut VisibilityPlan,
+    area: Rect,
+) {
     let Some(contact) = app.open_status_contact() else {
         return;
     };
-    let items: Arc<[wr::MessageId]> = app
-        .status_messages(&contact)
-        .iter()
+    let ids = app.status_messages(&contact);
+    render_status_items(frame, app, area, ids, media_render_plan, visibility_plan);
+}
+
+pub fn render_own_status_messages(
+    frame: &mut Frame,
+    app: &mut App,
+    media_render_plan: &mut MediaRenderPlan,
+    visibility_plan: &mut VisibilityPlan,
+    area: Rect,
+) {
+    let pending = app.pending_own_status_messages();
+    let pending_height = pending_tail_height(app, &pending, area.width as usize).min(area.height);
+    let list_area = Rect::new(
+        area.x,
+        area.y,
+        area.width,
+        area.height.saturating_sub(pending_height),
+    );
+    let pending_area = Rect::new(area.x, list_area.bottom(), area.width, pending_height);
+    let ids = app.own_status_messages();
+    render_status_items(
+        frame,
+        app,
+        list_area,
+        ids,
+        media_render_plan,
+        visibility_plan,
+    );
+    render_pending_tail(
+        frame,
+        app,
+        media_render_plan,
+        pending_area,
+        &pending,
+        MessageTextMode::Status,
+    );
+}
+
+fn render_status_items(
+    frame: &mut Frame,
+    app: &mut App,
+    area: Rect,
+    ids: Vec<wr::MessageId>,
+    media_render_plan: &mut MediaRenderPlan,
+    visibility_plan: &mut VisibilityPlan,
+) {
+    let items: Arc<[wr::MessageId]> = ids
+        .into_iter()
         .rev()
-        .filter(|id| app.messages.contains_key(*id))
-        .cloned()
+        .filter(|id| app.messages.contains_key(id))
         .collect::<Vec<_>>()
         .into();
     let author_groups: Arc<[AuthorGroupContext]> = items
@@ -997,7 +1136,9 @@ pub fn render_status_messages(frame: &mut Frame, app: &mut App, area: Rect) {
         true,
         items.len() as u64,
         0,
+        visibility_plan,
         MessageTextMode::Status,
+        media_render_plan,
     );
 }
 
@@ -1012,7 +1153,9 @@ fn render_message_items(
     sequence_rebuilt: bool,
     author_groups_built: u64,
     unread_count: usize,
+    visibility_plan: &mut VisibilityPlan,
     text_mode: MessageTextMode,
+    media_render_plan: &mut MediaRenderPlan,
 ) -> Option<()> {
     let list_area = area;
     if list_area.is_empty() {
@@ -1043,6 +1186,7 @@ fn render_message_items(
         return Some(());
     }
 
+    app.mouse_hit_map.message_list = Some(list_area);
     let width = list_area.width as isize;
     let selection_started = app.message_list_phase_started();
     let (start_index, y) = message_list_reconciliation::reconcile(
@@ -1069,7 +1213,9 @@ fn render_message_items(
         start_index,
         y,
         &mut viewport_counts,
+        visibility_plan,
         text_mode,
+        media_render_plan,
     );
     app.record_message_list_counts(crate::app::runtime_diagnostics::MessageListCounts {
         visible_rows: viewport_counts.visible_rows,

@@ -26,6 +26,43 @@ fn maps_picker_navigation_and_controls() {
 }
 
 #[test]
+fn reaction_picker_uses_vertical_navigation() {
+    assert_eq!(
+        reaction_picker_action(&key(KeyCode::Char('j'))),
+        Some(AppAction::ReactionNext)
+    );
+    assert_eq!(
+        reaction_picker_action(&key(KeyCode::Down)),
+        Some(AppAction::ReactionNext)
+    );
+    assert_eq!(
+        reaction_picker_action(&key(KeyCode::Char('k'))),
+        Some(AppAction::ReactionPrev)
+    );
+    assert_eq!(
+        reaction_picker_action(&key(KeyCode::Up)),
+        Some(AppAction::ReactionPrev)
+    );
+
+    for horizontal_key in [
+        KeyCode::Char('h'),
+        KeyCode::Left,
+        KeyCode::Char('l'),
+        KeyCode::Right,
+    ] {
+        assert_eq!(reaction_picker_action(&key(horizontal_key)), None);
+    }
+    assert_eq!(
+        reaction_picker_action(&key(KeyCode::Enter)),
+        Some(AppAction::ConfirmReaction)
+    );
+    assert_eq!(
+        reaction_picker_action(&key(KeyCode::Esc)),
+        Some(AppAction::CancelReaction)
+    );
+}
+
+#[test]
 fn maps_picker_search_and_viewer_keys() {
     assert_eq!(
         file_picker_search_action(&key(KeyCode::Char('x'))),

@@ -30,11 +30,31 @@ https://github.com/user-attachments/assets/f08d20f9-6051-45e2-a1d2-b0a512242e9c
 - Contextual, Vim-inspired keybindings
 - Andiveli welcome mark in the chat panel before any conversation is opened
 
+The Chats list has **All**, **Unread**, **Groups**, and **Archived** views. All,
+Unread, and Groups exclude archived chats; Archived shows only archived chats.
+Archive status comes from the linked device's WhatsApp settings. Search narrows
+the selected view. Switching views does not change messages or read status;
+a community row contains only groups in that view. Archive changes received
+from WhatsApp refresh the current view without switching filters. A yellow `@`
+and yellow **Archived** label signal an unread mention or reply to your message
+in an archived group; ordinary archived chats and other group messages do not
+trigger it. Reading that group clears the alert.
+
 ## Data
 
 Your WhatsApp data — database, media, and session — lives in `~/.local/share/wptui/` on your
 machine. It is not uploaded anywhere; the client only exchanges data with the WhatsApp servers
 when it links or syncs, like any official client.
+
+Mouse capture is enabled by default during the pointer-support preview. Add `mouse=disable` to
+`~/.local/share/wptui/settings.conf` and restart to restore terminal-native selection, or use
+`mouse=enable` to explicitly enable terminal-wide capture. When capture is on, Shift+drag may
+allow native text selection depending on your terminal; it cannot be enabled for individual panes.
+In this preview, the wheel scrolls painted lists. Clicking a section enters its list, clicking
+a contact opens it, and clicking an ordinary text message selects it and opens its Enter actions.
+Clicking a painted URL opens that link, while clicking a file's painted media/path opens the
+image/video viewer or uses the existing downloaded document/audio action. Empty file-row space
+only selects. Mouse behavior still needs a fresh live-terminal check.
 
 ## Requirements
 
@@ -150,11 +170,12 @@ or editor state.
 | Toggle logs | `Ctrl+Shift+L` |
 | Toggle section rail | `Space`, then `1` |
 | Toggle chat list | `Space`, then `2` |
-| Focus previous / next pane | `h` / `l` |
-| Select previous / next item | `k` / `j` |
+| Focus previous / next pane | `h` / `l` or `←` / `→` |
+| Select previous / next item | `k` / `j` or `↑` / `↓` |
 | Jump to first / last item | `g g` / `G` |
 | Move half a page | `Ctrl+U` / `Ctrl+D` |
 | Search chats | `/` |
+| Cycle chat filters (All, Unread, Groups, Archived) | `Tab` in the Chats list |
 
 ### Messages
 
@@ -167,12 +188,18 @@ or editor state.
 | Reply | `R` |
 | Edit your text message | `e` |
 | Delete your text message | `d` |
+| Delete one selected, published own status (text, image, or video) | `d` in Status navigation |
 | Open downloaded media | `x` |
 | View selected image or video | `v` |
 | Open message actions | `Enter` |
 
 Use `j`/`k` or the arrow keys inside menus, then press `Enter` to confirm. Available actions depend
-on the selected message.
+on the selected message. In Status, press `Enter` on your own contact to open the Create status
+pane in navigation. Select one published update with `j`/`k` or `↓`/`↑`, then press `d` to revoke it; `i`
+starts writing and `Esc` returns to the contact list. `Space`, `a`, `c` still opens Create status
+directly in authoring mode; `Esc` there enters navigation. Pending drafts and other contacts'
+statuses cannot be deleted this way. A failed revoke leaves the item visible; a successful send
+removes the local row, but does not itself prove removal from every recipient's device.
 
 ### Composer and media
 
@@ -180,7 +207,7 @@ on the selected message.
 |---|---|---|
 | Composer | Send | `Enter` |
 | Composer | Paste text, files, or an image | `Ctrl+V` |
-| Reaction picker | Move / confirm | `h`/`l` or arrows / `Enter` |
+| Reaction picker | Move / confirm | `j`/`k` or Up/Down arrows / `Enter` |
 | Media viewer | Previous / next | `h`/`l` or arrows |
 
 Pasted files are queued as attachments. When text is included, it becomes the caption of the first
@@ -195,7 +222,9 @@ release binary with the exact command `WPTUI_PERF=1 target/release/wp-tui`,
 reproduce the CPU spike or interaction, and exit normally. It writes one
 bounded report to `~/.cache/wptui/perf-report.txt`.
 
-Run the Rust test suite:
+To build and test without using local Cargo resources, see [cloud-built preview binaries](docs/preview-builds.md). The workflow checks pushes to `beta` and `preview/**`, then uploads a downloadable Linux binary without creating a release.
+
+For contributors who prefer local checks, run the Rust test suite:
 
 ```bash
 cargo test -- --test-threads=1
@@ -208,8 +237,7 @@ cd whatsrust/lib
 go test ./...
 ```
 
-Continuous integration runs format checks, builds, and both test suites on every push and pull
-request.
+Continuous integration runs format checks, builds, and both test suites on pushes to `main` and pull requests. The preview workflow runs its own checks and uploads a binary on pushes to `beta` and `preview/**` branches. Start future feature branches from `beta` to inherit this workflow; builds on those branches require a `preview/**` name or a push back to `beta`.
 
 ## Disclaimer
 

@@ -58,8 +58,36 @@ func TestGroupParticipantNameFallsBackToProtocolIdentity(t *testing.T) {
 	}
 }
 
+func TestGroupParticipantNameNeverUsesUnmappedLIDAsPhone(t *testing.T) {
+	lid := types.JID{User: "99887766", Server: types.HiddenUserServer}
+	phone := types.JID{User: "15551234567", Server: types.DefaultUserServer}
+	for _, tc := range []struct {
+		name        string
+		participant types.GroupParticipant
+		contacts    groupParticipantContacts
+		want        string
+	}{
+		{name: "verified phone", participant: types.GroupParticipant{JID: lid, PhoneNumber: phone}, want: phone.User},
+		{name: "unmapped LID", participant: types.GroupParticipant{JID: lid}, want: ""},
+		{name: "numeric LID display is not a phone", participant: types.GroupParticipant{JID: lid, DisplayName: lid.User}, want: ""},
+		{name: "raw LID display is not a name", participant: types.GroupParticipant{JID: lid, DisplayName: lid.String()}, want: ""},
+		{name: "raw LID display falls back to verified phone", participant: types.GroupParticipant{JID: lid, PhoneNumber: phone, DisplayName: lid.String()}, want: phone.User},
+		{name: "raw saved name falls back to verified phone", participant: types.GroupParticipant{JID: lid, PhoneNumber: phone}, contacts: groupParticipantContacts{contacts: map[types.JID]types.ContactInfo{lid: {FullName: lid.String()}}}, want: phone.User},
+		{name: "raw push name falls back to verified phone", participant: types.GroupParticipant{JID: lid, PhoneNumber: phone}, contacts: groupParticipantContacts{contacts: map[types.JID]types.ContactInfo{lid: {PushName: lid.String()}}}, want: phone.User},
+		{name: "numeric display with empty JID", participant: types.GroupParticipant{LID: lid, DisplayName: lid.User}, want: ""},
+		{name: "numeric local name with empty JID", participant: types.GroupParticipant{LID: lid}, contacts: groupParticipantContacts{contacts: map[types.JID]types.ContactInfo{lid: {FullName: lid.User}}}, want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := groupParticipantName(context.Background(), tc.participant, tc.contacts); got != tc.want {
+				t.Fatalf("groupParticipantName() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestGroupParticipantNameUsesPlainSavedAndPushNamesBeforeNumericFallback(t *testing.T) {
 	phone := types.JID{User: "123", Server: types.DefaultUserServer}
+	lid := types.JID{User: "99887766", Server: types.HiddenUserServer}
 	tests := []struct {
 		name        string
 		participant types.GroupParticipant
@@ -73,6 +101,26 @@ func TestGroupParticipantNameUsesPlainSavedAndPushNamesBeforeNumericFallback(t *
 				phone: {PushName: "Profile"},
 			}},
 			want: "Profile",
+		},
+		{
+			name:        "profile aliases use the same lexical tie-break as contacts",
+			participant: types.GroupParticipant{JID: phone, LID: lid},
+			contacts: groupParticipantContacts{contacts: map[types.JID]types.ContactInfo{
+				phone: {PushName: "Zed"},
+				lid:   {PushName: "Alice"},
+			}},
+			want: "Alice",
+		},
+		{
+			name: "saved first name beats numeric full name and profile",
+			participant: types.GroupParticipant{
+				JID:         phone,
+				DisplayName: "Display",
+			},
+			contacts: groupParticipantContacts{contacts: map[types.JID]types.ContactInfo{
+				phone: {FullName: "+15551234567", FirstName: "Alice", PushName: "Profile"},
+			}},
+			want: "Alice",
 		},
 		{
 			name: "legacy helper prefix is not rendered",
@@ -89,6 +137,37 @@ func TestGroupParticipantNameUsesPlainSavedAndPushNamesBeforeNumericFallback(t *
 				t.Fatalf("groupParticipantName() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestGroupParticipantNameMatchesSavedAliasResolution(t *testing.T) {
+	pn := types.NewJID("15551234567", types.DefaultUserServer)
+	lid := types.NewJID("99887766", types.HiddenUserServer)
+	contacts := groupParticipantContacts{contacts: map[types.JID]types.ContactInfo{
+		pn:  {FullName: "Zed"},
+		lid: {FullName: "Alice"},
+	}}
+	participant := types.GroupParticipant{JID: pn, PhoneNumber: pn, LID: lid}
+	if got := groupParticipantName(context.Background(), participant, contacts); got != "Alice" {
+		t.Fatalf("groupParticipantName() = %q, want saved alias Alice", got)
+	}
+	client := &whatsmeow.Client{Store: &store.Device{
+		Contacts: contacts,
+		LIDs: participantIdentityLIDStore{
+			pnByLID: map[types.JID]types.JID{lid: pn},
+			lidByPN: map[types.JID]types.JID{pn: lid},
+		},
+	}}
+	entries, err := loadContactEntries(context.Background(), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(map[types.JID]string)
+	for _, entry := range entries {
+		got[entry.jid] = entry.name
+	}
+	if got[pn] != "Alice" || got[lid] != "Alice" {
+		t.Fatalf("contact aliases = %q, %q, want Alice", got[pn], got[lid])
 	}
 }
 
@@ -114,14 +193,15 @@ func TestDeduplicateGroupParticipantsUsesExplicitAliasesOnly(t *testing.T) {
 }
 
 func TestGroupParticipantNamePrefersSelfLocalNameThenPushNameThenNumeric(t *testing.T) {
-	previousClient := client
-	t.Cleanup(func() { client = previousClient })
+	previousClient := lifecycleState.clientSnapshot()
+	t.Cleanup(func() { lifecycleState.publishClient(previousClient) })
 
 	self := types.NewJID("123", types.DefaultUserServer)
-	client = &whatsmeow.Client{Store: &store.Device{
+	client := &whatsmeow.Client{Store: &store.Device{
 		ID:       &self,
 		PushName: "Connected Profile",
 	}}
+	lifecycleState.publishClient(client)
 	participant := types.GroupParticipant{JID: self, DisplayName: "Other Display"}
 
 	for name, tt := range map[string]struct {
@@ -162,11 +242,12 @@ func TestGroupParticipantNamePrefersSelfLocalNameThenPushNameThenNumeric(t *test
 }
 
 func TestGroupParticipantPickerExcludesSelfAndRetainsAllOtherMembers(t *testing.T) {
-	previousClient := client
-	t.Cleanup(func() { client = previousClient })
+	previousClient := lifecycleState.clientSnapshot()
+	t.Cleanup(func() { lifecycleState.publishClient(previousClient) })
 
 	self := types.NewJID("123", types.DefaultUserServer)
-	client = &whatsmeow.Client{Store: &store.Device{ID: &self}}
+	client := &whatsmeow.Client{Store: &store.Device{ID: &self}}
+	lifecycleState.publishClient(client)
 	participants := []types.GroupParticipant{
 		{JID: self},
 		{JID: types.NewJID("456", types.DefaultUserServer)},

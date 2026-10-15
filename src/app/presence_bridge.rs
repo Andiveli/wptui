@@ -30,7 +30,7 @@ impl App<'_> {
 
     pub(crate) fn write_presence_diagnostics(&self, output: &mut impl Write) {
         let _ = self.presence_diagnostics.write_report(&mut *output);
-        let raw_report = wr::drain_raw_presence_diagnostics();
+        let raw_report = self.raw_presence_diagnostics.drain();
         let _ = self
             .presence_diagnostics
             .write_raw_report(&mut *output, raw_report.as_deref());
@@ -55,7 +55,7 @@ impl App<'_> {
         self.presence_diagnostics
             .record(|| format!("presence subscription attempt: jid={diagnostic_jid}"));
         info!("Presence subscription attempt: jid={}", jid_for_log(&jid));
-        let result = wr::subscribe_presence(&jid);
+        let result = self.presence_subscription.subscribe(&jid);
         let retry_delay = self
             .selected_presence
             .subscription_result(&jid, result, now);

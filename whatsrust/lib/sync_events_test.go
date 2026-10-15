@@ -18,6 +18,7 @@ func TestAppStateSyncCompleteOnlyAcceptsRegularPatch(t *testing.T) {
 		want      bool
 	}{
 		{caseName: "regular", patchName: appstate.WAPatchRegular, want: true},
+		{caseName: "regular low", patchName: appstate.WAPatchRegularLow, want: false},
 		{caseName: "critical", patchName: appstate.WAPatchCriticalBlock, want: false},
 	}
 	for _, tc := range cases {
@@ -29,6 +30,28 @@ func TestAppStateSyncCompleteOnlyAcceptsRegularPatch(t *testing.T) {
 	}
 	if appStateSyncComplete(nil) {
 		t.Fatal("nil app-state event must be ignored")
+	}
+}
+
+func TestArchiveRefreshRecognizesArchiveAndRegularLowCompletion(t *testing.T) {
+	cases := []struct {
+		name  string
+		event any
+		want  bool
+	}{
+		{name: "archive", event: &events.Archive{}, want: true},
+		{name: "regular low completion", event: &events.AppStateSyncComplete{Name: appstate.WAPatchRegularLow}, want: true},
+		{name: "regular completion", event: &events.AppStateSyncComplete{Name: appstate.WAPatchRegular}},
+		{name: "nil archive", event: (*events.Archive)(nil)},
+		{name: "nil completion", event: (*events.AppStateSyncComplete)(nil)},
+		{name: "unrelated", event: &events.Connected{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := archiveRefreshEvent(tc.event); got != tc.want {
+				t.Fatalf("archiveRefreshEvent() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -82,6 +105,8 @@ func TestHistorySyncDispatchKeepsProgressChatAndMessageOrdering(t *testing.T) {
 		"EventTypeSyncProgress",
 		"C.free(unsafe.Pointer(cpercent))",
 		"EventTypeChat",
+		"C.free(unsafe.Pointer(payload.chat))",
+		"C.free(unsafe.Pointer(payload))",
 		"conversation.GetMessages()",
 		"dispatchMessage(parsed)",
 	} {
@@ -91,5 +116,11 @@ func TestHistorySyncDispatchKeepsProgressChatAndMessageOrdering(t *testing.T) {
 	}
 	if strings.Index(body, "EventTypeSyncProgress") > strings.Index(body, "EventTypeChat") {
 		t.Fatal("sync progress must be emitted before chat lifecycle events")
+	}
+	chatCallbackIndex := strings.Index(body, "C.callSyncEventCallback(eventHandler, &C.Event{\n\t\t\tkind: C.uint8_t(EventTypeChat)")
+	chatCleanupIndex := strings.Index(body, "C.free(unsafe.Pointer(payload.chat))")
+	payloadCleanupIndex := strings.Index(body, "C.free(unsafe.Pointer(payload))")
+	if chatCallbackIndex < 0 || chatCleanupIndex < 0 || payloadCleanupIndex < 0 || chatCallbackIndex > chatCleanupIndex || chatCleanupIndex > payloadCleanupIndex {
+		t.Fatal("history chat callback payload allocations must be freed after the callback")
 	}
 }

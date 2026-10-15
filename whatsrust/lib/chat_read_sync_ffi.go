@@ -129,7 +129,8 @@ func sendChatReadSync(ctx context.Context, chat, messageID string, timestamp int
 //
 //export C_MarkChatReadSync
 func C_MarkChatReadSync(chatJID *C.char, messageID *C.char, timestamp C.longlong, fromMe C.bool, participantJID C.JID) C.int {
-	if client == nil || chatJID == nil || messageID == nil {
+	clientSnapshot := lifecycleState.clientSnapshot()
+	if clientSnapshot == nil || chatJID == nil || messageID == nil {
 		return 1
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -141,7 +142,7 @@ func C_MarkChatReadSync(chatJID *C.char, messageID *C.char, timestamp C.longlong
 	return markReadResult(func() error {
 		return sendChatReadSync(ctx, C.GoString(chatJID), C.GoString(messageID), int64(timestamp), bool(fromMe), participant,
 			func(ctx context.Context, patch appstate.PatchInfo) error {
-				return client.SendAppState(ctx, patch)
+				return clientSnapshot.SendAppState(ctx, patch)
 			})
 	})
 }

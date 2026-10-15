@@ -1,6 +1,23 @@
-use super::super::{Chat, ChatRow, CommunityNode, ContactRow, test_support::TestApp};
+use super::super::{
+    Chat, ChatFilter, ChatRow, CommunityNode, ContactRow,
+    test_support::{FakeDmResolver, TestApp},
+};
+use crate::app::ChatSettingsQueryPort;
 use crate::ui::contact_list::ContactListItem;
+use std::collections::HashSet;
 use whatsrust as wr;
+
+struct ArchiveSettings(HashSet<wr::JID>);
+
+impl ChatSettingsQueryPort for ArchiveSettings {
+    fn get_chat_settings(&self, jid: &wr::JID) -> wr::ChatSettings {
+        wr::ChatSettings {
+            found: true,
+            archived: self.0.contains(jid),
+            ..Default::default()
+        }
+    }
+}
 
 fn jid(value: &str) -> wr::JID {
     wr::JID::from(value.to_owned())
@@ -31,6 +48,135 @@ fn unread_message(
     message.info.mentions_self = mentions_self;
     message.info.quote_id = quote_id.map(Into::into);
     message
+}
+
+#[test]
+fn unread_filter_shows_only_chats_with_pending_activity_and_all_restores_the_list() {
+    let mut app = TestApp::new();
+    let unread = jid("unread@s.whatsapp.net");
+    let read = jid("read@s.whatsapp.net");
+    for chat in [&unread, &read] {
+        add_chat(&mut app, chat);
+    }
+    app.sorted_chats = vec![unread.clone(), read.clone()];
+    app.add_message(message(&unread, "new", 2));
+
+    app.chat_filter = ChatFilter::Unread;
+    assert_eq!(app.visible_chat_rows().len(), 1);
+    assert_eq!(app.visible_chat_rows()[0].target, unread);
+    app.chat_filter = ChatFilter::All;
+    assert_eq!(app.visible_chat_rows().len(), 2);
+}
+
+#[test]
+fn groups_filter_keeps_group_chats_but_not_individuals() {
+    let mut app = TestApp::new();
+    let group = jid("team@g.us");
+    let direct = jid("alice@s.whatsapp.net");
+    for chat in [&group, &direct] {
+        add_chat(&mut app, chat);
+    }
+    app.sorted_chats = vec![group.clone(), direct];
+    app.chat_filter = ChatFilter::Groups;
+    assert_eq!(app.visible_chat_rows().len(), 1);
+    assert_eq!(app.visible_chat_rows()[0].target, group);
+    app.contact_search.enter_char('z');
+    assert!(app.visible_chat_rows().is_empty());
+    app.contact_search.clean();
+    assert_eq!(app.visible_chat_rows()[0].target, group);
+}
+
+#[test]
+fn all_view_excludes_archived_chat_but_keeps_active_chat() {
+    let mut app = TestApp::new();
+    let archived = jid("archived@s.whatsapp.net");
+    let active = jid("active@s.whatsapp.net");
+    for chat in [&archived, &active] {
+        add_chat(&mut app, chat);
+    }
+    app.sorted_chats = vec![archived.clone(), active.clone()];
+    app.set_chat_settings_query(Box::new(ArchiveSettings(HashSet::from([archived.clone()]))));
+
+    let rows = app.visible_chat_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].target, active);
+    app.add_message(crate::app::test_support::message(&archived, "new", 2));
+    app.chat_filter = ChatFilter::Unread;
+    assert!(app.visible_chat_rows().is_empty());
+}
+
+#[test]
+fn archived_view_shows_archived_chat_and_switching_back_restores_active_chat() {
+    let mut app = TestApp::new();
+    let archived = jid("archived@s.whatsapp.net");
+    let active = jid("active@s.whatsapp.net");
+    for chat in [&archived, &active] {
+        add_chat(&mut app, chat);
+    }
+    app.sorted_chats = vec![archived.clone(), active.clone()];
+    app.set_chat_settings_query(Box::new(ArchiveSettings(HashSet::from([archived.clone()]))));
+
+    app.chat_filter = ChatFilter::Archived;
+    let rows = app.visible_chat_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].target, archived);
+    app.chat_filter = ChatFilter::All;
+    let rows = app.visible_chat_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].target, active);
+}
+
+#[test]
+fn mixed_community_shows_only_members_from_the_selected_archive_view() {
+    let mut app = TestApp::new();
+    let archived = jid("archived@g.us");
+    let active = jid("active@g.us");
+    let root = jid("community@g.us");
+    for chat in [&archived, &active] {
+        add_chat(&mut app, chat);
+    }
+    app.sorted_chats = vec![archived.clone(), active.clone()];
+    app.communities = vec![CommunityNode {
+        jid: root.clone(),
+        name: "Project Team".into(),
+        is_root: true,
+        linked_groups: vec![archived.clone(), active.clone()],
+        is_joined: true,
+        is_default_subgroup: false,
+        is_announce: None,
+        participant_count: None,
+    }];
+    app.set_chat_settings_query(Box::new(ArchiveSettings(HashSet::from([archived.clone()]))));
+
+    let rows = app.visible_chat_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].members, vec![active.clone()]);
+    assert_eq!(rows[0].target, active.clone());
+    app.chat_filter = ChatFilter::Groups;
+    assert_eq!(app.visible_chat_rows()[0].members, vec![active.clone()]);
+    app.chat_filter = ChatFilter::All;
+    app.chat_list_state.select(Some(0));
+    assert_eq!(app.selected_community_contact(), Some(root.clone()));
+    app.open_community_detail(root.clone());
+    let detail = app.visible_contact_rows();
+    assert!(detail.iter().any(|row| row.target() == Some(&active)));
+    assert!(!detail.iter().any(|row| row.target() == Some(&archived)));
+    app.close_community_detail();
+    app.add_message(crate::app::test_support::message(&active, "new", 2));
+
+    app.chat_filter = ChatFilter::Archived;
+    let rows = app.visible_chat_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].members, vec![archived.clone()]);
+    assert_eq!(rows[0].target, archived.clone());
+    app.chat_list_state.select(Some(0));
+    assert_eq!(app.selected_community_contact(), Some(root.clone()));
+    app.dispatch_action(crate::app::actions::AppAction::OpenChat);
+    assert_eq!(app.open_chat(), None);
+    assert_eq!(app.community_detail, Some(root));
+    let detail = app.visible_contact_rows();
+    assert!(detail.iter().any(|row| row.target() == Some(&archived)));
+    assert!(!detail.iter().any(|row| row.target() == Some(&active)));
 }
 
 #[test]
@@ -226,6 +372,38 @@ fn community_rows_use_the_most_recent_linked_chat_as_target() {
 }
 
 #[test]
+fn unresolved_lid_chat_is_hidden_until_a_name_is_available() {
+    let mut app = TestApp::new();
+    let lid = jid("99887766@lid");
+    add_chat(&mut app, &lid);
+    app.sorted_chats = vec![lid.clone()];
+    assert!(app.chat_rows().is_empty());
+
+    app.apply_contact_refresh(vec![(lid.clone(), "Saved Name".into())]);
+    let rows = app.chat_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].label, "Saved Name");
+}
+
+#[test]
+fn saved_phone_contact_is_searchable_by_name_in_verified_lid_chat() {
+    let lid = jid("99887766@lid");
+    let phone = jid("15551234567@s.whatsapp.net");
+    let mut app =
+        TestApp::with_dm_resolver(Box::new(FakeDmResolver::with_result(Some(phone.clone()))));
+    app.apply_contact_refresh(vec![(phone, "Alice".into())]);
+    add_chat(&mut app, &lid);
+    app.sorted_chats = vec![lid.clone()];
+    app.add_message(message(&lid, "lid-chat-message", 10));
+    app.contact_search.input = "alice".into();
+
+    let rows = app.visible_chat_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].label, "Alice");
+    assert_eq!(rows[0].target, lid);
+}
+
+#[test]
 fn selected_chat_follows_the_visible_row_target() {
     let mut app = TestApp::new();
     let chat = jid("alice@s.whatsapp.net");
@@ -307,6 +485,35 @@ fn one_unread_linked_group_opens_directly() {
     assert_eq!(app.open_chat(), Some(unread));
     assert_eq!(app.community_detail, None);
 }
+#[test]
+fn restored_unread_group_filter_opens_the_only_unread_community_member() {
+    let mut app = TestApp::new();
+    let unread = jid("restored@g.us");
+    let quiet = jid("quiet@g.us");
+    for chat in [&unread, &quiet] {
+        add_chat(&mut app, chat);
+    }
+    app.sorted_chats = vec![unread.clone(), quiet.clone()];
+    app.communities = vec![CommunityNode {
+        jid: jid("community@g.us"),
+        name: "Project Team".into(),
+        is_root: true,
+        linked_groups: vec![unread.clone(), quiet],
+        is_joined: true,
+        is_default_subgroup: false,
+        is_announce: None,
+        participant_count: None,
+    }];
+    app.add_message(crate::app::test_support::message(&unread, "new", 2));
+    app.timeline.get_mut(&unread).unwrap().pending_new_messages = 0;
+    app.chat_filter = ChatFilter::Unread;
+    assert_eq!(app.visible_chat_rows().len(), 1);
+    app.chat_list_state.select(Some(0));
+    app.dispatch_action(crate::app::actions::AppAction::OpenChat);
+    assert_eq!(app.open_chat(), Some(unread));
+    assert_eq!(app.community_detail, None);
+}
+
 #[test]
 fn zero_unread_linked_groups_open_virtual_detail_rows() {
     let mut app = TestApp::new();
