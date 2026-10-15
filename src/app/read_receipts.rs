@@ -3,12 +3,10 @@
 use std::collections::{HashSet, VecDeque};
 
 pub mod repository_port;
-pub mod sqlite_repository;
 pub mod viewport;
-pub mod whatsapp_adapter;
 pub mod worker;
 pub use repository_port::{PendingReceiptRepository, RepositoryError};
-pub use viewport::{active_view, conversation_pane_is_visible};
+pub use viewport::{VisibilityPlan, active_view, conversation_pane_is_visible};
 
 pub const MAX_PENDING: usize = 256;
 

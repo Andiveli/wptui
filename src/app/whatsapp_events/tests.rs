@@ -1,6 +1,52 @@
 use super::*;
-use crate::app::test_support::{TestApp, message};
-use std::sync::Arc;
+use crate::app::{
+    actions::Section,
+    chat_store::write_port::{ChatStoreWritePort, PersistChat, PersistChatMessage, PersistMessage},
+    community_hierarchy::CommunityNode,
+    test_support::{
+        FakeChatReadCursorPort, FakeCommunityQuery, FakeContactSource, FakeStatusCursorPort,
+        TestApp, message,
+    },
+};
+use std::{
+    collections::HashSet,
+    panic::AssertUnwindSafe,
+    sync::{Arc, Mutex},
+};
+
+struct MutableArchiveSettings(Arc<Mutex<HashSet<wr::JID>>>);
+
+impl crate::app::ChatSettingsQueryPort for MutableArchiveSettings {
+    fn get_chat_settings(&self, jid: &wr::JID) -> wr::ChatSettings {
+        wr::ChatSettings {
+            found: true,
+            archived: self.0.lock().unwrap().contains(jid),
+            ..Default::default()
+        }
+    }
+}
+
+struct RecordingChatStoreWritePort(Arc<Mutex<Vec<Chat>>>);
+
+impl ChatStoreWritePort for RecordingChatStoreWritePort {
+    fn persist(&self, _: PersistChatMessage) {}
+
+    fn persist_chat(&self, command: PersistChat) {
+        self.0.lock().unwrap().push(command.chat);
+    }
+
+    fn persist_message(&self, _: PersistMessage) {}
+}
+
+struct PanickingChatStoreWritePort;
+
+impl ChatStoreWritePort for PanickingChatStoreWritePort {
+    fn persist(&self, _: PersistChatMessage) {}
+    fn persist_chat(&self, _: PersistChat) {
+        panic!("chat persistence failed")
+    }
+    fn persist_message(&self, _: PersistMessage) {}
+}
 
 fn status_message(sender: &wr::JID, id: &str, timestamp: i64) -> wr::Message {
     let mut message = message(&wr::JID::from("status@broadcast".to_owned()), id, timestamp);
@@ -17,20 +63,298 @@ fn sync_progress_event_updates_history_progress() {
 }
 
 #[test]
-fn chat_event_keeps_empty_chat_and_updates_newer_timestamp() {
+fn connection_and_sync_complete_each_query_communities_once() {
+    let mut app = TestApp::new();
+    let query = FakeCommunityQuery::default();
+    query.results.lock().unwrap().extend([
+        Err(wr::CommunitiesError::BridgeUnavailable),
+        Err(wr::CommunitiesError::BridgeUnavailable),
+    ]);
+    app.set_community_query(Box::new(query.clone()));
+
+    app.handle_whatsapp_event(wr::Event::Connected);
+    assert_eq!(*query.calls.lock().unwrap(), 1);
+    app.handle_whatsapp_event(wr::Event::AppStateSyncComplete);
+    assert_eq!(*query.calls.lock().unwrap(), 2);
+}
+
+#[test]
+fn connected_refreshes_stale_self_message_sender_without_sync_complete() {
+    let self_jid = wr::JID::from("15550000001@s.whatsapp.net".to_owned());
+    let chat = wr::JID::from("chat@g.us".to_owned());
+    let source = FakeContactSource::default();
+    source
+        .rows
+        .lock()
+        .unwrap()
+        .push((self_jid.clone(), "Ada".into()));
+    let mut app = TestApp::with_contact_source(source.clone());
+    let community_query = FakeCommunityQuery::default();
+    community_query
+        .results
+        .lock()
+        .unwrap()
+        .extend([Err(wr::CommunitiesError::BridgeUnavailable)]);
+    app.set_community_query(Box::new(community_query));
+    app.contacts.insert(self_jid.clone(), "15550000001".into());
+    let other = wr::JID::from("15550000002@s.whatsapp.net".to_owned());
+    app.contacts
+        .insert(other.clone(), "Other Saved Name".into());
+    app.contacts.insert(chat.clone(), "Saved Group".into());
+    app.fresh_contact_jids = Some([other.clone(), chat.clone()].into());
+    let mut own_message = message(&chat, "own-message", 1);
+    own_message.info.sender = self_jid;
+    own_message.info.is_from_me = true;
+
+    assert_eq!(
+        app.message_sender_name(&own_message).as_ref(),
+        "15550000001"
+    );
+    assert_eq!(*source.calls.lock().unwrap(), 0);
+    assert!(app.handle_whatsapp_event(wr::Event::Connected));
+    assert_eq!(app.message_sender_name(&own_message).as_ref(), "Ada");
+    assert_eq!(app.contact_name(&other).as_ref(), "Other Saved Name");
+    assert_eq!(app.contact_name(&chat).as_ref(), "Saved Group");
+    assert_eq!(*source.self_calls.lock().unwrap(), 1);
+    assert_eq!(*source.calls.lock().unwrap(), 0);
+}
+
+#[test]
+fn connected_self_name_survives_restart_without_a_new_sync() {
+    let dir = tempfile::tempdir().unwrap();
+    let self_jid = wr::JID::from("15550000001@s.whatsapp.net".to_owned());
+    let chat = wr::JID::from("chat@g.us".to_owned());
+    let mut own_message = message(&chat, "own-message", 1);
+    own_message.info.sender = self_jid.clone();
+    own_message.info.is_from_me = true;
+
+    {
+        let source = FakeContactSource::default();
+        source.rows.lock().unwrap().push((self_jid, "Ada".into()));
+        let mut app = TestApp::with_database_contact_source(dir.path(), source);
+        let community_query = FakeCommunityQuery::default();
+        community_query
+            .results
+            .lock()
+            .unwrap()
+            .extend([Err(wr::CommunitiesError::BridgeUnavailable)]);
+        app.set_community_query(Box::new(community_query));
+        assert!(app.handle_whatsapp_event(wr::Event::Connected));
+        assert_eq!(app.message_sender_name(&own_message).as_ref(), "Ada");
+    }
+
+    let mut restarted = TestApp::with_database(dir.path());
+    restarted.load_data_from_db();
+    assert_eq!(restarted.message_sender_name(&own_message).as_ref(), "Ada");
+}
+
+#[test]
+fn archive_event_refreshes_current_chat_filter_without_switching_views() {
+    let mut app = TestApp::new();
+    let jid = wr::JID::from("archive@s.whatsapp.net".to_owned());
+    app.chats.insert(
+        jid.clone(),
+        Chat {
+            jid: jid.clone(),
+            last_message_time: Some(1),
+        },
+    );
+    app.sorted_chats = vec![jid.clone()];
+    let archived = Arc::new(Mutex::new(HashSet::new()));
+    app.set_chat_settings_query(Box::new(MutableArchiveSettings(archived.clone())));
+    app.update_filtered_chats(Some(jid.clone()));
+    assert_eq!(app.visible_chat_rows().len(), 1);
+    assert_eq!(app.filtered_chats, vec![jid.clone()]);
+
+    archived.lock().unwrap().insert(jid.clone());
+    assert!(app.handle_whatsapp_event(wr::Event::ArchiveChanged));
+    assert!(app.visible_chat_rows().is_empty());
+    assert!(app.filtered_chats.is_empty());
+    assert_eq!(app.chat_list_state.selected(), None);
+
+    app.chat_filter = crate::app::ChatFilter::Archived;
+    assert_eq!(app.visible_chat_rows()[0].target, jid);
+    archived.lock().unwrap().clear();
+    assert!(app.handle_whatsapp_event(wr::Event::ArchiveChanged));
+    assert!(app.visible_chat_rows().is_empty());
+    app.chat_filter = crate::app::ChatFilter::All;
+    assert_eq!(app.visible_chat_rows()[0].target, jid);
+}
+
+#[test]
+fn archiving_an_ordinary_chat_keeps_the_selected_community_group() {
+    let mut app = TestApp::new();
+    let root = wr::JID::from("community@g.us".to_owned());
+    let first = wr::JID::from("first@g.us".to_owned());
+    let selected = wr::JID::from("second@g.us".to_owned());
+    let ordinary = wr::JID::from("private@s.whatsapp.net".to_owned());
+    for jid in [&first, &selected, &ordinary] {
+        app.chats.insert(
+            (*jid).clone(),
+            Chat {
+                jid: (*jid).clone(),
+                last_message_time: Some(1),
+            },
+        );
+    }
+    app.sorted_chats = vec![ordinary.clone(), first.clone(), selected.clone()];
+    app.communities = vec![
+        CommunityNode {
+            jid: root,
+            name: "Community".into(),
+            is_root: true,
+            linked_groups: vec![first.clone(), selected.clone()],
+            is_joined: true,
+            is_default_subgroup: false,
+            is_announce: None,
+            participant_count: None,
+        },
+        CommunityNode {
+            jid: first,
+            name: "First".into(),
+            is_root: false,
+            linked_groups: Vec::new(),
+            is_joined: true,
+            is_default_subgroup: false,
+            is_announce: None,
+            participant_count: None,
+        },
+        CommunityNode {
+            jid: selected.clone(),
+            name: "Second".into(),
+            is_root: false,
+            linked_groups: Vec::new(),
+            is_joined: true,
+            is_default_subgroup: false,
+            is_announce: None,
+            participant_count: None,
+        },
+    ];
+    let archived = Arc::new(Mutex::new(HashSet::new()));
+    app.set_chat_settings_query(Box::new(MutableArchiveSettings(archived.clone())));
+    app.selected_section = Section::Communities;
+    app.select_community_node(Some(selected.clone()));
+    assert_eq!(app.visible_chat_rows().len(), 2);
+    assert_eq!(app.get_selected_community(), Some(selected.clone()));
+    assert_eq!(app.chat_list_state.selected(), Some(1));
+
+    archived.lock().unwrap().insert(ordinary);
+    assert!(app.handle_whatsapp_event(wr::Event::ArchiveChanged));
+    assert_eq!(app.visible_chat_rows().len(), 1);
+    assert_eq!(app.get_selected_community(), Some(selected));
+    assert_eq!(app.chat_list_state.selected(), Some(1));
+}
+
+#[test]
+fn alias_completion_restores_saved_contact_in_chat_search_and_status() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = FakeContactSource::default();
+    let pn = wr::JID::from("15550000001@s.whatsapp.net".to_owned());
+    let lid = wr::JID::from("99887766@lid".to_owned());
+    let other = wr::JID::from("15550000002@s.whatsapp.net".to_owned());
+    let group = wr::JID::from("club@g.us".to_owned());
+    source.rows.lock().unwrap().push((pn, "Alice".into()));
+    let mut app = TestApp::with_database_contact_source(dir.path(), source.clone());
+    app.contacts.insert(other.clone(), "Bob".into());
+    app.contacts.insert(group.clone(), "Study Group".into());
+    app.handle_whatsapp_event(wr::Event::Chat {
+        jid: lid.clone(),
+        last_message_time: 1,
+    });
+    app.add_message(status_message(&lid, "alias-status", 1));
+    app.contact_search.input = "alice".into();
+    assert!(app.visible_chat_rows().is_empty());
+    assert!(app.status_contacts.is_empty());
+
+    source
+        .rows
+        .lock()
+        .unwrap()
+        .push((lid.clone(), "Alice".into()));
+    assert!(app.handle_whatsapp_event(wr::Event::ContactAliasesUpdated));
+    let rows = app.visible_chat_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].label, "Alice");
+    assert_eq!(rows[0].target, lid.clone());
+    assert_eq!(app.status_contacts, vec![lid.clone()]);
+    assert_eq!(app.contact_name(&other).as_ref(), "Bob");
+    assert_eq!(app.contact_name(&group).as_ref(), "Study Group");
+    assert_eq!(*source.calls.lock().unwrap(), 0);
+
+    drop(app);
+    let mut restarted = TestApp::with_database(dir.path());
+    restarted.load_data_from_db();
+    assert_eq!(restarted.contact_name(&lid).as_ref(), "");
+}
+
+#[test]
+fn connected_reads_existing_alias_without_a_group_contact_query() {
+    let source = FakeContactSource::default();
+    let lid = wr::JID::from("99887766@lid".to_owned());
+    source
+        .rows
+        .lock()
+        .unwrap()
+        .push((lid.clone(), "Alice".into()));
+    *source.self_rows.lock().unwrap() = Some(vec![]);
+    let mut app = TestApp::with_contact_source(source.clone());
+    let communities = FakeCommunityQuery::default();
+    communities
+        .results
+        .lock()
+        .unwrap()
+        .push_back(Err(wr::CommunitiesError::BridgeUnavailable));
+    app.set_community_query(Box::new(communities));
+    app.add_message(status_message(&lid, "restarted-status", 1));
+    assert!(app.status_contacts.is_empty());
+
+    assert!(app.handle_whatsapp_event(wr::Event::Connected));
+    assert_eq!(app.contact_name(&lid).as_ref(), "Alice");
+    assert_eq!(app.status_contacts, vec![lid]);
+    assert_eq!(*source.calls.lock().unwrap(), 0);
+}
+
+#[test]
+fn chat_event_updates_memory_and_persists_each_current_canonical_chat() {
     let mut app = TestApp::new();
     let jid = wr::JID::from("chat@example.test".to_owned());
+    let persisted = Arc::new(Mutex::new(Vec::new()));
+    app.chat_store_write = Box::new(RecordingChatStoreWritePort(persisted.clone()));
 
-    assert!(app.handle_whatsapp_event(wr::Event::Chat {
-        jid: jid.clone(),
-        last_message_time: 0,
-    }));
-    assert_eq!(app.chats[&jid].last_message_time, None);
+    for timestamp in [0, 12, 7, 12] {
+        assert!(app.handle_whatsapp_event(wr::Event::Chat {
+            jid: jid.clone(),
+            last_message_time: timestamp,
+        }));
+    }
 
-    app.handle_whatsapp_event(wr::Event::Chat {
-        jid: jid.clone(),
-        last_message_time: 12,
-    });
+    assert_eq!(app.chats[&jid].last_message_time, Some(12));
+    assert_eq!(
+        persisted
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|chat| chat.last_message_time)
+            .collect::<Vec<_>>(),
+        [None, Some(12), Some(12), Some(12)]
+    );
+}
+
+#[test]
+fn chat_event_updates_memory_before_persistence_panics() {
+    let mut app = TestApp::new();
+    let jid = wr::JID::from("chat@example.test".to_owned());
+    app.chat_store_write = Box::new(PanickingChatStoreWritePort);
+
+    assert!(
+        std::panic::catch_unwind(AssertUnwindSafe(|| {
+            app.handle_whatsapp_event(wr::Event::Chat {
+                jid: jid.clone(),
+                last_message_time: 12,
+            });
+        }))
+        .is_err()
+    );
     assert_eq!(app.chats[&jid].last_message_time, Some(12));
 }
 
@@ -54,6 +378,8 @@ fn reaction_event_is_translated_into_reaction_projection() {
 fn remote_read_clears_only_the_covered_unread_range() {
     let mut app = TestApp::new();
     let chat = wr::JID::from("chat@example.test".to_owned());
+    let cursor = FakeChatReadCursorPort::default();
+    app.chat_read_cursor = Box::new(cursor.clone());
     for (id, timestamp) in [("first", 10), ("middle", 20), ("latest", 30)] {
         app.add_message(message(&chat, id, timestamp));
     }
@@ -74,6 +400,33 @@ fn remote_read_clears_only_the_covered_unread_range() {
         Some("middle")
     );
     assert_eq!(app.timeline[&chat].last_read_at, Some(20));
+    let stored = cursor.stored.lock().unwrap();
+    assert_eq!(
+        (&stored[0].chat, &stored[0].message_id, stored[0].timestamp),
+        (&chat, &Some("middle".into()), 20)
+    );
+}
+
+#[test]
+fn remote_read_mutates_timeline_before_cursor_storage_panics() {
+    let mut app = TestApp::new();
+    let chat = wr::JID::from("chat@example.test".to_owned());
+    app.add_message(message(&chat, "read", 20));
+    let cursor = FakeChatReadCursorPort::default();
+    *cursor.panic_on_store.lock().unwrap() = true;
+    app.chat_read_cursor = Box::new(cursor);
+
+    assert!(
+        std::panic::catch_unwind(AssertUnwindSafe(|| {
+            app.apply_remote_chat_read(chat.clone(), "read".into(), true, 20, false, None);
+        }))
+        .is_err()
+    );
+    assert_eq!(
+        app.timeline[&chat].last_read_message.as_deref(),
+        Some("read")
+    );
+    assert_eq!(app.pending_new_messages(&chat), 0);
 }
 
 #[test]
@@ -230,6 +583,10 @@ fn ordinary_read_of_outgoing_message_updates_peer_read_state() {
 fn ordinary_read_of_incoming_message_advances_local_cursor_and_preserves_later_unread() {
     let mut app = TestApp::new();
     let chat = wr::JID::from("chat@example.test".to_owned());
+    let cursor = FakeChatReadCursorPort::default();
+    let status_cursor = FakeStatusCursorPort::default();
+    app.chat_read_cursor = Box::new(cursor.clone());
+    app.status_cursor = Box::new(status_cursor.clone());
     for (id, timestamp) in [("old", 10), ("read", 20), ("later", 30)] {
         app.add_message(message(&chat, id, timestamp));
     }
@@ -247,6 +604,12 @@ fn ordinary_read_of_incoming_message_advances_local_cursor_and_preserves_later_u
     assert_eq!(app.timeline[&chat].last_read_at, Some(20));
     assert_eq!(app.pending_new_messages(&chat), 1);
     assert_eq!(app.messages["read"].info.read_by, 0);
+    let stored = cursor.stored.lock().unwrap();
+    assert_eq!(
+        (&stored[0].chat, &stored[0].message_id, stored[0].timestamp),
+        (&chat, &Some("read".into()), 20)
+    );
+    assert!(status_cursor.stored.lock().unwrap().is_empty());
 }
 
 #[test]

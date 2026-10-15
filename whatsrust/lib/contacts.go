@@ -18,7 +18,9 @@ import "C"
 
 import (
 	"context"
+	"sort"
 	"strings"
+	"time"
 	"unsafe"
 
 	"go.mau.fi/whatsmeow"
@@ -31,22 +33,48 @@ type contactEntry struct {
 	name string
 }
 
-// contactDisplayName follows the same fallback order as Rust get_contact_name.
+// Prefer a saved name, unless the phone stored in the address book is only
+// a numeric placeholder for the contact's WhatsApp profile name.
 func contactDisplayName(c types.ContactInfo) string {
-	for _, candidate := range []string{c.FullName, c.FirstName, c.PushName, c.BusinessName} {
+	name, _ := contactNameCandidate(c)
+	return name
+}
+
+// Higher ranks win when PN and LID contact records describe the same person.
+func contactNameCandidate(c types.ContactInfo) (string, int) {
+	var numericLocal string
+	for _, candidate := range []string{c.FullName, c.FirstName} {
 		if name := plainContactName(candidate); name != "" {
-			return name
+			if !phoneLikeName(name) {
+				return name, 3
+			}
+			if numericLocal == "" {
+				numericLocal = name
+			}
 		}
 	}
-	return ""
+	for _, candidate := range []string{c.PushName, c.BusinessName} {
+		if name := plainContactName(candidate); name != "" && !phoneLikeName(name) {
+			return name, 2
+		}
+	}
+	if numericLocal != "" {
+		return numericLocal, 1
+	}
+	return "", 0
 }
 
 func plainContactName(name string) string {
 	name = strings.TrimSpace(name)
 	for _, prefix := range []string{"~ ", "+ "} {
 		if strings.HasPrefix(name, prefix) {
-			return strings.TrimSpace(strings.TrimPrefix(name, prefix))
+			name = strings.TrimSpace(strings.TrimPrefix(name, prefix))
+			break
 		}
+	}
+	user, server, hasServer := strings.Cut(name, "@")
+	if hasServer && strings.EqualFold(server, types.HiddenUserServer) && !strings.ContainsAny(user, " \t\n\r") {
+		return ""
 	}
 	return name
 }
@@ -60,7 +88,8 @@ func lookupContactEntries(ctx context.Context, bridgeClient *whatsmeow.Client) [
 }
 
 func lookupMentionContactEntries() []contactEntry {
-	entries, err := loadContactEntries(context.Background(), client)
+	clientSnapshot := lifecycleState.clientSnapshot()
+	entries, err := loadContactEntries(context.Background(), clientSnapshot)
 	if err != nil {
 		return nil
 	}
@@ -68,36 +97,116 @@ func lookupMentionContactEntries() []contactEntry {
 }
 
 func loadContactEntries(ctx context.Context, bridgeClient *whatsmeow.Client) ([]contactEntry, error) {
-	if bridgeClient == nil || bridgeClient.Store == nil || bridgeClient.Store.Contacts == nil {
+	if bridgeClient == nil || bridgeClient.Store == nil {
 		return nil, nil
 	}
-	contacts, err := bridgeClient.Store.Contacts.GetAllContacts(ctx)
-	if err != nil {
-		return nil, err
+	var contacts map[types.JID]types.ContactInfo
+	if bridgeClient.Store.Contacts != nil {
+		var err error
+		contacts, err = bridgeClient.Store.Contacts.GetAllContacts(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
-	entries := make([]contactEntry, 0, len(contacts))
+	type rankedName struct {
+		name string
+		rank int
+	}
+	resolved := make(map[types.JID]rankedName, len(contacts))
 	for jid, contact := range contacts {
-		name := contactDisplayName(contact)
+		aliases := contactJIDs(ctx, jid, bridgeClient.Store.LIDs)
+		name, rank := contactNameCandidate(contact)
+		if rank == 1 && (jid.Server == types.HiddenUserServer || jid.Server == types.DefaultUserServer) {
+			name, rank = "", 0
+		}
+		if name == "" {
+			for _, alias := range aliases {
+				if alias.Server == types.DefaultUserServer && alias.User != "" {
+					name = alias.User
+					break
+				}
+			}
+		}
 		if name == "" {
 			continue
 		}
-		for _, alias := range contactJIDs(ctx, jid, bridgeClient.Store.LIDs) {
-			entries = append(entries, contactEntry{jid: alias, name: name})
+		for _, alias := range aliases {
+			previous := resolved[alias]
+			if rank > previous.rank || (rank == previous.rank && (previous.name == "" || name < previous.name)) {
+				resolved[alias] = rankedName{name: name, rank: rank}
+			}
 		}
+	}
+	// Authenticated self identity wins over a numeric address-book placeholder.
+	selfName := selfDisplayNameWithContacts(ctx, bridgeClient, bridgeClient.Store.Contacts)
+	selfRank := 4
+	if selfName == "" {
+		selfRank = 0
+		for _, jid := range selfIdentityJIDs(ctx, bridgeClient) {
+			if jid.Server == types.DefaultUserServer && jid.User != "" {
+				selfName = jid.User
+				break
+			}
+		}
+	}
+	if selfName != "" {
+		for _, jid := range selfIdentityJIDs(ctx, bridgeClient) {
+			if previous := resolved[jid]; previous.name == "" || selfRank > previous.rank {
+				resolved[jid] = rankedName{name: selfName, rank: selfRank}
+			}
+		}
+	}
+	jids := make([]types.JID, 0, len(resolved))
+	for jid := range resolved {
+		jids = append(jids, jid)
+	}
+	sort.Slice(jids, func(i, j int) bool { return jids[i].String() < jids[j].String() })
+	entries := make([]contactEntry, 0, len(jids))
+	for _, jid := range jids {
+		entries = append(entries, contactEntry{jid: jid, name: resolved[jid].name})
 	}
 	return entries, nil
 }
 
+// contactAliasesForClient reads only the local saved-contact alias cache.
+// A partial failure must never hide names already displayed in Rust.
+func contactAliasesForClient(clientSnapshot *whatsmeow.Client) []contactEntry {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	entries, err := loadContactEntries(ctx, clientSnapshot)
+	if err != nil {
+		LOG_WARN("Contact-only alias cache lookup unavailable")
+		return nil
+	}
+	return entries
+}
+
+//export C_GetContactAliases
+func C_GetContactAliases() C.GetContactsResult {
+	return contactEntriesToC(contactAliasesForClient(lifecycleState.clientSnapshot()))
+}
+
+// C_GetSelfContacts only reads authenticated self identities and names. It
+// intentionally avoids the joined-groups network query in C_GetContacts:
+// Connected can arrive before that query is available.
+//
+//export C_GetSelfContacts
+func C_GetSelfContacts() C.GetContactsResult {
+	clientSnapshot := lifecycleState.clientSnapshot()
+	return contactEntriesToC(selfMentionEntries(context.Background(), clientSnapshot))
+}
+
 //export C_GetContacts
 func C_GetContacts() C.GetContactsResult {
-	if client == nil || client.Store == nil {
+	clientSnapshot := lifecycleState.clientSnapshot()
+	if clientSnapshot == nil || clientSnapshot.Store == nil {
 		return contactEntriesToC(nil)
 	}
 	ctx := context.Background()
-	entries := lookupContactEntries(ctx, client)
+	entries := lookupContactEntries(ctx, clientSnapshot)
 
 	// Groups remain in this bridge wrapper; contacts.go owns only contact lookup.
-	groups, err := client.GetJoinedGroups(ctx)
+	groups, err := clientSnapshot.GetJoinedGroups(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -129,6 +238,15 @@ func freeContactResult(result C.GetContactsResult) {
 		C.free(unsafe.Pointer(entry.name))
 	}
 	C.free(unsafe.Pointer(result.entries))
+}
+
+// C_FreeContacts releases the entries and strings returned by C_GetContacts.
+// The caller owns the result and must invoke this exactly once after copying
+// all entries. Empty results are valid and nil-safe.
+//
+//export C_FreeContacts
+func C_FreeContacts(result C.GetContactsResult) {
+	freeContactResult(result)
 }
 
 func contactEntryStrings(entry C.ContactEntry) (string, string) {

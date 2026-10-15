@@ -125,7 +125,8 @@ func appendCommunityEntry(entries *[]communityEntry, indexes map[types.JID]int, 
 
 //export C_GetCommunities
 func C_GetCommunities() C.GetCommunitiesResult {
-	entries, err := lookupCommunityEntries(context.Background(), client)
+	clientSnapshot := lifecycleState.clientSnapshot()
+	entries, err := lookupCommunityEntries(context.Background(), clientSnapshot)
 	if err != nil {
 		LOG_WARN("Could not load communities: %v", err)
 		return C.GetCommunitiesResult{status: 1}

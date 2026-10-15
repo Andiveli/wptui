@@ -32,6 +32,7 @@ import (
 	"sync"
 	"unsafe"
 
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 )
@@ -50,12 +51,16 @@ type messageCallbackMetadata struct {
 }
 
 func messageCallbackMetadataFrom(info types.MessageInfo, msg *waE2E.Message) messageCallbackMetadata {
+	return messageCallbackMetadataFromWithClient(lifecycleState.clientSnapshot(), info, msg)
+}
+
+func messageCallbackMetadataFromWithClient(c *whatsmeow.Client, info types.MessageInfo, msg *waE2E.Message) messageCallbackMetadata {
 	return messageCallbackMetadata{
 		id:           info.ID,
 		chat:         info.Chat,
 		sender:       info.Sender,
 		pushName:     info.PushName,
-		mentionsSelf: messageMentionsSelf(msg),
+		mentionsSelf: messageMentionsSelfWithClient(c, msg),
 		timestamp:    info.Timestamp.Unix(),
 		isFromMe:     info.IsFromMe,
 		forwarding:   forwardingStateFromMessage(msg),
@@ -65,17 +70,20 @@ func messageCallbackMetadataFrom(info types.MessageInfo, msg *waE2E.Message) mes
 type messageCallback struct {
 	info        C.MessageInfo
 	forwardData unsafe.Pointer
+	locked      bool
+	closed      bool
 }
 
 func beginMessageCallback(info types.MessageInfo, msg *waE2E.Message, rawSource []byte) *messageCallback {
 	messageCallbackMu.Lock()
-	rememberAuthenticatedPushName(info)
-	callback := &messageCallback{}
+	clientSnapshot := lifecycleState.clientSnapshot()
+	rememberAuthenticatedPushNameWithClient(clientSnapshot, info)
+	callback := &messageCallback{locked: true}
 	if len(rawSource) > 0 {
 		callback.forwardData = C.CBytes(rawSource)
 	}
 	C.setActiveForwardSource((*C.uint8_t)(callback.forwardData), C.size_t(len(rawSource)))
-	metadata := messageCallbackMetadataFrom(info, msg)
+	metadata := messageCallbackMetadataFromWithClient(clientSnapshot, info, msg)
 	callback.info = C.MessageInfo{
 		id:              C.CString(metadata.id),
 		chat:            jidToC(metadata.chat),
@@ -93,13 +101,17 @@ func beginMessageCallback(info types.MessageInfo, msg *waE2E.Message, rawSource 
 }
 
 func messageMentionsSelf(msg *waE2E.Message) bool {
-	if client == nil || client.Store == nil || msg == nil {
+	return messageMentionsSelfWithClient(lifecycleState.clientSnapshot(), msg)
+}
+
+func messageMentionsSelfWithClient(c *whatsmeow.Client, msg *waE2E.Message) bool {
+	if c == nil || c.Store == nil || msg == nil {
 		return false
 	}
 	for _, contextInfo := range messageContextInfos(msg) {
 		for _, mentioned := range contextInfo.GetMentionedJID() {
 			jid, err := types.ParseJID(mentioned)
-			if err == nil && participantMatchesSelf(client, types.GroupParticipant{JID: jid}) {
+			if err == nil && participantMatchesSelf(c, types.GroupParticipant{JID: jid}) {
 				return true
 			}
 		}
@@ -134,13 +146,53 @@ func messageCallbackPushName(callback *messageCallback) string {
 	return C.GoString(callback.info.pushName)
 }
 
+func (callback *messageCallback) setQuoteID(id string) {
+	callback.clearQuoteID()
+	callback.info.quoteID = C.CString(id)
+}
+
+func (callback *messageCallback) setQuoteIDFromContext(contextInfo *waE2E.ContextInfo) {
+	callback.clearQuoteID()
+	if contextInfo != nil && contextInfo.GetStanzaID() != "" {
+		callback.info.quoteID = C.CString(contextInfo.GetStanzaID())
+	}
+}
+
+func (callback *messageCallback) clearQuoteID() {
+	if callback.info.quoteID != nil {
+		C.free(unsafe.Pointer(callback.info.quoteID))
+		callback.info.quoteID = nil
+	}
+}
+
 func (callback *messageCallback) close() {
+	if callback == nil || callback.closed {
+		return
+	}
+	callback.closed = true
 	C.setActiveForwardSource(nil, 0)
 	if callback.forwardData != nil {
 		C.free(callback.forwardData)
+		callback.forwardData = nil
 	}
-	if callback.info.pushName != nil {
-		C.free(unsafe.Pointer(callback.info.pushName))
+	for _, pointer := range []unsafe.Pointer{
+		unsafe.Pointer(callback.info.id),
+		unsafe.Pointer(callback.info.chat),
+		unsafe.Pointer(callback.info.sender),
+		unsafe.Pointer(callback.info.pushName),
+		unsafe.Pointer(callback.info.quoteID),
+	} {
+		if pointer != nil {
+			C.free(pointer)
+		}
 	}
-	messageCallbackMu.Unlock()
+	callback.info.id = nil
+	callback.info.chat = nil
+	callback.info.sender = nil
+	callback.info.pushName = nil
+	callback.info.quoteID = nil
+	if callback.locked {
+		callback.locked = false
+		messageCallbackMu.Unlock()
+	}
 }

@@ -72,9 +72,9 @@ func (mentionContactStore) GetAllContacts(context.Context) (map[types.JID]types.
 }
 
 func TestTextWithMentionNamesResolvesSynchronizedMessages(t *testing.T) {
-	previousClient := client
-	client = &whatsmeow.Client{Store: &store.Device{Contacts: mentionContactStore{}}}
-	t.Cleanup(func() { client = previousClient })
+	previousClient := lifecycleState.clientSnapshot()
+	lifecycleState.publishClient(&whatsmeow.Client{Store: &store.Device{Contacts: mentionContactStore{}}})
+	t.Cleanup(func() { lifecycleState.publishClient(previousClient) })
 
 	contextInfo := &waE2E.ContextInfo{MentionedJID: []string{"123@s.whatsapp.net"}}
 	if got := textWithMentionNames("hello @123", contextInfo); got != "hello @Alice" {
@@ -146,11 +146,12 @@ func TestReplaceMentionedNames(t *testing.T) {
 }
 
 func TestGroupMentionMetadataFailureUsesOnlyDirectSavedContactLookup(t *testing.T) {
-	previousClient := client
-	client = whatsmeow.NewClient(&store.Device{Contacts: mentionDirectContactStore{direct: map[types.JID]types.ContactInfo{
+	previousClient := lifecycleState.clientSnapshot()
+	client := whatsmeow.NewClient(&store.Device{Contacts: mentionDirectContactStore{direct: map[types.JID]types.ContactInfo{
 		{User: "123", Server: types.DefaultUserServer}: {FullName: "Saved Direct Name"},
 	}}}, nil)
-	t.Cleanup(func() { client = previousClient })
+	lifecycleState.publishClient(client)
+	t.Cleanup(func() { lifecycleState.publishClient(previousClient) })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -171,9 +172,10 @@ func TestGroupMentionMetadataFailureUsesOnlyDirectSavedContactLookup(t *testing.
 }
 
 func TestGroupMentionMetadataFailurePreservesUnresolvedTokens(t *testing.T) {
-	previousClient := client
-	client = whatsmeow.NewClient(&store.Device{Contacts: mentionPrefixedContactStore{}}, nil)
-	t.Cleanup(func() { client = previousClient })
+	previousClient := lifecycleState.clientSnapshot()
+	client := whatsmeow.NewClient(&store.Device{Contacts: mentionPrefixedContactStore{}}, nil)
+	lifecycleState.publishClient(client)
+	t.Cleanup(func() { lifecycleState.publishClient(previousClient) })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -200,8 +202,8 @@ func TestGroupMentionMetadataFailurePreservesUnresolvedTokens(t *testing.T) {
 }
 
 func TestIncomingMentionRenderingResolvesMappedLIDsSafely(t *testing.T) {
-	previousClient := client
-	t.Cleanup(func() { client = previousClient })
+	previousClient := lifecycleState.clientSnapshot()
+	t.Cleanup(func() { lifecycleState.publishClient(previousClient) })
 
 	lid := types.JID{User: "269595130773675", Server: types.HiddenUserServer}
 	pn := types.JID{User: "141270097854639", Server: types.DefaultUserServer}
@@ -239,7 +241,7 @@ func TestIncomingMentionRenderingResolvesMappedLIDsSafely(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client = &whatsmeow.Client{Store: &store.Device{LIDs: mentionLIDStore{pn: tt.mappedPN}}}
+			lifecycleState.publishClient(&whatsmeow.Client{Store: &store.Device{LIDs: mentionLIDStore{pn: tt.mappedPN}}})
 			name := groupParticipantName(context.Background(), tt.participant, tt.contacts)
 			got := replaceMentionedNames(
 				"hello @"+lid.User,
@@ -279,11 +281,11 @@ func (mentionLIDStore) GetManyLIDsForPNs(context.Context, []types.JID) (map[type
 }
 
 func TestOutgoingMentionEchoMapsDifferentlyNumberedPNBodyToLIDMetadata(t *testing.T) {
-	previousClient := client
-	client = &whatsmeow.Client{Store: &store.Device{LIDs: mentionLIDStore{
+	previousClient := lifecycleState.clientSnapshot()
+	lifecycleState.publishClient(&whatsmeow.Client{Store: &store.Device{LIDs: mentionLIDStore{
 		pn: types.JID{User: "141270097854639", Server: types.DefaultUserServer},
-	}}}
-	t.Cleanup(func() { client = previousClient })
+	}}})
+	t.Cleanup(func() { lifecycleState.publishClient(previousClient) })
 
 	lid := types.JID{User: "269595130773675", Server: types.HiddenUserServer}
 	pn := types.JID{User: "141270097854639", Server: types.DefaultUserServer}
@@ -376,15 +378,16 @@ func TestMentionReplacementNeverRendersLegacyNamePrefixes(t *testing.T) {
 }
 
 func TestGroupMentionMetadataFailureResolvesSelfWithPushNameAndUTF8Range(t *testing.T) {
-	previousClient := client
-	t.Cleanup(func() { client = previousClient })
+	previousClient := lifecycleState.clientSnapshot()
+	t.Cleanup(func() { lifecycleState.publishClient(previousClient) })
 
 	pn := types.NewJID("123", types.DefaultUserServer)
-	client = whatsmeow.NewClient(&store.Device{
+	client := whatsmeow.NewClient(&store.Device{
 		ID:       &pn,
 		PushName: "阿丽",
 		Contacts: mentionDirectContactStore{direct: map[types.JID]types.ContactInfo{}},
 	}, nil)
+	lifecycleState.publishClient(client)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -401,12 +404,12 @@ func TestGroupMentionMetadataFailureResolvesSelfWithPushNameAndUTF8Range(t *test
 }
 
 func TestGroupMentionMetadataFailureResolvesSelfLIDAndLocalOverride(t *testing.T) {
-	previousClient := client
-	t.Cleanup(func() { client = previousClient })
+	previousClient := lifecycleState.clientSnapshot()
+	t.Cleanup(func() { lifecycleState.publishClient(previousClient) })
 
 	pn := types.NewJID("123", types.DefaultUserServer)
 	lid := types.NewJID("456", types.HiddenUserServer)
-	client = whatsmeow.NewClient(&store.Device{
+	client := whatsmeow.NewClient(&store.Device{
 		ID:       &pn,
 		LID:      lid,
 		PushName: "Connected Profile",
@@ -418,6 +421,7 @@ func TestGroupMentionMetadataFailureResolvesSelfLIDAndLocalOverride(t *testing.T
 			pn: {FirstName: "Saved Local Name"},
 		}},
 	}, nil)
+	lifecycleState.publishClient(client)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -430,14 +434,15 @@ func TestGroupMentionMetadataFailureResolvesSelfLIDAndLocalOverride(t *testing.T
 }
 
 func TestGroupMentionMetadataFailureKeepsMissingSelfNameNumeric(t *testing.T) {
-	previousClient := client
-	t.Cleanup(func() { client = previousClient })
+	previousClient := lifecycleState.clientSnapshot()
+	t.Cleanup(func() { lifecycleState.publishClient(previousClient) })
 
 	pn := types.NewJID("123", types.DefaultUserServer)
-	client = whatsmeow.NewClient(&store.Device{
+	client := whatsmeow.NewClient(&store.Device{
 		ID:       &pn,
 		Contacts: mentionDirectContactStore{direct: map[types.JID]types.ContactInfo{}},
 	}, nil)
+	lifecycleState.publishClient(client)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -450,12 +455,12 @@ func TestGroupMentionMetadataFailureKeepsMissingSelfNameNumeric(t *testing.T) {
 }
 
 func TestSelfMentionEntriesRemainAvailableWhenGroupParticipantsFilterSelf(t *testing.T) {
-	previousClient := client
-	t.Cleanup(func() { client = previousClient })
+	previousClient := lifecycleState.clientSnapshot()
+	t.Cleanup(func() { lifecycleState.publishClient(previousClient) })
 
 	pn := types.NewJID("123", types.DefaultUserServer)
 	lid := types.NewJID("456", types.HiddenUserServer)
-	client = whatsmeow.NewClient(&store.Device{
+	client := whatsmeow.NewClient(&store.Device{
 		ID:       &pn,
 		LID:      lid,
 		PushName: "Connected Profile",
@@ -464,6 +469,7 @@ func TestSelfMentionEntriesRemainAvailableWhenGroupParticipantsFilterSelf(t *tes
 			lidByPN: map[types.JID]types.JID{pn: lid},
 		},
 	}, nil)
+	lifecycleState.publishClient(client)
 
 	entries := selfMentionEntries(context.Background(), client)
 	if len(entries) != 2 {
@@ -477,12 +483,12 @@ func TestSelfMentionEntriesRemainAvailableWhenGroupParticipantsFilterSelf(t *tes
 }
 
 func TestSelfMentionAliasesUseOneDisplayNameWithoutAmbiguity(t *testing.T) {
-	previousClient := client
-	t.Cleanup(func() { client = previousClient })
+	previousClient := lifecycleState.clientSnapshot()
+	t.Cleanup(func() { lifecycleState.publishClient(previousClient) })
 
 	pn := types.NewJID("141270097854639", types.DefaultUserServer)
 	lid := types.NewJID("269595130773675", types.HiddenUserServer)
-	client = whatsmeow.NewClient(&store.Device{
+	client := whatsmeow.NewClient(&store.Device{
 		ID:       &pn,
 		LID:      lid,
 		PushName: "SAMA3L",
@@ -491,6 +497,7 @@ func TestSelfMentionAliasesUseOneDisplayNameWithoutAmbiguity(t *testing.T) {
 			lidByPN: map[types.JID]types.JID{pn: lid},
 		},
 	}, nil)
+	lifecycleState.publishClient(client)
 	contacts := groupParticipantContacts{contacts: map[types.JID]types.ContactInfo{
 		pn: {FullName: "+593 99 568 2425"},
 	}}
@@ -545,17 +552,18 @@ func TestAssignMentionNameFailsClosedForRealAmbiguity(t *testing.T) {
 }
 
 func TestSelfDisplayNamePrefersSavedNameThenPushName(t *testing.T) {
-	previousClient := client
-	t.Cleanup(func() { client = previousClient })
+	previousClient := lifecycleState.clientSnapshot()
+	t.Cleanup(func() { lifecycleState.publishClient(previousClient) })
 
 	pn := types.NewJID("123", types.DefaultUserServer)
-	client = whatsmeow.NewClient(&store.Device{
+	client := whatsmeow.NewClient(&store.Device{
 		ID:       &pn,
 		PushName: "Connected Profile",
 		Contacts: mentionDirectContactStore{direct: map[types.JID]types.ContactInfo{
 			pn: {FirstName: "Saved Local Name"},
 		}},
 	}, nil)
+	lifecycleState.publishClient(client)
 
 	if got := selfDisplayName(context.Background(), client); got != "Saved Local Name" {
 		t.Fatalf("selfDisplayName() = %q, want saved local name", got)

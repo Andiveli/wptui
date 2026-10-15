@@ -141,6 +141,7 @@ pub enum ContextualAction {
     NewGroup,
     NewCommunity,
     StatusPrivacy,
+    CreateStatus,
     MarkRead,
     ViewContact,
     Pin,
@@ -180,7 +181,7 @@ pub enum ContextualScope {
     Global,
 }
 
-pub const CONTEXTUAL_ACTION_METADATA: [ContextualActionMetadata; 23] = [
+pub const CONTEXTUAL_ACTION_METADATA: [ContextualActionMetadata; 24] = [
     m(
         ContextualAction::Starred,
         "Starred",
@@ -215,6 +216,13 @@ pub const CONTEXTUAL_ACTION_METADATA: [ContextualActionMetadata; 23] = [
         'p',
         ContextualScope::SectionRail,
         ImplementationStatus::Planned,
+    ),
+    m(
+        ContextualAction::CreateStatus,
+        "Create status",
+        'c',
+        ContextualScope::StatusChatList,
+        ImplementationStatus::Implemented,
     ),
     m(
         ContextualAction::MarkRead,

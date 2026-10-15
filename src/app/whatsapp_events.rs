@@ -1,4 +1,5 @@
-use super::{App, Chat, MessageAction, MessageActionKind};
+use super::{App, Chat, MessageAction, MessageActionKind, actions::Section};
+use crate::app::chat_store::write_port::PersistChat;
 use whatsrust as wr;
 
 pub(crate) fn handle(app: &mut App<'_>, event: wr::Event) -> bool {
@@ -9,6 +10,17 @@ pub(crate) fn handle(app: &mut App<'_>, event: wr::Event) -> bool {
             app.sort_chats();
             true
         }
+        wr::Event::ArchiveChanged => {
+            if app.selected_section == Section::Chats {
+                let selected = app.get_selected_chat();
+                app.invalidate_chat_list();
+                app.update_filtered_chats(selected);
+            } else {
+                // Communities shares the selection state with Chats, not its rows.
+                app.invalidate_chat_list();
+            }
+            true
+        }
         wr::Event::Chat {
             jid,
             last_message_time,
@@ -16,6 +28,7 @@ pub(crate) fn handle(app: &mut App<'_>, event: wr::Event) -> bool {
             // History sync reports chats that may carry no messages. Keep
             // them so the chat list reflects the full account, not only
             // conversations that shipped a message in the sync batch.
+            let chat_jid = jid.clone();
             let changed = app.add_or_update_chat(
                 Chat {
                     jid,
@@ -27,6 +40,12 @@ pub(crate) fn handle(app: &mut App<'_>, event: wr::Event) -> bool {
                     }
                 },
             );
+            let chat = app
+                .chats
+                .get(&chat_jid)
+                .expect("chat event updates the in-memory chat store")
+                .clone();
+            app.chat_store_write.persist_chat(PersistChat { chat });
             if changed {
                 app.invalidate_chat_list();
             }
@@ -72,11 +91,20 @@ pub(crate) fn handle(app: &mut App<'_>, event: wr::Event) -> bool {
             app.apply_reaction(&target_message_id, participant, text);
             true
         }
+        wr::Event::ContactAliasesUpdated => {
+            app.refresh_contact_aliases();
+            true
+        }
         wr::Event::Connected => {
             app.set_read_receipt_readiness(crate::app::read_receipts::Readiness::Connected);
-            // Connected is emitted again after reconnects. The first
-            // probe may race group metadata hydration, so AppStateSyncComplete
-            // below remains the authoritative follow-up refresh.
+            // Own names are available from the authenticated store even before
+            // group metadata is queryable; a partial refresh must not hide
+            // cached names for other contacts or groups.
+            app.refresh_self_contacts();
+            app.refresh_contact_aliases();
+            // Connected is emitted again after reconnects. The first group
+            // probe may race metadata hydration, so AppStateSyncComplete
+            // below remains the authoritative full follow-up refresh.
             app.load_communities();
             app.mark_presence_ready();
             true

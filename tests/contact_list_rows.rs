@@ -8,9 +8,11 @@ use ratatui::{
 };
 use whatsrust::{JID, Message, MessageContent, MessageInfo};
 use wp_tui::app::contact_avatars::prioritized_avatar_requests;
+use wp_tui::app::read_receipts::VisibilityPlan;
 use wp_tui::app::{
     Chat, CommunityNode,
     actions::{PaneVisibility, Section},
+    events::MediaRenderPlan,
 };
 use wp_tui::ui::{
     self,
@@ -23,6 +25,8 @@ use common::TestApp;
 
 const UI_SOURCE: &str = include_str!("../src/ui.rs");
 const CONTACTS_SOURCE: &str = include_str!("../src/ui/contacts.rs");
+const COMMUNITIES_SOURCE: &str = include_str!("../src/ui/communities.rs");
+const AVATAR_RUNTIME_SOURCE: &str = include_str!("../src/app/runtime_avatar_events.rs");
 
 #[test]
 fn initials_are_deterministic_for_names_and_unicode() {
@@ -167,7 +171,16 @@ fn search_list_renders_the_same_two_row_item_and_preserves_its_selection() {
     let backend = TestBackend::new(100, 10);
     let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
     terminal
-        .draw(|frame| ui::draw(frame, &mut app))
+        .draw(|frame| {
+            let mut media_render_plan = MediaRenderPlan::default();
+            let mut visibility_plan = VisibilityPlan::default();
+            ui::draw_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                &mut visibility_plan,
+            )
+        })
         .expect("search contacts should render");
     let rows = terminal
         .backend()
@@ -216,7 +229,18 @@ fn chats_render_one_aggregated_community_row_and_one_normal_chat_row() {
     }];
 
     let mut terminal = Terminal::new(TestBackend::new(100, 10)).unwrap();
-    terminal.draw(|frame| ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| {
+            let mut media_render_plan = MediaRenderPlan::default();
+            let mut visibility_plan = VisibilityPlan::default();
+            ui::draw_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                &mut visibility_plan,
+            )
+        })
+        .unwrap();
     let rendered = terminal
         .backend()
         .buffer()
@@ -246,7 +270,18 @@ fn visible_chats_preserve_search_geometry_and_selected_contact_rendering() {
     app.chat_list_state.select(Some(0));
 
     let mut terminal = Terminal::new(TestBackend::new(100, 10)).unwrap();
-    terminal.draw(|frame| ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| {
+            let mut media_render_plan = MediaRenderPlan::default();
+            let mut visibility_plan = VisibilityPlan::default();
+            ui::draw_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                &mut visibility_plan,
+            )
+        })
+        .unwrap();
     let rows = terminal
         .backend()
         .buffer()
@@ -282,27 +317,31 @@ fn avatar_requests_are_selected_first_then_visible_then_overscan() {
 }
 
 #[test]
-fn contacts_module_owns_orchestration_and_preserves_draw_guards() {
+fn avatar_runtime_owns_scheduling_while_ui_renderers_only_plan_and_paint() {
     for symbol in [
         "render_contacts",
         "visible_contact_rows",
-        "prioritized_avatar_requests",
-        "app.contact_avatars.schedule",
         "AVATAR_WIDTH",
         "AVATAR_HEIGHT",
         "protocol_mut",
     ] {
-        assert!(CONTACTS_SOURCE.contains(symbol), "contacts owns {symbol}");
+        assert!(
+            CONTACTS_SOURCE.contains(symbol),
+            "contacts renders {symbol}"
+        );
         assert_eq!(UI_SOURCE.matches(&format!("fn {symbol}")).count(), 0);
     }
     assert!(CONTACTS_SOURCE.contains("if avatar_area.width == AVATAR_WIDTH"));
     assert!(CONTACTS_SOURCE.contains("&& avatar_area.height == AVATAR_HEIGHT"));
-    assert!(UI_SOURCE.contains("app.contact_avatars.clear_window();"));
+    assert!(!CONTACTS_SOURCE.contains("contact_avatars.schedule"));
+    assert!(!COMMUNITIES_SOURCE.contains("contact_avatars.schedule"));
+    assert!(!UI_SOURCE.contains("contact_avatars.clear_window"));
+    assert!(AVATAR_RUNTIME_SOURCE.contains("schedule_avatar_viewport"));
     assert!(!CONTACTS_SOURCE.contains("pub fn"));
 }
 
 #[test]
-fn hidden_chats_clear_avatar_window_before_rendering_without_invalid_placement() {
+fn hidden_chats_clear_avatar_window_in_runtime_before_pure_rendering() {
     let mut app = TestApp::new();
     app.selected_section = Section::Chats;
     app.pane_visibility = PaneVisibility {
@@ -312,7 +351,18 @@ fn hidden_chats_clear_avatar_window_before_rendering_without_invalid_placement()
     app.sorted_chats = vec![JID::from("hidden@example.test".to_owned())];
 
     let mut terminal = Terminal::new(TestBackend::new(24, 8)).unwrap();
-    terminal.draw(|frame| ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| {
+            let mut media_render_plan = MediaRenderPlan::default();
+            let mut visibility_plan = VisibilityPlan::default();
+            ui::draw_with_plan(
+                frame,
+                &mut app,
+                &mut media_render_plan,
+                &mut visibility_plan,
+            )
+        })
+        .unwrap();
     assert!(
         terminal
             .backend()
@@ -322,7 +372,8 @@ fn hidden_chats_clear_avatar_window_before_rendering_without_invalid_placement()
             .any(|cell| cell.symbol() == "C")
     );
     assert!(UI_SOURCE.contains("if let Some(area) = areas.chat_list"));
-    assert!(UI_SOURCE.contains("else {\n            app.contact_avatars.clear_window();"));
+    assert!(AVATAR_RUNTIME_SOURCE.contains("schedule_avatar_viewport"));
+    assert!(AVATAR_RUNTIME_SOURCE.contains("Vec::new()"));
 }
 
 #[test]

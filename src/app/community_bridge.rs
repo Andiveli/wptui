@@ -4,7 +4,8 @@ use whatsrust as wr;
 
 impl App<'_> {
     pub(crate) fn load_communities(&mut self) {
-        self.refresh_communities(wr::get_communities);
+        let result = self.community_query.get_communities();
+        self.apply_community_result(result);
     }
 
     pub fn refresh_communities<F>(&mut self, fetch: F)

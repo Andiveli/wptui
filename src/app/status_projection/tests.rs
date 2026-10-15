@@ -1,4 +1,7 @@
-use super::super::{STATUS_BROADCAST_CHAT, test_support::TestApp};
+use super::super::{
+    STATUS_BROADCAST_CHAT,
+    test_support::{FakeDmResolver, FakeStatusCursorPort, TestApp},
+};
 use super::*;
 
 fn status_message(sender: &wr::JID, id: &str, timestamp: i64) -> wr::Message {
@@ -37,6 +40,30 @@ fn status_contacts_are_sorted_by_latest_status_newest_first() {
             .collect::<Vec<_>>(),
         ["a-old", "a-new"]
     );
+}
+
+#[test]
+fn unresolved_lid_status_is_hidden_until_a_name_is_available() {
+    let mut app = TestApp::new();
+    let sender = wr::JID::from("99887766@lid".to_owned());
+    app.add_message(status_message(&sender, "status", 100));
+    assert!(app.status_contacts.is_empty());
+
+    app.apply_contact_refresh(vec![(sender.clone(), "Saved Name".into())]);
+    assert_eq!(app.status_contacts, vec![sender]);
+}
+
+#[test]
+fn saved_phone_contact_names_verified_lid_status() {
+    let sender = wr::JID::from("99887766@lid".to_owned());
+    let phone = wr::JID::from("15551234567@s.whatsapp.net".to_owned());
+    let mut app =
+        TestApp::with_dm_resolver(Box::new(FakeDmResolver::with_result(Some(phone.clone()))));
+    app.apply_contact_refresh(vec![(phone, "Alice".into())]);
+    app.add_message(status_message(&sender, "saved-contact-status", 100));
+
+    assert_eq!(app.status_contacts, vec![sender.clone()]);
+    assert_eq!(app.contact_name(&sender).as_ref(), "Alice");
 }
 
 #[test]
@@ -84,6 +111,19 @@ fn opening_a_status_marks_the_latest_status_as_seen() {
 }
 
 #[test]
+fn load_data_from_db_hydrates_status_cursors_from_the_port() {
+    let mut app = TestApp::new();
+    let cursor = FakeStatusCursorPort::default();
+    let alice = wr::JID::from("alice@s.whatsapp.net".to_owned());
+    cursor.loaded.lock().unwrap().push((alice.clone(), 200));
+    app.status_cursor = Box::new(cursor);
+
+    app.load_data_from_db();
+
+    assert_eq!(app.status_last_seen.get(&alice), Some(&200));
+}
+
+#[test]
 fn status_view_cursor_survives_reload() {
     let directory = tempfile::tempdir().unwrap();
     let alice = wr::JID::from("alice@s.whatsapp.net".to_owned());
@@ -99,4 +139,23 @@ fn status_view_cursor_survives_reload() {
         assert_eq!(app.status_last_seen.get(&alice), Some(&200));
         assert!(!app.has_unseen_statuses(&alice));
     }
+}
+
+#[test]
+fn opening_status_stores_latest_cursor_even_when_persistence_fails() {
+    let mut app = TestApp::new();
+    let cursor = FakeStatusCursorPort::default();
+    *cursor.fails.lock().unwrap() = true;
+    let alice = wr::JID::from("alice@s.whatsapp.net".to_owned());
+    app.status_cursor = Box::new(cursor.clone());
+    app.add_message(status_message(&alice, "a-status", 200));
+
+    app.open_selected_status();
+
+    let stored = cursor.stored.lock().unwrap();
+    assert_eq!(
+        (stored[0].contact.clone(), stored[0].timestamp),
+        (alice.clone(), 200)
+    );
+    assert_eq!(app.status_last_seen.get(&alice), Some(&200));
 }

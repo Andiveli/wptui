@@ -40,7 +40,8 @@ func HandleMessage(info types.MessageInfo, msg *waE2E.Message, isSync bool) {
 			id := context_info.GetStanzaID()
 			// LOG_ERROR("asdfasdf %s", co)
 			if id != "" {
-				cinfo.quoteID = C.CString(id)
+				callback.setQuoteID(id)
+				cinfo.quoteID = callback.info.quoteID
 			}
 		}
 
@@ -48,27 +49,27 @@ func HandleMessage(info types.MessageInfo, msg *waE2E.Message, isSync bool) {
 		emitTextMessage(cinfo, text, isSync)
 	}
 	if msg.ImageMessage != nil {
-		if !emitImageMessage(cinfo, info.ID, msg.GetImageMessage(), isSync) {
+		if !emitImageMessage(callback, info.ID, msg.GetImageMessage(), isSync) {
 			return
 		}
 	}
 	if msg.VideoMessage != nil {
-		if !emitVideoMessage(cinfo, info.ID, msg.GetVideoMessage(), isSync) {
+		if !emitVideoMessage(callback, info.ID, msg.GetVideoMessage(), isSync) {
 			return
 		}
 	}
 	if msg.AudioMessage != nil {
-		if !emitAudioMessage(cinfo, info.ID, msg.GetAudioMessage(), isSync) {
+		if !emitAudioMessage(callback, info.ID, msg.GetAudioMessage(), isSync) {
 			return
 		}
 	}
 	if msg.DocumentMessage != nil {
-		if !emitDocumentMessage(cinfo, info.ID, msg.GetDocumentMessage(), isSync) {
+		if !emitDocumentMessage(callback, info.ID, msg.GetDocumentMessage(), isSync) {
 			return
 		}
 	}
 	if msg.StickerMessage != nil {
-		if !emitStickerMessage(cinfo, info.ID, msg.GetStickerMessage(), isSync) {
+		if !emitStickerMessage(callback, info.ID, msg.GetStickerMessage(), isSync) {
 			return
 		}
 	}
@@ -84,8 +85,10 @@ func HandleOptimisticTextSent(localSendID uint64, info types.MessageInfo, msg *w
 	if msg.ExtendedTextMessage != nil {
 		ext := msg.GetExtendedTextMessage()
 		contextInfo := ext.GetContextInfo()
-		if id := contextInfo.GetStanzaID(); id != "" {
-			callback.info.quoteID = C.CString(id)
+		if contextInfo != nil {
+			if id := contextInfo.GetStanzaID(); id != "" {
+				callback.info.quoteID = C.CString(id)
+			}
 		}
 		text := replaceMessageMentionNames(info.Chat, ext.GetText(), contextInfo)
 		emitOptimisticTextMessage(callback.info, text, localSendID)
@@ -93,6 +96,26 @@ func HandleOptimisticTextSent(localSendID uint64, info types.MessageInfo, msg *w
 	}
 	if msg.Conversation != nil {
 		emitOptimisticTextMessage(callback.info, msg.GetConversation(), localSendID)
+		return
+	}
+	if image := msg.GetImageMessage(); image != nil {
+		emitImageMessageWithLocalSendID(callback, info.ID, image, false, localSendID)
+		return
+	}
+	if video := msg.GetVideoMessage(); video != nil {
+		emitVideoMessageWithLocalSendID(callback, info.ID, video, false, localSendID)
+		return
+	}
+	if audio := msg.GetAudioMessage(); audio != nil {
+		emitAudioMessageWithLocalSendID(callback, info.ID, audio, false, localSendID)
+		return
+	}
+	if document := msg.GetDocumentMessage(); document != nil {
+		emitDocumentMessageWithLocalSendID(callback, info.ID, document, false, localSendID)
+		return
+	}
+	if sticker := msg.GetStickerMessage(); sticker != nil {
+		emitStickerMessageWithLocalSendID(callback, info.ID, sticker, false, localSendID)
 	}
 }
 

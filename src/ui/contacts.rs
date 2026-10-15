@@ -1,25 +1,81 @@
-use std::sync::Arc;
-
 use super::contact_list::{AVATAR_HEIGHT, AVATAR_WIDTH, ContactList, visible_contact_rows};
 use crate::app::App;
 use crate::app::actions::FocusPane;
 use crate::app::contact_avatars::AvatarTarget;
-use crate::app::contact_avatars::prioritized_avatar_requests;
-use crate::app::runtime_diagnostics::Phase;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Position, Rect},
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, Paragraph, StatefulWidget, Widget},
 };
 use ratatui_image::StatefulImage;
+
+pub(crate) fn render_chat_filters(frame: &mut Frame, app: &mut App, area: Rect) {
+    let filters = [
+        crate::app::ChatFilter::All,
+        crate::app::ChatFilter::Unread,
+        crate::app::ChatFilter::Groups,
+        crate::app::ChatFilter::Archived,
+    ];
+    let archived_attention = app.archived_group_attention();
+    let mut labels = Vec::new();
+    let mut offset = 0u16;
+    for (index, filter) in filters.into_iter().enumerate() {
+        if index > 0 {
+            labels.push(Span::raw("  "));
+            offset = offset.saturating_add(2);
+        }
+        let start = offset;
+        if filter == crate::app::ChatFilter::Archived && archived_attention {
+            labels.push(Span::styled(
+                "@ ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            offset = offset.saturating_add(2);
+        }
+        let label = if filter == app.chat_filter {
+            format!("[{}]", filter.label())
+        } else {
+            filter.label().to_owned()
+        };
+        offset = offset.saturating_add(Span::raw(label.as_str()).width() as u16);
+        if filter == crate::app::ChatFilter::Archived && archived_attention {
+            labels.push(Span::styled(
+                label,
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        } else {
+            labels.push(Span::raw(label));
+        }
+        if area.height > 0 && start < area.width {
+            app.mouse_hit_map
+                .filter_labels
+                .push(crate::app::mouse_input::FilterHit {
+                    area: Rect::new(
+                        area.x.saturating_add(start),
+                        area.y,
+                        offset.min(area.width).saturating_sub(start),
+                        1,
+                    ),
+                    filter,
+                });
+        }
+    }
+    labels.push(Span::raw("  (Tab)"));
+    frame.render_widget(Paragraph::new(Line::from(labels)), area);
+}
 
 pub(crate) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
     let (rows, items) = app.cached_contact_view();
     let mut list_area = area;
     if !app.contact_search.input.is_empty() || app.contact_search_active {
         let [search_area, new_list_area] =
-            Layout::vertical([Constraint::Length(1), Constraint::Percentage(100)]).areas(area);
+            Layout::vertical([Constraint::Length(1), Constraint::Percentage(100)]).areas(list_area);
         list_area = new_list_area;
 
         let text = format!("/{}", app.contact_search.input);
@@ -47,6 +103,7 @@ pub(crate) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
             }),
         );
     let contacts_area = block.inner(list_area);
+    app.mouse_hit_map.chat_list = Some(contacts_area);
     block.render(list_area, frame.buffer_mut());
     frame.render_stateful_widget(
         ContactList::new(&items),
@@ -55,51 +112,25 @@ pub(crate) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
     );
 
     let visible = visible_contact_rows(&items, app.chat_list_state.offset(), contacts_area.height);
-    let row_targets = rows
-        .iter()
-        .map(|row| row.avatar_target().cloned().map(AvatarTarget::Contact))
-        .collect::<Vec<_>>();
-    let target_positions = row_targets
-        .iter()
-        .scan(0usize, |position, target| {
-            let current = target.as_ref().map(|_| {
-                let current = *position;
-                *position += 1;
-                current
-            });
-            Some(current)
-        })
-        .collect::<Vec<_>>();
-    let visible_target_positions = visible
-        .iter()
-        .filter_map(|(index, _)| target_positions[*index])
-        .collect::<Vec<_>>();
-    let selected_target = app
-        .chat_list_state
-        .selected()
-        .and_then(|index| target_positions.get(index).copied().flatten());
-    let target_offset = visible_target_positions
-        .first()
-        .copied()
-        .unwrap_or_default();
-    let target_visible_count = visible_target_positions.last().map_or(0, |last| {
-        (*last).saturating_sub(target_offset).saturating_add(1)
-    });
-    let targets = row_targets.into_iter().flatten().collect::<Vec<_>>();
-    let avatar_started = app.runtime_diagnostics.phase_started();
-    app.contact_avatars.schedule(
-        prioritized_avatar_requests(
-            &targets,
-            selected_target,
-            target_offset,
-            target_visible_count,
-        ),
-        app.tx.clone(),
-        Arc::clone(&app.picker),
-    );
-    if let Some(started) = avatar_started {
-        app.runtime_diagnostics
-            .record_phase_finished(Phase::AvatarScheduling, started);
+    for (position, &(index, relative_y)) in visible.iter().enumerate() {
+        if !matches!(rows[index], crate::app::ContactRow::Header(_)) {
+            let next_y = visible
+                .get(position + 1)
+                .map(|(_, y)| *y)
+                .unwrap_or(contacts_area.height);
+            app.mouse_hit_map
+                .contact_rows
+                .push(crate::app::mouse_input::ContactHit {
+                    area: Rect::new(
+                        contacts_area.x,
+                        contacts_area.y + relative_y,
+                        contacts_area.width,
+                        next_y.saturating_sub(relative_y),
+                    ),
+                    index,
+                    target: crate::app::mouse_input::ContactTarget::Chat(rows[index].clone()),
+                });
+        }
     }
     for (index, relative_y) in visible {
         let y = contacts_area.y.saturating_add(relative_y);
@@ -126,8 +157,11 @@ pub(crate) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
 mod tests {
     use super::*;
     use crate::app::Chat;
+    use crate::app::events::MediaRenderPlan;
+    use crate::app::read_receipts::VisibilityPlan;
     use crate::app::runtime_diagnostics::{PerfClock, PerfEnvironment, RuntimeDiagnostics};
     use crate::app::test_support::TestApp;
+    use crate::ui;
     use ratatui::{Terminal, backend::TestBackend};
     use whatsrust as wr;
 
@@ -145,6 +179,26 @@ mod tests {
         fn now_us(&self) -> u64 {
             1
         }
+    }
+
+    #[test]
+    fn chats_filter_bar_shows_current_view_above_search_and_list() {
+        let mut app = TestApp::new();
+        app.chat_filter = crate::app::ChatFilter::Unread;
+        app.contact_search.enter_char('x');
+        let mut terminal = Terminal::new(TestBackend::new(50, 10)).unwrap();
+        let mut media = MediaRenderPlan::default();
+        let mut visibility = VisibilityPlan::default();
+        terminal
+            .draw(|frame| ui::draw_with_plan(frame, &mut app.app, &mut media, &mut visibility))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let first_line = (0..50).map(|x| buffer[(x, 0)].symbol()).collect::<String>();
+        assert!(first_line.starts_with("All  [Unread]  Groups  Archived  (Tab)"));
+        let search_line = (14..44)
+            .map(|x| buffer[(x, 1)].symbol())
+            .collect::<String>();
+        assert!(search_line.starts_with("/x"));
     }
 
     #[test]
@@ -185,7 +239,7 @@ mod tests {
     }
 
     #[test]
-    fn scrolling_reschedules_the_avatar_window_for_newly_visible_chats() {
+    fn scrolling_updates_contact_geometry_without_scheduling_avatar_requests() {
         let mut test_app = TestApp::new();
         for index in 0..12 {
             let chat: wr::JID = format!("chat-{index:02}@example.test").into();
@@ -203,26 +257,15 @@ mod tests {
         terminal
             .draw(|frame| render_contacts(frame, &mut test_app.app, frame.area()))
             .unwrap();
-        let initial = test_app.app.contact_avatars.requested_targets().to_vec();
-        assert!(initial.len() < 12);
-        assert!(initial.iter().any(
-            |target| target == &AvatarTarget::Contact("chat-00@example.test".to_owned().into())
-        ));
+        assert!(test_app.app.contact_avatars.requested_targets().is_empty());
 
         test_app.app.chat_list_state.select(Some(8));
         terminal
             .draw(|frame| render_contacts(frame, &mut test_app.app, frame.area()))
             .unwrap();
-        let scrolled = test_app.app.contact_avatars.requested_targets();
-        assert_ne!(scrolled, initial.as_slice());
-        assert!(scrolled.iter().any(
-            |target| target == &AvatarTarget::Contact("chat-08@example.test".to_owned().into())
-        ));
-        assert!(scrolled.iter().any(
-            |target| target == &AvatarTarget::Contact("chat-11@example.test".to_owned().into())
-        ));
-        assert!(!scrolled.iter().any(
-            |target| target == &AvatarTarget::Contact("chat-00@example.test".to_owned().into())
-        ));
+
+        assert_eq!(test_app.app.chat_list_state.selected(), Some(8));
+        assert!(test_app.app.chat_list_state.offset() > 0);
+        assert!(test_app.app.contact_avatars.requested_targets().is_empty());
     }
 }

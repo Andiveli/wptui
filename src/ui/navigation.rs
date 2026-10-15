@@ -8,7 +8,7 @@ use ratatui::{
 };
 use tui_logger::TuiLoggerWidget;
 
-pub(super) fn render_section_rail(frame: &mut Frame, app: &App, area: Rect) {
+pub(super) fn render_section_rail(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut items = Section::ALL
         .iter()
         .map(|section| {
@@ -28,6 +28,7 @@ pub(super) fn render_section_rail(frame: &mut Frame, app: &App, area: Rect) {
             .unwrap_or(0)
     };
     let mut state = ratatui::widgets::ListState::default().with_selected(Some(selected));
+    let row_count = items.len();
     let list = List::new(items)
         .block(
             Block::bordered()
@@ -47,6 +48,18 @@ pub(super) fn render_section_rail(frame: &mut Frame, app: &App, area: Rect) {
             Style::default().green()
         });
     frame.render_stateful_widget(list, area, &mut state);
+    let inner = Block::bordered().inner(area);
+    for (relative_y, index) in (state.offset()..row_count)
+        .take(usize::from(inner.height))
+        .enumerate()
+    {
+        app.mouse_hit_map
+            .section_rows
+            .push(crate::app::mouse_input::SectionHit {
+                area: Rect::new(inner.x, inner.y + relative_y as u16, inner.width, 1),
+                section: Section::ALL.get(index).copied(),
+            });
+    }
 }
 
 pub(super) fn render_structural_placeholder(frame: &mut Frame, app: &App, area: Rect) {
