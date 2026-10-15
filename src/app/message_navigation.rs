@@ -1,5 +1,5 @@
 use super::App;
-use super::actions::{FocusPane, Section};
+use super::actions::{FocusPane, Section, StatusCompositionState};
 
 impl App<'_> {
     pub(crate) fn select_next(&mut self) {
@@ -78,6 +78,7 @@ impl App<'_> {
 
     fn mark_latest_if_reached(&mut self) {
         if self.focus_pane == FocusPane::Conversation
+            && matches!(self.selected_section, Section::Chats | Section::Communities)
             && self.message_list_state.selected == Some(0)
             && let Some(chat) = self.open_chat()
         {
@@ -100,9 +101,18 @@ impl App<'_> {
     }
 
     pub(crate) fn status_message_count(&self) -> usize {
-        self.open_status_contact()
-            .map(|contact| self.status_messages(&contact).len())
-            .unwrap_or(0)
+        if matches!(
+            self.status_composition,
+            StatusCompositionState::Authoring
+                | StatusCompositionState::Navigating
+                | StatusCompositionState::Submitting
+        ) {
+            self.own_status_messages().len()
+        } else {
+            self.open_status_contact()
+                .map(|contact| self.status_messages(&contact).len())
+                .unwrap_or(0)
+        }
     }
 }
 

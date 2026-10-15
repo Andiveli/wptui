@@ -34,14 +34,14 @@ func clearAuthenticatedPushNameCache() {
 	authenticatedPushNames.Unlock()
 }
 
-func rememberAuthenticatedPushName(info types.MessageInfo) {
-	if !info.IsFromMe || strings.TrimSpace(info.PushName) == "" || client == nil || client.Store == nil {
+func rememberAuthenticatedPushNameWithClient(clientSnapshot *whatsmeow.Client, info types.MessageInfo) {
+	if !info.IsFromMe || strings.TrimSpace(info.PushName) == "" || clientSnapshot == nil || clientSnapshot.Store == nil {
 		return
 	}
-	if !participantMatchesSelf(client, types.GroupParticipant{JID: info.Sender}) {
+	if !participantMatchesSelf(clientSnapshot, types.GroupParticipant{JID: info.Sender}) {
 		return
 	}
-	key := authenticatedIdentityKey(client)
+	key := authenticatedIdentityKey(clientSnapshot)
 	if key == "" {
 		return
 	}

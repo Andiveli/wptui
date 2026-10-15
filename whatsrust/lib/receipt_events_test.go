@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -59,9 +60,10 @@ func receiptTestClient(pn types.JID) *whatsmeow.Client {
 func TestReceiptChatCanonicalizationMatchesMessageIdentity(t *testing.T) {
 	pn := types.NewJID("15551234567", types.DefaultUserServer)
 	lid := types.NewJID("alice", types.HiddenUserServer)
-	previous := client
-	client = receiptTestClient(pn)
-	defer func() { client = previous }()
+	previous := lifecycleState.clientSnapshot()
+	client := receiptTestClient(pn)
+	lifecycleState.publishClient(client)
+	defer func() { lifecycleState.publishClient(previous) }()
 
 	messageInfo := normalizeMessageInfo(types.MessageInfo{MessageSource: types.MessageSource{Chat: lid, Sender: lid}})
 	receipt, ok := receiptEventFromEventWithClient(client, &events.Receipt{
@@ -130,5 +132,36 @@ func TestReceiptDispatchKeepsCArrayAndPayloadThroughCallback(t *testing.T) {
 	arrayBuild := strings.Index(body, "unsafe.Slice(cmessageIDs, n)")
 	if callback < arrayBuild {
 		t.Fatal("receipt C array must be populated before the callback")
+	}
+}
+
+func TestReceiptDispatchAndRustDecoderSupportEmptyMessageIDs(t *testing.T) {
+	goSource, err := os.ReadFile("receipt_events.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	goBody, ok := extractFunctionBody(string(goSource), "func dispatchReceiptEvent(receipt receiptEvent)")
+	if !ok {
+		t.Fatal("dispatchReceiptEvent function body not found in receipt_events.go")
+	}
+	for _, fragment := range []string{
+		"var cmessageIDs **C.char",
+		"if n > 0 {",
+		"creceipt.messageIDs = cmessageIDs",
+		"creceipt.size = C.uint32_t(n)",
+	} {
+		if !strings.Contains(goBody, fragment) {
+			t.Fatalf("empty receipt dispatch must contain %q", fragment)
+		}
+	}
+
+	rustSource, err := os.ReadFile("../src/events.rs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rustText := string(rustSource)
+	emptyMessageIDsGuard := regexp.MustCompile(`(?s)if\s+receipt\.count\s*==\s*0\s*\{\s*&\[\]\s*\}\s*else\s*\{\s*unsafe\s*\{\s*std::slice::from_raw_parts\(\s*receipt\.message_ids\s*,\s*receipt\.count\s+as\s+usize\s*\)\s*\}\s*\}`)
+	if !emptyMessageIDsGuard.MatchString(rustText) {
+		t.Fatal("Rust receipt decoder must guard empty message ID arrays before dereferencing their pointer")
 	}
 }

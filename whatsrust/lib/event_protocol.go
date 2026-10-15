@@ -6,9 +6,11 @@ const (
 	EventTypeReceipt              = 2
 	EventTypeReaction             = 3
 	// Event type 4 is reserved for the removed multiplexed Presence event.
-	EventTypeConnected      = 5
-	EventTypeMessageAction  = 6
-	EventTypeChat           = 7
-	EventTypeLogoutResult   = 8
-	EventTypeMarkChatAsRead = 9
+	EventTypeConnected             = 5
+	EventTypeMessageAction         = 6
+	EventTypeChat                  = 7
+	EventTypeLogoutResult          = 8
+	EventTypeMarkChatAsRead        = 9
+	EventTypeArchiveChanged        = 10
+	EventTypeContactAliasesUpdated = 11
 )

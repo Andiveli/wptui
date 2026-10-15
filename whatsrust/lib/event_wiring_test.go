@@ -66,19 +66,42 @@ func TestEventWiringOwnsRegistrationAndDispatchCases(t *testing.T) {
 	body := string(source)
 	for _, expected := range []string{
 		"func AddEventHandlers()",
-		"client.AddEventHandler(func(rawEvt any)",
-		"case *events.Connected:",
-		"case *events.Presence:",
-		"case *events.AppStateSyncComplete:",
-		"case *events.Message:",
-		"case *events.UndecryptableMessage:",
-		"case *events.Receipt:",
-		"case *events.HistorySync:",
-		"dispatchHistorySync(",
+		"clientSnapshot.AddEventHandler(func(rawEvt any)",
+		"messageActionCensusDiagnostic(rawEvt)",
+		"dispatchEventFamily(rawEvt, clientSnapshot, viewOnceDispatcher.dispatchOnce)",
 	} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("event wiring missing %q", expected)
 		}
+	}
+	if strings.Contains(body, "case *events.") {
+		t.Fatal("event registration still owns event-family cases")
+	}
+}
+
+func TestEventFamilyRoutesArchiveRefreshBeforeOtherHandlers(t *testing.T) {
+	source, err := os.ReadFile("event_dispatch.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, ok := extractFunctionBody(string(source), "func dispatchEventFamily(")
+	if !ok || !strings.Contains(body, "archiveRefreshEvent(rawEvt)") || !strings.Contains(body, "dispatchArchiveRefresh()") {
+		t.Fatal("event family must forward archive changes and regular_low completion")
+	}
+}
+
+func TestViewOnceUnavailableDispatcherDeduplicatesByMessageID(t *testing.T) {
+	dispatched := 0
+	dispatcher := newViewOnceUnavailableDispatcher(func(types.MessageInfo, bool) {
+		dispatched++
+	})
+	info := types.MessageInfo{ID: "same-view-once"}
+
+	dispatcher.dispatchOnce(info, false)
+	dispatcher.dispatchOnce(info, true)
+
+	if dispatched != 1 {
+		t.Fatalf("dispatch count = %d, want one", dispatched)
 	}
 }
 

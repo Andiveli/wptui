@@ -1,40 +1,54 @@
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     sync::Arc,
     sync::Mutex,
 };
 
+pub mod action_dispatch;
 pub mod actions;
 pub mod attachment_viewer;
+pub mod avatar_query_port;
 pub mod bootstrap;
 pub mod chat_navigation;
 pub mod chat_opening;
 pub mod chat_ordering;
 pub mod chat_projection;
+pub mod chat_read_sync_port;
 pub mod chat_search_input;
+pub mod chat_settings_query_port;
 pub mod chat_store;
 pub mod community_bridge;
 pub mod community_hierarchy;
+pub mod community_query_port;
 pub mod composer;
 pub mod composer_input_mapping;
 pub mod composer_input_paste;
 pub mod composer_integration;
 pub mod contact_avatars;
+pub mod contact_source_port;
 pub mod contextual_actions;
 pub mod contextual_activation;
 pub mod contextual_routing;
+pub mod dm_resolution_port;
 pub mod download_worker;
 pub mod events;
 pub mod file_picker_input;
+pub mod group_info_query_port;
+pub mod group_participants_query_port;
 pub mod input_mapping;
 pub mod input_reader;
+pub mod input_router;
 pub mod inputs;
 pub mod leader_menu;
+pub mod lifecycle_control;
+pub mod lifecycle_settings_dispatch;
 pub mod log_toggle;
 pub mod logout;
 pub mod media_cache;
+pub mod media_download_port;
+pub mod media_jobs;
 pub mod media_support;
 pub mod message_action_diagnostics;
 pub mod message_actions;
@@ -43,24 +57,37 @@ pub mod message_interactions;
 pub mod message_menu;
 pub mod message_navigation;
 pub mod message_opening;
+pub mod message_push_name_port;
+pub mod message_reactions;
+pub(crate) mod mouse_input;
+pub mod navigation_conversation_dispatch;
 pub mod notifications;
 pub mod optimistic_text_send;
 pub mod preferences;
 pub mod presence;
 pub mod presence_bridge;
+pub mod presence_diagnostics_port;
+pub mod presence_subscription_port;
 pub mod private_reply;
 pub mod reaction_picker;
 pub mod read_receipts;
-pub mod runtime_callbacks;
+pub mod runtime_avatar_events;
 pub mod runtime_diagnostics;
 pub mod runtime_loop;
-pub mod runtime_media_events;
+pub mod runtime_media_viewer_events;
+pub mod runtime_read_receipt_events;
+pub mod runtime_send_events;
 pub mod runtime_startup;
+pub mod runtime_updater_events;
 pub mod share_picker;
 pub mod share_picker_input;
 pub mod status_actions;
+pub mod status_cursor;
 pub mod status_input;
 pub mod status_projection;
+pub mod status_publish;
+pub mod status_retention;
+pub mod terminal_input_translation;
 pub mod terminal_session;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -71,30 +98,48 @@ pub use crate::app;
 use crate::app::actions::{
     ActionNotice, ClipboardReader, ClipboardWriter, ConversationMode, FocusPane, MessageEditor,
     MessageForwarder, MessageMenuAction, MessageReactor, MessageRevoker, PaneVisibility, Section,
-    SystemClipboardReader, SystemClipboardWriter, SystemUrlOpener, UnavailableClipboardReader,
-    UnavailableClipboardWriter, UrlOpener, WhatsAppMessageEditor, WhatsAppMessageForwarder,
-    WhatsAppMessageReactor, WhatsAppMessageRevoker,
+    StatusCompositionState, SystemClipboardReader, SystemClipboardWriter, SystemUrlOpener,
+    UnavailableClipboardReader, UnavailableClipboardWriter, UrlOpener,
 };
-pub use crate::app::chat_projection::{ChatRow, ContactRow};
+pub use crate::app::chat_projection::{ChatFilter, ChatRow, ContactRow};
+pub use crate::app::chat_read_sync_port::ChatReadSyncPort;
+pub use crate::app::chat_settings_query_port::ChatSettingsQueryPort;
+pub use crate::app::chat_store::{ChatReadCursorPort, StoreChatReadCursor};
+use crate::app::chat_store::{
+    ContactWritePort, hydration_port::ChatStoreHydrationPort, write_port::ChatStoreWritePort,
+};
 pub use crate::app::community_hierarchy::{CommunityNavigationRow, CommunityNode};
+pub use crate::app::community_query_port::CommunityQueryPort;
 use crate::app::composer::Composer;
 use crate::app::contact_avatars::ContactAvatars;
+pub use crate::app::contact_source_port::ContactSourcePort;
+pub use crate::app::dm_resolution_port::DmResolverPort;
 use crate::app::events::{AppEvent, AppInput, AttachmentViewerState, ViewerPreviewState};
+pub use crate::app::group_info_query_port::GroupInfoQueryPort;
+pub use crate::app::group_participants_query_port::GroupParticipantsQueryPort;
 use crate::app::input_reader::InputReader;
 pub use crate::app::media_support::{remove_owned_media_files, remove_status_media_files};
 use crate::app::message_action_diagnostics::MessageActionDiagnostics;
 pub use crate::app::message_actions::{
     DELETED_MESSAGE_TEXT, MessageAction, MessageActionKind, MessageStatus,
 };
+pub use crate::app::message_push_name_port::MessagePushNamePort;
+pub use crate::app::message_reactions::{MessageReactionWritePort, RecordMessageReaction};
 pub use crate::app::notifications::{
     Clock, NotificationProjection, Notifier, NotifyRustNotifier, SystemClock, now_or, unix_now,
 };
 use crate::app::preferences::ComposerDirection;
 use crate::app::presence::{PresenceDiagnostics, SelectedPresence};
+pub use crate::app::presence_diagnostics_port::RawPresenceDiagnosticsPort;
+pub use crate::app::presence_subscription_port::PresenceSubscriptionPort;
 use crate::app::read_receipts::Coordinator as ReadReceiptCoordinator;
 use crate::app::runtime_diagnostics::{MessageListCounts, Phase, RuntimeDiagnostics};
 pub use crate::app::share_picker::SharePicker;
+pub use crate::app::status_cursor::{StatusCursorError, StatusCursorPort, StoreStatusCursor};
 pub use crate::app::status_projection::STATUS_BROADCAST_CHAT;
+pub use crate::app::status_retention::{
+    PurgeExpiredStatuses, PurgedExpiredStatuses, StatusRetentionError, StatusRetentionPort,
+};
 use crate::db;
 use crate::file_picker::FilePickerState;
 use crate::key_handler::KeybindHandler;
@@ -110,6 +155,20 @@ use whatsrust as wr;
 use crate::ui::text_input::TextInput;
 
 pub const ADMIN_ONLY_GROUP_MESSAGE: &str = "Only group admins can send messages in this group.";
+
+pub trait AvatarQueryPort: Send + Sync + 'static {
+    fn get_profile_picture(
+        &self,
+        jid: &wr::JID,
+    ) -> Result<wr::ProfilePictureAvailability, wr::ProfilePictureError>;
+
+    fn get_community_profile_picture(
+        &self,
+        jid: &wr::JID,
+    ) -> Result<wr::ProfilePictureAvailability, wr::ProfilePictureError>;
+}
+
+pub type SharedAvatarQueryPort = Arc<dyn AvatarQueryPort>;
 
 #[derive(Clone, Debug)]
 pub struct Chat {
@@ -133,6 +192,21 @@ pub enum Metadata {
 
 pub struct App<'a> {
     pub db_handler: DatabaseHandler,
+    pub(crate) chat_store_hydration: Box<dyn ChatStoreHydrationPort>,
+    pub(crate) chat_store_write: Box<dyn ChatStoreWritePort>,
+    pub(crate) contact_write: Box<dyn ContactWritePort>,
+    pub(crate) contact_source: Box<dyn ContactSourcePort>,
+    pub(crate) community_query: Box<dyn CommunityQueryPort>,
+    pub(crate) chat_settings_query: Box<dyn ChatSettingsQueryPort>,
+    pub(crate) dm_resolver: Box<dyn DmResolverPort>,
+    pub(crate) group_info_query: Box<dyn GroupInfoQueryPort>,
+    pub(crate) group_participants_query: Box<dyn GroupParticipantsQueryPort>,
+    pub(crate) message_push_name: Box<dyn MessagePushNamePort>,
+    pub(crate) message_reaction_write: Box<dyn MessageReactionWritePort>,
+    pub(crate) chat_read_cursor: Box<dyn ChatReadCursorPort>,
+    pub(crate) status_cursor: Box<dyn StatusCursorPort>,
+    pub(crate) status_retention: Box<dyn StatusRetentionPort>,
+    pub(crate) lifecycle_control: Arc<dyn lifecycle_control::LifecycleControl>,
     pub media_path: PathBuf,
     pub whatsmeow_db: PathBuf,
     pub clock: Box<dyn Clock>,
@@ -148,6 +222,12 @@ pub struct App<'a> {
 
     // Maps JID to display name
     pub contacts: HashMap<wr::JID, Arc<str>>,
+    /// Profile names learned from message metadata, subordinate to saved contacts.
+    pub profile_names: HashMap<wr::JID, Arc<str>>,
+    /// Latest authoritative refresh keys; persisted contact rows remain untouched.
+    pub fresh_contact_jids: Option<HashSet<wr::JID>>,
+    /// Verified PN aliases for LIDs encountered in chats or status messages.
+    pub verified_phones: HashMap<wr::JID, Arc<str>>,
 
     pub clipboard_reader: Box<dyn ClipboardReader>,
     pub clipboard_writer: Box<dyn ClipboardWriter>,
@@ -175,16 +255,23 @@ pub struct App<'a> {
     /// Latest status timestamp the user has viewed per contact, restored from
     /// the status_read_cursors table at startup.
     pub status_last_seen: HashMap<wr::JID, i64>,
+    /// Outgoing status composition is separate from the read-only incoming
+    /// status pane and starts only from the status contact list.
+    pub status_composition: StatusCompositionState,
 
     pub history_sync_percent: Option<u8>,
     pub selected_presence: SelectedPresence,
+    pub(crate) presence_subscription: Box<dyn PresenceSubscriptionPort>,
+    pub(crate) raw_presence_diagnostics: Box<dyn RawPresenceDiagnosticsPort>,
     presence_diagnostics: PresenceDiagnostics,
 
     pub composer: Composer<'a>,
     pub(crate) composer_direction: ComposerDirection,
+    pub(crate) mouse_capture_enabled: bool,
     pub(crate) composer_viewport_width: u16,
     pub(crate) preferences_path: PathBuf,
     pub message_list_state: MessageListState,
+    pub(crate) mouse_hit_map: mouse_input::MouseHitMap,
     pub timeline: unread_messages::Timeline,
     pub metadata: HashMap<wr::MessageId, Metadata>,
     pub image_cache: HashMap<Arc<str>, StatefulProtocol>,
@@ -222,12 +309,22 @@ pub struct App<'a> {
     pub url_picker: Option<(Vec<String>, usize)>,
     pub file_picker: Option<FilePickerState>,
     pub url_opener: Box<dyn UrlOpener>,
+    pub launch_executor: Box<dyn crate::media::LaunchExecutor>,
     pub attachment_viewer: Option<AttachmentViewerState>,
     pub viewer_preview: Option<ViewerPreviewState>,
     pub viewer_zoom: u16,
     pub read_receipts: ReadReceiptCoordinator,
     pub read_receipt_worker: read_receipts::worker::Worker,
+    pub(crate) chat_read_sync: Box<dyn ChatReadSyncPort>,
+    read_sync_worker_stopped_for_logout: bool,
     pub optimistic_text_send_worker: optimistic_text_send::Worker,
+    media_download_worker: Option<download_worker::Worker>,
+    pub status_send_worker: status_publish::Worker,
+    pub pending_status_sends: usize,
+    pub(crate) pending_outgoing_status: Vec<(u64, wr::MessageContent)>,
+    pub(crate) status_batch_local_ids: Vec<u64>,
+    pub status_send_failure: Option<wr::StatusSendResult>,
+    pub status_retry_warning: bool,
     pub pending_outgoing_text: HashMap<u64, optimistic_text_send::TextSendRequest>,
     pub completed_text_send_ids: VecDeque<u64>,
     pub next_local_send_id: u64,
@@ -238,6 +335,7 @@ pub struct App<'a> {
 
     pub contact_search_active: bool,
     pub contact_search: TextInput,
+    pub chat_filter: ChatFilter,
     pub filtered_chats: Vec<wr::JID>,
 
     pub should_quit: bool,
@@ -270,6 +368,7 @@ pub struct App<'a> {
     pub(crate) runtime_diagnostics: RuntimeDiagnostics,
     pub(crate) chat_list_view: Option<chat_projection::ChatListViewModel>,
     pub(crate) chat_list_revision: u64,
+    pub(crate) archived_group_attention_cache: Option<(u64, bool)>,
     pub(crate) chat_list_mutation_depth: usize,
     pub(crate) chat_list_mutation_pending: bool,
 }
@@ -281,6 +380,12 @@ impl Default for App<'_> {
 }
 
 impl App<'_> {
+    pub(crate) fn take_media_download_worker(&mut self) -> download_worker::Worker {
+        self.media_download_worker
+            .take()
+            .expect("media download worker must be transferred to the runtime once")
+    }
+
     /// Constructs the full app with explicit storage directories instead of
     /// the user's real data/cache dirs. `App::default()` keeps using the
     /// real directories; tests use this factory with a fresh tempdir so they
@@ -297,6 +402,100 @@ impl App<'_> {
         notifier: Box<dyn Notifier>,
     ) -> Self {
         bootstrap::with_data_dir_and_ports(data_dir, cache_dir, clock, notifier)
+    }
+
+    pub fn set_chat_store_hydration(&mut self, port: Box<dyn ChatStoreHydrationPort>) {
+        self.chat_store_hydration = port;
+    }
+
+    pub fn set_chat_store_write(&mut self, port: Box<dyn ChatStoreWritePort>) {
+        self.chat_store_write = port;
+    }
+
+    pub fn set_contact_write(&mut self, port: Box<dyn ContactWritePort>) {
+        self.contact_write = port;
+    }
+
+    pub fn set_contact_source(&mut self, port: Box<dyn ContactSourcePort>) {
+        self.contact_source = port;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_presence_subscription(&mut self, port: Box<dyn PresenceSubscriptionPort>) {
+        self.presence_subscription = port;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_raw_presence_diagnostics(
+        &mut self,
+        port: Box<dyn RawPresenceDiagnosticsPort>,
+    ) {
+        self.raw_presence_diagnostics = port;
+    }
+
+    #[cfg(test)]
+    pub fn set_avatar_query(&mut self, port: SharedAvatarQueryPort) {
+        self.contact_avatars.set_avatar_query(port);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_community_query(&mut self, port: Box<dyn CommunityQueryPort>) {
+        self.community_query = port;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_chat_settings_query(&mut self, port: Box<dyn ChatSettingsQueryPort>) {
+        self.chat_settings_query = port;
+        self.archived_group_attention_cache = None;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_dm_resolver(&mut self, port: Box<dyn DmResolverPort>) {
+        self.dm_resolver = port;
+    }
+
+    #[cfg(test)]
+    pub fn set_group_info_query(&mut self, port: Box<dyn GroupInfoQueryPort>) {
+        self.group_info_query = port;
+    }
+
+    #[cfg(test)]
+    pub fn set_group_participants_query(&mut self, port: Box<dyn GroupParticipantsQueryPort>) {
+        self.group_participants_query = port;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_message_push_name(&mut self, port: Box<dyn MessagePushNamePort>) {
+        self.message_push_name = port;
+    }
+
+    pub fn set_message_reaction_write(&mut self, port: Box<dyn MessageReactionWritePort>) {
+        self.message_reaction_write = port;
+    }
+
+    pub fn set_chat_read_cursor(&mut self, port: Box<dyn ChatReadCursorPort>) {
+        self.chat_read_cursor = port;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_chat_read_sync(&mut self, port: Box<dyn ChatReadSyncPort>) {
+        self.chat_read_sync = port;
+    }
+
+    pub fn set_status_cursor(&mut self, port: Box<dyn StatusCursorPort>) {
+        self.status_cursor = port;
+    }
+
+    pub fn set_status_retention(&mut self, port: Box<dyn StatusRetentionPort>) {
+        self.status_retention = port;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_lifecycle_control<T: lifecycle_control::LifecycleControl>(
+        &mut self,
+        lifecycle_control: Arc<T>,
+    ) {
+        self.lifecycle_control = lifecycle_control;
     }
 
     pub(crate) fn toggle_composer_direction(&mut self) {

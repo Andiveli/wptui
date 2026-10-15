@@ -19,7 +19,7 @@ impl App<'_> {
         }
     }
 
-    fn open_selected_document(&mut self) {
+    pub(crate) fn open_selected_document(&mut self) {
         let Some(message) = self.selected_message() else {
             return self.unavailable("Open is not available");
         };
@@ -52,8 +52,7 @@ impl App<'_> {
             Some(Path::new(file.path.as_ref())),
         ) {
             Ok(Some(plan)) => {
-                match crate::media::execute_launch(&plan, &mut crate::media::CommandLaunchExecutor)
-                {
+                match crate::media::execute_launch(&plan, self.launch_executor.as_mut()) {
                     Ok(()) => {
                         self.action_notice = Some(crate::app::actions::ActionNotice::Unavailable(
                             "Document viewer started".into(),
@@ -87,7 +86,7 @@ impl App<'_> {
         }
     }
 
-    fn launch_url(&mut self, url: &str) {
+    pub(crate) fn launch_url(&mut self, url: &str) {
         let plan = crate::url::url_launch_plan(url);
         if self.url_opener.open(&plan).is_err() {
             self.unavailable("Could not open URL");

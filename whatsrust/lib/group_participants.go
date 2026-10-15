@@ -28,19 +28,20 @@ import (
 
 //export C_GetGroupParticipants
 func C_GetGroupParticipants(cjid C.JID) C.GroupParticipantsResult {
-	if client == nil || cjid == nil {
+	clientSnapshot := lifecycleState.clientSnapshot()
+	if clientSnapshot == nil || cjid == nil {
 		return C.GroupParticipantsResult{}
 	}
-	info, err := client.GetGroupInfo(context.Background(), cToJid(cjid).ToNonAD())
+	info, err := clientSnapshot.GetGroupInfo(context.Background(), cToJid(cjid).ToNonAD())
 	if err != nil || info == nil {
 		return C.GroupParticipantsResult{}
 	}
 	entries := make([]groupParticipantEntry, 0, len(info.Participants))
 	var contacts store.ContactStore
 	var lids store.LIDStore
-	if client.Store != nil {
-		contacts = client.Store.Contacts
-		lids = client.Store.LIDs
+	if clientSnapshot.Store != nil {
+		contacts = clientSnapshot.Store.Contacts
+		lids = clientSnapshot.Store.LIDs
 	}
 	participants := deduplicateGroupParticipants(context.Background(), info.Participants, lids)
 	participants = excludeSelfGroupParticipants(context.Background(), participants)
@@ -68,17 +69,18 @@ func C_GetGroupParticipants(cjid C.JID) C.GroupParticipantsResult {
 }
 
 func groupParticipantName(ctx context.Context, participant types.GroupParticipant, contacts store.ContactStore) string {
+	clientSnapshot := lifecycleState.clientSnapshot()
 	var lids store.LIDStore
-	if client != nil && client.Store != nil {
-		lids = client.Store.LIDs
+	if clientSnapshot != nil && clientSnapshot.Store != nil {
+		lids = clientSnapshot.Store.LIDs
 	}
-	isSelf := participantMatchesSelf(client, participant)
+	isSelf := participantMatchesSelf(clientSnapshot, participant)
 	if isSelf {
-		if name := selfDisplayNameWithContacts(ctx, client, contacts); name != "" {
+		if name := selfDisplayNameWithContacts(ctx, clientSnapshot, contacts); name != "" {
 			return name
 		}
 	}
-	var pushName string
+	var savedName, pushName string
 	if contacts != nil {
 		for _, jid := range participantJIDs(ctx, participant, lids) {
 			contact, err := contacts.GetContact(ctx, jid)
@@ -89,24 +91,29 @@ func groupParticipantName(ctx context.Context, participant types.GroupParticipan
 				if name := nonNumericLocalContactName(contact); name != "" {
 					return name
 				}
-			} else if name := locallySavedContactName(contact); name != "" {
-				return name
-			}
-			if !isSelf && pushName == "" {
-				pushName = plainContactName(contact.PushName)
+			} else {
+				if name := locallySavedContactName(contact); name != "" && (savedName == "" || name < savedName) {
+					savedName = name
+				}
+				if name := plainContactName(contact.PushName); name != "" && !phoneLikeName(name) && (pushName == "" || name < pushName) {
+					pushName = name
+				}
 			}
 		}
 	}
 	if isSelf {
-		return participantFallbackName(participant)
+		return participantFallbackName(ctx, participant, lids)
 	}
-	if name := plainContactName(participant.DisplayName); name != "" {
+	if savedName != "" {
+		return savedName
+	}
+	if name := plainContactName(participant.DisplayName); name != "" && !phoneLikeName(name) {
 		return name
 	}
 	if pushName != "" {
 		return pushName
 	}
-	return participantFallbackName(participant)
+	return participantFallbackName(ctx, participant, lids)
 }
 
 func currentUserPushName(client *whatsmeow.Client) string {
@@ -114,9 +121,10 @@ func currentUserPushName(client *whatsmeow.Client) string {
 }
 
 func excludeSelfGroupParticipants(ctx context.Context, participants []types.GroupParticipant) []types.GroupParticipant {
+	clientSnapshot := lifecycleState.clientSnapshot()
 	result := make([]types.GroupParticipant, 0, len(participants))
 	for _, participant := range participants {
-		if participantMatchesSelf(client, participant) {
+		if participantMatchesSelf(clientSnapshot, participant) {
 			continue
 		}
 		result = append(result, participant)
@@ -124,9 +132,12 @@ func excludeSelfGroupParticipants(ctx context.Context, participants []types.Grou
 	return result
 }
 
-func participantFallbackName(participant types.GroupParticipant) string {
-	for _, jid := range []types.JID{participant.PhoneNumber, participant.JID, participant.LID} {
-		if !jid.IsEmpty() && jid.User != "" {
+func participantFallbackName(ctx context.Context, participant types.GroupParticipant, lids store.LIDStore) string {
+	if participant.PhoneNumber.Server == types.DefaultUserServer && participant.PhoneNumber.User != "" {
+		return participant.PhoneNumber.User
+	}
+	for _, jid := range participantJIDs(ctx, participant, lids) {
+		if jid.Server == types.DefaultUserServer && jid.User != "" {
 			return jid.User
 		}
 	}
@@ -216,7 +227,7 @@ func participantJIDs(ctx context.Context, participant types.GroupParticipant, li
 
 func locallySavedContactName(contact types.ContactInfo) string {
 	for _, candidate := range []string{contact.FullName, contact.FirstName} {
-		if name := plainContactName(candidate); name != "" {
+		if name := plainContactName(candidate); name != "" && !phoneLikeName(name) {
 			return name
 		}
 	}
