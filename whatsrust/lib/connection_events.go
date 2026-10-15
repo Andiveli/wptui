@@ -37,6 +37,18 @@ func dispatchConnectedEvent() {
 	})
 }
 
+// A confirmed mapping only signals Rust to read local contacts; no PN/LID
+// or display name crosses the event payload boundary.
+func dispatchContactAliasesUpdatedEvent() {
+	if eventHandler.callback == nil {
+		return
+	}
+	C.callConnectionEventCallback(eventHandler, &C.Event{
+		kind: C.uint8_t(EventTypeContactAliasesUpdated),
+		data: nil,
+	})
+}
+
 func emitLogoutResult(status uint8) {
 	if eventHandler.callback == nil {
 		return

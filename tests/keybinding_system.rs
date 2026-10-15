@@ -1,3 +1,6 @@
+use ratatui::crossterm::event::{
+    Event, KeyCode as TerminalKeyCode, KeyEvent, KeyModifiers as TerminalKeyModifiers,
+};
 use whatsrust::JID;
 use wp_tui::app::actions::{
     AppAction, FocusPane, PaneVisibility, Section, focus_after, focus_after_visibility_change,
@@ -37,6 +40,66 @@ fn keymap_resolves_navigation_and_focus_bindings() {
             SequenceResolution::Complete(action)
         );
     }
+}
+
+#[test]
+fn arrow_keys_resolve_like_vim_navigation() {
+    let cases = [
+        (KeyCode::Up, KeyCode::Char('k'), AppAction::SelectPrevious),
+        (KeyCode::Down, KeyCode::Char('j'), AppAction::SelectNext),
+        (KeyCode::Left, KeyCode::Char('h'), AppAction::FocusPrevious),
+        (KeyCode::Right, KeyCode::Char('l'), AppAction::FocusNext),
+    ];
+
+    for (arrow, vim_key, action) in cases {
+        assert_eq!(
+            resolve_sequence(&[Key::k(arrow)]),
+            resolve_sequence(&[Key::k(vim_key)])
+        );
+        assert_eq!(
+            resolve_sequence(&[Key::k(arrow)]),
+            SequenceResolution::Complete(action)
+        );
+    }
+}
+
+#[test]
+fn terminal_arrows_navigate_the_focused_pane() {
+    let mut app = TestApp::new();
+    app.focus_pane = FocusPane::SectionRail;
+
+    for (arrow, section) in [
+        (TerminalKeyCode::Down, Section::Status),
+        (TerminalKeyCode::Up, Section::Chats),
+    ] {
+        app.on_terminal_event(Event::Key(KeyEvent::new(arrow, TerminalKeyModifiers::NONE)));
+        assert_eq!(app.selected_section, section);
+    }
+
+    let first = JID::from("first@example.test".to_owned());
+    app.sorted_chats.push(first);
+    app.sorted_chats
+        .push(JID::from("second@example.test".to_owned()));
+    app.chat_list_state.select(Some(0));
+    app.focus_pane = FocusPane::ChatList;
+
+    app.on_terminal_event(Event::Key(KeyEvent::new(
+        TerminalKeyCode::Down,
+        TerminalKeyModifiers::NONE,
+    )));
+    assert_eq!(app.chat_list_state.selected(), Some(1));
+
+    app.on_terminal_event(Event::Key(KeyEvent::new(
+        TerminalKeyCode::Right,
+        TerminalKeyModifiers::NONE,
+    )));
+    assert_eq!(app.focus_pane, FocusPane::Conversation);
+
+    app.on_terminal_event(Event::Key(KeyEvent::new(
+        TerminalKeyCode::Left,
+        TerminalKeyModifiers::NONE,
+    )));
+    assert_eq!(app.focus_pane, FocusPane::ChatList);
 }
 
 #[test]

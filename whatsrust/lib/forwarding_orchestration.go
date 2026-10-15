@@ -37,14 +37,15 @@ func forwardMessages(sourceID, sourceChat, sourceSender string, sourceIsFromMe b
 	if err != nil {
 		return forwardingReport{failed: uint32(len(destinations)), failure: forwardFailureInvalidSource}
 	}
-	if client == nil || client.Store == nil || client.Store.ID == nil {
+	clientSnapshot := lifecycleState.clientSnapshot()
+	if clientSnapshot == nil || clientSnapshot.Store == nil || clientSnapshot.Store.ID == nil {
 		return forwardingReport{failed: uint32(len(request.destinations)), failure: forwardFailureSendFailed}
 	}
 	sourceMessage, failure := forwardSourceFromBytes(rawSource)
 	if failure != forwardFailureNone {
 		return forwardingReport{failed: uint32(len(request.destinations)), failure: failure}
 	}
-	sourceOwned := sourceOwnedByCurrentUser(sourceIsFromMe, request.sourceSender, *client.Store.ID)
+	sourceOwned := sourceOwnedByCurrentUser(sourceIsFromMe, request.sourceSender, *clientSnapshot.Store.ID)
 	report := forwardingReport{}
 	for _, destination := range request.destinations {
 		message, err := prepareForwardMessage(sourceMessage, sourceOwned)
@@ -52,14 +53,14 @@ func forwardMessages(sourceID, sourceChat, sourceSender string, sourceIsFromMe b
 			report.failed++
 			continue
 		}
-		response, err := client.SendMessage(context.Background(), destination, message)
+		response, err := clientSnapshot.SendMessage(context.Background(), destination, message)
 		if err != nil {
 			LOG_WARN("forward send failed: %v", err)
 			report.failed++
 			continue
 		}
 		report.succeeded++
-		HandleMessage(types.MessageInfo{MessageSource: types.MessageSource{Chat: destination, Sender: *client.Store.ID, IsFromMe: true}, ID: response.ID, Timestamp: response.Timestamp}, message, false)
+		HandleMessage(types.MessageInfo{MessageSource: types.MessageSource{Chat: destination, Sender: *clientSnapshot.Store.ID, IsFromMe: true}, ID: response.ID, Timestamp: response.Timestamp}, message, false)
 	}
 	return report
 }

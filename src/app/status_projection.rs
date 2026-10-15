@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::App;
+use super::{App, StoreStatusCursor};
 use whatsrust as wr;
 
 /// The synthetic chat that carries WhatsApp status broadcasts. Each message's
@@ -29,6 +29,7 @@ impl App<'_> {
             .flatten()
         {
             if let Some(message) = self.messages.get(id)
+                && !self.message_status(id).deleted
                 && message.info.timestamp
                     > latest
                         .get(&message.info.sender)
@@ -45,7 +46,11 @@ impl App<'_> {
                 .cmp(&left.1)
                 .then_with(|| left.0.0.as_ref().cmp(right.0.0.as_ref()))
         });
-        senders.into_iter().map(|(jid, _)| jid).collect()
+        senders
+            .into_iter()
+            .map(|(jid, _)| jid)
+            .filter(|jid| !self.contact_name(jid).is_empty())
+            .collect()
     }
 
     /// Keeps the status-list highlight valid: always selects a row when the
@@ -65,6 +70,21 @@ impl App<'_> {
             .map(|index| self.status_contacts[index].clone())
     }
 
+    /// Only canonical published statuses determine whether this contact row
+    /// is ours; pending local-send rows never identify the account.
+    pub(crate) fn selected_status_contact_is_own(&self) -> bool {
+        let Some(contact) = self.selected_status_contact() else {
+            return false;
+        };
+        let ids = self.status_messages(&contact);
+        !ids.is_empty()
+            && ids.iter().all(|id| {
+                self.messages
+                    .get(id)
+                    .is_some_and(|message| message.info.is_from_me)
+            })
+    }
+
     /// The statuses of `contact` from the `status@broadcast` chat in
     /// ascending order (newest last, as `sort_chat_messages` leaves it).
     pub fn status_messages(&self, contact: &wr::JID) -> Vec<wr::MessageId> {
@@ -73,11 +93,47 @@ impl App<'_> {
             .into_iter()
             .flatten()
             .filter(|id| {
-                self.messages
-                    .get(*id)
-                    .is_some_and(|message| &message.info.sender == contact)
+                self.messages.get(*id).is_some_and(|message| {
+                    &message.info.sender == contact && !self.message_status(id).deleted
+                })
             })
             .cloned()
+            .collect()
+    }
+
+    /// Already-synced outbound broadcasts, independent of the sender JID.
+    pub fn own_status_messages(&self) -> Vec<wr::MessageId> {
+        self.chat_messages
+            .get(&wr::JID::from(STATUS_BROADCAST_CHAT.to_owned()))
+            .into_iter()
+            .flatten()
+            .filter(|id| {
+                self.messages.get(*id).is_some_and(|message| {
+                    message.info.is_from_me && !self.message_status(id).deleted
+                })
+            })
+            .cloned()
+            .collect()
+    }
+
+    pub(crate) fn pending_own_status_messages(&self) -> Vec<wr::Message> {
+        let broadcast = wr::JID::from(STATUS_BROADCAST_CHAT.to_owned());
+        self.pending_outgoing_status
+            .iter()
+            .map(|(local_id, content)| wr::Message {
+                info: wr::MessageInfo {
+                    id: format!("local-send-{local_id}").into(),
+                    chat: broadcast.clone(),
+                    sender: broadcast.clone(),
+                    mentions_self: false,
+                    timestamp: self.now(),
+                    is_from_me: true,
+                    quote_id: None,
+                    read_by: 0,
+                    forwarding: Default::default(),
+                },
+                message: content.clone(),
+            })
             .collect()
     }
 
@@ -86,6 +142,7 @@ impl App<'_> {
             .get(&wr::JID::from(STATUS_BROADCAST_CHAT.to_owned()))
             .into_iter()
             .flatten()
+            .filter(|id| !self.message_status(id).deleted)
             .filter_map(|id| self.messages.get(id))
             .filter(|message| &message.info.sender == contact)
             .map(|message| message.info.timestamp)
@@ -117,8 +174,12 @@ impl App<'_> {
                 .copied()
                 .unwrap_or_default();
             if latest > current {
-                match self.db_handler.set_status_last_seen(&contact, latest) {
-                    Ok(rows) => {
+                match self.status_cursor.store(StoreStatusCursor {
+                    contact: contact.clone(),
+                    timestamp: latest,
+                }) {
+                    Ok(()) => {
+                        let rows = 1;
                         let contact_id =
                             crate::app::message_action_diagnostics::identifier_for_log(&contact.0);
                         self.message_action_diagnostics.record_read_sync(|| {

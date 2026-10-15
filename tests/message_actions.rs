@@ -7,7 +7,10 @@ use wp_tui::app::MessageAction;
 use wp_tui::app::actions::{
     ActionNotice, AppAction, ConversationMode, MessageForwarder, MessageMenuAction,
 };
-use wp_tui::db::DatabaseHandler;
+use wp_tui::db::{
+    DatabaseHandler, SqliteChatReadCursor, SqliteChatStoreHydration, SqliteContactWriter,
+    SqliteMessageReactionWriter, SqliteStatusCursor, SqliteStatusRetention,
+};
 use wp_tui::ui::message_list::reply_summary;
 mod common;
 use common::TestApp;
@@ -258,21 +261,18 @@ fn reaction_picker_handles_modal_navigation_without_changing_focus() {
         KeyCode::Char('r'),
         KeyModifiers::NONE,
     )));
+    app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)));
     app.on_terminal_event(Event::Key(KeyEvent::new(
-        KeyCode::Right,
+        KeyCode::Char('j'),
+        KeyModifiers::NONE,
+    )));
+    app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)));
+    app.on_terminal_event(Event::Key(KeyEvent::new(
+        KeyCode::Char('k'),
         KeyModifiers::NONE,
     )));
     app.on_terminal_event(Event::Key(KeyEvent::new(
-        KeyCode::Char('l'),
-        KeyModifiers::NONE,
-    )));
-    app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)));
-    app.on_terminal_event(Event::Key(KeyEvent::new(
-        KeyCode::Char('h'),
-        KeyModifiers::NONE,
-    )));
-    app.on_terminal_event(Event::Key(KeyEvent::new(
-        KeyCode::Char('l'),
+        KeyCode::Char('j'),
         KeyModifiers::NONE,
     )));
     assert_eq!(app.focus_pane, wp_tui::app::actions::FocusPane::ChatList);
@@ -722,10 +722,15 @@ fn owned_text_app(text: &str) -> TestApp {
 }
 
 fn replace_database(app: &mut App<'_>, path: &std::path::Path) {
-    std::mem::replace(
-        &mut app.db_handler,
-        DatabaseHandler::new(&path.join("app.db")),
-    )
-    .stop();
+    let db_path = path.join("app.db");
+    let db_handler = DatabaseHandler::new(&db_path);
+    app.set_chat_store_write(Box::new(db_handler.chat_store_writer()));
+    app.set_contact_write(Box::new(SqliteContactWriter::new(&db_path)));
+    app.set_message_reaction_write(Box::new(SqliteMessageReactionWriter::new(&db_path)));
+    app.set_chat_read_cursor(Box::new(SqliteChatReadCursor::new(&db_path)));
+    app.set_status_cursor(Box::new(SqliteStatusCursor::new(&db_path)));
+    app.set_status_retention(Box::new(SqliteStatusRetention::new(&db_path)));
+    std::mem::replace(&mut app.db_handler, db_handler).stop();
+    app.set_chat_store_hydration(Box::new(SqliteChatStoreHydration::new(&db_path)));
     app.db_handler.init();
 }

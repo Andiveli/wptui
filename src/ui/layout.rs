@@ -36,6 +36,16 @@ pub(crate) fn composer_viewport_width(
         .saturating_sub(4)
 }
 
+pub(crate) fn chat_filter_areas(area: Rect, show_filters: bool) -> (Option<Rect>, Rect) {
+    if show_filters {
+        let [filter_area, body_area] =
+            Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
+        (Some(filter_area), body_area)
+    } else {
+        (None, area)
+    }
+}
+
 pub fn navigation_areas(area: Rect, visibility: PaneVisibility) -> NavigationAreas {
     let rail_width = if visibility.section_rail {
         14.min(area.width)
