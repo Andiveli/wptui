@@ -37,3 +37,23 @@ jobs:
 
       - name: Test
         run: cargo test -- --test-threads=1
+
+  nix-build-and-devshell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - name: Build Go bridge with Nix
+        run: nix build --no-update-lock-file --print-build-logs --no-link .#whatsrust-libgo
+
+      - name: Build wp-tui with Nix
+        run: |
+          nix build --no-update-lock-file --print-build-logs .#default
+          test -x result/bin/wp-tui
+          ./result/bin/wp-tui --version
+
+      - name: Run wp-tui from dev shell
+        run: nix develop --no-update-lock-file --command wp-tui --version

@@ -110,6 +110,23 @@ The script downloads the matching binary from the latest release into
 Make sure the runtime libraries listed in [Requirements](#requirements) are
 present first.
 
+### Nix (Linux)
+
+The flake declares `wp-tui` for `x86_64-linux` and `aarch64-linux`; CI builds
+only the x86_64 Linux package. From a checkout, build the package or run it
+from the development shell:
+
+```bash
+nix build .#default
+./result/bin/wp-tui --version
+nix develop --command wp-tui --version
+```
+
+Run `nix develop` without `--command` to enter a shell with `wp-tui` on `PATH`.
+When using the repository as a NixOS flake input, select
+`inputs.wptui.packages.x86_64-linux.default` on x86_64 Linux (or
+`inputs.wptui.packages.aarch64-linux.default` on ARM Linux).
+
 ### Build from source
 
 ```bash

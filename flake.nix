@@ -45,7 +45,7 @@
               cp libgo.a $out/lib/
             '';
 
-            vendorHash = "sha256-FyC60Cx+N8NV+TnNjFllTsN3Fv68aeiRsYY7/obyAYo=";
+            vendorHash = "sha256-y9y0KJoiwvwPoFGMf9RRrQDl6sSJmkWqyGaxHTEBX8E=";
           };
 
           default = pkgs.rustPlatform.buildRustPackage (finalAttrs: {
@@ -79,6 +79,14 @@
           });
 
           whatsrust = default;
+        }
+      );
+
+      devShells = forAllSystems (
+        pkgs: {
+          default = pkgs.mkShell {
+            packages = [ self.packages.${pkgs.stdenv.hostPlatform.system}.default ];
+          };
         }
       );
     };

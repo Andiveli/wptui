@@ -67,6 +67,22 @@ Notes:
 - The Rust tests **must** run with `--test-threads=1`; they are not safe to run in parallel.
 - CI does not run `clippy`, but keeping `cargo clippy` clean is a good idea.
 
+### Nix package and development shell
+
+On Linux with Nix installed, check both the Go bridge and the executable, then
+confirm that the development shell exposes `wp-tui`:
+
+```bash
+nix build --no-update-lock-file --no-link .#whatsrust-libgo
+nix build --no-update-lock-file .#default
+./result/bin/wp-tui --version
+nix develop --no-update-lock-file --command wp-tui --version
+```
+
+The Nix CI job runs these checks on pull requests and `main`. Keep the committed
+`flake.lock` unchanged when verifying a Go `vendorHash`; if Nix is unavailable
+locally, use the GitHub Actions result instead of claiming a local pass.
+
 ## Code style
 
 - **Rust**: format with `rustfmt` (enforced by CI). Follow the surrounding code's conventions.
