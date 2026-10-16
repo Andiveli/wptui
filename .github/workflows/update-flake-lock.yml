@@ -13,20 +13,52 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
+  actions: write
 
 jobs:
   update:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: main
 
       - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@main
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
 
       - name: Update flake.lock
         run: nix flake update
 
-      - name: Commit and push changes
-        uses: stefanzweifel/git-auto-commit-action@v7
+      # Keep recurring lock updates linked to the approved issue.
+      - name: Propose flake.lock update
+        id: lock_pr
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8
         with:
-          commit_message: "chore: update flake.lock"
+          add-paths: flake.lock
+          base: main
+          branch: chore/update-flake-lock
+          commit-message: "chore(nix): update flake.lock"
+          title: "chore(nix): update flake.lock"
+          body: |
+            ## Summary
+            - Refresh flake.lock through a reviewable PR instead of pushing to protected main.
+
+            ## Changes
+            - flake.lock: refresh inputs with nix flake update.
+
+            ## Testing
+            - [ ] `cargo test -- --test-threads=1` — verify the dispatched CI result.
+            - [ ] `cd whatsrust/lib && go test ./...` — verify the dispatched CI result.
+            - [ ] `cargo fmt --check` — verify the dispatched CI result.
+            - [ ] Manual testing done — verify the Nix package and devShell CI jobs.
+
+            Refs #448
+          labels: type:chore
+
+      - name: Run CI for lock update
+        if: ${{ steps.lock_pr.outputs.pull-request-operation == 'created' || steps.lock_pr.outputs.pull-request-operation == 'updated' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LOCK_BRANCH: ${{ steps.lock_pr.outputs.pull-request-branch }}
+        run: gh workflow run ci.yml --ref "$LOCK_BRANCH"
