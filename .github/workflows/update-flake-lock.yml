@@ -30,7 +30,6 @@ jobs:
       - name: Update flake.lock
         run: nix flake update
 
-      # Keep recurring lock updates linked to the approved issue.
       - name: Propose flake.lock update
         id: lock_pr
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8
@@ -52,8 +51,6 @@ jobs:
             - [ ] `cd whatsrust/lib && go test ./...` — verify the dispatched CI result.
             - [ ] `cargo fmt --check` — verify the dispatched CI result.
             - [ ] Manual testing done — verify the Nix package and devShell CI jobs.
-
-            Refs #448
           labels: type:chore
 
       - name: Run CI for lock update
