@@ -3,7 +3,6 @@ name: preview
 on:
   push:
     branches:
-      - beta
       - "preview/**"
 
 permissions:
