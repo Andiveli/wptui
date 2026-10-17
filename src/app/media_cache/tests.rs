@@ -233,7 +233,7 @@ fn saturated_pending_queue_keeps_sticker_still_without_retry_churn() {
     jobs.shutdown();
     assert!(app.image_cache.contains_key(&path));
     assert!(matches!(
-        app.metadata.get(&"overflow".into()),
+        app.metadata.get(&wr::MessageId::from("overflow")),
         Some(Metadata::File(FileMeta::Loaded))
     ));
 }
