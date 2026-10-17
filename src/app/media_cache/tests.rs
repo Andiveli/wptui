@@ -175,10 +175,17 @@ fn simultaneous_sticker_loads_eventually_animate_after_worker_slots_free() {
         );
         paths.push(Arc::<str>::from(path));
     }
-    for _ in 0..3 {
+    let mut results = 0;
+    while results < 3 {
         let AppInput::App(event) = app.rx.recv_timeout(Duration::from_secs(5)).unwrap() else {
             panic!("expected sticker preview event");
         };
+        if matches!(
+            &event,
+            AppEvent::SetStickerPreview(..) | AppEvent::SetFilePreview(..)
+        ) {
+            results += 1;
+        }
         app.handle_media_viewer_event(event, &download_tx, &mut jobs);
     }
     jobs.shutdown();
@@ -188,6 +195,99 @@ fn simultaneous_sticker_loads_eventually_animate_after_worker_slots_free() {
             "{path} remained a still preview"
         );
     }
+}
+
+#[test]
+fn saturated_pending_queue_keeps_sticker_still_without_retry_churn() {
+    let mut app = TestApp::new();
+    let mut jobs = MediaJobOwner::new();
+    let (download_tx, _download_rx) = mpsc::channel();
+    let _first = app.animation_slots.try_acquire().unwrap();
+    let _second = app.animation_slots.try_acquire().unwrap();
+    for index in 0..256 {
+        app.pending_sticker_previews
+            .push_back((format!("queued-{index}").into(), Arc::from("queued.webp")));
+    }
+    let path = Arc::<str>::from("stickers/overflow.webp");
+    std::fs::create_dir_all(app.media_path.join("stickers")).unwrap();
+    std::fs::write(
+        app.media_path.join(path.as_ref()),
+        include_bytes!("../../../tests/fixtures/sticker-animated.webp"),
+    )
+    .unwrap();
+    let mut message = file_message("overflow", path.as_ref());
+    if let wr::MessageContent::File(file) = &mut message.message {
+        file.kind = wr::FileKind::Sticker;
+    }
+    app.messages.insert("overflow".into(), message);
+    app.handle_media_viewer_event(
+        AppEvent::LoadFilePreview("overflow".into()),
+        &download_tx,
+        &mut jobs,
+    );
+    let AppInput::App(event) = app.rx.recv_timeout(Duration::from_secs(5)).unwrap() else {
+        panic!("expected still preview event");
+    };
+    assert!(matches!(&event, AppEvent::SetFilePreview(..)));
+    app.handle_media_viewer_event(event, &download_tx, &mut jobs);
+    jobs.shutdown();
+    assert!(app.image_cache.contains_key(&path));
+    assert!(matches!(
+        app.metadata.get(&"overflow".into()),
+        Some(Metadata::File(FileMeta::Loaded))
+    ));
+}
+
+#[test]
+fn ordinary_image_preview_loads_while_animation_slots_are_full() {
+    let mut app = TestApp::new();
+    let mut jobs = MediaJobOwner::new();
+    let (download_tx, _download_rx) = mpsc::channel();
+    let _first = app.animation_slots.try_acquire().unwrap();
+    let _second = app.animation_slots.try_acquire().unwrap();
+    let path = Arc::<str>::from("images/still.png");
+    std::fs::create_dir_all(app.media_path.join("images")).unwrap();
+    image::DynamicImage::new_rgba8(2, 2)
+        .save(app.media_path.join(path.as_ref()))
+        .unwrap();
+    app.messages
+        .insert("still".into(), file_message("still", path.as_ref()));
+    app.handle_media_viewer_event(
+        AppEvent::LoadFilePreview("still".into()),
+        &download_tx,
+        &mut jobs,
+    );
+    let AppInput::App(event) = app.rx.recv_timeout(Duration::from_secs(5)).unwrap() else {
+        panic!("expected image preview event");
+    };
+    assert!(matches!(&event, AppEvent::SetFilePreview(..)));
+    app.handle_media_viewer_event(event, &download_tx, &mut jobs);
+    jobs.shutdown();
+    assert!(app.image_cache.contains_key(&path));
+    assert!(app.pending_sticker_previews.is_empty());
+}
+
+#[test]
+fn removed_pending_sticker_is_not_restarted() {
+    let mut app = TestApp::new();
+    let mut jobs = MediaJobOwner::new();
+    let (download_tx, _download_rx) = mpsc::channel();
+    let id: wr::MessageId = "removed".into();
+    app.messages
+        .insert(id.clone(), file_message("removed", "old.webp"));
+    app.metadata
+        .insert(id.clone(), Metadata::File(FileMeta::Loading));
+    app.pending_sticker_previews
+        .push_back((id.clone(), Arc::from("old.webp")));
+    app.messages.remove(&id);
+    app.handle_media_viewer_event(
+        AppEvent::SetFileState("other".into(), FileMeta::Loaded),
+        &download_tx,
+        &mut jobs,
+    );
+    assert!(app.pending_sticker_previews.is_empty());
+    assert!(app.rx.try_recv().is_err());
+    jobs.shutdown();
 }
 
 #[test]
