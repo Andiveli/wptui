@@ -37,6 +37,14 @@ impl App<'_> {
                 self.conversation_mode = ConversationMode::MessageNavigation;
             } else if key == Key::c('i') && !self.composer_blocked() {
                 self.vim_composer_mode = Some(VimComposerMode::Insert);
+            } else if let Some(direction) = match key {
+                key if key == Key::c('h') => Some(KeyCode::Left),
+                key if key == Key::c('j') => Some(KeyCode::Down),
+                key if key == Key::c('k') => Some(KeyCode::Up),
+                key if key == Key::c('l') => Some(KeyCode::Right),
+                _ => None,
+            } {
+                self.dispatch_composer_action(ComposerAction::Edit(Key::k(direction)));
             }
             return true;
         }

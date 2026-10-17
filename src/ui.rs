@@ -21,7 +21,9 @@ pub(crate) use layout::{
 };
 
 use crate::app::App;
-use crate::app::actions::{ConversationMode, FocusPane, Section, StatusCompositionState};
+use crate::app::actions::{
+    ConversationMode, FocusPane, Section, StatusCompositionState, VimComposerMode,
+};
 use crate::app::events::{ViewerPreviewKey, ViewerPreviewState, ViewerStatus};
 use crate::app::read_receipts::VisibilityPlan;
 use crate::app::runtime_diagnostics::Phase;
@@ -500,6 +502,12 @@ pub fn render_chats_with_plan(
             " Admin-only group "
         } else if app.conversation_mode == ConversationMode::EditingMessage {
             " Edit message (Enter save, Esc cancel) "
+        } else if app.conversation_mode == ConversationMode::ComposerEditing {
+            match app.vim_composer_mode {
+                Some(VimComposerMode::Normal) => " Vim Normal (i insert, Esc exit) ",
+                Some(VimComposerMode::Insert) => " Vim Insert (Esc normal) ",
+                None => " Message input ",
+            }
         } else {
             " Message input "
         };

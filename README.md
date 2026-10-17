@@ -202,6 +202,7 @@ or editor state.
 | Action | Key |
 |---|---|
 | Start composing | `i` |
+| Start optional Vim composer (Chats/Communities conversation only) | `Space`, then `v` |
 | Copy selected text | `y` |
 | React | `r` |
 | Share | `s` |
@@ -227,11 +228,16 @@ removes the local row, but does not itself prove removal from every recipient's 
 |---|---|---|
 | Composer | Send | `Enter` |
 | Composer | Paste text, files, or an image | `Ctrl+V` |
+| Vim composer Normal | Move cursor | `h`/`j`/`k`/`l` |
+| Vim composer Normal | Insert / return to chat (draft kept) | `i` / `Esc` |
+| Vim composer Insert | Return to Normal | `Esc` |
 | Reaction picker | Move / confirm | `j`/`k` or Up/Down arrows / `Enter` |
 | Media viewer | Previous / next | `h`/`l` or arrows |
 
-Pasted files are queued as attachments. When text is included, it becomes the caption of the first
-attachment.
+The optional Vim composer starts in Normal mode; its border title shows Normal or Insert.
+Ordinary `i` composition remains unchanged. Search, substitution, deletion, and composer yank
+(`y`) are not available in this first slice. Pasted files are queued as attachments. When text
+is included, it becomes the caption of the first attachment.
 
 ## Development
 
