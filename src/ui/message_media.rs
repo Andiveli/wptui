@@ -155,7 +155,20 @@ pub fn render_file(
                     } else {
                         "🖼"
                     };
-                    if !render_image || app.image_cache.get_mut(&data.path).is_none() {
+                    if render_image
+                        && matches!(data.kind, FileKind::Sticker)
+                        && app.sticker_playback.contains_key(&data.path)
+                    {
+                        app.visible_stickers.insert(data.path.clone());
+                        app.touch_sticker_cache(&data.path);
+                        if let Some(playback) = app.sticker_playback.get_mut(&data.path) {
+                            StatefulImage::default().render(
+                                media_area,
+                                buf,
+                                &mut playback.frames[playback.current],
+                            );
+                        }
+                    } else if !render_image || app.image_cache.get_mut(&data.path).is_none() {
                         Paragraph::new(placeholder)
                             .alignment(alignment)
                             .render(media_area, buf);
