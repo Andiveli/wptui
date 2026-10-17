@@ -37,7 +37,9 @@ fn native_notifier_selects_sound_from_settings_without_audio_hardware() {
     let directory = tempfile::tempdir().unwrap();
     let settings = directory.path().join("settings.conf");
     let notifier = NotifyRustNotifier::new(settings.clone());
-    assert_eq!(notifier.sound_choice(), NotificationSound::System);
+    assert_eq!(notifier.sound_choice(), NotificationSound::Bundled);
+    std::fs::write(&settings, "notification_sound=relative.wav\n").unwrap();
+    assert_eq!(notifier.sound_choice(), NotificationSound::Bundled);
     std::fs::write(&settings, "notification_sound=/sounds/alert.wav\n").unwrap();
     assert_eq!(
         notifier.sound_choice(),
@@ -62,6 +64,12 @@ fn native_notifier_keeps_selected_legacy_sound_when_config_appears_later() {
 }
 
 #[test]
+fn bundled_sound_decodes_without_audio_hardware() {
+    let mut decoded = rodio::Decoder::try_from(std::io::Cursor::new(ATTENTION_WAV)).unwrap();
+    assert!(decoded.next().is_some());
+}
+
+#[test]
 fn custom_sound_decodes_wav_mp3_and_ogg_without_audio_hardware() {
     for extension in ["wav", "mp3", "ogg"] {
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -76,7 +84,7 @@ fn custom_sound_decodes_wav_mp3_and_ogg_without_audio_hardware() {
 fn missing_custom_audio_fails_without_panicking_or_waiting_for_a_device() {
     let directory = tempfile::tempdir().unwrap();
     let missing = directory.path().join("missing.ogg");
-    assert!(play_custom_sound(&missing).is_err());
+    assert!(play_sound(NotificationSound::Custom(missing)).is_err());
 }
 
 #[test]

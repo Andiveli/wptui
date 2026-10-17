@@ -51,11 +51,14 @@ An existing `settings.conf` in the data directory is copied there on first use i
 file exists; the legacy file is left untouched. Set `composer_direction=rtl` or
 `composer_direction=auto` to choose the composer direction.
 
-Desktop notifications use the system notification sound by default. To play a custom sound,
-add `notification_sound=/absolute/path/to/alert.ogg` to `settings.conf` (WAV, MP3 and
-OGG/Vorbis are supported). `notification_sound=system` restores the default. Custom playback
-does not request a second system sound; an unreadable file or missing audio device is logged
-without stopping incoming messages.
+Eligible desktop notifications play the bundled `assets/sounds/attention.wav` by default,
+even when the notification server does not support sound hints. To use your OS/theme sound
+instead, set `notification_sound=system` in `settings.conf` (this requests a system sound hint;
+it depends on your notification server). To play your own sound directly, set
+`notification_sound=/absolute/path/to/alert.ogg` (WAV, MP3 and OGG/Vorbis are supported).
+Absent or invalid settings use the bundled sound. Direct playback does not request a second
+system sound; an unreadable file or missing audio device is logged without suppressing the
+desktop notification. Muted chats, open chats and sync traffic remain silent.
 
 Mouse capture is enabled by default during the pointer-support preview. Add `mouse=disable` to
 that config file and restart to restore terminal-native selection, or use
