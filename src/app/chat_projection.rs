@@ -228,6 +228,31 @@ impl App<'_> {
         settings.found && settings.archived
     }
 
+    pub(crate) fn unread_filter_counts(&mut self) -> [usize; 4] {
+        if let Some((revision, counts)) = self.unread_filter_counts_cache
+            && revision == self.chat_list_revision
+        {
+            return counts;
+        }
+        let mut counts = [0; 4];
+        for jid in self.chats.keys() {
+            if self.pending_chat_activity(jid).0 == 0 {
+                continue;
+            }
+            if self.is_archived_chat(jid) {
+                counts[3] += 1;
+            } else {
+                counts[0] += 1;
+                counts[1] += 1;
+                if Self::is_group_chat(jid) {
+                    counts[2] += 1;
+                }
+            }
+        }
+        self.unread_filter_counts_cache = Some((self.chat_list_revision, counts));
+        counts
+    }
+
     pub(crate) fn archived_group_attention(&mut self) -> bool {
         if let Some((revision, attention)) = self.archived_group_attention_cache
             && revision == self.chat_list_revision

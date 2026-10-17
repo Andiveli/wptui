@@ -369,6 +369,7 @@ pub struct App<'a> {
     pub(crate) chat_list_view: Option<chat_projection::ChatListViewModel>,
     pub(crate) chat_list_revision: u64,
     pub(crate) archived_group_attention_cache: Option<(u64, bool)>,
+    pub(crate) unread_filter_counts_cache: Option<(u64, [usize; 4])>,
     pub(crate) chat_list_mutation_depth: usize,
     pub(crate) chat_list_mutation_pending: bool,
 }
@@ -447,6 +448,7 @@ impl App<'_> {
     pub(crate) fn set_chat_settings_query(&mut self, port: Box<dyn ChatSettingsQueryPort>) {
         self.chat_settings_query = port;
         self.archived_group_attention_cache = None;
+        self.unread_filter_counts_cache = None;
     }
 
     #[cfg(test)]

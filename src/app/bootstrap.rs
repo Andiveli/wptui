@@ -236,6 +236,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         chat_list_view: None,
         chat_list_revision: 0,
         archived_group_attention_cache: None,
+        unread_filter_counts_cache: None,
         chat_list_mutation_depth: 0,
         chat_list_mutation_pending: false,
     };
