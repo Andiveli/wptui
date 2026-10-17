@@ -10,8 +10,8 @@ S2. "Podemos copiar o basarnos en como lo hace concord (~/Escritorio/Programacio
 ## Tasks
 
 - [x] T1 (S1-S2): Decode and bound animated sticker frames; retain still-image behavior for other media. Route: bounded writer. Commit: bcec782 (preview run 38993765636 passed).
-- [~] T2 (S1): Schedule visible animated sticker playback and render current frame via negotiated terminal protocol, with focused tests and user documentation. Route: bounded writer. Commits: 0c30f67, 991b24e, d287aab; correction pending.
-- [ ] T3 (S1-S2): Verify feature and shared-path regressions, assess risk and close. Route: parent and independent verifier for item 4. Commit: pending renewed verification.
+- [x] T2 (S1): Schedule visible animated sticker playback and render current frame via negotiated terminal protocol, with focused tests and user documentation. Route: bounded writer. Commits: 0c30f67, 991b24e, d287aab, dc28dee, fb15c60 (preview run 39003693304 passed).
+- [x] T3 (S1-S2): Verify feature and shared-path regressions, assess risk and close. Route: parent and independent verifier for item 4. Commit: final documentation slice (Actions 39003693304 and artifact installed).
 
 ## Log
 
@@ -26,4 +26,5 @@ L8. Review slices: bcec782 decoder; 0c30f67 playback; 991b24e compilation fix; d
 L9. User correction: "Me funcionó en un sticker, en los demás no, raro". Reopened T2 and T3. Reproduction hypothesis from src/app/runtime_media_viewer_events.rs: try_acquire returns None after two concurrent loads, falls back to still image and marks preview Loaded permanently; no retry when a slot frees. Do not read real user media outside project.
 L10. RED: commit 1534d84, preview run 39001969318, Rust tests exit 101: `app::media_cache::tests::simultaneous_sticker_loads_eventually_animate_after_worker_slots_free` FAILED with `stickers/animated-2.webp remained a still preview`; 533 other tests passed. Preserve installed previous binary until validated replacement.
 L11. Bounded deduplicated pending sticker queue implemented for exhausted animation slots; preview results retry pending requests, reject stale message/path, and retain static fallback for unsupported media or 256-queue/four-animation overflow. Added ordinary-image and queue-saturation regressions.
-L12. First GREEN attempt, preview run 39003071385 at dc28dee, failed Rust test compilation (exit 101, E0283 in `app.metadata.get(&"overflow".into())`); fixed explicit `wr::MessageId` in the regression. Retry Actions before judging runtime outcome.
+L12. First GREEN attempt, preview run 39003071385 at dc28dee, failed Rust test compilation (exit 101, E0283 in `app.metadata.get(&"overflow".into())`); fixed explicit `wr::MessageId` in fb15c60. Run 39003693304 passed Go bridge, Rust formatting/tests (including three-sticker regression), release build and artifact upload at fb15c60. Independent verifier reviewed queue/slot correction; prior compile error addressed and CI supplied missing proof.
+L13. Validated sole x86-64 ELF tar member from artifact 12089464412 at exact fb15c60 and atomically replaced ignored `.worktrees/animated-stickers/target/wp-tui`, SHA-256 `772a791fb6e84122eb7bb7fba37f52cd51444c4a1540044df23c77298cd21b6c`; old binary preserved at `target/wp-tui.2f312ab`. No Cargo local or global binary changes. User live-terminal retest remains outstanding.
