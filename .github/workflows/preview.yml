@@ -42,7 +42,7 @@ jobs:
 
       # Temporary bootstrap for adding the audio dependency without running Cargo locally.
       - name: Resolve updated Cargo lockfile
-        run: cargo generate-lockfile
+        run: cargo metadata --format-version 1 > /dev/null
 
       - name: Upload resolved Cargo lockfile
         uses: actions/upload-artifact@v7

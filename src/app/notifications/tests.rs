@@ -36,6 +36,27 @@ fn native_notifier_selects_sound_from_settings_without_audio_hardware() {
 }
 
 #[test]
+fn native_notifier_uses_legacy_sound_when_config_cannot_be_migrated() {
+    let directory = tempfile::tempdir().unwrap();
+    let unavailable = directory.path().join("blocked");
+    std::fs::write(&unavailable, "not a directory").unwrap();
+    let config = unavailable.join("settings.conf");
+    let legacy = directory.path().join("settings.conf");
+    std::fs::write(&legacy, "notification_sound=/sounds/legacy.ogg\n").unwrap();
+    let notifier = NotifyRustNotifier::new(config.clone()).with_legacy_settings(legacy);
+    assert_eq!(
+        notifier.sound_choice(),
+        NotificationSound::Custom("/sounds/legacy.ogg".into())
+    );
+    // An existing config always takes precedence over the legacy file.
+    let config = directory.path().join("config.conf");
+    std::fs::write(&config, "notification_sound=system\n").unwrap();
+    let notifier = NotifyRustNotifier::new(config)
+        .with_legacy_settings(directory.path().join("settings.conf"));
+    assert_eq!(notifier.sound_choice(), NotificationSound::System);
+}
+
+#[test]
 fn custom_sound_decodes_wav_mp3_and_ogg_without_audio_hardware() {
     for extension in ["wav", "mp3", "ogg"] {
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))

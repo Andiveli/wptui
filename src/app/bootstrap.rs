@@ -21,9 +21,10 @@ pub(crate) fn default_app() -> App<'static> {
         picker,
         default_protocol_type,
         Box::new(SystemClock),
-        Box::new(NotifyRustNotifier::new(preferences::settings_path(
-            project_dirs.config_dir(),
-        ))),
+        Box::new(
+            NotifyRustNotifier::new(preferences::settings_path(project_dirs.config_dir()))
+                .with_legacy_settings(preferences::settings_path(project_dirs.data_dir())),
+        ),
     )
 }
 
