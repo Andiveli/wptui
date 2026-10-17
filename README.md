@@ -46,8 +46,13 @@ Your WhatsApp data — database, media, and session — lives in `~/.local/share
 machine. It is not uploaded anywhere; the client only exchanges data with the WhatsApp servers
 when it links or syncs, like any official client.
 
+Preferences live in your OS configuration directory (`~/.config/wptui/settings.conf` on Linux).
+An existing `settings.conf` in the data directory is copied there on first use if no config
+file exists; the legacy file is left untouched. Set `composer_direction=rtl` or
+`composer_direction=auto` to choose the composer direction.
+
 Mouse capture is enabled by default during the pointer-support preview. Add `mouse=disable` to
-`~/.local/share/wptui/settings.conf` and restart to restore terminal-native selection, or use
+that config file and restart to restore terminal-native selection, or use
 `mouse=enable` to explicitly enable terminal-wide capture. When capture is on, Shift+drag may
 allow native text selection depending on your terminal; it cannot be enabled for individual panes.
 In this preview, the wheel scrolls painted lists. Clicking a section enters its list, clicking

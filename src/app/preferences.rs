@@ -29,8 +29,43 @@ impl ComposerDirection {
     }
 }
 
-pub(crate) fn settings_path(data_dir: &Path) -> PathBuf {
-    data_dir.join(SETTINGS_FILE_NAME)
+pub(crate) fn settings_path(config_dir: &Path) -> PathBuf {
+    config_dir.join(SETTINGS_FILE_NAME)
+}
+
+/// Copy legacy settings once, so subsequent toggles update the config copy without
+/// losing the other preferences. Never replace an existing config file.
+pub(crate) fn resolve_settings_path(config_dir: &Path, data_dir: &Path) -> io::Result<PathBuf> {
+    let config = settings_path(config_dir);
+    let legacy = settings_path(data_dir);
+    if config.exists() || config == legacy || !legacy.exists() {
+        return Ok(config);
+    }
+    let contents = fs::read(&legacy)?;
+    fs::create_dir_all(config_dir)?;
+    publish_settings(&config, |file| {
+        use io::Write;
+        file.write_all(&contents)
+    })?;
+    Ok(config)
+}
+
+// Stage the complete copy next to the destination, then publish without replacing
+// a config file created by another process in the meantime.
+fn publish_settings(
+    config: &Path,
+    write: impl FnOnce(&mut fs::File) -> io::Result<()>,
+) -> io::Result<()> {
+    let parent = config
+        .parent()
+        .ok_or_else(|| io::Error::other("settings path has no parent"))?;
+    let mut staged = tempfile::NamedTempFile::new_in(parent)?;
+    write(staged.as_file_mut())?;
+    match staged.persist_noclobber(config) {
+        Ok(_) => Ok(()),
+        Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(error.error),
+    }
 }
 
 pub(crate) fn load_composer_direction(path: &Path) -> ComposerDirection {
@@ -183,6 +218,88 @@ mod tests {
 
         fs::write(&path, "mouse=invalid\n").unwrap();
         assert!(load_mouse_capture_enabled(&path));
+    }
+
+    #[test]
+    fn legacy_settings_move_without_losing_other_preferences() {
+        let root = tempfile::tempdir().unwrap();
+        let config = root.path().join("config");
+        let data = root.path().join("data");
+        fs::create_dir_all(&data).unwrap();
+        let legacy = settings_path(&data);
+        fs::write(
+            &legacy,
+            "mouse=disable\ncomposer_direction=rtl\ncustom=keep\n",
+        )
+        .unwrap();
+        let path = resolve_settings_path(&config, &data).unwrap();
+        assert_eq!(path, config.join("settings.conf"));
+        assert!(!load_mouse_capture_enabled(&path));
+        assert_eq!(load_composer_direction(&path), ComposerDirection::Rtl);
+        save_composer_direction(&path, ComposerDirection::Auto).unwrap();
+        assert_eq!(
+            fs::read_to_string(&legacy).unwrap(),
+            "mouse=disable\ncomposer_direction=rtl\ncustom=keep\n"
+        );
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "mouse=disable\ncomposer_direction=auto\ncustom=keep\n"
+        );
+    }
+
+    #[test]
+    fn existing_config_takes_precedence_over_legacy() {
+        let root = tempfile::tempdir().unwrap();
+        let config = root.path().join("config");
+        let data = root.path().join("data");
+        fs::create_dir_all(&config).unwrap();
+        fs::create_dir_all(&data).unwrap();
+        fs::write(
+            settings_path(&config),
+            "mouse=enable\ncomposer_direction=auto\n",
+        )
+        .unwrap();
+        fs::write(
+            settings_path(&data),
+            "mouse=disable\ncomposer_direction=rtl\n",
+        )
+        .unwrap();
+        let path = resolve_settings_path(&config, &data).unwrap();
+        assert!(load_mouse_capture_enabled(&path));
+        assert_eq!(load_composer_direction(&path), ComposerDirection::Auto);
+        assert_eq!(
+            fs::read_to_string(settings_path(&data)).unwrap(),
+            "mouse=disable\ncomposer_direction=rtl\n"
+        );
+    }
+
+    #[test]
+    fn failed_staging_does_not_publish_partial_settings() {
+        use io::Write;
+
+        let root = tempfile::tempdir().unwrap();
+        let config = settings_path(root.path());
+        let error = publish_settings(&config, |file| {
+            file.write_all(b"mouse=disable\n")?;
+            Err(io::Error::other("interrupted copy"))
+        })
+        .unwrap_err();
+        assert_eq!(error.to_string(), "interrupted copy");
+        assert!(!config.exists());
+    }
+
+    #[test]
+    fn publication_does_not_replace_existing_config() {
+        use io::Write;
+
+        let root = tempfile::tempdir().unwrap();
+        let config = settings_path(root.path());
+        publish_settings(&config, |file| {
+            file.write_all(b"mouse=disable\n")?;
+            fs::write(&config, "mouse=enable\n")
+        })
+        .unwrap();
+        assert_eq!(fs::read_to_string(config).unwrap(), "mouse=enable\n");
     }
 
     #[test]

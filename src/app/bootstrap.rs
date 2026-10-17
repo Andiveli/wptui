@@ -14,8 +14,9 @@ pub(crate) fn default_app() -> App<'static> {
     let picker = picker_from_terminal();
     let default_protocol_type = picker.protocol_type();
     let project_dirs = ProjectDirs::from("com", "nullptr", "wptui").unwrap();
-    with_data_dir_and_picker_and_ports(
+    with_dirs_and_picker_and_ports(
         project_dirs.data_dir(),
+        project_dirs.config_dir(),
         project_dirs.cache_dir(),
         picker,
         default_protocol_type,
@@ -73,10 +74,39 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
     clock: Box<dyn Clock>,
     notifier: Box<dyn Notifier>,
 ) -> App<'static> {
+    with_dirs_and_picker_and_ports(
+        data_dir,
+        data_dir,
+        cache_dir,
+        picker,
+        default_protocol_type,
+        clock,
+        notifier,
+    )
+}
+
+fn with_dirs_and_picker_and_ports(
+    data_dir: &Path,
+    config_dir: &Path,
+    cache_dir: &Path,
+    picker: Picker,
+    default_protocol_type: ProtocolType,
+    clock: Box<dyn Clock>,
+    notifier: Box<dyn Notifier>,
+) -> App<'static> {
     fs::create_dir_all(data_dir).unwrap();
     let (tx, rx) = mpsc::channel::<AppInput>();
     let (clipboard_reader, clipboard_writer) = open_clipboard_pair();
-    let preferences_path = preferences::settings_path(data_dir);
+    let preferences_path = match preferences::resolve_settings_path(config_dir, data_dir) {
+        Ok(path) => {
+            fs::create_dir_all(config_dir).unwrap();
+            path
+        }
+        Err(error) => {
+            log::warn!("Could not migrate settings to config directory: {error}");
+            preferences::settings_path(data_dir)
+        }
+    };
     let composer_direction = preferences::load_composer_direction(&preferences_path);
     let mouse_capture_enabled = preferences::load_mouse_capture_enabled(&preferences_path);
 
