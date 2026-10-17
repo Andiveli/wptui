@@ -282,7 +282,15 @@ mod tests {
     };
     use whatsrust::{FileContent, FileKind};
 
+    use crate::app::sticker_animation::{StickerPlayback, decode_animated_webp};
     use crate::app::test_support::TestApp;
+    use crate::app::{FileMeta, Metadata};
+    use ratatui::layout::Size;
+    use ratatui_image::picker::Picker;
+    use std::{
+        sync::Arc,
+        time::{Duration, Instant},
+    };
 
     #[test]
     fn caption_cells_use_visual_lines_after_logical_wrapping() {
@@ -320,6 +328,59 @@ mod tests {
             preview_height(&FileKind::Image),
             super::super::message_layout::IMAGE_HEIGHT
         );
+    }
+
+    #[test]
+    fn two_visible_sticker_previews_advance_together() {
+        let mut app = TestApp::new();
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 20, 28));
+        let mut plan = crate::app::events::MediaRenderPlan::default();
+        let mut paths = Vec::new();
+        for (index, y) in [(0, 0), (1, 14)] {
+            let id = format!("sticker-{index}");
+            let path = Arc::<str>::from(format!("stickers/{id}.webp"));
+            let animation =
+                decode_animated_webp(include_bytes!("../../tests/fixtures/sticker-animated.webp"))
+                    .unwrap()
+                    .unwrap();
+            app.sticker_playback.insert(
+                path.clone(),
+                StickerPlayback::prepare(animation, &mut Picker::halfblocks(), Size::new(20, 14)),
+            );
+            app.metadata
+                .insert(id.clone().into(), Metadata::File(FileMeta::Loaded));
+            let file = FileContent {
+                kind: FileKind::Sticker,
+                path: path.clone(),
+                ..Default::default()
+            };
+            super::render_file(
+                &mut buffer,
+                &id.into(),
+                &file,
+                None,
+                &mut app,
+                &mut plan,
+                Rect::new(0, y, 20, 14),
+                true,
+                Alignment::Left,
+                MessageTextMode::Chat,
+            );
+            paths.push(path);
+        }
+        assert!(plan.into_effects().is_empty());
+        assert_eq!(app.visible_stickers.len(), 2);
+        assert!(paths.iter().all(|path| app.visible_stickers.contains(path)));
+        let start = Instant::now();
+        assert!(!app.advance_visible_stickers(start));
+        assert!(app.advance_visible_stickers(start + Duration::from_millis(80)));
+        assert!(
+            paths
+                .iter()
+                .all(|path| app.sticker_playback[path].current == 1)
+        );
+        assert_ne!(buffer[(0, 0)].symbol(), " ");
+        assert_ne!(buffer[(0, 14)].symbol(), " ");
     }
 
     #[test]
