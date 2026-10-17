@@ -177,6 +177,10 @@ Check for and install the latest stable release when using a standalone binary:
 wp-tui update
 ```
 
+The updater accepts older binary-only archives and newer archives containing the
+bundled tone's MIT notices. It keeps `wp-tui-THIRD_PARTY_NOTICES.md` beside the
+updated executable.
+
 When running through Cargo, separate application arguments with `--`:
 
 ```bash
