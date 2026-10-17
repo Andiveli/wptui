@@ -38,7 +38,11 @@ pub(crate) fn settings_path(config_dir: &Path) -> PathBuf {
 pub(crate) fn resolve_settings_path(config_dir: &Path, data_dir: &Path) -> io::Result<PathBuf> {
     let config = settings_path(config_dir);
     let legacy = settings_path(data_dir);
-    if config.exists() || config == legacy || !legacy.exists() {
+    if config == legacy || config.exists() {
+        return Ok(config);
+    }
+    if !legacy.exists() {
+        fs::create_dir_all(config_dir)?;
         return Ok(config);
     }
     let contents = fs::read(&legacy)?;
@@ -218,6 +222,17 @@ mod tests {
 
         fs::write(&path, "mouse=invalid\n").unwrap();
         assert!(load_mouse_capture_enabled(&path));
+    }
+
+    #[test]
+    fn missing_settings_report_unavailable_config_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let obstacle = root.path().join("not-a-directory");
+        fs::write(&obstacle, "blocking file").unwrap();
+        let config_dir = obstacle.join("wptui");
+        let data_dir = root.path().join("data");
+        assert!(resolve_settings_path(&config_dir, &data_dir).is_err());
+        assert!(!settings_path(&config_dir).exists());
     }
 
     #[test]

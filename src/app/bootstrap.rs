@@ -98,10 +98,7 @@ fn with_dirs_and_picker_and_ports(
     let (tx, rx) = mpsc::channel::<AppInput>();
     let (clipboard_reader, clipboard_writer) = open_clipboard_pair();
     let preferences_path = match preferences::resolve_settings_path(config_dir, data_dir) {
-        Ok(path) => {
-            fs::create_dir_all(config_dir).unwrap();
-            path
-        }
+        Ok(path) => path,
         Err(error) => {
             log::warn!("Could not migrate settings to config directory: {error}");
             preferences::settings_path(data_dir)
