@@ -288,6 +288,44 @@ fn clicking_a_painted_plain_message_opens_its_enter_actions() {
     );
 }
 
+#[test]
+fn clicking_a_message_exits_vim_without_reactivating_it_on_ordinary_insert() {
+    let mut app = TestApp::with_settings("mouse=enable\n");
+    let chat: JID = "vim-click@example.test".to_owned().into();
+    app.open_chat_by_jid(chat.clone());
+    app.add_message(message(&chat, "target", 1, "VIM-CONTEXT"));
+    app.composer.insert_text("draft");
+    app.focus_pane = FocusPane::Conversation;
+    for character in [' ', 'v'] {
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            KeyCode::Char(character),
+            KeyModifiers::NONE,
+        )));
+    }
+    let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+    draw(&mut app, &mut terminal);
+    let conversation =
+        ui::navigation_areas(terminal.backend().buffer().area, app.pane_visibility).conversation;
+    let (x, y) = painted_in(&terminal, conversation, "VIM-CONTEXT");
+
+    app.on_terminal_event(mouse(MouseEventKind::Down(MouseButton::Left), x, y));
+    assert_eq!(
+        app.conversation_mode,
+        wp_tui::app::actions::ConversationMode::MessageNavigation
+    );
+    app.on_terminal_event(Event::Key(KeyEvent::new(
+        KeyCode::Esc,
+        KeyModifiers::NONE,
+    )));
+    for character in ['i', 'X'] {
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            KeyCode::Char(character),
+            KeyModifiers::NONE,
+        )));
+    }
+    assert_eq!(app.composer.text(), "draftX");
+}
+
 #[derive(Clone, Default)]
 struct RecordingUrlOpener(Rc<RefCell<Vec<wp_tui::url::UrlLaunchPlan>>>);
 

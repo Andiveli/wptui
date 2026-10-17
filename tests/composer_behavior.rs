@@ -326,6 +326,35 @@ fn attachment_only_drafts_are_sendable() {
 }
 
 #[test]
+fn exiting_vim_normal_dismisses_a_picker_reopened_by_navigation() {
+    let mut app = TestApp::new();
+    app.open_chat_by_jid(whatsrust::JID("123@g.us".into()));
+    app.composer
+        .set_group_participants(vec![whatsrust::GroupParticipant {
+            jid: whatsrust::JID("111@s.whatsapp.net".into()),
+            phone_number: whatsrust::JID("111@s.whatsapp.net".into()),
+            name: "Alice".into(),
+        }]);
+    app.composer.insert_text("@a ");
+    assert!(!app.composer.mention_picker_active());
+    app.focus_pane = FocusPane::Conversation;
+    for character in [' ', 'v', 'h'] {
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            TerminalKeyCode::Char(character),
+            TerminalKeyModifiers::NONE,
+        )));
+    }
+    assert!(app.composer.mention_picker_active());
+    app.on_terminal_event(Event::Key(KeyEvent::new(
+        TerminalKeyCode::Esc,
+        TerminalKeyModifiers::NONE,
+    )));
+    assert_eq!(app.conversation_mode, ConversationMode::MessageNavigation);
+    assert_eq!(app.composer.text(), "@a ");
+    assert!(!app.composer.mention_picker_active());
+}
+
+#[test]
 fn escape_closes_only_the_active_mention_picker() {
     let mut app = TestApp::new();
     app.open_chat_by_jid(whatsrust::JID("123@g.us".into()));
