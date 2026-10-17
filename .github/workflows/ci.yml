@@ -34,10 +34,10 @@ jobs:
         run: cargo fmt --check
 
       - name: Build
-        run: cargo build --all-targets
+        run: cargo build --locked --all-targets
 
       - name: Test
-        run: cargo test -- --test-threads=1
+        run: cargo test --locked -- --test-threads=1
 
   nix-build-and-devshell:
     runs-on: ubuntu-latest
