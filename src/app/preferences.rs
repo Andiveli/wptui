@@ -5,6 +5,37 @@ use std::path::{Path, PathBuf};
 const SETTINGS_FILE_NAME: &str = "settings.conf";
 const COMPOSER_DIRECTION_KEY: &str = "composer_direction";
 const MOUSE_KEY: &str = "mouse";
+const NOTIFICATION_SOUND_KEY: &str = "notification_sound";
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) enum NotificationSound {
+    #[default]
+    System,
+    Custom(PathBuf),
+}
+
+pub(crate) fn load_notification_sound(path: &Path) -> NotificationSound {
+    let Ok(contents) = fs::read_to_string(path) else {
+        return NotificationSound::System;
+    };
+    contents
+        .lines()
+        .find_map(|line| {
+            let (key, value) = line.split_once('=')?;
+            if key.trim() != NOTIFICATION_SOUND_KEY {
+                return None;
+            }
+            let value = value.trim();
+            if value == "system" {
+                Some(NotificationSound::System)
+            } else if !value.is_empty() && Path::new(value).is_absolute() {
+                Some(NotificationSound::Custom(PathBuf::from(value)))
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ComposerDirection {
@@ -158,6 +189,30 @@ pub(crate) fn save_composer_direction(path: &Path, direction: ComposerDirection)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn notification_sound_defaults_and_parses_absolute_paths() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = settings_path(directory.path());
+        assert_eq!(load_notification_sound(&path), NotificationSound::System);
+        for invalid in [
+            "notification_sound=relative.ogg",
+            "notification_sound=",
+            "notification_sound=systematic",
+        ] {
+            fs::write(&path, invalid).unwrap();
+            assert_eq!(load_notification_sound(&path), NotificationSound::System);
+        }
+        fs::write(
+            &path,
+            "mouse=disable\nnotification_sound=/sounds/alert.mp3\n",
+        )
+        .unwrap();
+        assert_eq!(
+            load_notification_sound(&path),
+            NotificationSound::Custom(PathBuf::from("/sounds/alert.mp3"))
+        );
+    }
 
     #[test]
     fn composer_direction_defaults_to_auto_when_settings_are_absent() {

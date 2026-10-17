@@ -1,5 +1,10 @@
+use std::fs::File;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use super::preferences::{self, NotificationSound};
 
 use notify_rust::Notification;
 use whatsrust as wr;
@@ -32,16 +37,67 @@ pub trait Notifier {
 }
 
 #[derive(Debug, Default)]
-pub struct NotifyRustNotifier;
+pub struct NotifyRustNotifier {
+    settings_path: Option<PathBuf>,
+}
+
+impl NotifyRustNotifier {
+    pub(crate) fn new(settings_path: PathBuf) -> Self {
+        Self {
+            settings_path: Some(settings_path),
+        }
+    }
+
+    fn sound_choice(&self) -> NotificationSound {
+        self.settings_path
+            .as_ref()
+            .map_or(NotificationSound::System, |path| {
+                preferences::load_notification_sound(path)
+            })
+    }
+}
+
+fn play_custom_sound(path: &Path) -> Result<(), String> {
+    let source = rodio::Decoder::try_from(File::open(path).map_err(|error| error.to_string())?)
+        .map_err(|error| error.to_string())?;
+    let stream =
+        rodio::DeviceSinkBuilder::open_default_sink().map_err(|error| error.to_string())?;
+    let player = rodio::Player::connect_new(&stream.mixer());
+    player.append(source);
+    player.sleep_until_end();
+    Ok(())
+}
 
 impl Notifier for NotifyRustNotifier {
     fn show(&self, notification: &NotificationProjection) -> Result<(), String> {
-        Notification::new()
+        let mut desktop = Notification::new();
+        desktop
             .summary(&notification.summary)
-            .body(&notification.body)
-            .show()
-            .map(|_| ())
-            .map_err(|error| error.to_string())
+            .body(&notification.body);
+        let sound = self.sound_choice();
+        match &sound {
+            NotificationSound::System => {
+                #[cfg(target_os = "linux")]
+                desktop.sound_name("message-new-instant");
+                #[cfg(target_os = "macos")]
+                desktop.sound_name("default");
+            }
+            NotificationSound::Custom(_) => {} // No system sound hint for custom playback.
+        }
+        desktop.show().map_err(|error| error.to_string())?;
+        if let NotificationSound::Custom(path) = sound {
+            if let Err(error) = thread::Builder::new()
+                .name("notification-sound".into())
+                .spawn(move || {
+                    if let Err(error) = play_custom_sound(&path) {
+                        log::warn!("Could not play notification sound: {error}");
+                    }
+                })
+            {
+                log::warn!("Could not start notification sound: {error}");
+            }
+        }
+        Ok(())
     }
 }
 

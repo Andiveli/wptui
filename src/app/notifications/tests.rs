@@ -21,6 +21,39 @@ fn message(chat: &str, text: &str) -> wr::Message {
 }
 
 #[test]
+fn native_notifier_selects_sound_from_settings_without_audio_hardware() {
+    let directory = tempfile::tempdir().unwrap();
+    let settings = directory.path().join("settings.conf");
+    let notifier = NotifyRustNotifier::new(settings.clone());
+    assert_eq!(notifier.sound_choice(), NotificationSound::System);
+    std::fs::write(&settings, "notification_sound=/sounds/alert.wav\n").unwrap();
+    assert_eq!(
+        notifier.sound_choice(),
+        NotificationSound::Custom("/sounds/alert.wav".into())
+    );
+    std::fs::write(&settings, "notification_sound=system\n").unwrap();
+    assert_eq!(notifier.sound_choice(), NotificationSound::System);
+}
+
+#[test]
+fn custom_sound_decodes_wav_mp3_and_ogg_without_audio_hardware() {
+    for extension in ["wav", "mp3", "ogg"] {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(format!("notification-tone.{extension}"));
+        let mut decoded = rodio::Decoder::try_from(File::open(&fixture).unwrap()).unwrap();
+        assert!(decoded.next().is_some(), "no samples in {extension}");
+    }
+}
+
+#[test]
+fn missing_custom_audio_fails_without_panicking_or_waiting_for_a_device() {
+    let directory = tempfile::tempdir().unwrap();
+    let missing = directory.path().join("missing.ogg");
+    assert!(play_custom_sound(&missing).is_err());
+}
+
+#[test]
 fn eligibility_skips_status_and_own_messages() {
     assert!(notification_eligibility(
         &message("chat@g.us", "incoming"),

@@ -65,6 +65,7 @@
             buildInputs = with pkgs; [
               chafa
               glib
+              alsa-lib
               wayland
               mpv
             ];

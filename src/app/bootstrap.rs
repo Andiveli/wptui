@@ -21,7 +21,9 @@ pub(crate) fn default_app() -> App<'static> {
         picker,
         default_protocol_type,
         Box::new(SystemClock),
-        Box::new(NotifyRustNotifier),
+        Box::new(NotifyRustNotifier::new(preferences::settings_path(
+            project_dirs.config_dir(),
+        ))),
     )
 }
 
@@ -34,7 +36,9 @@ pub(crate) fn with_data_dir(data_dir: &Path, cache_dir: &Path) -> App<'static> {
         picker,
         default_protocol_type,
         Box::new(SystemClock),
-        Box::new(NotifyRustNotifier),
+        Box::new(NotifyRustNotifier::new(preferences::settings_path(
+            data_dir,
+        ))),
     )
 }
 
