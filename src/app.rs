@@ -279,6 +279,7 @@ pub struct App<'a> {
     pub image_cache: HashMap<Arc<str>, StatefulProtocol>,
     pub image_cache_order: VecDeque<Arc<str>>,
     pub(crate) sticker_playback: HashMap<Arc<str>, sticker_animation::StickerPlayback>,
+    pub(crate) animation_slots: Arc<sticker_animation::AnimationSlots>,
     pub(crate) visible_stickers: HashSet<Arc<str>>,
     /// Probed audio duration in seconds, keyed by file path. Populated lazily
     /// by a background thread once the file is on disk.

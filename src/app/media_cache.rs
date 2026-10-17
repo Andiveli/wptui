@@ -33,6 +33,9 @@ impl App<'_> {
     }
 
     pub(crate) fn sticker_deadline(&self) -> Option<Instant> {
+        if self.attachment_viewer.is_some() {
+            return None;
+        }
         self.visible_stickers
             .iter()
             .filter_map(|path| self.sticker_playback.get(path)?.deadline)
@@ -40,10 +43,14 @@ impl App<'_> {
     }
 
     pub(crate) fn advance_visible_stickers(&mut self, now: Instant) -> bool {
+        let covered = self.attachment_viewer.is_some();
         for (path, playback) in &mut self.sticker_playback {
-            if !self.visible_stickers.contains(path) {
+            if covered || !self.visible_stickers.contains(path) {
                 playback.deadline = None;
             }
+        }
+        if covered {
+            return false;
         }
         let mut changed = false;
         for path in &self.visible_stickers {
@@ -58,8 +65,18 @@ impl App<'_> {
         &mut self,
         message_id: wr::MessageId,
         path: Arc<str>,
-        playback: super::sticker_animation::StickerPlayback,
+        mut playback: super::sticker_animation::StickerPlayback,
     ) {
+        // Release the worker slot only once the queued result reaches the UI.
+        playback.slot.take();
+        if !self.sticker_playback.contains_key(&path)
+            && self.sticker_playback.len() >= ANIMATED_CACHE_CAPACITY
+        {
+            if let Some(first) = playback.frames.into_iter().next() {
+                self.cache_file_preview(message_id, path, first);
+            }
+            return;
+        }
         if !self.image_cache.contains_key(&path)
             && !self.sticker_playback.contains_key(&path)
             && self.image_cache.len() + self.sticker_playback.len() >= IMAGE_CACHE_CAPACITY
@@ -67,18 +84,6 @@ impl App<'_> {
         {
             self.image_cache.remove(&oldest);
             self.sticker_playback.remove(&oldest);
-            self.mark_evicted_preview_reloadable(&oldest);
-        }
-        if !self.sticker_playback.contains_key(&path)
-            && self.sticker_playback.len() >= ANIMATED_CACHE_CAPACITY
-            && let Some(oldest) = self
-                .image_cache_order
-                .iter()
-                .find(|p| self.sticker_playback.contains_key(*p))
-                .cloned()
-        {
-            self.sticker_playback.remove(&oldest);
-            self.image_cache_order.retain(|p| p != &oldest);
             self.mark_evicted_preview_reloadable(&oldest);
         }
         self.sticker_playback.insert(path.clone(), playback);
