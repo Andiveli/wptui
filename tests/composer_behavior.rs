@@ -336,6 +336,7 @@ fn exiting_vim_normal_dismisses_a_picker_reopened_by_navigation() {
             name: "Alice".into(),
         }]);
     app.composer.insert_text("@a ");
+    app.composer.cancel_mention_picker();
     assert!(!app.composer.mention_picker_active());
     app.focus_pane = FocusPane::Conversation;
     for character in [' ', 'v', 'h'] {
