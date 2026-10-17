@@ -1,12 +1,13 @@
 use std::collections::VecDeque;
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use ratatui::layout::Size;
 use ratatui_image::picker::Picker;
 
+use super::super::media_jobs::MediaJobOwner;
 use super::super::test_support::TestApp;
-use super::super::{FileMeta, Metadata};
+use super::super::{AppEvent, AppInput, FileMeta, Metadata};
 use whatsrust as wr;
 
 fn file_message(id: &str, path: &str) -> wr::Message {
@@ -145,6 +146,48 @@ fn fifth_visible_animation_keeps_first_frame_without_evicting_playback() {
     }
     assert_eq!(app.sticker_playback.len(), 4);
     assert_eq!(app.image_cache.len(), 1);
+}
+
+#[test]
+fn simultaneous_sticker_loads_eventually_animate_after_worker_slots_free() {
+    let mut app = TestApp::new();
+    let mut jobs = MediaJobOwner::new();
+    let (download_tx, _download_rx) = mpsc::channel();
+    std::fs::create_dir_all(app.media_path.join("stickers")).unwrap();
+    let mut paths = Vec::new();
+    for index in 0..3 {
+        let id = format!("animated-{index}");
+        let path = format!("stickers/{id}.webp");
+        std::fs::write(
+            app.media_path.join(&path),
+            include_bytes!("../../../tests/fixtures/sticker-animated.webp"),
+        )
+        .unwrap();
+        let mut message = file_message(&id, &path);
+        if let wr::MessageContent::File(file) = &mut message.message {
+            file.kind = wr::FileKind::Sticker;
+        }
+        app.messages.insert(id.clone().into(), message);
+        app.handle_media_viewer_event(
+            AppEvent::LoadFilePreview(id.into()),
+            &download_tx,
+            &mut jobs,
+        );
+        paths.push(Arc::<str>::from(path));
+    }
+    for _ in 0..3 {
+        let AppInput::App(event) = app.rx.recv_timeout(Duration::from_secs(5)).unwrap() else {
+            panic!("expected sticker preview event");
+        };
+        app.handle_media_viewer_event(event, &download_tx, &mut jobs);
+    }
+    jobs.shutdown();
+    for path in paths {
+        assert!(
+            app.sticker_playback.contains_key(&path),
+            "{path} remained a still preview"
+        );
+    }
 }
 
 #[test]
