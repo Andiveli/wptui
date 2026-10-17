@@ -120,6 +120,86 @@ fn empty_and_blank_submits_are_silent_no_ops() {
 }
 
 #[test]
+fn vim_navigation_moves_the_caret_without_inserting_commands_or_sending() {
+    for (movement, expected) in [
+        (vec!['h'], "ab\ncXd"),
+        (vec!['h', 'l'], "ab\ncdX"),
+        (vec!['k'], "abX\ncd"),
+        (vec!['k', 'j'], "ab\ncdX"),
+    ] {
+        let mut app = TestApp::new();
+        app.open_chat_by_jid(whatsrust::JID("alice@s.whatsapp.net".into()));
+        app.focus_pane = FocusPane::Conversation;
+        app.composer.insert_text("ab\ncd");
+        for character in [' ', 'v'] {
+            app.on_terminal_event(Event::Key(KeyEvent::new(
+                TerminalKeyCode::Char(character),
+                TerminalKeyModifiers::NONE,
+            )));
+        }
+        for character in movement {
+            app.on_terminal_event(Event::Key(KeyEvent::new(
+                TerminalKeyCode::Char(character),
+                TerminalKeyModifiers::NONE,
+            )));
+        }
+        assert_eq!(app.composer.text(), "ab\ncd");
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            TerminalKeyCode::Char('i'),
+            TerminalKeyModifiers::NONE,
+        )));
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            TerminalKeyCode::Char('X'),
+            TerminalKeyModifiers::NONE,
+        )));
+        assert_eq!(app.composer.text(), expected);
+    }
+}
+
+#[test]
+fn vim_composer_title_shows_the_active_mode_without_changing_standard_input_title() {
+    let mut app = TestApp::new();
+    app.open_chat_by_jid(whatsrust::JID("alice@s.whatsapp.net".into()));
+    app.focus_pane = FocusPane::Conversation;
+    let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+    let mut title = |app: &mut TestApp| {
+        terminal
+            .draw(|frame| {
+                let mut media = MediaRenderPlan::default();
+                let mut visibility = VisibilityPlan::default();
+                render_chats_with_plan(
+                    frame,
+                    app,
+                    &mut media,
+                    &mut visibility,
+                    Rect::new(0, 0, 80, 20),
+                );
+            })
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>()
+    };
+    assert!(title(&mut app).contains("Message input"));
+    for character in [' ', 'v'] {
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            TerminalKeyCode::Char(character),
+            TerminalKeyModifiers::NONE,
+        )));
+    }
+    assert!(title(&mut app).contains("Vim Normal"));
+    app.on_terminal_event(Event::Key(KeyEvent::new(
+        TerminalKeyCode::Char('i'),
+        TerminalKeyModifiers::NONE,
+    )));
+    assert!(title(&mut app).contains("Vim Insert"));
+}
+
+#[test]
 fn conversation_leader_enters_vim_and_escape_returns_to_chat_without_losing_draft() {
     let mut app = TestApp::new();
     app.open_chat_by_jid(whatsrust::JID("alice@s.whatsapp.net".into()));

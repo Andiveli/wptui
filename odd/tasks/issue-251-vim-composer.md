@@ -8,8 +8,8 @@ S3. "Como Vim: Insert → Normal → salir" — selected explanation: "`Esc` des
 S4. "No se puede usar cargo acá en local, se usan las github actions" — Rust validation runs in GitHub Actions after separately authorized publication, never local Cargo. Check: record exact workflow run and SHA or explicitly report proof unavailable.
 
 ## Tasks
-T1 [S1,S3] PENDING Inline: add public routing RED tests and implement scoped leader entry, Vim Normal/Insert, Escape exit and draft preservation; commit: n/a.
-T2 [S1,S2,S3] PENDING Inline: add public movement RED tests; route `h/j/k/l` through existing composer movement, provide visible mode cue and update relevant help/docs while preserving standard composer; commit: n/a.
+T1 [S1,S3] DONE Scoped worker + parent: public routing RED 39002410445, behavior and guards GREEN preview 39003692737; commits: e3d5dd2 (RED), 09f9028 (behavior).
+T2 [S1,S2,S3] IN_PROGRESS Inline: add public movement RED tests; route `h/j/k/l` through existing composer movement, provide visible mode cue and update relevant help/docs while preserving standard composer; commit: n/a.
 T3 [S1-S4] PENDING Inline: run structural checks, obtain publication authorization for GitHub Actions, observe exact-head CI and independent verification if risk item applies; commit: n/a.
 
 ## Log
@@ -23,3 +23,4 @@ L7. Worktree created at `.worktrees/issue-251-vim-compose` from remote main 286e
 L8. rama preview/
 L9. User authorized publishing only this feature's RED/GREEN commits on `preview/issue-251-vim-composer` to GitHub Actions via the current gh account; no PR, merge or release. Preview builds an artifact automatically.
 L10. T1 public terminal-event test-only commit e3d5dd2 pushed; preview Actions run 39002410445 on exact SHA observed expected RED: Go and rustfmt passed; 15 composer_behavior tests passed, only conversation_leader_enters_vim_and_escape_returns_to_chat_without_losing_draft failed at tests/composer_behavior.rs:134 (MessageNavigation vs ComposerEditing after Space+v); Rust tests exit 101, preview artifact skipped. No local Cargo.
+L11. T1 implementation 09f902884a502e07bc08b1af150458a68284f3da added a guarded Space+v entry for Chats/Communities conversation only, Vim Normal/Insert, and two-stage Escape retaining draft; blocked/status/list cases covered. Exact-head preview Actions 39003692737 completed success: Go bridge, Rust format and tests, release build, artifact upload. No local Cargo. Existing composer paths are shared; T2 must prove unchanged ordinary behavior and mode isolation.
