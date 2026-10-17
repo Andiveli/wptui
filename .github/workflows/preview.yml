@@ -55,8 +55,8 @@ jobs:
       - name: Build Linux preview
         run: cargo build --locked --release
 
-      - name: Package preview binary
-        run: tar -czf wptui-linux-x86_64.tar.gz -C target/release wp-tui
+      - name: Package preview binary and notices
+        run: tar -czf wptui-linux-x86_64.tar.gz -C target/release wp-tui -C "$GITHUB_WORKSPACE" THIRD_PARTY_NOTICES.md assets/sounds/LICENSE.md
 
       - name: Upload preview artifact
         uses: actions/upload-artifact@v7

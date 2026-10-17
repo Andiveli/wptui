@@ -121,6 +121,8 @@ curl -sSL https://raw.githubusercontent.com/Andiveli/wptui/main/install.sh | bas
 
 The script downloads the matching binary from the latest release into
 `~/.local/bin` (override with `PREFIX`, e.g. `PREFIX=/opt/wptui ./install.sh`).
+New release archives include the bundled tone's MIT notice; the installer keeps
+it next to the binary as `wp-tui-THIRD_PARTY_NOTICES.md`.
 Make sure the runtime libraries listed in [Requirements](#requirements) are
 present first.
 

@@ -60,6 +60,9 @@ main() {
     mkdir -p "$PREFIX"
     tar -xzf "${tmp}/${asset}" -C "$tmp"
     install -m 0755 "${tmp}/${BIN_NAME}" "${PREFIX}/${BIN_NAME}"
+    if [[ -f "${tmp}/THIRD_PARTY_NOTICES.md" ]]; then
+        install -m 0644 "${tmp}/THIRD_PARTY_NOTICES.md" "${PREFIX}/${BIN_NAME}-THIRD_PARTY_NOTICES.md"
+    fi
 
     echo "Installed ${BIN_NAME} to ${PREFIX}"
 

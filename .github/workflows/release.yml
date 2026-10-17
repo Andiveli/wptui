@@ -42,8 +42,8 @@ jobs:
       - name: Build
         run: cargo build --locked --release
 
-      - name: Package
-        run: tar -czf ${{ matrix.asset }} -C target/release wp-tui
+      - name: Package binary and notices
+        run: tar -czf ${{ matrix.asset }} -C target/release wp-tui -C "$GITHUB_WORKSPACE" THIRD_PARTY_NOTICES.md assets/sounds/LICENSE.md
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
