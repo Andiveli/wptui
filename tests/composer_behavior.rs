@@ -120,6 +120,37 @@ fn empty_and_blank_submits_are_silent_no_ops() {
 }
 
 #[test]
+fn conversation_leader_enters_vim_and_escape_returns_to_chat_without_losing_draft() {
+    let mut app = TestApp::new();
+    app.open_chat_by_jid(whatsrust::JID("alice@s.whatsapp.net".into()));
+    app.focus_pane = wp_tui::app::actions::FocusPane::Conversation;
+    app.composer.insert_text("draft");
+    fn key(app: &mut TestApp, code: TerminalKeyCode) {
+        app.on_terminal_event(Event::Key(KeyEvent::new(code, TerminalKeyModifiers::NONE)));
+    }
+
+    key(&mut app, TerminalKeyCode::Char(' '));
+    key(&mut app, TerminalKeyCode::Char('v'));
+    assert_eq!(app.conversation_mode, ConversationMode::ComposerEditing);
+    assert_eq!(app.composer.text(), "draft");
+    key(&mut app, TerminalKeyCode::Char('i'));
+    key(&mut app, TerminalKeyCode::Char('X'));
+    assert_eq!(app.composer.text(), "draftX");
+    key(&mut app, TerminalKeyCode::Esc);
+    assert_eq!(app.conversation_mode, ConversationMode::ComposerEditing);
+    assert_eq!(app.composer.text(), "draftX");
+    key(&mut app, TerminalKeyCode::Esc);
+    assert_eq!(app.conversation_mode, ConversationMode::MessageNavigation);
+    assert_eq!(app.composer.text(), "draftX");
+
+    let mut other = TestApp::new();
+    key(&mut other, TerminalKeyCode::Char(' '));
+    key(&mut other, TerminalKeyCode::Char('v'));
+    assert_eq!(other.conversation_mode, ConversationMode::MessageNavigation);
+    assert!(other.composer.text().is_empty());
+}
+
+#[test]
 fn escape_cancels_reply_and_attachment_modes_without_leaking_to_the_next_draft() {
     let mut app = TestApp::new();
     app.focus_pane = wp_tui::app::actions::FocusPane::Conversation;
