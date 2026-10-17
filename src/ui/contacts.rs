@@ -19,6 +19,7 @@ pub(crate) fn render_chat_filters(frame: &mut Frame, app: &mut App, area: Rect) 
         crate::app::ChatFilter::Archived,
     ];
     let archived_attention = app.archived_group_attention();
+    let counts = app.unread_filter_counts();
     let mut labels = Vec::new();
     let mut offset = 0u16;
     for (index, filter) in filters.into_iter().enumerate() {
@@ -36,10 +37,15 @@ pub(crate) fn render_chat_filters(frame: &mut Frame, app: &mut App, area: Rect) 
             ));
             offset = offset.saturating_add(2);
         }
-        let label = if filter == app.chat_filter {
-            format!("[{}]", filter.label())
-        } else {
+        let text = if counts[index] == 0 {
             filter.label().to_owned()
+        } else {
+            format!("{} {}", filter.label(), counts[index])
+        };
+        let label = if filter == app.chat_filter {
+            format!("[{text}]")
+        } else {
+            text
         };
         offset = offset.saturating_add(Span::raw(label.as_str()).width() as u16);
         if filter == crate::app::ChatFilter::Archived && archived_attention {
@@ -199,6 +205,47 @@ mod tests {
             .map(|x| buffer[(x, 1)].symbol())
             .collect::<String>();
         assert!(search_line.starts_with("/x"));
+    }
+
+    #[test]
+    fn filter_bar_counts_unread_chats_once_in_each_archive_partition() {
+        let mut app = TestApp::new();
+        let active = wr::JID::from("active@s.whatsapp.net".to_owned());
+        let group = wr::JID::from("team@g.us".to_owned());
+        let archived = wr::JID::from("archived@s.whatsapp.net".to_owned());
+        for jid in [&active, &group, &archived] {
+            app.chats.insert(
+                jid.clone(),
+                Chat {
+                    jid: jid.clone(),
+                    last_message_time: Some(1),
+                },
+            );
+        }
+        app.set_archived_chat_settings([archived.clone()]);
+        for (jid, id) in [
+            (&active, "a"),
+            (&active, "b"),
+            (&group, "g"),
+            (&archived, "z"),
+        ] {
+            app.add_message(crate::app::test_support::message(jid, id, 2));
+        }
+        let mut terminal = Terminal::new(TestBackend::new(90, 12)).unwrap();
+        let mut draw = |app: &mut TestApp| {
+            terminal
+                .draw(|frame| {
+                    let area = Rect::new(0, 0, 90, 1);
+                    render_chat_filters(frame, &mut app.app, area);
+                })
+                .unwrap();
+            (0..90)
+                .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
+                .collect::<String>()
+        };
+        assert!(draw(&mut app).starts_with("[All 2]  Unread 2  Groups 1  Archived 1  (Tab)"));
+        app.mark_chat_read_at_latest(&active);
+        assert!(draw(&mut app).starts_with("[All 1]  Unread 1  Groups 1  Archived 1  (Tab)"));
     }
 
     #[test]

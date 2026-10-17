@@ -32,6 +32,9 @@ https://github.com/user-attachments/assets/f08d20f9-6051-45e2-a1d2-b0a512242e9c
 
 The Chats list has **All**, **Unread**, **Groups**, and **Archived** views. All,
 Unread, and Groups exclude archived chats; Archived shows only archived chats.
+Filter badges count chats with unread messages (each chat once), not individual
+messages. All, Unread, and Groups count unarchived chats; Archived counts archived
+chats. Zero counts are hidden.
 Archive status comes from the linked device's WhatsApp settings. Search narrows
 the selected view. Switching views does not change messages or read status;
 a community row contains only groups in that view. Archive changes received

@@ -777,14 +777,18 @@ mod chat_filter_layout_tests {
         let mut active = crate::app::test_support::message(&active_group, "active", 4);
         active.info.mentions_self = true;
         app.add_message(active);
-        assert!(filter_row(&mut app, &mut terminal).0.starts_with(plain));
+        assert!(
+            filter_row(&mut app, &mut terminal)
+                .0
+                .starts_with("[All 1]  Unread 1  Groups 1  Archived 2  (Tab)")
+        );
 
         let mut mention = crate::app::test_support::message(&archived_group, "mention", 5);
         mention.info.mentions_self = true;
         app.add_message(mention);
         let (row, color) = filter_row(&mut app, &mut terminal);
         assert!(
-            row.starts_with("[All]  Unread  Groups  @ Archived  (Tab)"),
+            row.starts_with("[All 1]  Unread 1  Groups 1  @ Archived 2  (Tab)"),
             "{row:?}"
         );
         assert_eq!(color.map(|style| style.0), Some(Color::Yellow));
@@ -794,7 +798,7 @@ mod chat_filter_layout_tests {
         app.chat_filter = crate::app::ChatFilter::Archived;
         let (row, color) = filter_row(&mut app, &mut terminal);
         assert!(
-            row.starts_with("All  Unread  Groups  [Archived]  (Tab)"),
+            row.starts_with("All 1  Unread 1  Groups 1  [Archived 1]  (Tab)"),
             "{row:?}"
         );
         assert_eq!(color, None);
@@ -808,7 +812,7 @@ mod chat_filter_layout_tests {
         app.add_message(reply);
         let (row, color) = filter_row(&mut app, &mut terminal);
         assert!(
-            row.starts_with("All  Unread  Groups  @ [Archived]  (Tab)"),
+            row.starts_with("All 1  Unread 1  Groups 1  @ [Archived 2]  (Tab)"),
             "{row:?}"
         );
         assert_eq!(color.map(|style| style.0), Some(Color::Yellow));
