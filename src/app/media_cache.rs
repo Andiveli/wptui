@@ -45,10 +45,13 @@ impl App<'_> {
                 playback.deadline = None;
             }
         }
-        self.visible_stickers
-            .iter()
-            .filter_map(|path| self.sticker_playback.get_mut(path))
-            .fold(false, |changed, playback| playback.advance(now) || changed)
+        let mut changed = false;
+        for path in &self.visible_stickers {
+            if let Some(playback) = self.sticker_playback.get_mut(path) {
+                changed |= playback.advance(now);
+            }
+        }
+        changed
     }
 
     pub(crate) fn cache_sticker_preview(
