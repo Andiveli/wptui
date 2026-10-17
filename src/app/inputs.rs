@@ -385,6 +385,7 @@ impl App<'_> {
             | AppAction::HalfPageDown
             | AppAction::HalfPageUp
             | AppAction::InsertMode
+            | AppAction::StartVimComposer
             | AppAction::CopyMessage
             | AppAction::ReplyMessage
             | AppAction::ReplyPrivately

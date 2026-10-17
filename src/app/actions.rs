@@ -18,6 +18,7 @@ pub enum AppAction {
     CancelStatusComposition,
     ToggleShortcutPopup,
     ToggleComposerDirection,
+    StartVimComposer,
     PlannedLeaderAction(&'static str),
     FocusNext,
     FocusPrevious,
@@ -241,6 +242,12 @@ pub enum ConversationMode {
     MessageNavigation,
     ComposerEditing,
     EditingMessage,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VimComposerMode {
+    Normal,
+    Insert,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

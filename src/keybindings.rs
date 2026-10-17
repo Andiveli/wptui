@@ -53,6 +53,12 @@ pub fn leader_bindings() -> Vec<LeaderBinding> {
             label: "Composer direction",
             implementation: BindingImplementation::Implemented,
         },
+        LeaderBinding {
+            key: Key::c('v'),
+            action: AppAction::StartVimComposer,
+            label: "Vim composer",
+            implementation: BindingImplementation::Implemented,
+        },
     ]
 }
 

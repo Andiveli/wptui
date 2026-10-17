@@ -1,5 +1,5 @@
 use crate::app::actions::{
-    AppAction, ConversationMode, FocusPane, Section, StatusCompositionState,
+    AppAction, ConversationMode, FocusPane, Section, StatusCompositionState, VimComposerMode,
 };
 use crate::app::{App, ChatFilter};
 
@@ -16,6 +16,17 @@ impl App<'_> {
             AppAction::JumpBottom => self.jump_bottom(),
             AppAction::HalfPageDown => self.half_page_down(),
             AppAction::HalfPageUp => self.half_page_up(),
+            AppAction::StartVimComposer => {
+                if self.focus_pane == FocusPane::Conversation
+                    && matches!(self.selected_section, Section::Chats | Section::Communities)
+                    && self.conversation_mode == ConversationMode::MessageNavigation
+                    && self.open_chat().is_some()
+                    && !self.composer_blocked()
+                {
+                    self.conversation_mode = ConversationMode::ComposerEditing;
+                    self.vim_composer_mode = Some(VimComposerMode::Normal);
+                }
+            }
             AppAction::InsertMode => {
                 if self.focus_pane == FocusPane::Conversation && !self.composer_blocked() {
                     self.conversation_mode = ConversationMode::ComposerEditing;

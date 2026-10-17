@@ -99,7 +99,7 @@ use crate::app::actions::{
     ActionNotice, ClipboardReader, ClipboardWriter, ConversationMode, FocusPane, MessageEditor,
     MessageForwarder, MessageMenuAction, MessageReactor, MessageRevoker, PaneVisibility, Section,
     StatusCompositionState, SystemClipboardReader, SystemClipboardWriter, SystemUrlOpener,
-    UnavailableClipboardReader, UnavailableClipboardWriter, UrlOpener,
+    UnavailableClipboardReader, UnavailableClipboardWriter, UrlOpener, VimComposerMode,
 };
 pub use crate::app::chat_projection::{ChatFilter, ChatRow, ContactRow};
 pub use crate::app::chat_read_sync_port::ChatReadSyncPort;
@@ -290,6 +290,7 @@ pub struct App<'a> {
     pub pane_visibility: PaneVisibility,
     pub selected_section: Section,
     pub conversation_mode: ConversationMode,
+    pub vim_composer_mode: Option<VimComposerMode>,
     pub edit_message: Option<wr::Message>,
     pub message_editor: Box<dyn MessageEditor>,
     pub message_reactor: Box<dyn MessageReactor>,

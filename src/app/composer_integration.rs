@@ -1,7 +1,9 @@
 use crate::input_key::KeyCode;
 
 use crate::app::App;
-use crate::app::actions::{AppAction, ComposerAction, ConversationMode, FocusPane, Section};
+use crate::app::actions::{
+    AppAction, ComposerAction, ConversationMode, FocusPane, Section, VimComposerMode,
+};
 use crate::app::composer_input_mapping::composer_action_for_editing_key;
 use crate::app::composer_input_paste::apply_clipboard_paste;
 use crate::app::runtime_diagnostics::Phase;
@@ -27,6 +29,26 @@ impl App<'_> {
             return false;
         }
 
+        if self.conversation_mode == ConversationMode::ComposerEditing
+            && self.vim_composer_mode == Some(VimComposerMode::Normal)
+        {
+            if key == Key::k(KeyCode::Esc) {
+                self.vim_composer_mode = None;
+                self.conversation_mode = ConversationMode::MessageNavigation;
+            } else if key == Key::c('i') && !self.composer_blocked() {
+                self.vim_composer_mode = Some(VimComposerMode::Insert);
+            }
+            return true;
+        }
+        if self.conversation_mode == ConversationMode::ComposerEditing
+            && self.vim_composer_mode == Some(VimComposerMode::Insert)
+            && key == Key::k(KeyCode::Esc)
+            && !self.composer.mention_picker_active()
+        {
+            self.vim_composer_mode = Some(VimComposerMode::Normal);
+            return true;
+        }
+
         if key == Key::k(KeyCode::Esc) && !self.composer.mention_picker_active() {
             if self.conversation_mode == ConversationMode::EditingMessage {
                 self.cancel_message_edit();
@@ -34,6 +56,7 @@ impl App<'_> {
                 self.composer.apply(ComposerAction::CancelReply);
                 self.composer.pending.clear();
                 self.conversation_mode = ConversationMode::MessageNavigation;
+                self.vim_composer_mode = None;
             }
         } else if key == Key::ctrl('o') {
             self.dispatch_action(AppAction::AttachFile);

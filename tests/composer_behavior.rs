@@ -3,7 +3,7 @@ use ratatui::crossterm::event::{
 };
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use wp_tui::app::actions::ComposerAction;
-use wp_tui::app::actions::{AppAction, ConversationMode};
+use wp_tui::app::actions::{AppAction, ConversationMode, FocusPane, Section, VimComposerMode};
 use wp_tui::app::composer::Composer;
 use wp_tui::app::events::MediaRenderPlan;
 use wp_tui::app::inputs::composer_action_for_editing_key;
@@ -132,15 +132,19 @@ fn conversation_leader_enters_vim_and_escape_returns_to_chat_without_losing_draf
     key(&mut app, TerminalKeyCode::Char(' '));
     key(&mut app, TerminalKeyCode::Char('v'));
     assert_eq!(app.conversation_mode, ConversationMode::ComposerEditing);
+    assert_eq!(app.vim_composer_mode, Some(VimComposerMode::Normal));
     assert_eq!(app.composer.text(), "draft");
     key(&mut app, TerminalKeyCode::Char('i'));
+    assert_eq!(app.vim_composer_mode, Some(VimComposerMode::Insert));
     key(&mut app, TerminalKeyCode::Char('X'));
     assert_eq!(app.composer.text(), "draftX");
     key(&mut app, TerminalKeyCode::Esc);
     assert_eq!(app.conversation_mode, ConversationMode::ComposerEditing);
+    assert_eq!(app.vim_composer_mode, Some(VimComposerMode::Normal));
     assert_eq!(app.composer.text(), "draftX");
     key(&mut app, TerminalKeyCode::Esc);
     assert_eq!(app.conversation_mode, ConversationMode::MessageNavigation);
+    assert_eq!(app.vim_composer_mode, None);
     assert_eq!(app.composer.text(), "draftX");
 
     let mut other = TestApp::new();
@@ -148,6 +152,48 @@ fn conversation_leader_enters_vim_and_escape_returns_to_chat_without_losing_draf
     key(&mut other, TerminalKeyCode::Char('v'));
     assert_eq!(other.conversation_mode, ConversationMode::MessageNavigation);
     assert!(other.composer.text().is_empty());
+}
+
+#[test]
+fn vim_leader_entry_requires_unblocked_open_conversation() {
+    for (section, focus, blocked) in [
+        (Section::Chats, FocusPane::ChatList, false),
+        (Section::Status, FocusPane::Conversation, false),
+        (Section::Chats, FocusPane::Conversation, true),
+    ] {
+        let mut app = TestApp::new();
+        let chat = whatsrust::JID(
+            if blocked {
+                "admins@g.us"
+            } else {
+                "alice@s.whatsapp.net"
+            }
+            .into(),
+        );
+        app.open_chat_by_jid(chat.clone());
+        app.selected_section = section;
+        app.focus_pane = focus;
+        if blocked {
+            app.group_permissions.insert(
+                chat.clone(),
+                whatsrust::GroupInfo {
+                    jid: chat,
+                    name: "Admins only".into(),
+                    is_announce: true,
+                    is_admin: false,
+                },
+            );
+            app.composer.set_blocked(true);
+        }
+        for character in [' ', 'v'] {
+            app.on_terminal_event(Event::Key(KeyEvent::new(
+                TerminalKeyCode::Char(character),
+                TerminalKeyModifiers::NONE,
+            )));
+        }
+        assert_eq!(app.conversation_mode, ConversationMode::MessageNavigation);
+        assert_eq!(app.vim_composer_mode, None);
+    }
 }
 
 #[test]
