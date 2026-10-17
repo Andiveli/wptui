@@ -91,10 +91,60 @@ fn only_visible_stickers_schedule_playback() {
         app.sticker_deadline(),
         Some(start + Duration::from_millis(80))
     );
-    assert!(app.advance_visible_stickers(start + Duration::from_millis(80)));
+    app.attachment_viewer =
+        Some(super::super::events::AttachmentViewerState::from_attachments(Vec::new(), 0));
+    assert_eq!(app.sticker_deadline(), None);
+    assert!(!app.advance_visible_stickers(start + Duration::from_millis(80)));
+    assert_eq!(app.sticker_playback[&path].current, 0);
+    app.attachment_viewer = None;
+    assert!(!app.advance_visible_stickers(start + Duration::from_secs(1)));
+    assert!(
+        app.advance_visible_stickers(start + Duration::from_secs(1) + Duration::from_millis(80))
+    );
     app.visible_stickers.clear();
     assert!(!app.advance_visible_stickers(start + Duration::from_millis(81)));
     assert_eq!(app.sticker_deadline(), None);
+}
+
+#[test]
+fn fifth_visible_animation_keeps_first_frame_without_evicting_playback() {
+    let mut app = TestApp::new();
+    let mut paths = Vec::new();
+    for index in 0..5 {
+        let id = format!("sticker-{index}");
+        let path = format!("sticker-{index}.webp");
+        app.messages
+            .insert(id.clone().into(), file_message(&id, &path));
+        app.metadata
+            .insert(id.clone().into(), Metadata::File(FileMeta::Loading));
+        let animation = super::super::sticker_animation::decode_animated_webp(include_bytes!(
+            "../../../tests/fixtures/sticker-animated.webp"
+        ))
+        .unwrap()
+        .unwrap();
+        let playback = super::super::sticker_animation::StickerPlayback::prepare(
+            animation,
+            &mut Picker::halfblocks(),
+            Size::new(2, 2),
+        );
+        let path: Arc<str> = path.into();
+        app.cache_sticker_preview(id.into(), path.clone(), playback);
+        paths.push(path);
+    }
+    assert_eq!(app.sticker_playback.len(), 4);
+    assert_eq!(app.image_cache.len(), 1);
+    assert!(app.image_cache.contains_key(&paths[4]));
+    for path in &paths {
+        app.visible_stickers.insert(path.clone());
+        app.touch_sticker_cache(path);
+        assert!(matches!(
+            app.metadata
+                .get(&wr::MessageId::from(path.replace(".webp", ""))),
+            Some(Metadata::File(FileMeta::Loaded))
+        ));
+    }
+    assert_eq!(app.sticker_playback.len(), 4);
+    assert_eq!(app.image_cache.len(), 1);
 }
 
 #[test]

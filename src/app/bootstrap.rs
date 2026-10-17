@@ -149,6 +149,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         image_cache: HashMap::new(),
         image_cache_order: VecDeque::new(),
         sticker_playback: HashMap::new(),
+        animation_slots: sticker_animation::AnimationSlots::new(),
         visible_stickers: HashSet::new(),
         audio_durations: HashMap::new(),
         message_height_cache: MessageHeightCache::default(),

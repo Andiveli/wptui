@@ -131,6 +131,12 @@ impl App<'_> {
                         _ => None,
                     };
                     if let Some(file) = file {
+                        // Only animated work needs a slot; still and other media jobs stay unchanged.
+                        let animation_slot = if matches!(file.kind, wr::FileKind::Sticker) {
+                            self.animation_slots.try_acquire()
+                        } else {
+                            None
+                        };
                         media_jobs.spawn(move |permit| {
                             let preview_path = match file.kind {
                                 wr::FileKind::Video => {
@@ -147,15 +153,16 @@ impl App<'_> {
                             };
                             let absolute = MediaRoot::new(&media_path)
                                 .and_then(|root| root.media_file(Path::new(&preview_path))).ok();
-                            if matches!(file.kind, wr::FileKind::Sticker) {
+                            if animation_slot.is_some() {
                                 if let Some(bytes) = absolute.as_ref().and_then(|path| std::fs::metadata(path).ok()
                                     .filter(|meta| meta.len() <= 8 * 1024 * 1024)
                                     .and_then(|_| std::fs::read(path).ok())) {
                                     if let Ok(Some(animation)) = crate::app::sticker_animation::decode_animated_webp(&bytes) {
                                         if animation.frames.len() > 1 {
-                                            let playback = crate::app::sticker_animation::StickerPlayback::prepare(
+                                            let mut playback = crate::app::sticker_animation::StickerPlayback::prepare(
                                                 animation, &mut picker.lock().unwrap(),
                                                 Size::new(IMAGE_WIDTH as u16, IMAGE_HEIGHT as u16));
+                                            playback.slot = animation_slot;
                                             permit.send(&tx, AppInput::App(AppEvent::SetStickerPreview(
                                                 message_id, file.path, playback)));
                                             return;
