@@ -33,6 +33,7 @@ impl App<'_> {
             && self.vim_composer_mode == Some(VimComposerMode::Normal)
         {
             if key == Key::k(KeyCode::Esc) {
+                self.composer.cancel_mention_picker();
                 self.vim_composer_mode = None;
                 self.conversation_mode = ConversationMode::MessageNavigation;
             } else if key == Key::c('i') && !self.composer_blocked() {
