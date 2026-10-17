@@ -40,7 +40,7 @@ jobs:
           fi
 
       - name: Build
-        run: cargo build --release
+        run: cargo build --locked --release
 
       - name: Package
         run: tar -czf ${{ matrix.asset }} -C target/release wp-tui

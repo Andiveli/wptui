@@ -39,32 +39,21 @@ pub trait Notifier {
 #[derive(Debug, Default)]
 pub struct NotifyRustNotifier {
     settings_path: Option<PathBuf>,
-    legacy_settings_path: Option<PathBuf>,
 }
 
 impl NotifyRustNotifier {
     pub(crate) fn new(settings_path: PathBuf) -> Self {
         Self {
             settings_path: Some(settings_path),
-            legacy_settings_path: None,
         }
     }
 
-    pub(crate) fn with_legacy_settings(mut self, path: PathBuf) -> Self {
-        self.legacy_settings_path = Some(path);
-        self
-    }
-
     fn sound_choice(&self) -> NotificationSound {
-        let Some(path) = self.settings_path.as_ref() else {
-            return NotificationSound::System;
-        };
-        let path = if !path.exists() {
-            self.legacy_settings_path.as_ref().unwrap_or(path)
-        } else {
-            path
-        };
-        preferences::load_notification_sound(path)
+        self.settings_path
+            .as_ref()
+            .map_or(NotificationSound::System, |path| {
+                preferences::load_notification_sound(path)
+            })
     }
 }
 
