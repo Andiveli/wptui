@@ -10,13 +10,14 @@ const NOTIFICATION_SOUND_KEY: &str = "notification_sound";
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) enum NotificationSound {
     #[default]
+    Bundled,
     System,
     Custom(PathBuf),
 }
 
 pub(crate) fn load_notification_sound(path: &Path) -> NotificationSound {
     let Ok(contents) = fs::read_to_string(path) else {
-        return NotificationSound::System;
+        return NotificationSound::Bundled;
     };
     contents
         .lines()
@@ -194,15 +195,17 @@ mod tests {
     fn notification_sound_defaults_and_parses_absolute_paths() {
         let directory = tempfile::tempdir().unwrap();
         let path = settings_path(directory.path());
-        assert_eq!(load_notification_sound(&path), NotificationSound::System);
+        assert_eq!(load_notification_sound(&path), NotificationSound::Bundled);
         for invalid in [
             "notification_sound=relative.ogg",
             "notification_sound=",
             "notification_sound=systematic",
         ] {
             fs::write(&path, invalid).unwrap();
-            assert_eq!(load_notification_sound(&path), NotificationSound::System);
+            assert_eq!(load_notification_sound(&path), NotificationSound::Bundled);
         }
+        fs::write(&path, "notification_sound=system\n").unwrap();
+        assert_eq!(load_notification_sound(&path), NotificationSound::System);
         fs::write(
             &path,
             "mouse=disable\nnotification_sound=/sounds/alert.mp3\n",

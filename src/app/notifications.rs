@@ -1,4 +1,5 @@
 use std::fs::File;
+use std::io::{Cursor, Read, Seek};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
@@ -51,7 +52,7 @@ impl NotifyRustNotifier {
     fn sound_choice(&self) -> NotificationSound {
         self.settings_path
             .as_ref()
-            .map_or(NotificationSound::System, |path| {
+            .map_or(NotificationSound::Bundled, |path| {
                 preferences::load_notification_sound(path)
             })
     }
@@ -67,9 +68,20 @@ fn system_sound_name() -> &'static str {
     "NSUserNotificationDefaultSoundName"
 }
 
-fn play_custom_sound(path: &Path) -> Result<(), String> {
-    let source = rodio::Decoder::try_from(File::open(path).map_err(|error| error.to_string())?)
-        .map_err(|error| error.to_string())?;
+const ATTENTION_WAV: &[u8] = include_bytes!("../../assets/sounds/attention.wav");
+
+trait ReadSeek: Read + Seek {}
+impl<T: Read + Seek> ReadSeek for T {}
+
+fn play_sound(sound: NotificationSound) -> Result<(), String> {
+    let input: Box<dyn ReadSeek + Send + Sync> = match sound {
+        NotificationSound::Bundled => Box::new(Cursor::new(ATTENTION_WAV)),
+        NotificationSound::Custom(path) => {
+            Box::new(File::open(path).map_err(|error| error.to_string())?)
+        }
+        NotificationSound::System => return Ok(()),
+    };
+    let source = rodio::Decoder::try_from(input).map_err(|error| error.to_string())?;
     let stream =
         rodio::DeviceSinkBuilder::open_default_sink().map_err(|error| error.to_string())?;
     let player = rodio::Player::connect_new(&stream.mixer());
@@ -90,14 +102,14 @@ impl Notifier for NotifyRustNotifier {
                 #[cfg(any(target_os = "linux", target_os = "macos"))]
                 desktop.sound_name(system_sound_name());
             }
-            NotificationSound::Custom(_) => {} // No system sound hint for custom playback.
+            NotificationSound::Bundled | NotificationSound::Custom(_) => {} // Direct playback needs no daemon sound hint.
         }
         desktop.show().map_err(|error| error.to_string())?;
-        if let NotificationSound::Custom(path) = sound {
+        if sound != NotificationSound::System {
             if let Err(error) = thread::Builder::new()
                 .name("notification-sound".into())
                 .spawn(move || {
-                    if let Err(error) = play_custom_sound(&path) {
+                    if let Err(error) = play_sound(sound) {
                         log::warn!("Could not play notification sound: {error}");
                     }
                 })
