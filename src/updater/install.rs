@@ -215,6 +215,70 @@ mod tests {
     }
 
     #[test]
+    fn installs_binary_and_mit_notice_from_three_member_release_archive() {
+        let directory = tempdir().unwrap();
+        let binary = directory.path().join("wp-tui");
+        let notice = directory.path().join("wp-tui-THIRD_PARTY_NOTICES.md");
+        fs::write(&binary, b"old").unwrap();
+        let bytes = archive(&[
+            ("wp-tui", b"new"),
+            ("THIRD_PARTY_NOTICES.md", b"MIT notice"),
+            ("assets/sounds/LICENSE.md", b"attribution and recipe"),
+        ]);
+        let digest = format!("{:x}", Sha256::digest(&bytes));
+        let mut installer = StandaloneInstaller;
+        installer.install(&binary, &bytes, &digest).unwrap();
+        assert_eq!(fs::read(&binary).unwrap(), b"new");
+        assert_eq!(fs::read(&notice).unwrap(), b"MIT notice");
+        #[cfg(unix)]
+        assert_eq!(
+            fs::metadata(&notice).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
+    }
+
+    #[test]
+    fn rejects_incomplete_duplicate_unexpected_and_oversized_notices_without_replacing_files() {
+        let directory = tempdir().unwrap();
+        let binary = directory.path().join("wp-tui");
+        let notice = directory.path().join("wp-tui-THIRD_PARTY_NOTICES.md");
+        let oversized = vec![b'x'; 65_537];
+        let invalid = [
+            archive(&[("wp-tui", b"new"), ("THIRD_PARTY_NOTICES.md", b"MIT")]),
+            archive(&[
+                ("wp-tui", b"new"),
+                ("THIRD_PARTY_NOTICES.md", b"MIT"),
+                ("THIRD_PARTY_NOTICES.md", b"duplicate"),
+                ("assets/sounds/LICENSE.md", b"recipe"),
+            ]),
+            archive(&[
+                ("wp-tui", b"new"),
+                ("THIRD_PARTY_NOTICES.md", b"MIT"),
+                ("assets/sounds/LICENSE.md", b"recipe"),
+                ("unexpected", b"extra"),
+            ]),
+            archive(&[
+                ("wp-tui", b"new"),
+                ("THIRD_PARTY_NOTICES.md", &oversized),
+                ("assets/sounds/LICENSE.md", b"recipe"),
+            ]),
+            notice_symlink_archive(),
+        ];
+        for bytes in invalid {
+            fs::write(&binary, b"old").unwrap();
+            fs::write(&notice, b"previous notice").unwrap();
+            let digest = format!("{:x}", Sha256::digest(&bytes));
+            let mut installer = StandaloneInstaller;
+            assert_eq!(
+                installer.install(&binary, &bytes, &digest).unwrap_err(),
+                "update archive is unsafe"
+            );
+            assert_eq!(fs::read(&binary).unwrap(), b"old");
+            assert_eq!(fs::read(&notice).unwrap(), b"previous notice");
+        }
+    }
+
+    #[test]
     fn rejects_checksum_mismatch_before_archive_processing() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("wp-tui");
@@ -315,6 +379,29 @@ mod tests {
             classify_installation(&link).unwrap(),
             InstallClassification::Unsafe
         );
+    }
+
+    fn notice_symlink_archive() -> Vec<u8> {
+        let mut compressed =
+            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        {
+            let mut builder = tar::Builder::new(&mut compressed);
+            let mut binary = tar::Header::new_gnu();
+            binary.set_path("wp-tui").unwrap();
+            binary.set_size(3);
+            binary.set_mode(0o755);
+            binary.set_cksum();
+            builder.append(&binary, &b"new"[..]).unwrap();
+            let mut link = tar::Header::new_gnu();
+            link.set_path("THIRD_PARTY_NOTICES.md").unwrap();
+            link.set_entry_type(tar::EntryType::Symlink);
+            link.set_link_name("../outside").unwrap();
+            link.set_size(0);
+            link.set_cksum();
+            builder.append(&link, &[][..]).unwrap();
+            builder.finish().unwrap();
+        }
+        compressed.finish().unwrap()
     }
 
     fn symlink_archive() -> Vec<u8> {

@@ -1,6 +1,8 @@
 use std::fs::File;
-use std::io::{Cursor, Read, Seek};
-use std::path::{Path, PathBuf};
+use std::io::{BufReader, Cursor, Read, Seek};
+#[cfg(test)]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -81,7 +83,8 @@ fn play_sound(sound: NotificationSound) -> Result<(), String> {
         }
         NotificationSound::System => return Ok(()),
     };
-    let source = rodio::Decoder::try_from(input).map_err(|error| error.to_string())?;
+    let source =
+        rodio::Decoder::try_from(BufReader::new(input)).map_err(|error| error.to_string())?;
     let stream =
         rodio::DeviceSinkBuilder::open_default_sink().map_err(|error| error.to_string())?;
     let player = rodio::Player::connect_new(&stream.mixer());
