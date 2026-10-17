@@ -4,6 +4,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use tar::Archive;
 
+const MAX_BINARY_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_NOTICE_BYTES: u64 = 64 * 1024;
 const INSTALLED_NOTICE: &str = "wp-tui-THIRD_PARTY_NOTICES.md";
 
@@ -122,6 +123,9 @@ impl super::InstallerPort for StandaloneInstaller {
             return Err("update archive is unsafe".into());
         }
         let mode = entry.header().mode().map_err(|error| error.to_string())?;
+        if entry.size() > MAX_BINARY_BYTES || mode & !0o755 != 0 {
+            return Err("update archive is unsafe".into());
+        }
         let mut temp =
             tempfile::NamedTempFile::new_in(parent).map_err(|error| error.to_string())?;
         io::copy(&mut entry, &mut temp).map_err(|error| error.to_string())?;
@@ -174,6 +178,8 @@ impl super::InstallerPort for StandaloneInstaller {
         temp.as_file()
             .sync_all()
             .map_err(|error| error.to_string())?;
+        // Publish the notice first: a failed binary rename can leave an extra notice,
+        // but never a newly installed bundled executable without its MIT notice.
         if let Some(contents) = notice {
             let mut notice_temp =
                 tempfile::NamedTempFile::new_in(parent).map_err(|error| error.to_string())?;
