@@ -313,10 +313,7 @@ fn clicking_a_message_exits_vim_without_reactivating_it_on_ordinary_insert() {
         app.conversation_mode,
         wp_tui::app::actions::ConversationMode::MessageNavigation
     );
-    app.on_terminal_event(Event::Key(KeyEvent::new(
-        KeyCode::Esc,
-        KeyModifiers::NONE,
-    )));
+    app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
     for character in ['i', 'X'] {
         app.on_terminal_event(Event::Key(KeyEvent::new(
             KeyCode::Char(character),
