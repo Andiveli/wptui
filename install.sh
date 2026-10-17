@@ -46,23 +46,47 @@ url_for_target() {
 }
 
 main() {
-    local asset url tmp
+    local asset url tmp members details has_notice
     asset="$(url_for_target)"
     url="https://github.com/${REPO}/releases/latest/download/${asset}"
 
     tmp="$(mktemp -d)"
-    trap 'rm -rf "$tmp"' EXIT
+    trap "rm -rf -- $(printf '%q' "$tmp")" EXIT
 
     echo "Downloading ${asset} ..."
-    curl -fL --proto '=https' --tlsv1.2 -o "${tmp}/${asset}" "${url}" \
+    curl -fL --proto '=https' --tlsv1.2 --max-filesize 67108864 \
+        -o "${tmp}/${asset}" "${url}" \
         || die "download failed (is there a release with ${asset}?)"
 
+    members="$(tar -tzf "${tmp}/${asset}")" || die "release archive is unsafe"
+    case "$members" in
+        "$BIN_NAME") has_notice=false ;;
+        "$(printf '%s\n%s\n%s' "$BIN_NAME" THIRD_PARTY_NOTICES.md assets/sounds/LICENSE.md)")
+            has_notice=true ;;
+        *) die "release archive is unsafe" ;;
+    esac
+    details="$(tar -tvzf "${tmp}/${asset}")" || die "release archive is unsafe"
+    # GNU tar puts size in field 3; BSD tar includes a link-count and uses field 5.
+    printf '%s\n' "$details" | awk -v expected="$(if "$has_notice"; then echo 3; else echo 1; fi)" '
+        {
+            size = ($3 ~ /^[0-9]+$/) ? $3 : $5
+            if (substr($1, 1, 1) != "-" || size !~ /^[0-9]+$/ ||
+                size + 0 > (NR == 1 ? 268435456 : 65536)) exit 1
+        }
+        END { if (NR != expected) exit 1 }
+    ' || die "release archive is unsafe"
+
+    tar -xOzf "${tmp}/${asset}" "$BIN_NAME" > "${tmp}/${BIN_NAME}" \
+        || die "release archive is unsafe"
+    if "$has_notice"; then
+        tar -xOzf "${tmp}/${asset}" THIRD_PARTY_NOTICES.md > "${tmp}/THIRD_PARTY_NOTICES.md" \
+            || die "release archive is unsafe"
+    fi
     mkdir -p "$PREFIX"
-    tar -xzf "${tmp}/${asset}" -C "$tmp"
-    install -m 0755 "${tmp}/${BIN_NAME}" "${PREFIX}/${BIN_NAME}"
-    if [[ -f "${tmp}/THIRD_PARTY_NOTICES.md" ]]; then
+    if "$has_notice"; then
         install -m 0644 "${tmp}/THIRD_PARTY_NOTICES.md" "${PREFIX}/${BIN_NAME}-THIRD_PARTY_NOTICES.md"
     fi
+    install -m 0755 "${tmp}/${BIN_NAME}" "${PREFIX}/${BIN_NAME}"
 
     echo "Installed ${BIN_NAME} to ${PREFIX}"
 

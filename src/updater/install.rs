@@ -340,6 +340,25 @@ mod tests {
     }
 
     #[test]
+    fn rejects_oversized_binary_header_and_unsafe_mode_without_replacing_files() {
+        let directory = tempdir().unwrap();
+        let binary = directory.path().join("wp-tui");
+        let notice = directory.path().join("wp-tui-THIRD_PARTY_NOTICES.md");
+        for bytes in [oversized_binary_archive(), archive_with_mode(0o4777)] {
+            fs::write(&binary, b"old").unwrap();
+            fs::write(&notice, b"previous notice").unwrap();
+            let digest = format!("{:x}", Sha256::digest(&bytes));
+            let mut installer = StandaloneInstaller;
+            assert_eq!(
+                installer.install(&binary, &bytes, &digest).unwrap_err(),
+                "update archive is unsafe"
+            );
+            assert_eq!(fs::read(&binary).unwrap(), b"old");
+            assert_eq!(fs::read(&notice).unwrap(), b"previous notice");
+        }
+    }
+
+    #[test]
     fn rejects_checksum_mismatch_before_archive_processing() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("wp-tui");
@@ -440,6 +459,34 @@ mod tests {
             classify_installation(&link).unwrap(),
             InstallClassification::Unsafe
         );
+    }
+
+    fn archive_with_mode(mode: u32) -> Vec<u8> {
+        let mut compressed =
+            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        {
+            let mut builder = tar::Builder::new(&mut compressed);
+            let mut header = tar::Header::new_gnu();
+            header.set_path("wp-tui").unwrap();
+            header.set_size(3);
+            header.set_mode(mode);
+            header.set_cksum();
+            builder.append(&header, &b"new"[..]).unwrap();
+            builder.finish().unwrap();
+        }
+        compressed.finish().unwrap()
+    }
+
+    fn oversized_binary_archive() -> Vec<u8> {
+        let mut header = tar::Header::new_gnu();
+        header.set_path("wp-tui").unwrap();
+        header.set_size(256 * 1024 * 1024 + 1);
+        header.set_mode(0o755);
+        header.set_cksum();
+        let mut compressed =
+            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        compressed.write_all(header.as_bytes()).unwrap();
+        compressed.finish().unwrap()
     }
 
     fn notice_symlink_archive() -> Vec<u8> {
