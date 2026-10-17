@@ -51,6 +51,12 @@ An existing `settings.conf` in the data directory is copied there on first use i
 file exists; the legacy file is left untouched. Set `composer_direction=rtl` or
 `composer_direction=auto` to choose the composer direction.
 
+Desktop notifications use the system notification sound by default. To play a custom sound,
+add `notification_sound=/absolute/path/to/alert.ogg` to `settings.conf` (WAV, MP3 and
+OGG/Vorbis are supported). `notification_sound=system` restores the default. Custom playback
+does not request a second system sound; an unreadable file or missing audio device is logged
+without stopping incoming messages.
+
 Mouse capture is enabled by default during the pointer-support preview. Add `mouse=disable` to
 that config file and restart to restore terminal-native selection, or use
 `mouse=enable` to explicitly enable terminal-wide capture. When capture is on, Shift+drag may
@@ -72,15 +78,15 @@ terminal.
 
 - **Debian / Ubuntu**
   ```
-  sudo apt install libchafa0t64 libglib2.0-0 libwayland-client0
+  sudo apt install libchafa0t64 libglib2.0-0 libwayland-client0 libasound2
   ```
 - **Fedora**
   ```
-  sudo dnf install chafa glib2 wayland
+  sudo dnf install chafa glib2 wayland alsa-lib
   ```
 - **Arch Linux**
   ```
-  sudo pacman -S chafa glib2 wayland
+  sudo pacman -S chafa glib2 wayland alsa-lib
   ```
 - **macOS**
   ```
@@ -96,7 +102,7 @@ terminal.
 - Go with CGO enabled
 - A C compiler supported by CGO
 - On Linux, the development packages `libwayland-dev`, `libchafa-dev` and
-  `libglib2.0-dev`; on macOS, `chafa` from Homebrew
+  `libglib2.0-dev`, `libasound2-dev`; on macOS, `chafa` from Homebrew
 - Optional: `mpv` for opening media externally
 
 ## Installation

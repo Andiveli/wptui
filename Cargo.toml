@@ -8,6 +8,7 @@ description = "Experimental keyboard-driven WhatsApp client for the terminal"
 
 [dependencies]
 notify-rust = "4"
+rodio = { version = "0.22.2", default-features = false, features = ["playback", "wav", "mp3", "vorbis"] }
 log = "0.4"
 whatsrust = { path = "whatsrust", version = "0.1.1" }
 clap = { version = "4.5", features = ["derive"] }

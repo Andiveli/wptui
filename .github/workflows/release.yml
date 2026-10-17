@@ -34,7 +34,7 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             sudo apt-get update
-            sudo apt-get install -y libwayland-dev libchafa-dev libglib2.0-dev
+            sudo apt-get install -y libwayland-dev libchafa-dev libglib2.0-dev libasound2-dev
           else
             brew install chafa
           fi
