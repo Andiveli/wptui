@@ -20,6 +20,18 @@ fn message(chat: &str, text: &str) -> wr::Message {
     }
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn system_sound_uses_macos_default_notification_constant() {
+    assert_eq!(system_sound_name(), "NSUserNotificationDefaultSoundName");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn system_sound_uses_desktop_sound_theme_name() {
+    assert_eq!(system_sound_name(), "message-new-instant");
+}
+
 #[test]
 fn native_notifier_selects_sound_from_settings_without_audio_hardware() {
     let directory = tempfile::tempdir().unwrap();

@@ -68,6 +68,16 @@ impl NotifyRustNotifier {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn system_sound_name() -> &'static str {
+    "message-new-instant"
+}
+
+#[cfg(target_os = "macos")]
+fn system_sound_name() -> &'static str {
+    "NSUserNotificationDefaultSoundName"
+}
+
 fn play_custom_sound(path: &Path) -> Result<(), String> {
     let source = rodio::Decoder::try_from(File::open(path).map_err(|error| error.to_string())?)
         .map_err(|error| error.to_string())?;
@@ -88,10 +98,8 @@ impl Notifier for NotifyRustNotifier {
         let sound = self.sound_choice();
         match &sound {
             NotificationSound::System => {
-                #[cfg(target_os = "linux")]
-                desktop.sound_name("message-new-instant");
-                #[cfg(target_os = "macos")]
-                desktop.sound_name("default");
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
+                desktop.sound_name(system_sound_name());
             }
             NotificationSound::Custom(_) => {} // No system sound hint for custom playback.
         }
