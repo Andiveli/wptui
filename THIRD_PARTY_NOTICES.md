@@ -16,6 +16,15 @@ licenses are distributed by the crates themselves and via
 The MPL-2.0 full text is available at https://www.mozilla.org/MPL/2.0/ and in
 the `LICENSE` file of the `go.mau.fi/whatsmeow` module in the Go module cache.
 
+## Symphonia
+
+- Component: `symphonia` and audio codec crates — audio decoding for custom notification sounds
+- License: Mozilla Public License 2.0 (MPL-2.0)
+- Source: https://github.com/pdeljanov/Symphonia
+
+The MPL-2.0 full text is available at https://www.mozilla.org/MPL/2.0/ and
+in the corresponding crate source distributions.
+
 ## Other dependencies
 
 Remaining Go and Rust dependencies are consumed under their respective
