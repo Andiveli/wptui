@@ -1,4 +1,10 @@
-use std::{io::Cursor, time::Duration};
+use std::{
+    io::Cursor,
+    time::{Duration, Instant},
+};
+
+use ratatui::layout::Size;
+use ratatui_image::{Resize, ResizeEncodeRender, picker::Picker, protocol::StatefulProtocol};
 
 use image::{AnimationDecoder, Frame, ImageDecoder, RgbaImage, codecs::webp::WebPDecoder};
 
@@ -16,6 +22,52 @@ pub struct StickerFrame {
 
 pub struct StickerAnimation {
     pub frames: Vec<StickerFrame>,
+}
+
+/// Protocols are prepared on the media worker, never inside a draw.
+pub struct StickerPlayback {
+    pub frames: Vec<StatefulProtocol>,
+    pub durations: Vec<Duration>,
+    pub current: usize,
+    pub deadline: Option<Instant>,
+}
+
+impl StickerPlayback {
+    pub fn prepare(animation: StickerAnimation, picker: &mut Picker, size: Size) -> Self {
+        let mut frames = Vec::with_capacity(animation.frames.len());
+        let mut durations = Vec::with_capacity(animation.frames.len());
+        for frame in animation.frames {
+            let mut protocol =
+                picker.new_resize_protocol(image::DynamicImage::ImageRgba8(frame.image));
+            protocol.resize_encode(&Resize::Scale(None), size);
+            frames.push(protocol);
+            durations.push(frame.duration);
+        }
+        Self {
+            frames,
+            durations,
+            current: 0,
+            deadline: None,
+        }
+    }
+
+    pub fn advance(&mut self, now: Instant) -> bool {
+        if self.frames.len() < 2 {
+            return false;
+        }
+        match self.deadline {
+            None => {
+                self.deadline = Some(now + self.durations[self.current]);
+                false
+            }
+            Some(deadline) if now < deadline => false,
+            Some(_) => {
+                self.current = (self.current + 1) % self.frames.len();
+                self.deadline = Some(now + self.durations[self.current]);
+                true
+            }
+        }
+    }
 }
 
 /// Returns `None` for static WebP so the caller can retain its existing still-image path.
@@ -95,6 +147,21 @@ mod tests {
             0,
             Delay::from_numer_denom_ms(millis, 1),
         ))
+    }
+
+    #[test]
+    fn playback_advances_only_at_deadline_and_resets_after_pause() {
+        let animation = collect_frames(vec![frame(1, 80), frame(2, 120)].into_iter()).unwrap();
+        let mut playback =
+            StickerPlayback::prepare(animation, &mut Picker::halfblocks(), Size::new(2, 2));
+        let start = Instant::now();
+        assert!(!playback.advance(start));
+        assert!(!playback.advance(start + Duration::from_millis(79)));
+        assert!(playback.advance(start + Duration::from_millis(80)));
+        assert_eq!(playback.current, 1);
+        playback.deadline = None;
+        assert!(!playback.advance(start + Duration::from_secs(10)));
+        assert_eq!(playback.current, 1);
     }
 
     #[test]

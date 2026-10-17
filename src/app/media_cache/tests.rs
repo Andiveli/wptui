@@ -1,5 +1,9 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use ratatui::layout::Size;
+use ratatui_image::picker::Picker;
 
 use super::super::test_support::TestApp;
 use super::super::{FileMeta, Metadata};
@@ -43,6 +47,54 @@ fn evicted_loaded_preview_becomes_reloadable() {
         !app.message_height_cache
             .contains(&wr::MessageId::from("preview"))
     );
+}
+
+#[test]
+fn late_preview_result_requires_loading_and_same_path() {
+    let mut app = TestApp::new();
+    app.messages
+        .insert("preview".into(), file_message("preview", "old.png"));
+    let path = Arc::<str>::from("old.png");
+    assert!(!app.preview_result_is_current(&"preview".into(), &path));
+    app.metadata
+        .insert("preview".into(), Metadata::File(FileMeta::Loading));
+    assert!(app.preview_result_is_current(&"preview".into(), &path));
+    assert!(!app.preview_result_is_current(&"preview".into(), &Arc::from("new.png")));
+    app.metadata
+        .insert("preview".into(), Metadata::File(FileMeta::Downloaded));
+    assert!(!app.preview_result_is_current(&"preview".into(), &path));
+}
+
+#[test]
+fn only_visible_stickers_schedule_playback() {
+    let mut app = TestApp::new();
+    let path = Arc::<str>::from("stickers/animated.webp");
+    let animation = super::super::sticker_animation::decode_animated_webp(include_bytes!(
+        "../../../tests/fixtures/sticker-animated.webp"
+    ))
+    .unwrap()
+    .unwrap();
+    app.sticker_playback.insert(
+        path.clone(),
+        super::super::sticker_animation::StickerPlayback::prepare(
+            animation,
+            &mut Picker::halfblocks(),
+            Size::new(2, 2),
+        ),
+    );
+    let start = Instant::now();
+    assert!(!app.advance_visible_stickers(start));
+    assert_eq!(app.sticker_deadline(), None);
+    app.visible_stickers.insert(path.clone());
+    assert!(!app.advance_visible_stickers(start));
+    assert_eq!(
+        app.sticker_deadline(),
+        Some(start + Duration::from_millis(80))
+    );
+    assert!(app.advance_visible_stickers(start + Duration::from_millis(80)));
+    app.visible_stickers.clear();
+    assert!(!app.advance_visible_stickers(start + Duration::from_millis(81)));
+    assert_eq!(app.sticker_deadline(), None);
 }
 
 #[test]
