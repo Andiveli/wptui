@@ -1,8 +1,11 @@
 use flate2::read::GzDecoder;
 use std::fs::{self, File};
-use std::io;
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use tar::Archive;
+
+const MAX_NOTICE_BYTES: u64 = 64 * 1024;
+const INSTALLED_NOTICE: &str = "wp-tui-THIRD_PARTY_NOTICES.md";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum InstallClassification {
@@ -122,9 +125,45 @@ impl super::InstallerPort for StandaloneInstaller {
         let mut temp =
             tempfile::NamedTempFile::new_in(parent).map_err(|error| error.to_string())?;
         io::copy(&mut entry, &mut temp).map_err(|error| error.to_string())?;
-        if entries.next().is_some() {
-            return Err("update archive is unsafe".into());
-        }
+        drop(entry);
+
+        // Validate the entire archive before changing either installed file.
+        // Older releases contain only the binary; new releases include both notices.
+        let notice = if let Some(next) = entries.next() {
+            let mut notice_entry = next.map_err(|error| error.to_string())?;
+            if notice_entry.path().map_err(|error| error.to_string())?
+                != PathBuf::from("THIRD_PARTY_NOTICES.md")
+                || !notice_entry.header().entry_type().is_file()
+                || notice_entry.size() > MAX_NOTICE_BYTES
+            {
+                return Err("update archive is unsafe".into());
+            }
+            let mut contents = Vec::with_capacity(notice_entry.size() as usize);
+            notice_entry
+                .read_to_end(&mut contents)
+                .map_err(|error| error.to_string())?;
+            drop(notice_entry);
+
+            let mut license = entries
+                .next()
+                .ok_or("update archive is unsafe")?
+                .map_err(|error| error.to_string())?;
+            if license.path().map_err(|error| error.to_string())?
+                != PathBuf::from("assets/sounds/LICENSE.md")
+                || !license.header().entry_type().is_file()
+                || license.size() > MAX_NOTICE_BYTES
+            {
+                return Err("update archive is unsafe".into());
+            }
+            io::copy(&mut license, &mut io::sink()).map_err(|error| error.to_string())?;
+            drop(license);
+            if entries.next().is_some() {
+                return Err("update archive is unsafe".into());
+            }
+            Some(contents)
+        } else {
+            None
+        };
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -135,6 +174,28 @@ impl super::InstallerPort for StandaloneInstaller {
         temp.as_file()
             .sync_all()
             .map_err(|error| error.to_string())?;
+        if let Some(contents) = notice {
+            let mut notice_temp =
+                tempfile::NamedTempFile::new_in(parent).map_err(|error| error.to_string())?;
+            notice_temp
+                .write_all(&contents)
+                .map_err(|error| error.to_string())?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                notice_temp
+                    .as_file()
+                    .set_permissions(fs::Permissions::from_mode(0o644))
+                    .map_err(|error| error.to_string())?;
+            }
+            notice_temp
+                .as_file()
+                .sync_all()
+                .map_err(|error| error.to_string())?;
+            notice_temp
+                .persist(parent.join(INSTALLED_NOTICE))
+                .map_err(|error| error.error.to_string())?;
+        }
         temp.persist(current_exe)
             .map_err(|error| error.error.to_string())?;
         #[cfg(unix)]
