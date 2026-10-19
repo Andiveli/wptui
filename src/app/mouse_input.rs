@@ -245,6 +245,7 @@ impl App<'_> {
                     self.focus_pane = FocusPane::Conversation;
                     if self.conversation_mode == ConversationMode::ComposerEditing {
                         self.conversation_mode = ConversationMode::MessageNavigation;
+                        self.vim_composer_mode = None;
                     }
                     let mut activated = false;
                     if !self.selected_message_is_deleted() {
