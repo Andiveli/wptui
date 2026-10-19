@@ -286,7 +286,7 @@ mod tests {
     use crate::app::test_support::TestApp;
     use crate::app::{FileMeta, Metadata};
     use ratatui::layout::Size;
-    use ratatui_image::picker::Picker;
+    use ratatui_image::picker::{Picker, ProtocolType};
     use std::{
         sync::Arc,
         time::{Duration, Instant},
@@ -381,6 +381,97 @@ mod tests {
         );
         assert_ne!(buffer[(0, 0)].symbol(), " ");
         assert_ne!(buffer[(0, 14)].symbol(), " ");
+    }
+
+    #[test]
+    fn two_visible_kitty_stickers_emit_distinct_frames() {
+        let mut app = TestApp::new();
+        let mut picker = Picker::halfblocks();
+        picker.set_protocol_type(ProtocolType::Kitty);
+        let mut paths = Vec::new();
+        for index in 0..2 {
+            let id = format!("kitty-sticker-{index}");
+            let path = Arc::<str>::from(format!("stickers/{id}.webp"));
+            let animation =
+                decode_animated_webp(include_bytes!("../../tests/fixtures/sticker-animated.webp"))
+                    .unwrap()
+                    .unwrap();
+            app.sticker_playback.insert(
+                path.clone(),
+                StickerPlayback::prepare(animation, &mut picker, Size::new(20, 14)),
+            );
+            app.metadata
+                .insert(id.into(), Metadata::File(FileMeta::Loaded));
+            paths.push(path);
+        }
+
+        let paint = |app: &mut TestApp| {
+            let mut buffer = Buffer::empty(Rect::new(0, 0, 20, 28));
+            let mut plan = crate::app::events::MediaRenderPlan::default();
+            for (index, path) in paths.iter().enumerate() {
+                let file = FileContent {
+                    kind: FileKind::Sticker,
+                    path: path.clone(),
+                    ..Default::default()
+                };
+                super::render_file(
+                    &mut buffer,
+                    &format!("kitty-sticker-{index}").into(),
+                    &file,
+                    None,
+                    app,
+                    &mut plan,
+                    Rect::new(0, index as u16 * 14, 20, 14),
+                    true,
+                    Alignment::Left,
+                    MessageTextMode::Chat,
+                );
+            }
+            assert!(plan.into_effects().is_empty());
+            [
+                buffer[(0, 0)].symbol().to_owned(),
+                buffer[(0, 14)].symbol().to_owned(),
+            ]
+        };
+
+        let first = paint(&mut app);
+        assert_eq!(app.visible_stickers.len(), 2);
+        let image_id = |symbol: &str| {
+            let header = symbol
+                .split("\x1b_Gq=2,i=")
+                .nth(1)
+                .expect("Kitty transmission");
+            header.split(',').next().unwrap().to_owned()
+        };
+        let first_ids = first.each_ref().map(|symbol| image_id(symbol));
+        assert_ne!(first_ids[0], first_ids[1], "distinct virtual image IDs");
+        for symbol in &first {
+            assert!(
+                symbol.contains(",a=T,U=1,"),
+                "virtual placement transmission"
+            );
+            assert!(symbol.contains("\u{10EEEE}"), "Kitty image placeholder");
+        }
+
+        let start = Instant::now();
+        assert!(!app.advance_visible_stickers(start));
+        assert!(app.advance_visible_stickers(start + Duration::from_millis(80)));
+        assert!(
+            paths
+                .iter()
+                .all(|path| app.sticker_playback[path].current == 1)
+        );
+        let second = paint(&mut app);
+        let second_ids = second.each_ref().map(|symbol| image_id(symbol));
+        assert_ne!(second_ids[0], second_ids[1]);
+        for index in 0..2 {
+            assert_ne!(first_ids[index], second_ids[index], "new frame image ID");
+            assert_ne!(
+                first[index], second[index],
+                "changed Kitty frame placeholder"
+            );
+            assert!(second[index].contains(",a=T,U=1,"));
+        }
     }
 
     #[test]
