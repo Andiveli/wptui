@@ -235,17 +235,45 @@ mod tests {
     }
 
     #[test]
-    fn decoded_work_and_retention_limits_fall_back() {
-        let oversized = || {
-            Ok(Frame::from_parts(
-                RgbaImage::new(MAX_DIMENSION, MAX_DIMENSION),
-                0,
-                0,
-                Delay::from_numer_denom_ms(80, 1),
-            ))
-        };
-        let animation = collect_frames(std::iter::repeat_with(oversized).take(70)).unwrap();
-        assert_eq!(animation.frames.len(), 1);
+    fn long_webp_keeps_bounded_motion_and_full_timing() {
+        for count in [40, 130] {
+            let frames = (0..count).map(|index| {
+                Ok(Frame::from_parts(
+                    RgbaImage::from_pixel(
+                        MAX_DIMENSION,
+                        MAX_DIMENSION,
+                        image::Rgba([index as u8, 0, 0, 255]),
+                    ),
+                    0,
+                    0,
+                    Delay::from_numer_denom_ms(50, 1),
+                ))
+            });
+            let animation = collect_frames(frames).unwrap();
+            assert!(animation.frames.len() >= 2, "{count} frames became still");
+            assert!(animation.frames.len() <= MAX_RETAINED_FRAMES);
+            assert!(
+                animation
+                    .frames
+                    .iter()
+                    .map(|frame| frame.image.as_raw().len() as u64)
+                    .sum::<u64>()
+                    <= MAX_RETAINED_BYTES
+            );
+            assert_eq!(
+                animation
+                    .frames
+                    .iter()
+                    .map(|frame| frame.duration)
+                    .sum::<Duration>(),
+                Duration::from_millis(count as u64 * 50)
+            );
+            assert_eq!(animation.frames[0].image.get_pixel(0, 0).0[0], 0);
+            assert_eq!(
+                animation.frames.last().unwrap().image.get_pixel(0, 0).0[0],
+                (count - 1) as u8
+            );
+        }
         let animation = collect_frames(vec![frame(1, 80), frame(2, 80)].into_iter()).unwrap();
         assert_eq!(animation.frames.len(), 2);
     }
