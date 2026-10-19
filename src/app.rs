@@ -210,6 +210,7 @@ pub struct App<'a> {
     pub media_path: PathBuf,
     pub whatsmeow_db: PathBuf,
     pub clock: Box<dyn Clock>,
+    pub(crate) startup_unix_seconds: Option<i64>,
     pub notifier: Box<dyn Notifier>,
 
     pub messages: HashMap<wr::MessageId, wr::Message>,

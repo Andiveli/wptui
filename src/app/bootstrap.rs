@@ -107,6 +107,7 @@ fn with_dirs_and_picker_and_ports(
         }
     };
     let notifier = notifier_from_settings(&preferences_path);
+    let startup_unix_seconds = clock.unix_seconds();
     let composer_direction = preferences::load_composer_direction(&preferences_path);
     let mouse_capture_enabled = preferences::load_mouse_capture_enabled(&preferences_path);
 
@@ -136,6 +137,7 @@ fn with_dirs_and_picker_and_ports(
         media_path: data_dir.join("media"),
         whatsmeow_db: data_dir.join("whatsmeow.db"),
         clock,
+        startup_unix_seconds,
         notifier,
         messages: HashMap::new(),
         message_actions: HashMap::new(),

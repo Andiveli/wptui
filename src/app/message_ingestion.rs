@@ -103,8 +103,11 @@ impl App<'_> {
             return;
         }
 
+        let play_sound = self
+            .startup_unix_seconds
+            .is_none_or(|started| message.info.timestamp >= started);
         let notification =
-            notification_projection(message, self.contact_name(&message.info.sender));
+            notification_projection(message, self.contact_name(&message.info.sender), play_sound);
         if let Err(err) = self.notifier.show(&notification) {
             error!("Failed to show desktop notification: {err}");
         }
