@@ -357,25 +357,43 @@ fn clicking_another_chat_exits_vim_before_ordinary_composition() {
 }
 
 #[test]
-fn switching_sections_exits_vim_composer_mode() {
-    let mut app = TestApp::with_settings("mouse=enable\n");
-    app.open_chat_by_jid("section-vim@example.test".to_owned().into());
-    app.focus_pane = FocusPane::Conversation;
-    for character in [' ', 'v'] {
-        app.on_terminal_event(Event::Key(KeyEvent::new(
-            KeyCode::Char(character),
-            KeyModifiers::NONE,
-        )));
+fn switching_sections_or_filters_exits_vim_composer_mode() {
+    for filter_click in [false, true] {
+        let mut app = TestApp::with_settings("mouse=enable\n");
+        app.open_chat_by_jid("section-vim@example.test".to_owned().into());
+        app.focus_pane = FocusPane::Conversation;
+        for character in [' ', 'v'] {
+            app.on_terminal_event(Event::Key(KeyEvent::new(
+                KeyCode::Char(character),
+                KeyModifiers::NONE,
+            )));
+        }
+        let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+        draw(&mut app, &mut terminal);
+        let area = if filter_click {
+            Rect::new(0, 0, 100, 1)
+        } else {
+            ui::navigation_areas(terminal.backend().buffer().area, app.pane_visibility)
+                .section_rail
+                .unwrap()
+        };
+        let (x, y) = painted_in(
+            &terminal,
+            area,
+            if filter_click { "Unread" } else { "Status" },
+        );
+        app.on_terminal_event(mouse(MouseEventKind::Down(MouseButton::Left), x, y));
+        if filter_click {
+            assert_eq!(app.chat_filter, ChatFilter::Unread);
+        } else {
+            assert_eq!(app.selected_section, Section::Status);
+        }
+        assert_eq!(app.vim_composer_mode, None);
+        assert_eq!(
+            app.conversation_mode,
+            wp_tui::app::actions::ConversationMode::MessageNavigation
+        );
     }
-    let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
-    draw(&mut app, &mut terminal);
-    let rail = ui::navigation_areas(terminal.backend().buffer().area, app.pane_visibility)
-        .section_rail
-        .unwrap();
-    let (x, y) = painted_in(&terminal, rail, "Status");
-    app.on_terminal_event(mouse(MouseEventKind::Down(MouseButton::Left), x, y));
-    assert_eq!(app.selected_section, Section::Status);
-    assert_eq!(app.vim_composer_mode, None);
 }
 
 #[derive(Clone, Default)]
