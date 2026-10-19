@@ -323,6 +323,61 @@ fn clicking_a_message_exits_vim_without_reactivating_it_on_ordinary_insert() {
     assert_eq!(app.composer.text(), "draftX");
 }
 
+#[test]
+fn clicking_another_chat_exits_vim_before_ordinary_composition() {
+    let mut app = TestApp::with_settings("mouse=enable\n");
+    let alice: JID = "alice-vim@example.test".to_owned().into();
+    let bob: JID = "bob-vim@example.test".to_owned().into();
+    app.contacts.insert(alice.clone(), "AliceVim".into());
+    app.contacts.insert(bob.clone(), "BobVim".into());
+    app.open_chat_by_jid(alice.clone());
+    app.open_chat_by_jid(bob);
+    app.focus_pane = FocusPane::Conversation;
+    for character in [' ', 'v'] {
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            KeyCode::Char(character),
+            KeyModifiers::NONE,
+        )));
+    }
+    let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+    draw(&mut app, &mut terminal);
+    let contacts = ui::navigation_areas(terminal.backend().buffer().area, app.pane_visibility)
+        .chat_list
+        .unwrap();
+    let (x, y) = painted_in(&terminal, contacts, "AliceVim");
+    app.on_terminal_event(mouse(MouseEventKind::Down(MouseButton::Left), x, y));
+    assert_eq!(app.open_chat(), Some(alice));
+    for character in ['i', 'X'] {
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            KeyCode::Char(character),
+            KeyModifiers::NONE,
+        )));
+    }
+    assert_eq!(app.composer.text(), "X");
+}
+
+#[test]
+fn switching_sections_exits_vim_composer_mode() {
+    let mut app = TestApp::with_settings("mouse=enable\n");
+    app.open_chat_by_jid("section-vim@example.test".to_owned().into());
+    app.focus_pane = FocusPane::Conversation;
+    for character in [' ', 'v'] {
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            KeyCode::Char(character),
+            KeyModifiers::NONE,
+        )));
+    }
+    let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+    draw(&mut app, &mut terminal);
+    let rail = ui::navigation_areas(terminal.backend().buffer().area, app.pane_visibility)
+        .section_rail
+        .unwrap();
+    let (x, y) = painted_in(&terminal, rail, "Status");
+    app.on_terminal_event(mouse(MouseEventKind::Down(MouseButton::Left), x, y));
+    assert_eq!(app.selected_section, Section::Status);
+    assert_eq!(app.vim_composer_mode, None);
+}
+
 #[derive(Clone, Default)]
 struct RecordingUrlOpener(Rc<RefCell<Vec<wp_tui::url::UrlLaunchPlan>>>);
 
