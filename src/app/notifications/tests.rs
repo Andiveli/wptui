@@ -64,6 +64,18 @@ fn native_notifier_keeps_selected_legacy_sound_when_config_appears_later() {
 }
 
 #[test]
+fn stale_notices_select_no_system_hint_or_direct_audio() {
+    for choice in [
+        NotificationSound::System,
+        NotificationSound::Bundled,
+        NotificationSound::Custom("/sounds/alert.ogg".into()),
+    ] {
+        assert_eq!(selected_sound(false, choice.clone()), None);
+        assert_eq!(selected_sound(true, choice.clone()), Some(choice));
+    }
+}
+
+#[test]
 fn bundled_sound_decodes_without_audio_hardware() {
     let mut decoded = rodio::Decoder::try_from(std::io::Cursor::new(ATTENTION_WAV)).unwrap();
     assert!(decoded.next().is_some());
@@ -137,8 +149,11 @@ fn mute_policy_excludes_expired_boundary() {
 
 #[test]
 fn projection_preserves_untrusted_message_text() {
-    let projection =
-        notification_projection(&message("alice@s.whatsapp.net", "ignored"), "Alice".into());
+    let projection = notification_projection(
+        &message("alice@s.whatsapp.net", "ignored"),
+        "Alice".into(),
+        true,
+    );
     assert_eq!(projection.summary.as_ref(), "Alice");
     assert_eq!(projection.body, "ignored");
 
@@ -146,7 +161,7 @@ fn projection_preserves_untrusted_message_text() {
         message: wr::MessageContent::Text("こんにちは\n\"quoted\"\u{0007}".into()),
         ..message("alice@s.whatsapp.net", "ignored")
     };
-    let projection = notification_projection(&message, Arc::from("名前\n\"sender\""));
+    let projection = notification_projection(&message, Arc::from("名前\n\"sender\""), true);
     assert_eq!(projection.summary.as_ref(), "名前\n\"sender\"");
     assert_eq!(projection.body, "こんにちは\n\"quoted\"\u{0007}");
 }

@@ -33,6 +33,7 @@ impl Clock for SystemClock {
 pub struct NotificationProjection {
     pub summary: Arc<str>,
     pub body: String,
+    pub play_sound: bool,
 }
 
 pub trait Notifier {
@@ -85,12 +86,17 @@ fn play_sound(sound: NotificationSound) -> Result<(), String> {
     };
     let source =
         rodio::Decoder::try_from(BufReader::new(input)).map_err(|error| error.to_string())?;
-    let stream =
+    let mut stream =
         rodio::DeviceSinkBuilder::open_default_sink().map_err(|error| error.to_string())?;
     let player = rodio::Player::connect_new(&stream.mixer());
     player.append(source);
     player.sleep_until_end();
+    stream.log_on_drop(false);
     Ok(())
+}
+
+fn selected_sound(play_sound: bool, choice: NotificationSound) -> Option<NotificationSound> {
+    play_sound.then_some(choice)
 }
 
 impl Notifier for NotifyRustNotifier {
@@ -99,16 +105,16 @@ impl Notifier for NotifyRustNotifier {
         desktop
             .summary(&notification.summary)
             .body(&notification.body);
-        let sound = self.sound_choice();
+        let sound = selected_sound(notification.play_sound, self.sound_choice());
         match &sound {
-            NotificationSound::System => {
+            Some(NotificationSound::System) => {
                 #[cfg(any(target_os = "linux", target_os = "macos"))]
                 desktop.sound_name(system_sound_name());
             }
-            NotificationSound::Bundled | NotificationSound::Custom(_) => {} // Direct playback needs no daemon sound hint.
+            Some(NotificationSound::Bundled | NotificationSound::Custom(_)) | None => {} // Direct playback needs no daemon sound hint.
         }
         desktop.show().map_err(|error| error.to_string())?;
-        if sound != NotificationSound::System {
+        if let Some(sound @ (NotificationSound::Bundled | NotificationSound::Custom(_))) = sound {
             if let Err(error) = thread::Builder::new()
                 .name("notification-sound".into())
                 .spawn(move || {
@@ -137,6 +143,7 @@ pub(crate) fn notification_is_muted(found: bool, muted_until: i64, now: i64) -> 
 pub(crate) fn notification_projection(
     message: &wr::Message,
     summary: Arc<str>,
+    play_sound: bool,
 ) -> NotificationProjection {
     let body = match &message.message {
         wr::MessageContent::ViewOnceUnavailable => wr::VIEW_ONCE_UNAVAILABLE_DESCRIPTION.to_owned(),
@@ -152,7 +159,11 @@ pub(crate) fn notification_projection(
             ToString::to_string,
         ),
     };
-    NotificationProjection { summary, body }
+    NotificationProjection {
+        summary,
+        body,
+        play_sound,
+    }
 }
 
 pub fn now_or(fallback: i64, clock: &dyn Clock) -> i64 {

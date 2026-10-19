@@ -194,6 +194,16 @@ fn same_second_and_newer_messages_request_audio_despite_visible_sync() {
 }
 
 #[test]
+fn unavailable_startup_clock_does_not_mute_eligible_messages() {
+    let chat = wr::JID::from("chat@g.us".to_owned());
+    let notifier = RecordingNotifier::default();
+    let mut app = TestApp::with_ports(FixedClock(None), notifier.clone());
+    app.process_message_with_lookup(message(&chat, "old", 1), false, |_| Default::default());
+    assert_eq!(*notifier.sound_requests.lock().unwrap(), vec![true]);
+    assert_eq!(notifier.notifications.lock().unwrap().len(), 1);
+}
+
+#[test]
 fn process_message_skips_the_port_for_ineligible_paths() {
     let chat = wr::JID::from("chat@g.us".to_owned());
     let fake = FakeChatSettingsQuery::default();
