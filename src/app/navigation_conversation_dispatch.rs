@@ -23,6 +23,7 @@ impl App<'_> {
                     && self.open_chat().is_some()
                     && !self.composer_blocked()
                 {
+                    self.composer.clear_vim_word_prefix();
                     self.conversation_mode = ConversationMode::ComposerEditing;
                     self.vim_composer_mode = Some(VimComposerMode::Normal);
                 }

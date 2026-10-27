@@ -39,7 +39,7 @@ impl App<'_> {
                 self.conversation_mode = ConversationMode::MessageNavigation;
             } else if self.composer.vim_word_prefix_pending() {
                 if let KeyCode::Char(character) = key.code {
-                    if key == Key::c(character) {
+                    if key == Key::k(KeyCode::Char(character)) {
                         self.composer.vim_word_key(character);
                     } else {
                         self.composer.clear_vim_word_prefix();
@@ -58,7 +58,7 @@ impl App<'_> {
             } {
                 self.dispatch_composer_action(ComposerAction::Edit(Key::k(direction)));
             } else if let KeyCode::Char(character) = key.code {
-                if key == Key::c(character) && !self.composer_blocked() {
+                if key == Key::k(KeyCode::Char(character)) && !self.composer_blocked() {
                     self.composer.vim_word_key(character);
                 }
             }

@@ -296,7 +296,7 @@ impl Composer<'_> {
                     }
                     next
                 } else {
-                    chars.len()
+                    chars.len().saturating_sub(1)
                 }
             }
             WordMotion::PreviousEnd => {
@@ -304,7 +304,11 @@ impl Composer<'_> {
                 while previous > 0 && class(previous) == 0 {
                     previous -= 1;
                 }
-                if offset < chars.len() && class(offset) != 0 && class(previous) == class(offset) {
+                if offset < chars.len()
+                    && previous + 1 == offset
+                    && class(offset) != 0
+                    && class(previous) == class(offset)
+                {
                     while previous > 0 && class(previous - 1) == class(previous) {
                         previous -= 1;
                     }
