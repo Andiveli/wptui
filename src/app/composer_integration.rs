@@ -33,9 +33,20 @@ impl App<'_> {
             && self.vim_composer_mode == Some(VimComposerMode::Normal)
         {
             if key == Key::k(KeyCode::Esc) {
+                self.composer.clear_vim_word_prefix();
                 self.composer.cancel_mention_picker();
                 self.vim_composer_mode = None;
                 self.conversation_mode = ConversationMode::MessageNavigation;
+            } else if self.composer.vim_word_prefix_pending() {
+                if let KeyCode::Char(character) = key.code {
+                    if key == Key::c(character) {
+                        self.composer.vim_word_key(character);
+                    } else {
+                        self.composer.clear_vim_word_prefix();
+                    }
+                } else {
+                    self.composer.clear_vim_word_prefix();
+                }
             } else if key == Key::c('i') && !self.composer_blocked() {
                 self.vim_composer_mode = Some(VimComposerMode::Insert);
             } else if let Some(direction) = match key {
@@ -46,6 +57,10 @@ impl App<'_> {
                 _ => None,
             } {
                 self.dispatch_composer_action(ComposerAction::Edit(Key::k(direction)));
+            } else if let KeyCode::Char(character) = key.code {
+                if key == Key::c(character) && !self.composer_blocked() {
+                    self.composer.vim_word_key(character);
+                }
             }
             return true;
         }

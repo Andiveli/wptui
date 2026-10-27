@@ -206,6 +206,7 @@ fn vim_e_moves_to_next_small_word_end() {
     assert_vim_word_motion("ab,cd ef", 0, &['e'], "aXb,cd ef");
     assert_vim_word_motion("ab,cd ef", 1, &['e'], "abX,cd ef");
     assert_vim_word_motion("ab\nβeta", 2, &['e'], "ab\nβetXa");
+    assert_vim_word_motion("ab", 1, &['e'], "aXb");
 }
 
 #[test]
@@ -232,6 +233,7 @@ fn vim_big_b_skips_punctuation_within_word() {
 fn vim_big_e_skips_punctuation_within_word() {
     assert_vim_word_motion("ab,cd ef", 0, &['E'], "ab,cXd ef");
     assert_vim_word_motion("ab\nβeta", 2, &['E'], "ab\nβetXa");
+    assert_vim_word_motion("ab", 1, &['E'], "aXb");
 }
 
 #[test]

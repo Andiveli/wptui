@@ -229,14 +229,21 @@ removes the local row, but does not itself prove removal from every recipient's 
 | Composer | Send | `Enter` |
 | Composer | Paste text, files, or an image | `Ctrl+V` |
 | Vim composer Normal | Move cursor | `h`/`j`/`k`/`l` |
+| Vim composer Normal | Next / previous word start | `w` / `b` |
+| Vim composer Normal | Next / previous word end | `e` / `ge` |
+| Vim composer Normal | Next / previous WORD start | `W` / `B` |
+| Vim composer Normal | Next / previous WORD end | `E` / `gE` |
 | Vim composer Normal | Insert / return to chat (draft kept) | `i` / `Esc` |
 | Vim composer Insert | Return to Normal | `Esc` |
 | Reaction picker | Move / confirm | `j`/`k` or Up/Down arrows / `Enter` |
 | Media viewer | Previous / next | `h`/`l` or arrows |
 
 The optional Vim composer starts in Normal mode; its border title shows Normal or Insert.
-Ordinary `i` composition remains unchanged. Search, substitution, deletion, and composer yank
-(`y`) are not available in this first slice. Pasted files are queued as attachments. When text
+Ordinary `i` composition remains unchanged. These motions move only the cursor: a word
+separates letters/digits/underscores from punctuation, while a WORD is any non-whitespace
+run. Counts and operators are not supported; composer yank (`y`) is deferred to a later
+slice, and this is not full Vim emulation. Search, substitution, and deletion are not
+available here. Pasted files are queued as attachments. When text
 is included, it becomes the caption of the first attachment.
 
 ## Development

@@ -396,6 +396,37 @@ fn switching_sections_or_filters_exits_vim_composer_mode() {
     }
 }
 
+#[test]
+fn reentering_vim_after_filter_click_discards_pending_word_prefix() {
+    let mut app = TestApp::with_settings("mouse=enable\n");
+    app.open_chat_by_jid("word-prefix@example.test".to_owned().into());
+    app.composer.insert_text("ab,cd");
+    app.focus_pane = FocusPane::Conversation;
+    let key = |app: &mut TestApp, character| {
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            KeyCode::Char(character),
+            KeyModifiers::NONE,
+        )));
+    };
+    for character in [' ', 'v'] {
+        key(&mut app, character);
+    }
+    for _ in 0..5 {
+        key(&mut app, 'h');
+    }
+    key(&mut app, 'g');
+    let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+    draw(&mut app, &mut terminal);
+    let (x, y) = painted_in(&terminal, Rect::new(0, 0, 100, 1), "Unread");
+    app.on_terminal_event(mouse(MouseEventKind::Down(MouseButton::Left), x, y));
+    assert_eq!(app.vim_composer_mode, None);
+    app.focus_pane = FocusPane::Conversation;
+    for character in [' ', 'v', 'e', 'i', 'X'] {
+        key(&mut app, character);
+    }
+    assert_eq!(app.composer.text(), "aXb,cd");
+}
+
 #[derive(Clone, Default)]
 struct RecordingUrlOpener(Rc<RefCell<Vec<wp_tui::url::UrlLaunchPlan>>>);
 

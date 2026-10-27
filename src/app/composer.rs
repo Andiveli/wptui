@@ -93,6 +93,7 @@ pub struct Composer<'a> {
     mentions: Vec<MentionMark>,
     caret_affinity: Option<BoundaryAffinity>,
     preferred_visual_column: Option<usize>,
+    pending_vim_g: bool,
 }
 
 fn logical_cursor_position(cursor: ratatui_textarea::DataCursor) -> (usize, usize) {
@@ -129,6 +130,7 @@ impl Default for Composer<'_> {
             mentions: Vec::new(),
             caret_affinity: None,
             preferred_visual_column: None,
+            pending_vim_g: false,
         }
     }
 }
@@ -221,6 +223,102 @@ impl Composer<'_> {
                 self.preferred_visual_column = None;
             }
         }
+    }
+
+    pub(crate) fn vim_word_key(&mut self, key: char) {
+        if self.pending_vim_g {
+            self.pending_vim_g = false;
+            if key == 'e' || key == 'E' {
+                self.move_word(key == 'E', WordMotion::PreviousEnd);
+            }
+            return;
+        }
+        match key {
+            'g' => self.pending_vim_g = true,
+            'w' => self.move_word(false, WordMotion::NextStart),
+            'W' => self.move_word(true, WordMotion::NextStart),
+            'b' => self.move_word(false, WordMotion::PreviousStart),
+            'B' => self.move_word(true, WordMotion::PreviousStart),
+            'e' => self.move_word(false, WordMotion::NextEnd),
+            'E' => self.move_word(true, WordMotion::NextEnd),
+            _ => {}
+        }
+    }
+
+    pub(crate) fn vim_word_prefix_pending(&self) -> bool {
+        self.pending_vim_g
+    }
+
+    pub(crate) fn clear_vim_word_prefix(&mut self) {
+        self.pending_vim_g = false;
+    }
+
+    fn move_word(&mut self, big: bool, motion: WordMotion) {
+        let chars: Vec<char> = self.text().chars().collect();
+        let offset = self.cursor_offset().min(chars.len());
+        let class = |index: usize| word_class(chars[index], big);
+        let target = match motion {
+            WordMotion::NextStart => {
+                let mut next = offset;
+                if next < chars.len() && class(next) != 0 {
+                    let current = class(next);
+                    while next < chars.len() && class(next) == current {
+                        next += 1;
+                    }
+                }
+                while next < chars.len() && class(next) == 0 {
+                    next += 1;
+                }
+                next
+            }
+            WordMotion::PreviousStart => {
+                let mut previous = offset.saturating_sub(1);
+                while previous > 0 && class(previous) == 0 {
+                    previous -= 1;
+                }
+                if class(previous) != 0 {
+                    let current = class(previous);
+                    while previous > 0 && class(previous - 1) == current {
+                        previous -= 1;
+                    }
+                }
+                previous
+            }
+            WordMotion::NextEnd => {
+                let mut next = offset.saturating_add(1).min(chars.len());
+                while next < chars.len() && class(next) == 0 {
+                    next += 1;
+                }
+                if next < chars.len() {
+                    let current = class(next);
+                    while next + 1 < chars.len() && class(next + 1) == current {
+                        next += 1;
+                    }
+                    next
+                } else {
+                    chars.len()
+                }
+            }
+            WordMotion::PreviousEnd => {
+                let mut previous = offset.saturating_sub(1);
+                while previous > 0 && class(previous) == 0 {
+                    previous -= 1;
+                }
+                if offset < chars.len() && class(offset) != 0 && class(previous) == class(offset) {
+                    while previous > 0 && class(previous - 1) == class(previous) {
+                        previous -= 1;
+                    }
+                    previous = previous.saturating_sub(1);
+                    while previous > 0 && class(previous) == 0 {
+                        previous -= 1;
+                    }
+                }
+                previous
+            }
+        };
+        self.set_cursor_offset(target);
+        self.caret_affinity = None;
+        self.preferred_visual_column = None;
     }
 
     fn visual_layout(&self, direction: ComposerDirection, width: u16) -> ComposerVisualLayout {
@@ -667,6 +765,23 @@ impl Composer<'_> {
         let chars: Vec<char> = text.chars().collect();
         output.extend(chars[last..].iter());
         (output, mentions, mention_ranges, display_mention_ranges)
+    }
+}
+
+enum WordMotion {
+    NextStart,
+    PreviousStart,
+    NextEnd,
+    PreviousEnd,
+}
+
+fn word_class(character: char, big: bool) -> u8 {
+    if character.is_whitespace() {
+        0
+    } else if big || character.is_alphanumeric() || character == '_' {
+        1
+    } else {
+        2
     }
 }
 
