@@ -177,6 +177,9 @@ impl App<'_> {
                         self.chat_filter = filter;
                         self.update_filtered_chats(selected);
                         self.focus_pane = FocusPane::ChatList;
+                        if self.vim_composer_mode.take().is_some() {
+                            self.conversation_mode = ConversationMode::MessageNavigation;
+                        }
                     }
                     return;
                 }
@@ -192,6 +195,9 @@ impl App<'_> {
                         self.selected_section = section;
                         self.rail_on_logout = false;
                         self.dispatch_action(AppAction::FocusPane(FocusPane::ChatList));
+                        if self.vim_composer_mode.take().is_some() {
+                            self.conversation_mode = ConversationMode::MessageNavigation;
+                        }
                     } else {
                         self.rail_on_logout = true;
                         self.begin_logout_confirmation();
