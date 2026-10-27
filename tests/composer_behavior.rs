@@ -156,6 +156,90 @@ fn vim_navigation_moves_the_caret_without_inserting_commands_or_sending() {
     }
 }
 
+// Each case enters Vim through terminal events and observes the movement through
+// the insertion point, rather than inspecting the textarea's private cursor.
+fn assert_vim_word_motion(draft: &str, from: usize, keys: &[char], expected: &str) {
+    let mut app = TestApp::new();
+    app.open_chat_by_jid(whatsrust::JID("alice@s.whatsapp.net".into()));
+    app.focus_pane = FocusPane::Conversation;
+    app.composer.insert_text(draft);
+    let key = |app: &mut TestApp, character| {
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            TerminalKeyCode::Char(character),
+            TerminalKeyModifiers::NONE,
+        )));
+    };
+    for character in [' ', 'v'] {
+        key(&mut app, character);
+    }
+    // Set up a logical character position using the already supported h motion.
+    for _ in from..draft.chars().count() {
+        key(&mut app, 'h');
+    }
+    for &character in keys {
+        key(&mut app, character);
+    }
+    assert_eq!(app.composer.text(), draft, "keys: {keys:?}");
+    assert_eq!(app.vim_composer_mode, Some(VimComposerMode::Normal));
+    key(&mut app, 'i');
+    key(&mut app, 'X');
+    assert_eq!(app.composer.text(), expected, "keys: {keys:?}");
+}
+
+#[test]
+fn vim_w_moves_to_next_small_word_start_across_punctuation_and_lines() {
+    assert_vim_word_motion("ab,cd ef", 0, &['w'], "abX,cd ef");
+    assert_vim_word_motion("ab,cd ef", 2, &['w'], "ab,Xcd ef");
+    assert_vim_word_motion("ab\nβeta", 0, &['w'], "ab\nXβeta");
+    assert_vim_word_motion("ab", 2, &['w'], "abX");
+}
+
+#[test]
+fn vim_b_moves_to_previous_small_word_start() {
+    assert_vim_word_motion("ab,cd ef", 6, &['b'], "ab,Xcd ef");
+    assert_vim_word_motion("ab,cd", 3, &['b'], "abX,cd");
+    assert_vim_word_motion("ab", 0, &['b'], "Xab");
+}
+
+#[test]
+fn vim_e_moves_to_next_small_word_end() {
+    assert_vim_word_motion("ab,cd ef", 0, &['e'], "aXb,cd ef");
+    assert_vim_word_motion("ab,cd ef", 1, &['e'], "abX,cd ef");
+    assert_vim_word_motion("ab\nβeta", 2, &['e'], "ab\nβetXa");
+}
+
+#[test]
+fn vim_ge_moves_to_previous_small_word_end() {
+    assert_vim_word_motion("ab,cd ef", 6, &['g', 'e'], "ab,cXd ef");
+    assert_vim_word_motion("ab,cd", 3, &['g', 'e'], "abX,cd");
+    assert_vim_word_motion("ab", 0, &['g', 'e'], "Xab");
+}
+
+#[test]
+fn vim_big_w_skips_punctuation_within_word() {
+    assert_vim_word_motion("ab,cd ef", 0, &['W'], "ab,cd Xef");
+    assert_vim_word_motion("ab\nβeta", 0, &['W'], "ab\nXβeta");
+    assert_vim_word_motion("ab", 2, &['W'], "abX");
+}
+
+#[test]
+fn vim_big_b_skips_punctuation_within_word() {
+    assert_vim_word_motion("ab,cd ef", 6, &['B'], "Xab,cd ef");
+    assert_vim_word_motion("ab", 0, &['B'], "Xab");
+}
+
+#[test]
+fn vim_big_e_skips_punctuation_within_word() {
+    assert_vim_word_motion("ab,cd ef", 0, &['E'], "ab,cXd ef");
+    assert_vim_word_motion("ab\nβeta", 2, &['E'], "ab\nβetXa");
+}
+
+#[test]
+fn vim_big_ge_skips_punctuation_within_word() {
+    assert_vim_word_motion("ab,cd ef", 6, &['g', 'E'], "ab,cXd ef");
+    assert_vim_word_motion("ab,cd ef", 0, &['g', 'E'], "Xab,cd ef");
+}
+
 #[test]
 fn vim_composer_title_shows_the_active_mode_without_changing_standard_input_title() {
     let mut app = TestApp::new();
