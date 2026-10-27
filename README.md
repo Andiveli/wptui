@@ -26,7 +26,7 @@ https://github.com/user-attachments/assets/f08d20f9-6051-45e2-a1d2-b0a512242e9c
 - Paste text, images, and files from the clipboard
 - Send attachments with captions
 - Download and preview media, or open it in an external player
-- Play animated WebP stickers while visible in terminals with image support (up to four cached animations); excess or unsupported stickers retain a still preview
+- Play animated WebP stickers while visible in terminals with image support (up to four cached animations); long animations are sampled to preserve motion and their normalized frame timing within bounded memory, while excess or unsupported stickers retain a still preview
 - Display contact avatars and desktop notifications
 - Contextual, Vim-inspired keybindings
 - Andiveli welcome mark in the chat panel before any conversation is opened
