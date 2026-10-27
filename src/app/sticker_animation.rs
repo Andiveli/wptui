@@ -10,7 +10,10 @@ use std::{
 use ratatui::layout::Size;
 use ratatui_image::{Resize, ResizeEncodeRender, picker::Picker, protocol::StatefulProtocol};
 
-use image::{AnimationDecoder, Frame, ImageDecoder, RgbaImage, codecs::webp::WebPDecoder};
+use image::{
+    AnimationDecoder, Frame, ImageDecoder, RgbaImage, codecs::webp::WebPDecoder,
+    imageops::FilterType,
+};
 
 const MAX_ANIMATION_JOBS: usize = 2;
 
@@ -42,7 +45,8 @@ impl Drop for AnimationSlot {
 const MAX_DIMENSION: u32 = 512;
 const MAX_SOURCE_FRAMES: usize = 256;
 const MAX_RETAINED_FRAMES: usize = 32;
-const MAX_DECODE_WORK_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_FRAME_SIDE: u32 = 256;
+const MAX_DECODE_WORK_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_RETAINED_BYTES: u64 = 16 * 1024 * 1024;
 
 /// A composited canvas and the time it remains visible.
@@ -104,7 +108,8 @@ impl StickerPlayback {
 }
 
 /// Returns `None` for static WebP so the caller can retain its existing still-image path.
-/// An animation exceeding any budget becomes its first composited frame only.
+/// Long animations are sampled within memory and work budgets; unsupported ones
+/// retain only their first composited frame.
 pub fn decode_animated_webp(bytes: &[u8]) -> image::ImageResult<Option<StickerAnimation>> {
     let decoder = WebPDecoder::new(Cursor::new(bytes))?;
     if !decoder.has_animation() {
@@ -124,7 +129,6 @@ fn collect_frames(
 ) -> image::ImageResult<StickerAnimation> {
     let mut retained = Vec::new();
     let mut work = 0u64;
-    let mut retained_bytes = 0u64;
     let mut truncated = false;
     for (index, result) in frames.take(MAX_SOURCE_FRAMES + 1).enumerate() {
         if index == MAX_SOURCE_FRAMES {
@@ -137,22 +141,41 @@ fn collect_frames(
         if image.width() > MAX_DIMENSION
             || image.height() > MAX_DIMENSION
             || work.saturating_add(bytes) > MAX_DECODE_WORK_BYTES
-            || retained.len() == MAX_RETAINED_FRAMES
-            || retained_bytes.saturating_add(bytes) > MAX_RETAINED_BYTES
         {
             truncated = true;
             break;
         }
         work += bytes;
-        retained_bytes += bytes;
         let (numerator, denominator) = frame.delay().numer_denom_ms();
         let millis = if denominator == 0 {
             100
         } else {
             u64::from(numerator) / u64::from(denominator)
         };
+        if retained.len() == MAX_RETAINED_FRAMES {
+            // Merge skipped frame times into their predecessor, so sampling does
+            // not shorten playback or discard the first or final source frame.
+            let mut compacted: Vec<StickerFrame> = Vec::with_capacity(MAX_RETAINED_FRAMES / 2);
+            for (index, previous) in retained.drain(..).enumerate() {
+                if index % 2 == 0 {
+                    compacted.push(previous);
+                } else {
+                    compacted.last_mut().unwrap().duration += previous.duration;
+                }
+            }
+            retained = compacted;
+        }
+        let image = frame.into_buffer();
+        let image = if image.width() > MAX_FRAME_SIDE || image.height() > MAX_FRAME_SIDE {
+            let longest = image.width().max(image.height());
+            let width = (image.width() * MAX_FRAME_SIDE / longest).max(1);
+            let height = (image.height() * MAX_FRAME_SIDE / longest).max(1);
+            image::imageops::resize(&image, width, height, FilterType::Triangle)
+        } else {
+            image
+        };
         retained.push(StickerFrame {
-            image: frame.into_buffer(),
+            image,
             duration: Duration::from_millis(millis.clamp(20, 10_000)),
         });
     }
@@ -276,6 +299,31 @@ mod tests {
         }
         let animation = collect_frames(vec![frame(1, 80), frame(2, 80)].into_iter()).unwrap();
         assert_eq!(animation.frames.len(), 2);
+
+        let boundary = collect_frames((0..MAX_SOURCE_FRAMES).map(|n| frame(n as u8, 40))).unwrap();
+        assert!(boundary.frames.len() >= 2);
+        assert_eq!(boundary.frames[0].image.get_pixel(0, 0).0[0], 0);
+        assert_eq!(
+            boundary.frames.last().unwrap().image.get_pixel(0, 0).0[0],
+            255
+        );
+        assert_eq!(
+            boundary
+                .frames
+                .iter()
+                .map(|frame| frame.duration)
+                .sum::<Duration>(),
+            Duration::from_millis(MAX_SOURCE_FRAMES as u64 * 40)
+        );
+
+        let wide = collect_frames(std::iter::once(Ok(Frame::from_parts(
+            RgbaImage::new(512, 256),
+            0,
+            0,
+            Delay::from_numer_denom_ms(80, 1),
+        ))))
+        .unwrap();
+        assert_eq!(wide.frames[0].image.dimensions(), (256, 128));
     }
 
     #[test]
@@ -283,5 +331,6 @@ mod tests {
         let frames = (0..MAX_SOURCE_FRAMES + 1).map(|n| frame(n as u8, 40));
         let animation = collect_frames(frames).unwrap();
         assert_eq!(animation.frames.len(), 1);
+        assert_eq!(animation.frames[0].image.get_pixel(0, 0).0[0], 0);
     }
 }
