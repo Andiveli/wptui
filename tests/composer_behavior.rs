@@ -1,7 +1,7 @@
 use ratatui::crossterm::event::{
     Event, KeyCode as TerminalKeyCode, KeyEvent, KeyModifiers as TerminalKeyModifiers,
 };
-use ratatui::{backend::TestBackend, layout::Rect, Terminal};
+use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use wp_tui::app::actions::{ActionNotice, ClipboardWriteError, ClipboardWriter, ComposerAction};
 use wp_tui::app::actions::{AppAction, ConversationMode, FocusPane, Section, VimComposerMode};
 use wp_tui::app::composer::Composer;
