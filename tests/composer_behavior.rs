@@ -1,8 +1,8 @@
 use ratatui::crossterm::event::{
     Event, KeyCode as TerminalKeyCode, KeyEvent, KeyModifiers as TerminalKeyModifiers,
 };
-use ratatui::{Terminal, backend::TestBackend, layout::Rect};
-use wp_tui::app::actions::ComposerAction;
+use ratatui::{backend::TestBackend, layout::Rect, Terminal};
+use wp_tui::app::actions::{ActionNotice, ClipboardWriteError, ClipboardWriter, ComposerAction};
 use wp_tui::app::actions::{AppAction, ConversationMode, FocusPane, Section, VimComposerMode};
 use wp_tui::app::composer::Composer;
 use wp_tui::app::events::MediaRenderPlan;
@@ -308,6 +308,135 @@ fn uppercase_word_motions_accept_shifted_terminal_events() {
         }
         assert_eq!(app.composer.text(), expected);
     }
+}
+
+#[derive(Default)]
+struct RecordingClipboard(Option<String>);
+
+impl ClipboardWriter for RecordingClipboard {
+    fn write_text(&mut self, text: &str) -> Result<(), ClipboardWriteError> {
+        self.0 = Some(text.into());
+        Ok(())
+    }
+
+    fn written_text(&self) -> Option<&str> {
+        self.0.as_deref()
+    }
+}
+
+struct FailingClipboard;
+
+impl ClipboardWriter for FailingClipboard {
+    fn write_text(&mut self, _: &str) -> Result<(), ClipboardWriteError> {
+        Err(ClipboardWriteError)
+    }
+}
+
+fn vim_yank_key(app: &mut TestApp, character: char) {
+    app.on_terminal_event(Event::Key(KeyEvent::new(
+        TerminalKeyCode::Char(character),
+        if character.is_ascii_uppercase() {
+            TerminalKeyModifiers::SHIFT
+        } else {
+            TerminalKeyModifiers::NONE
+        },
+    )));
+}
+
+fn yank_app(draft: &str, from_end: usize) -> TestApp {
+    let mut app = TestApp::new();
+    app.open_chat_by_jid(whatsrust::JID("alice@s.whatsapp.net".into()));
+    app.focus_pane = FocusPane::Conversation;
+    app.composer.insert_text(draft);
+    app.clipboard_writer = Box::new(RecordingClipboard::default());
+    for character in [' ', 'v'] {
+        vim_yank_key(&mut app, character);
+    }
+    for _ in 0..from_end {
+        vim_yank_key(&mut app, 'h');
+    }
+    app
+}
+
+#[test]
+fn vim_yank_word_motions_copy_without_moving_the_caret_or_editing() {
+    for (draft, from_end, motion, copied, inserted) in [
+        ("alpha beta", 10, "yw", "alpha ", "Xalpha beta"),
+        ("alpha beta", 10, "ye", "alpha", "Xalpha beta"),
+        ("alpha beta", 4, "yb", "alpha ", "alpha Xbeta"),
+        ("alpha beta", 4, "yge", "a ", "alpha Xbeta"),
+        ("ab,cd ef", 8, "yW", "ab,cd ", "Xab,cd ef"),
+    ] {
+        let mut app = yank_app(draft, from_end);
+        for character in motion.chars() {
+            vim_yank_key(&mut app, character);
+        }
+        assert_eq!(
+            app.clipboard_writer.written_text(),
+            Some(copied),
+            "{motion}"
+        );
+        assert_eq!(
+            app.action_notice,
+            Some(ActionNotice::CopiedText(copied.into())),
+            "{motion}"
+        );
+        assert_eq!(app.composer.text(), draft, "{motion}");
+        assert_eq!(app.vim_composer_mode, Some(VimComposerMode::Normal));
+        vim_yank_key(&mut app, 'i');
+        vim_yank_key(&mut app, 'X');
+        assert_eq!(app.composer.text(), inserted, "{motion}");
+    }
+}
+
+#[test]
+fn vim_yy_copies_the_current_line_of_a_multiline_draft_without_moving() {
+    let mut app = yank_app("first\nsecond\nthird", 12);
+    for character in ['y', 'y'] {
+        vim_yank_key(&mut app, character);
+    }
+    assert_eq!(app.clipboard_writer.written_text(), Some("second\n"));
+    assert_eq!(
+        app.action_notice,
+        Some(ActionNotice::CopiedText("second\n".into()))
+    );
+    assert_eq!(app.composer.text(), "first\nsecond\nthird");
+    vim_yank_key(&mut app, 'i');
+    vim_yank_key(&mut app, 'X');
+    assert_eq!(app.composer.text(), "first\nXsecond\nthird");
+}
+
+#[test]
+fn pending_vim_y_does_not_copy_and_escape_cancels_it() {
+    let mut app = yank_app("alpha beta", 10);
+    vim_yank_key(&mut app, 'y');
+    assert_eq!(app.clipboard_writer.written_text(), None);
+    assert_eq!(app.action_notice, None);
+    assert_eq!(app.composer.text(), "alpha beta");
+    app.on_terminal_event(Event::Key(KeyEvent::new(
+        TerminalKeyCode::Esc,
+        TerminalKeyModifiers::NONE,
+    )));
+    assert_eq!(app.clipboard_writer.written_text(), None);
+    assert_eq!(app.action_notice, None);
+    assert_eq!(app.composer.text(), "alpha beta");
+}
+
+#[test]
+fn failed_vim_yank_keeps_draft_and_caret_available_for_editing() {
+    let mut app = yank_app("alpha beta", 10);
+    app.clipboard_writer = Box::new(FailingClipboard);
+    for character in ['y', 'w'] {
+        vim_yank_key(&mut app, character);
+    }
+    assert!(matches!(
+        app.action_notice,
+        Some(ActionNotice::Unavailable(_))
+    ));
+    assert_eq!(app.composer.text(), "alpha beta");
+    vim_yank_key(&mut app, 'i');
+    vim_yank_key(&mut app, 'X');
+    assert_eq!(app.composer.text(), "Xalpha beta");
 }
 
 #[test]
