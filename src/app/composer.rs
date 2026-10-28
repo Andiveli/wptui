@@ -784,6 +784,7 @@ impl Composer<'_> {
     }
 }
 
+#[derive(Clone, Copy)]
 enum WordMotion {
     NextStart,
     PreviousStart,
