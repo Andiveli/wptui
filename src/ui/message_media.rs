@@ -150,6 +150,12 @@ pub fn render_file(
             }
             FileMeta::Loaded => match data.kind {
                 FileKind::Image | FileKind::Sticker | FileKind::Video => {
+                    if render_image
+                        && matches!(data.kind, FileKind::Sticker)
+                        && app.deferred_sticker_previews.contains(&data.path)
+                    {
+                        app.visible_stickers.insert(data.path.clone());
+                    }
                     let placeholder = if matches!(data.kind, FileKind::Video) {
                         "🎬"
                     } else {

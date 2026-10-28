@@ -217,7 +217,11 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
     if let Ok(area) = terminal_session.terminal_mut().size() {
         app.schedule_avatar_viewport(area.into());
     }
-    app.advance_visible_stickers(std::time::Instant::now());
+    if app.advance_visible_stickers(std::time::Instant::now())
+        && app.tx.send(AppInput::Draw(DrawSource::Ordinary)).is_err()
+    {
+        error!("Failed to schedule sticker preview redraw");
+    }
     app.dispatch_read_receipts();
 
     loop {
@@ -310,7 +314,11 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
                 &mut media_jobs,
             );
             app.apply_visibility_plan(visibility_plan);
-            app.advance_visible_stickers(std::time::Instant::now());
+            if app.advance_visible_stickers(std::time::Instant::now())
+                && app.tx.send(AppInput::Draw(DrawSource::Ordinary)).is_err()
+            {
+                error!("Failed to schedule sticker preview redraw");
+            }
             if let Ok(area) = terminal_session.terminal_mut().size() {
                 app.schedule_avatar_viewport(area.into());
             }

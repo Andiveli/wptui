@@ -44,6 +44,43 @@ impl App<'_> {
 
     pub(crate) fn advance_visible_stickers(&mut self, now: Instant) -> bool {
         let covered = self.attachment_viewer.is_some();
+        let mut changed = false;
+        if !covered {
+            // A still overflow preview is only retried when it enters the viewport.
+            // Reclaim an off-screen playback first; never evict a visible sticker.
+            let waiting: Vec<_> = self
+                .image_cache_order
+                .iter()
+                .filter(|path| {
+                    self.visible_stickers.contains(*path)
+                        && self.deferred_sticker_previews.contains(*path)
+                })
+                .cloned()
+                .collect();
+            for path in waiting {
+                if self.sticker_playback.len() >= ANIMATED_CACHE_CAPACITY {
+                    let oldest = self
+                        .image_cache_order
+                        .iter()
+                        .find(|cached| {
+                            self.sticker_playback.contains_key(*cached)
+                                && !self.visible_stickers.contains(*cached)
+                        })
+                        .cloned();
+                    let Some(oldest) = oldest else {
+                        break;
+                    };
+                    self.sticker_playback.remove(&oldest);
+                    self.image_cache_order.retain(|cached| cached != &oldest);
+                    self.mark_evicted_preview_reloadable(&oldest);
+                }
+                self.deferred_sticker_previews.remove(&path);
+                self.image_cache.remove(&path);
+                self.image_cache_order.retain(|cached| cached != &path);
+                self.mark_evicted_preview_reloadable(&path);
+                changed = true;
+            }
+        }
         for (path, playback) in &mut self.sticker_playback {
             if covered || !self.visible_stickers.contains(path) {
                 playback.deadline = None;
@@ -52,7 +89,6 @@ impl App<'_> {
         if covered {
             return false;
         }
-        let mut changed = false;
         for path in &self.visible_stickers {
             if let Some(playback) = self.sticker_playback.get_mut(path) {
                 changed |= playback.advance(now);
@@ -73,10 +109,12 @@ impl App<'_> {
             && self.sticker_playback.len() >= ANIMATED_CACHE_CAPACITY
         {
             if let Some(first) = playback.frames.into_iter().next() {
-                self.cache_file_preview(message_id, path, first);
+                self.cache_file_preview(message_id, path.clone(), first);
+                self.deferred_sticker_previews.insert(path);
             }
             return;
         }
+        self.deferred_sticker_previews.remove(&path);
         if !self.image_cache.contains_key(&path)
             && !self.sticker_playback.contains_key(&path)
             && self.image_cache.len() + self.sticker_playback.len() >= IMAGE_CACHE_CAPACITY
@@ -84,6 +122,7 @@ impl App<'_> {
         {
             self.image_cache.remove(&oldest);
             self.sticker_playback.remove(&oldest);
+            self.deferred_sticker_previews.remove(&oldest);
             self.mark_evicted_preview_reloadable(&oldest);
         }
         self.sticker_playback.insert(path.clone(), playback);
@@ -105,6 +144,7 @@ impl App<'_> {
         file_path: Arc<str>,
         preview: StatefulProtocol,
     ) {
+        self.deferred_sticker_previews.remove(&file_path);
         if !self.image_cache.contains_key(&file_path)
             && !self.sticker_playback.contains_key(&file_path)
             && self.image_cache.len() + self.sticker_playback.len() >= IMAGE_CACHE_CAPACITY
@@ -112,6 +152,7 @@ impl App<'_> {
         {
             self.image_cache.remove(&oldest);
             self.sticker_playback.remove(&oldest);
+            self.deferred_sticker_previews.remove(&oldest);
             self.mark_evicted_preview_reloadable(&oldest);
         }
         self.sticker_playback.remove(&file_path);
