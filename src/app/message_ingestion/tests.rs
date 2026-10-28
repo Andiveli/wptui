@@ -140,6 +140,70 @@ fn process_message_queries_the_port_once_then_notifies_and_persists() {
 }
 
 #[test]
+fn ordinary_backlog_during_visible_sync_preserves_notice_and_persistence_without_audio() {
+    let chat = wr::JID::from("chat@g.us".to_owned());
+    let settings = FakeChatSettingsQuery::default();
+    let notifier = RecordingNotifier::default();
+    let mut app = TestApp::with_ports(FixedClock::new(1_000), notifier.clone());
+    let persisted = Arc::new(Mutex::new(Vec::new()));
+    app.chat_store_write = Box::new(RecordingChatStoreWritePort {
+        persisted: persisted.clone(),
+    });
+    app.contacts.insert(chat.clone(), "Saved Group".into());
+    app.set_chat_settings_query(Box::new(settings.clone()));
+    assert!(app.handle_whatsapp_event(wr::Event::SyncProgress(42)));
+    assert_eq!(app.history_sync_percent, Some(42));
+
+    assert!(app.process_message(message(&chat, "old backlog", 999), false));
+    assert_eq!(*settings.jids.lock().unwrap(), vec![chat.clone()]);
+    assert_eq!(
+        *notifier.notifications.lock().unwrap(),
+        vec![("Saved Group".to_owned(), "old backlog".to_owned())]
+    );
+    assert_eq!(*notifier.sound_requests.lock().unwrap(), vec![false]);
+    let persisted = persisted.lock().unwrap();
+    assert_eq!(persisted.len(), 1);
+    assert_eq!(persisted[0].1.info.id.as_ref(), "old backlog");
+    assert!(app.messages.contains_key("old backlog"));
+}
+
+#[test]
+fn same_second_and_newer_messages_request_audio_despite_visible_sync() {
+    let chat = wr::JID::from("chat@g.us".to_owned());
+    let settings = FakeChatSettingsQuery::default();
+    let notifier = RecordingNotifier::default();
+    let mut app = TestApp::with_ports(FixedClock::new(1_000), notifier.clone());
+    app.contacts.insert(chat.clone(), "Saved Group".into());
+    app.set_chat_settings_query(Box::new(settings.clone()));
+    assert!(app.handle_whatsapp_event(wr::Event::SyncProgress(42)));
+
+    for (id, timestamp) in [("same second", 1_000), ("newer", 1_001)] {
+        assert!(app.process_message(message(&chat, id, timestamp), false));
+    }
+    assert_eq!(*settings.jids.lock().unwrap(), vec![chat.clone(), chat]);
+    assert_eq!(
+        *notifier.notifications.lock().unwrap(),
+        vec![
+            ("Saved Group".to_owned(), "same second".to_owned()),
+            ("Saved Group".to_owned(), "newer".to_owned())
+        ]
+    );
+    assert_eq!(*notifier.sound_requests.lock().unwrap(), vec![true, true]);
+    assert!(app.messages.contains_key("same second"));
+    assert!(app.messages.contains_key("newer"));
+}
+
+#[test]
+fn unavailable_startup_clock_does_not_mute_eligible_messages() {
+    let chat = wr::JID::from("chat@g.us".to_owned());
+    let notifier = RecordingNotifier::default();
+    let mut app = TestApp::with_ports(FixedClock(None), notifier.clone());
+    app.process_message_with_lookup(message(&chat, "old", 1), false, |_| Default::default());
+    assert_eq!(*notifier.sound_requests.lock().unwrap(), vec![true]);
+    assert_eq!(notifier.notifications.lock().unwrap().len(), 1);
+}
+
+#[test]
 fn process_message_skips_the_port_for_ineligible_paths() {
     let chat = wr::JID::from("chat@g.us".to_owned());
     let fake = FakeChatSettingsQuery::default();
@@ -180,12 +244,14 @@ fn muted_port_settings_suppress_notification_without_skipping_persistence() {
     app.process_message(message(&chat, "muted", 6), false);
     assert_eq!(*fake.jids.lock().unwrap(), vec![chat]);
     assert!(notifier.notifications.lock().unwrap().is_empty());
+    assert!(notifier.sound_requests.lock().unwrap().is_empty());
     assert_eq!(persisted.lock().unwrap().len(), 1);
 }
 
 #[test]
 fn sync_messages_skip_notification_lookup_and_return_false() {
-    let mut app = TestApp::new();
+    let notifier = RecordingNotifier::default();
+    let mut app = TestApp::with_ports(FixedClock::new(1_000), notifier.clone());
     let chat = wr::JID::from("chat@g.us".to_owned());
 
     assert!(
@@ -194,6 +260,8 @@ fn sync_messages_skip_notification_lookup_and_return_false() {
         ))
     );
     assert!(app.messages.contains_key("sync"));
+    assert!(notifier.notifications.lock().unwrap().is_empty());
+    assert!(notifier.sound_requests.lock().unwrap().is_empty());
 }
 
 #[test]

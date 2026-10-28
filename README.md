@@ -54,11 +54,18 @@ An existing `settings.conf` in the data directory is copied there on first use i
 file exists; the legacy file is left untouched. Set `composer_direction=rtl` or
 `composer_direction=auto` to choose the composer direction.
 
-Desktop notifications use the system notification sound by default. To play a custom sound,
-add `notification_sound=/absolute/path/to/alert.ogg` to `settings.conf` (WAV, MP3 and
-OGG/Vorbis are supported). `notification_sound=system` restores the default. Custom playback
-does not request a second system sound; an unreadable file or missing audio device is logged
-without stopping incoming messages.
+Eligible desktop notifications play the bundled `assets/sounds/attention.wav` by default,
+even when the notification server does not support sound hints. To use your OS/theme sound
+instead, set `notification_sound=system` in `settings.conf` (this requests a system sound hint;
+it depends on your notification server). To play your own sound directly, set
+`notification_sound=/absolute/path/to/alert.ogg` (WAV, MP3 and OGG/Vorbis are supported).
+Absent or invalid settings use the bundled sound. Direct playback does not request a second
+system sound; an unreadable file or missing audio device is logged without suppressing the
+desktop notification. Messages timestamped before this app session started still show desktop
+notices, but request neither bundled/custom audio nor a system sound hint. Messages from the
+startup second onward remain audible, even while synchronization progress is visible. If the
+startup clock is unavailable, audio remains enabled for eligible notices. Muted chats, open
+chats and explicit sync traffic remain silent.
 
 Mouse capture is enabled by default during the pointer-support preview. Add `mouse=disable` to
 that config file and restart to restore terminal-native selection, or use
@@ -121,6 +128,8 @@ curl -sSL https://raw.githubusercontent.com/Andiveli/wptui/main/install.sh | bas
 
 The script downloads the matching binary from the latest release into
 `~/.local/bin` (override with `PREFIX`, e.g. `PREFIX=/opt/wptui ./install.sh`).
+New release archives include the bundled tone's MIT notice; the installer keeps
+it next to the binary as `wp-tui-THIRD_PARTY_NOTICES.md`.
 Make sure the runtime libraries listed in [Requirements](#requirements) are
 present first.
 
@@ -171,6 +180,10 @@ Check for and install the latest stable release when using a standalone binary:
 ```bash
 wp-tui update
 ```
+
+The updater accepts older binary-only archives and newer archives containing the
+bundled tone's MIT notices. It keeps `wp-tui-THIRD_PARTY_NOTICES.md` beside the
+updated executable.
 
 When running through Cargo, separate application arguments with `--`:
 

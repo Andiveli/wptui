@@ -30,6 +30,9 @@ jobs:
           go vet ./...
           go test ./...
 
+      - name: Test release archive installer
+        run: bash tests/install_archive.sh
+
       - name: Format check
         run: cargo fmt --check
 
