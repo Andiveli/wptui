@@ -61,7 +61,11 @@ it depends on your notification server). To play your own sound directly, set
 `notification_sound=/absolute/path/to/alert.ogg` (WAV, MP3 and OGG/Vorbis are supported).
 Absent or invalid settings use the bundled sound. Direct playback does not request a second
 system sound; an unreadable file or missing audio device is logged without suppressing the
-desktop notification. Muted chats, open chats and sync traffic remain silent.
+desktop notification. Messages timestamped before this app session started still show desktop
+notices, but request neither bundled/custom audio nor a system sound hint. Messages from the
+startup second onward remain audible, even while synchronization progress is visible. If the
+startup clock is unavailable, audio remains enabled for eligible notices. Muted chats, open
+chats and explicit sync traffic remain silent.
 
 Mouse capture is enabled by default during the pointer-support preview. Add `mouse=disable` to
 that config file and restart to restore terminal-native selection, or use
@@ -176,6 +180,10 @@ Check for and install the latest stable release when using a standalone binary:
 ```bash
 wp-tui update
 ```
+
+The updater accepts older binary-only archives and newer archives containing the
+bundled tone's MIT notices. It keeps `wp-tui-THIRD_PARTY_NOTICES.md` beside the
+updated executable.
 
 When running through Cargo, separate application arguments with `--`:
 

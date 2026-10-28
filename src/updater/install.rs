@@ -1,8 +1,12 @@
 use flate2::read::GzDecoder;
 use std::fs::{self, File};
-use std::io;
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use tar::Archive;
+
+const MAX_BINARY_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_NOTICE_BYTES: u64 = 64 * 1024;
+const INSTALLED_NOTICE: &str = "wp-tui-THIRD_PARTY_NOTICES.md";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum InstallClassification {
@@ -119,12 +123,51 @@ impl super::InstallerPort for StandaloneInstaller {
             return Err("update archive is unsafe".into());
         }
         let mode = entry.header().mode().map_err(|error| error.to_string())?;
+        if entry.size() > MAX_BINARY_BYTES || mode & !0o755 != 0 {
+            return Err("update archive is unsafe".into());
+        }
         let mut temp =
             tempfile::NamedTempFile::new_in(parent).map_err(|error| error.to_string())?;
         io::copy(&mut entry, &mut temp).map_err(|error| error.to_string())?;
-        if entries.next().is_some() {
-            return Err("update archive is unsafe".into());
-        }
+        drop(entry);
+
+        // Validate the entire archive before changing either installed file.
+        // Older releases contain only the binary; new releases include both notices.
+        let notice = if let Some(next) = entries.next() {
+            let mut notice_entry = next.map_err(|error| error.to_string())?;
+            if notice_entry.path().map_err(|error| error.to_string())?
+                != PathBuf::from("THIRD_PARTY_NOTICES.md")
+                || !notice_entry.header().entry_type().is_file()
+                || notice_entry.size() > MAX_NOTICE_BYTES
+            {
+                return Err("update archive is unsafe".into());
+            }
+            let mut contents = Vec::with_capacity(notice_entry.size() as usize);
+            notice_entry
+                .read_to_end(&mut contents)
+                .map_err(|error| error.to_string())?;
+            drop(notice_entry);
+
+            let mut license = entries
+                .next()
+                .ok_or("update archive is unsafe")?
+                .map_err(|error| error.to_string())?;
+            if license.path().map_err(|error| error.to_string())?
+                != PathBuf::from("assets/sounds/LICENSE.md")
+                || !license.header().entry_type().is_file()
+                || license.size() > MAX_NOTICE_BYTES
+            {
+                return Err("update archive is unsafe".into());
+            }
+            io::copy(&mut license, &mut io::sink()).map_err(|error| error.to_string())?;
+            drop(license);
+            if entries.next().is_some() {
+                return Err("update archive is unsafe".into());
+            }
+            Some(contents)
+        } else {
+            None
+        };
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -135,6 +178,30 @@ impl super::InstallerPort for StandaloneInstaller {
         temp.as_file()
             .sync_all()
             .map_err(|error| error.to_string())?;
+        // Publish the notice first: a failed binary rename can leave an extra notice,
+        // but never a newly installed bundled executable without its MIT notice.
+        if let Some(contents) = notice {
+            let mut notice_temp =
+                tempfile::NamedTempFile::new_in(parent).map_err(|error| error.to_string())?;
+            notice_temp
+                .write_all(&contents)
+                .map_err(|error| error.to_string())?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                notice_temp
+                    .as_file()
+                    .set_permissions(fs::Permissions::from_mode(0o644))
+                    .map_err(|error| error.to_string())?;
+            }
+            notice_temp
+                .as_file()
+                .sync_all()
+                .map_err(|error| error.to_string())?;
+            notice_temp
+                .persist(parent.join(INSTALLED_NOTICE))
+                .map_err(|error| error.error.to_string())?;
+        }
         temp.persist(current_exe)
             .map_err(|error| error.error.to_string())?;
         #[cfg(unix)]
@@ -211,6 +278,89 @@ mod tests {
             let output = std::process::Command::new(&path).output().unwrap();
             assert!(output.status.success());
             assert_eq!(output.stdout, b"wp-tui-test-ok\n");
+        }
+    }
+
+    #[test]
+    fn installs_binary_and_mit_notice_from_three_member_release_archive() {
+        let directory = tempdir().unwrap();
+        let binary = directory.path().join("wp-tui");
+        let notice = directory.path().join("wp-tui-THIRD_PARTY_NOTICES.md");
+        fs::write(&binary, b"old").unwrap();
+        let bytes = archive(&[
+            ("wp-tui", b"new"),
+            ("THIRD_PARTY_NOTICES.md", b"MIT notice"),
+            ("assets/sounds/LICENSE.md", b"attribution and recipe"),
+        ]);
+        let digest = format!("{:x}", Sha256::digest(&bytes));
+        let mut installer = StandaloneInstaller;
+        installer.install(&binary, &bytes, &digest).unwrap();
+        assert_eq!(fs::read(&binary).unwrap(), b"new");
+        assert_eq!(fs::read(&notice).unwrap(), b"MIT notice");
+        #[cfg(unix)]
+        assert_eq!(
+            fs::metadata(&notice).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
+    }
+
+    #[test]
+    fn rejects_incomplete_duplicate_unexpected_and_oversized_notices_without_replacing_files() {
+        let directory = tempdir().unwrap();
+        let binary = directory.path().join("wp-tui");
+        let notice = directory.path().join("wp-tui-THIRD_PARTY_NOTICES.md");
+        let oversized = vec![b'x'; 65_537];
+        let invalid = [
+            archive(&[("wp-tui", b"new"), ("THIRD_PARTY_NOTICES.md", b"MIT")]),
+            archive(&[
+                ("wp-tui", b"new"),
+                ("THIRD_PARTY_NOTICES.md", b"MIT"),
+                ("THIRD_PARTY_NOTICES.md", b"duplicate"),
+                ("assets/sounds/LICENSE.md", b"recipe"),
+            ]),
+            archive(&[
+                ("wp-tui", b"new"),
+                ("THIRD_PARTY_NOTICES.md", b"MIT"),
+                ("assets/sounds/LICENSE.md", b"recipe"),
+                ("unexpected", b"extra"),
+            ]),
+            archive(&[
+                ("wp-tui", b"new"),
+                ("THIRD_PARTY_NOTICES.md", &oversized),
+                ("assets/sounds/LICENSE.md", b"recipe"),
+            ]),
+            notice_symlink_archive(),
+        ];
+        for bytes in invalid {
+            fs::write(&binary, b"old").unwrap();
+            fs::write(&notice, b"previous notice").unwrap();
+            let digest = format!("{:x}", Sha256::digest(&bytes));
+            let mut installer = StandaloneInstaller;
+            assert_eq!(
+                installer.install(&binary, &bytes, &digest).unwrap_err(),
+                "update archive is unsafe"
+            );
+            assert_eq!(fs::read(&binary).unwrap(), b"old");
+            assert_eq!(fs::read(&notice).unwrap(), b"previous notice");
+        }
+    }
+
+    #[test]
+    fn rejects_oversized_binary_header_and_unsafe_mode_without_replacing_files() {
+        let directory = tempdir().unwrap();
+        let binary = directory.path().join("wp-tui");
+        let notice = directory.path().join("wp-tui-THIRD_PARTY_NOTICES.md");
+        for bytes in [oversized_binary_archive(), archive_with_mode(0o4777)] {
+            fs::write(&binary, b"old").unwrap();
+            fs::write(&notice, b"previous notice").unwrap();
+            let digest = format!("{:x}", Sha256::digest(&bytes));
+            let mut installer = StandaloneInstaller;
+            assert_eq!(
+                installer.install(&binary, &bytes, &digest).unwrap_err(),
+                "update archive is unsafe"
+            );
+            assert_eq!(fs::read(&binary).unwrap(), b"old");
+            assert_eq!(fs::read(&notice).unwrap(), b"previous notice");
         }
     }
 
@@ -315,6 +465,57 @@ mod tests {
             classify_installation(&link).unwrap(),
             InstallClassification::Unsafe
         );
+    }
+
+    fn archive_with_mode(mode: u32) -> Vec<u8> {
+        let mut compressed =
+            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        {
+            let mut builder = tar::Builder::new(&mut compressed);
+            let mut header = tar::Header::new_gnu();
+            header.set_path("wp-tui").unwrap();
+            header.set_size(3);
+            header.set_mode(mode);
+            header.set_cksum();
+            builder.append(&header, &b"new"[..]).unwrap();
+            builder.finish().unwrap();
+        }
+        compressed.finish().unwrap()
+    }
+
+    fn oversized_binary_archive() -> Vec<u8> {
+        let mut header = tar::Header::new_gnu();
+        header.set_path("wp-tui").unwrap();
+        header.set_size(256 * 1024 * 1024 + 1);
+        header.set_mode(0o755);
+        header.set_cksum();
+        let mut compressed =
+            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        compressed.write_all(header.as_bytes()).unwrap();
+        compressed.finish().unwrap()
+    }
+
+    fn notice_symlink_archive() -> Vec<u8> {
+        let mut compressed =
+            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        {
+            let mut builder = tar::Builder::new(&mut compressed);
+            let mut binary = tar::Header::new_gnu();
+            binary.set_path("wp-tui").unwrap();
+            binary.set_size(3);
+            binary.set_mode(0o755);
+            binary.set_cksum();
+            builder.append(&binary, &b"new"[..]).unwrap();
+            let mut link = tar::Header::new_gnu();
+            link.set_path("THIRD_PARTY_NOTICES.md").unwrap();
+            link.set_entry_type(tar::EntryType::Symlink);
+            link.set_link_name("../outside").unwrap();
+            link.set_size(0);
+            link.set_cksum();
+            builder.append(&link, &[][..]).unwrap();
+            builder.finish().unwrap();
+        }
+        compressed.finish().unwrap()
     }
 
     fn symlink_archive() -> Vec<u8> {
