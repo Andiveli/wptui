@@ -156,15 +156,24 @@ pub(crate) enum MediaRenderEffect {
 #[derive(Default)]
 pub struct MediaRenderPlan {
     effects: Vec<MediaRenderEffect>,
+    visible_stickers: Vec<Arc<str>>,
 }
 
 impl MediaRenderPlan {
     pub fn is_empty(&self) -> bool {
-        self.effects.is_empty()
+        self.effects.is_empty() && self.visible_stickers.is_empty()
     }
 
     pub(crate) fn append(&mut self, effect: MediaRenderEffect) {
         self.effects.push(effect);
+    }
+
+    pub(crate) fn record_visible_sticker(&mut self, path: Arc<str>) {
+        self.visible_stickers.push(path);
+    }
+
+    pub(crate) fn visible_stickers(&self) -> &[Arc<str>] {
+        &self.visible_stickers
     }
 
     pub(crate) fn into_effects(self) -> Vec<MediaRenderEffect> {

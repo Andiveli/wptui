@@ -97,6 +97,19 @@ const CONTACT_WRITER_FACTORIES: [(&str, &str); 5] = [
 ];
 
 #[test]
+fn sticker_visibility_bookkeeping_stays_out_of_ui_renderer() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let ui = fs::read_to_string(root.join("src/ui/message_media.rs")).unwrap();
+    let renderer = ui.split("#[cfg(test)]").next().unwrap();
+    assert!(!renderer.contains("app.visible_stickers"));
+    assert!(!renderer.contains("app.touch_sticker_cache"));
+    assert!(!renderer.contains("app.deferred_sticker_previews"));
+    assert!(renderer.contains("record_visible_sticker"));
+    let runtime = fs::read_to_string(root.join("src/app/runtime_loop.rs")).unwrap();
+    assert!(runtime.contains("apply_sticker_render_plan"));
+}
+
+#[test]
 fn command_launch_executor_is_constructed_only_by_app_bootstrap() {
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let media = project_root.join("src/media.rs");
