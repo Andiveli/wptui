@@ -278,6 +278,7 @@ pub struct App<'a> {
     pub image_cache: HashMap<Arc<str>, StatefulProtocol>,
     pub image_cache_order: VecDeque<Arc<str>>,
     pub(crate) sticker_playback: HashMap<Arc<str>, sticker_animation::StickerPlayback>,
+    pub(crate) deferred_sticker_previews: HashSet<Arc<str>>,
     pub(crate) animation_slots: Arc<sticker_animation::AnimationSlots>,
     pub(crate) pending_sticker_previews: VecDeque<(wr::MessageId, Arc<str>)>,
     pub(crate) visible_stickers: HashSet<Arc<str>>,
