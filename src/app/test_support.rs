@@ -59,6 +59,7 @@ impl Clock for MutableClock {
 #[derive(Clone, Default)]
 pub(crate) struct RecordingNotifier {
     pub(crate) notifications: Arc<Mutex<Vec<(String, String)>>>,
+    pub(crate) sound_requests: Arc<Mutex<Vec<bool>>>,
 }
 
 #[derive(Clone, Default)]
@@ -470,6 +471,10 @@ impl Notifier for RecordingNotifier {
             .lock()
             .unwrap()
             .push((notification.summary.to_string(), notification.body.clone()));
+        self.sound_requests
+            .lock()
+            .unwrap()
+            .push(notification.play_sound);
         Ok(())
     }
 }
