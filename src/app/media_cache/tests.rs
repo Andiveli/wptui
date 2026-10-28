@@ -146,6 +146,17 @@ fn fifth_visible_animation_keeps_first_frame_without_evicting_playback() {
     }
     assert_eq!(app.sticker_playback.len(), 4);
     assert_eq!(app.image_cache.len(), 1);
+
+    // The fifth sticker was initially a stable still preview. Once it is the
+    // only visible one, a slot must be reclaimed and its preview made reloadable.
+    app.visible_stickers.clear();
+    app.visible_stickers.insert(paths[4].clone());
+    app.advance_visible_stickers(Instant::now());
+    assert!(matches!(
+        app.metadata.get(&wr::MessageId::from("sticker-4")),
+        Some(Metadata::File(FileMeta::Downloaded))
+    ));
+    assert!(app.sticker_playback.len() <= 4);
 }
 
 #[test]
