@@ -32,6 +32,16 @@ impl App<'_> {
                 Some(wr::MessageContent::File(file)) if file.path == *path)
     }
 
+    pub(crate) fn apply_sticker_render_plan(&mut self, plan: &super::events::MediaRenderPlan) {
+        self.visible_stickers.clear();
+        for path in plan.visible_stickers() {
+            self.visible_stickers.insert(path.clone());
+            if self.sticker_playback.contains_key(path) {
+                self.touch_sticker_cache(path);
+            }
+        }
+    }
+
     pub(crate) fn sticker_deadline(&self) -> Option<Instant> {
         if self.attachment_viewer.is_some() {
             return None;

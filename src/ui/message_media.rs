@@ -150,11 +150,8 @@ pub fn render_file(
             }
             FileMeta::Loaded => match data.kind {
                 FileKind::Image | FileKind::Sticker | FileKind::Video => {
-                    if render_image
-                        && matches!(data.kind, FileKind::Sticker)
-                        && app.deferred_sticker_previews.contains(&data.path)
-                    {
-                        app.visible_stickers.insert(data.path.clone());
+                    if render_image && matches!(data.kind, FileKind::Sticker) {
+                        media_render_plan.record_visible_sticker(data.path.clone());
                     }
                     let placeholder = if matches!(data.kind, FileKind::Video) {
                         "🎬"
@@ -165,8 +162,6 @@ pub fn render_file(
                         && matches!(data.kind, FileKind::Sticker)
                         && app.sticker_playback.contains_key(&data.path)
                     {
-                        app.visible_stickers.insert(data.path.clone());
-                        app.touch_sticker_cache(&data.path);
                         if let Some(playback) = app.sticker_playback.get_mut(&data.path) {
                             StatefulImage::default().render(
                                 media_area,
@@ -373,8 +368,60 @@ mod tests {
             Alignment::Left,
             MessageTextMode::Chat,
         );
-        assert!(plan.into_effects().is_empty());
+        assert!(plan.visible_stickers().contains(&path));
+        assert!(app.visible_stickers.is_empty());
+        app.apply_sticker_render_plan(&plan);
         assert!(app.visible_stickers.contains(&path));
+
+        // Visibility is a viewport observation, not a decision about whether
+        // this particular still preview is deferred for animation.
+        app.deferred_sticker_previews.remove(&path);
+        app.visible_stickers.clear();
+        let mut plain_plan = crate::app::events::MediaRenderPlan::default();
+        super::render_file(
+            &mut buffer,
+            &"deferred".into(),
+            &file,
+            None,
+            &mut app,
+            &mut plain_plan,
+            Rect::new(0, 0, 20, 14),
+            true,
+            Alignment::Left,
+            MessageTextMode::Chat,
+        );
+        assert_eq!(plain_plan.visible_stickers(), &[path]);
+        assert!(app.visible_stickers.is_empty());
+    }
+
+    #[test]
+    fn clipped_sticker_does_not_report_visibility() {
+        let mut app = TestApp::new();
+        let path = Arc::<str>::from("stickers/clipped.webp");
+        app.deferred_sticker_previews.insert(path.clone());
+        app.metadata
+            .insert("clipped".into(), Metadata::File(FileMeta::Loaded));
+        let file = FileContent {
+            kind: FileKind::Sticker,
+            path,
+            ..Default::default()
+        };
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 20, 14));
+        let mut plan = crate::app::events::MediaRenderPlan::default();
+        super::render_file(
+            &mut buffer,
+            &"clipped".into(),
+            &file,
+            None,
+            &mut app,
+            &mut plan,
+            Rect::new(0, 0, 20, 14),
+            false,
+            Alignment::Left,
+            MessageTextMode::Chat,
+        );
+        assert!(plan.visible_stickers().is_empty());
+        assert!(app.visible_stickers.is_empty());
     }
 
     #[test]
@@ -415,6 +462,9 @@ mod tests {
             );
             paths.push(path);
         }
+        assert_eq!(plan.visible_stickers().len(), 2);
+        assert!(app.visible_stickers.is_empty());
+        app.apply_sticker_render_plan(&plan);
         assert!(plan.into_effects().is_empty());
         assert_eq!(app.visible_stickers.len(), 2);
         assert!(paths.iter().all(|path| app.visible_stickers.contains(path)));
@@ -474,6 +524,8 @@ mod tests {
                     MessageTextMode::Chat,
                 );
             }
+            assert_eq!(plan.visible_stickers().len(), 2);
+            app.apply_sticker_render_plan(&plan);
             assert!(plan.into_effects().is_empty());
             [
                 buffer[(0, 0)].symbol().to_owned(),
