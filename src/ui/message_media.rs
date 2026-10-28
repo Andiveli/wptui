@@ -337,6 +337,47 @@ mod tests {
     }
 
     #[test]
+    fn deferred_sticker_still_preview_is_tracked_as_visible() {
+        let mut app = TestApp::new();
+        let path = Arc::<str>::from("stickers/deferred.webp");
+        let animation =
+            decode_animated_webp(include_bytes!("../../tests/fixtures/sticker-animated.webp"))
+                .unwrap()
+                .unwrap();
+        let still =
+            StickerPlayback::prepare(animation, &mut Picker::halfblocks(), Size::new(20, 14))
+                .frames
+                .into_iter()
+                .next()
+                .unwrap();
+        app.image_cache.insert(path.clone(), still);
+        app.deferred_sticker_previews.insert(path.clone());
+        app.metadata
+            .insert("deferred".into(), Metadata::File(FileMeta::Loaded));
+        let file = FileContent {
+            kind: FileKind::Sticker,
+            path: path.clone(),
+            ..Default::default()
+        };
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 20, 14));
+        let mut plan = crate::app::events::MediaRenderPlan::default();
+        super::render_file(
+            &mut buffer,
+            &"deferred".into(),
+            &file,
+            None,
+            &mut app,
+            &mut plan,
+            Rect::new(0, 0, 20, 14),
+            true,
+            Alignment::Left,
+            MessageTextMode::Chat,
+        );
+        assert!(plan.into_effects().is_empty());
+        assert!(app.visible_stickers.contains(&path));
+    }
+
+    #[test]
     fn two_visible_sticker_previews_advance_together() {
         let mut app = TestApp::new();
         let mut buffer = Buffer::empty(Rect::new(0, 0, 20, 28));

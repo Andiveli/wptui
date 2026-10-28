@@ -160,6 +160,7 @@ fn fifth_visible_animation_keeps_first_frame_without_evicting_playback() {
 
     // Reload through the same App event used by the rendered preview, not by
     // inserting a playback directly into the cache.
+    std::fs::create_dir_all(&app.media_path).unwrap();
     std::fs::write(
         app.media_path.join(paths[4].as_ref()),
         include_bytes!("../../../tests/fixtures/sticker-animated.webp"),
