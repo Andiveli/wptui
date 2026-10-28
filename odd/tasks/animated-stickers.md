@@ -12,7 +12,7 @@ S3. "Priorizar los visibles, máximo cuatro a la vez"
 
 - [x] T1 (S1-S2): Decode and bound animated sticker frames; retain still-image behavior for other media. Route: bounded writer. Commit: bcec782 (preview run 38993765636 passed).
 - [x] T2 (S1): Schedule visible animated sticker playback and render current frame via negotiated terminal protocol, with focused tests and user documentation. Route: bounded writer or inline according to trigger. Commits: 0c30f67, 991b24e, d287aab, dc28dee, fb15c60, 374a0c7 (RED), 438b1d8 (sampling GREEN), 8fadc3f and 7d25301 (visible rotation GREEN); live user confirmation L37.
-- [x] T3 (S1-S3): Verify feature and shared-path regressions, assess risk and close. Route: parent and independent verifier for item 4. Evidence: Actions 40614270636, independent read-only verifier, user live check L37; closure log commit pending.
+- [x] T3 (S1-S3): Verify feature and shared-path regressions, assess risk and close. Route: parent and independent verifier for item 4. Evidence: Actions 40614270636, independent read-only verifier, user live check L37. Commit: accf3f4 (closure log).
 - [x] T4 (S1, S3): Rotate up to four playback slots toward visible stickers and retry previously static overflow previews when scrolled into view; focused regressions and docs. Route: inline after worker setup unavailable. Commits: 6ef4452 (RED), 8fadc3f (behavior), 7d25301 (test setup/visibility); preview run 40614270636 passed.
 
 ## Log
