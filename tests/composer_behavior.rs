@@ -243,6 +243,74 @@ fn vim_big_ge_skips_punctuation_within_word() {
 }
 
 #[test]
+fn empty_vim_draft_word_motions_do_not_panic_or_modify_text() {
+    for motion in [&['b'][..], &['B'], &['g', 'e'], &['g', 'E']] {
+        let mut app = TestApp::new();
+        app.open_chat_by_jid(whatsrust::JID("empty@s.whatsapp.net".into()));
+        app.focus_pane = FocusPane::Conversation;
+        for character in [' ', 'v'] {
+            app.on_terminal_event(Event::Key(KeyEvent::new(
+                TerminalKeyCode::Char(character),
+                TerminalKeyModifiers::NONE,
+            )));
+        }
+        for &character in motion {
+            app.on_terminal_event(Event::Key(KeyEvent::new(
+                TerminalKeyCode::Char(character),
+                TerminalKeyModifiers::NONE,
+            )));
+        }
+        assert_eq!(app.composer.text(), "", "motion: {motion:?}");
+        assert_eq!(app.vim_composer_mode, Some(VimComposerMode::Normal));
+    }
+}
+
+#[test]
+fn uppercase_word_motions_accept_shifted_terminal_events() {
+    for (start, motion, expected) in [
+        (0, vec!['W'], "ab,cd Xef"),
+        (6, vec!['B'], "Xab,cd ef"),
+        (0, vec!['E'], "ab,cXd ef"),
+        (6, vec!['g', 'E'], "ab,cXd ef"),
+    ] {
+        let mut app = TestApp::new();
+        app.open_chat_by_jid(whatsrust::JID("shift@s.whatsapp.net".into()));
+        app.focus_pane = FocusPane::Conversation;
+        app.composer.insert_text("ab,cd ef");
+        for character in [' ', 'v'] {
+            app.on_terminal_event(Event::Key(KeyEvent::new(
+                TerminalKeyCode::Char(character),
+                TerminalKeyModifiers::NONE,
+            )));
+        }
+        for _ in start..8 {
+            app.on_terminal_event(Event::Key(KeyEvent::new(
+                TerminalKeyCode::Char('h'),
+                TerminalKeyModifiers::NONE,
+            )));
+        }
+        for character in motion {
+            app.on_terminal_event(Event::Key(KeyEvent::new(
+                TerminalKeyCode::Char(character),
+                if character.is_ascii_uppercase() {
+                    TerminalKeyModifiers::SHIFT
+                } else {
+                    TerminalKeyModifiers::NONE
+                },
+            )));
+        }
+        assert_eq!(app.composer.text(), "ab,cd ef");
+        for character in ['i', 'X'] {
+            app.on_terminal_event(Event::Key(KeyEvent::new(
+                TerminalKeyCode::Char(character),
+                TerminalKeyModifiers::NONE,
+            )));
+        }
+        assert_eq!(app.composer.text(), expected);
+    }
+}
+
+#[test]
 fn vim_composer_title_shows_the_active_mode_without_changing_standard_input_title() {
     let mut app = TestApp::new();
     app.open_chat_by_jid(whatsrust::JID("alice@s.whatsapp.net".into()));
