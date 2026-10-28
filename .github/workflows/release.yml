@@ -34,16 +34,16 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             sudo apt-get update
-            sudo apt-get install -y libwayland-dev libchafa-dev libglib2.0-dev
+            sudo apt-get install -y libwayland-dev libchafa-dev libglib2.0-dev libasound2-dev
           else
             brew install chafa
           fi
 
       - name: Build
-        run: cargo build --release
+        run: cargo build --locked --release
 
-      - name: Package
-        run: tar -czf ${{ matrix.asset }} -C target/release wp-tui
+      - name: Package binary and notices
+        run: tar -czf ${{ matrix.asset }} -C target/release wp-tui -C "$GITHUB_WORKSPACE" THIRD_PARTY_NOTICES.md assets/sounds/LICENSE.md
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7

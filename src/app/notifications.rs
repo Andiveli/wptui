@@ -1,5 +1,13 @@
+use std::fs::File;
+use std::io::{BufReader, Cursor, Read, Seek};
+#[cfg(test)]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use super::preferences::{self, NotificationSound};
 
 use notify_rust::Notification;
 use whatsrust as wr;
@@ -25,6 +33,7 @@ impl Clock for SystemClock {
 pub struct NotificationProjection {
     pub summary: Arc<str>,
     pub body: String,
+    pub play_sound: bool,
 }
 
 pub trait Notifier {
@@ -32,16 +41,92 @@ pub trait Notifier {
 }
 
 #[derive(Debug, Default)]
-pub struct NotifyRustNotifier;
+pub struct NotifyRustNotifier {
+    settings_path: Option<PathBuf>,
+}
+
+impl NotifyRustNotifier {
+    pub(crate) fn new(settings_path: PathBuf) -> Self {
+        Self {
+            settings_path: Some(settings_path),
+        }
+    }
+
+    fn sound_choice(&self) -> NotificationSound {
+        self.settings_path
+            .as_ref()
+            .map_or(NotificationSound::Bundled, |path| {
+                preferences::load_notification_sound(path)
+            })
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn system_sound_name() -> &'static str {
+    "message-new-instant"
+}
+
+#[cfg(target_os = "macos")]
+fn system_sound_name() -> &'static str {
+    "NSUserNotificationDefaultSoundName"
+}
+
+const ATTENTION_WAV: &[u8] = include_bytes!("../../assets/sounds/attention.wav");
+
+trait ReadSeek: Read + Seek {}
+impl<T: Read + Seek> ReadSeek for T {}
+
+fn play_sound(sound: NotificationSound) -> Result<(), String> {
+    let input: Box<dyn ReadSeek + Send + Sync> = match sound {
+        NotificationSound::Bundled => Box::new(Cursor::new(ATTENTION_WAV)),
+        NotificationSound::Custom(path) => {
+            Box::new(File::open(path).map_err(|error| error.to_string())?)
+        }
+        NotificationSound::System => return Ok(()),
+    };
+    let source =
+        rodio::Decoder::try_from(BufReader::new(input)).map_err(|error| error.to_string())?;
+    let mut stream =
+        rodio::DeviceSinkBuilder::open_default_sink().map_err(|error| error.to_string())?;
+    let player = rodio::Player::connect_new(&stream.mixer());
+    player.append(source);
+    player.sleep_until_end();
+    stream.log_on_drop(false);
+    Ok(())
+}
+
+fn selected_sound(play_sound: bool, choice: NotificationSound) -> Option<NotificationSound> {
+    play_sound.then_some(choice)
+}
 
 impl Notifier for NotifyRustNotifier {
     fn show(&self, notification: &NotificationProjection) -> Result<(), String> {
-        Notification::new()
+        let mut desktop = Notification::new();
+        desktop
             .summary(&notification.summary)
-            .body(&notification.body)
-            .show()
-            .map(|_| ())
-            .map_err(|error| error.to_string())
+            .body(&notification.body);
+        let sound = selected_sound(notification.play_sound, self.sound_choice());
+        match &sound {
+            Some(NotificationSound::System) => {
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
+                desktop.sound_name(system_sound_name());
+            }
+            Some(NotificationSound::Bundled | NotificationSound::Custom(_)) | None => {} // Direct playback needs no daemon sound hint.
+        }
+        desktop.show().map_err(|error| error.to_string())?;
+        if let Some(sound @ (NotificationSound::Bundled | NotificationSound::Custom(_))) = sound {
+            if let Err(error) = thread::Builder::new()
+                .name("notification-sound".into())
+                .spawn(move || {
+                    if let Err(error) = play_sound(sound) {
+                        log::warn!("Could not play notification sound: {error}");
+                    }
+                })
+            {
+                log::warn!("Could not start notification sound: {error}");
+            }
+        }
+        Ok(())
     }
 }
 
@@ -58,6 +143,7 @@ pub(crate) fn notification_is_muted(found: bool, muted_until: i64, now: i64) -> 
 pub(crate) fn notification_projection(
     message: &wr::Message,
     summary: Arc<str>,
+    play_sound: bool,
 ) -> NotificationProjection {
     let body = match &message.message {
         wr::MessageContent::ViewOnceUnavailable => wr::VIEW_ONCE_UNAVAILABLE_DESCRIPTION.to_owned(),
@@ -73,7 +159,11 @@ pub(crate) fn notification_projection(
             ToString::to_string,
         ),
     };
-    NotificationProjection { summary, body }
+    NotificationProjection {
+        summary,
+        body,
+        play_sound,
+    }
 }
 
 pub fn now_or(fallback: i64, clock: &dyn Clock) -> i64 {

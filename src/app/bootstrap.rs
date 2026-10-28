@@ -14,13 +14,14 @@ pub(crate) fn default_app() -> App<'static> {
     let picker = picker_from_terminal();
     let default_protocol_type = picker.protocol_type();
     let project_dirs = ProjectDirs::from("com", "nullptr", "wptui").unwrap();
-    with_data_dir_and_picker_and_ports(
+    with_dirs_and_picker_and_ports(
         project_dirs.data_dir(),
+        project_dirs.config_dir(),
         project_dirs.cache_dir(),
         picker,
         default_protocol_type,
         Box::new(SystemClock),
-        Box::new(NotifyRustNotifier),
+        |path| Box::new(NotifyRustNotifier::new(path.to_path_buf())),
     )
 }
 
@@ -33,7 +34,9 @@ pub(crate) fn with_data_dir(data_dir: &Path, cache_dir: &Path) -> App<'static> {
         picker,
         default_protocol_type,
         Box::new(SystemClock),
-        Box::new(NotifyRustNotifier),
+        Box::new(NotifyRustNotifier::new(preferences::settings_path(
+            data_dir,
+        ))),
     )
 }
 
@@ -73,10 +76,38 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
     clock: Box<dyn Clock>,
     notifier: Box<dyn Notifier>,
 ) -> App<'static> {
+    with_dirs_and_picker_and_ports(
+        data_dir,
+        data_dir,
+        cache_dir,
+        picker,
+        default_protocol_type,
+        clock,
+        move |_| notifier,
+    )
+}
+
+fn with_dirs_and_picker_and_ports(
+    data_dir: &Path,
+    config_dir: &Path,
+    cache_dir: &Path,
+    picker: Picker,
+    default_protocol_type: ProtocolType,
+    clock: Box<dyn Clock>,
+    notifier_from_settings: impl FnOnce(&Path) -> Box<dyn Notifier>,
+) -> App<'static> {
     fs::create_dir_all(data_dir).unwrap();
     let (tx, rx) = mpsc::channel::<AppInput>();
     let (clipboard_reader, clipboard_writer) = open_clipboard_pair();
-    let preferences_path = preferences::settings_path(data_dir);
+    let preferences_path = match preferences::resolve_settings_path(config_dir, data_dir) {
+        Ok(path) => path,
+        Err(error) => {
+            log::warn!("Could not migrate settings to config directory: {error}");
+            preferences::settings_path(data_dir)
+        }
+    };
+    let notifier = notifier_from_settings(&preferences_path);
+    let startup_unix_seconds = clock.unix_seconds();
     let composer_direction = preferences::load_composer_direction(&preferences_path);
     let mouse_capture_enabled = preferences::load_mouse_capture_enabled(&preferences_path);
 
@@ -106,6 +137,7 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         media_path: data_dir.join("media"),
         whatsmeow_db: data_dir.join("whatsmeow.db"),
         clock,
+        startup_unix_seconds,
         notifier,
         messages: HashMap::new(),
         message_actions: HashMap::new(),
@@ -259,5 +291,53 @@ fn open_clipboard_pair() -> (Box<dyn ClipboardReader>, Box<dyn ClipboardWriter>)
             Box::new(UnavailableClipboardReader),
             Box::new(UnavailableClipboardWriter),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn notifier_uses_the_same_selected_settings_file_after_migration_fallback() {
+        let root = tempfile::tempdir().unwrap();
+        let data = root.path().join("data");
+        fs::create_dir_all(&data).unwrap();
+        let legacy = preferences::settings_path(&data);
+        fs::write(
+            &legacy,
+            "mouse=disable\nnotification_sound=/sounds/legacy.ogg\n",
+        )
+        .unwrap();
+        let obstacle = root.path().join("blocked");
+        fs::write(&obstacle, "not a directory").unwrap();
+        let config = obstacle.join("wptui");
+        let chosen = Arc::new(Mutex::new(None));
+        let selected = Arc::clone(&chosen);
+        let picker = Picker::halfblocks();
+        let protocol = picker.protocol_type();
+        let app = with_dirs_and_picker_and_ports(
+            &data,
+            &config,
+            &data,
+            picker,
+            protocol,
+            Box::new(SystemClock),
+            move |path| {
+                *selected.lock().unwrap() = Some(path.to_path_buf());
+                Box::new(NotifyRustNotifier::new(path.to_path_buf()))
+            },
+        );
+        assert!(!app.mouse_capture_enabled);
+        assert_eq!(app.preferences_path, legacy);
+        drop(app);
+        fs::remove_file(&obstacle).unwrap();
+        fs::create_dir_all(&config).unwrap();
+        fs::write(
+            preferences::settings_path(&config),
+            "notification_sound=system\n",
+        )
+        .unwrap();
+        assert_eq!(*chosen.lock().unwrap(), Some(legacy));
     }
 }

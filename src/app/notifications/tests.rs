@@ -20,6 +20,85 @@ fn message(chat: &str, text: &str) -> wr::Message {
     }
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn system_sound_uses_macos_default_notification_constant() {
+    assert_eq!(system_sound_name(), "NSUserNotificationDefaultSoundName");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn system_sound_uses_desktop_sound_theme_name() {
+    assert_eq!(system_sound_name(), "message-new-instant");
+}
+
+#[test]
+fn native_notifier_selects_sound_from_settings_without_audio_hardware() {
+    let directory = tempfile::tempdir().unwrap();
+    let settings = directory.path().join("settings.conf");
+    let notifier = NotifyRustNotifier::new(settings.clone());
+    assert_eq!(notifier.sound_choice(), NotificationSound::Bundled);
+    std::fs::write(&settings, "notification_sound=relative.wav\n").unwrap();
+    assert_eq!(notifier.sound_choice(), NotificationSound::Bundled);
+    std::fs::write(&settings, "notification_sound=/sounds/alert.wav\n").unwrap();
+    assert_eq!(
+        notifier.sound_choice(),
+        NotificationSound::Custom("/sounds/alert.wav".into())
+    );
+    std::fs::write(&settings, "notification_sound=system\n").unwrap();
+    assert_eq!(notifier.sound_choice(), NotificationSound::System);
+}
+
+#[test]
+fn native_notifier_keeps_selected_legacy_sound_when_config_appears_later() {
+    let directory = tempfile::tempdir().unwrap();
+    let legacy = directory.path().join("settings.conf");
+    let config = directory.path().join("config.conf");
+    std::fs::write(&legacy, "notification_sound=/sounds/legacy.ogg\n").unwrap();
+    let notifier = NotifyRustNotifier::new(legacy);
+    std::fs::write(&config, "notification_sound=system\n").unwrap();
+    assert_eq!(
+        notifier.sound_choice(),
+        NotificationSound::Custom("/sounds/legacy.ogg".into())
+    );
+}
+
+#[test]
+fn stale_notices_select_no_system_hint_or_direct_audio() {
+    for choice in [
+        NotificationSound::System,
+        NotificationSound::Bundled,
+        NotificationSound::Custom("/sounds/alert.ogg".into()),
+    ] {
+        assert_eq!(selected_sound(false, choice.clone()), None);
+        assert_eq!(selected_sound(true, choice.clone()), Some(choice));
+    }
+}
+
+#[test]
+fn bundled_sound_decodes_without_audio_hardware() {
+    let mut decoded = rodio::Decoder::try_from(std::io::Cursor::new(ATTENTION_WAV)).unwrap();
+    assert!(decoded.next().is_some());
+}
+
+#[test]
+fn custom_sound_decodes_wav_mp3_and_ogg_without_audio_hardware() {
+    for extension in ["wav", "mp3", "ogg"] {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(format!("notification-tone.{extension}"));
+        let mut decoded = rodio::Decoder::try_from(File::open(&fixture).unwrap()).unwrap();
+        assert!(decoded.next().is_some(), "no samples in {extension}");
+    }
+}
+
+#[test]
+fn missing_custom_audio_fails_without_panicking_or_waiting_for_a_device() {
+    let directory = tempfile::tempdir().unwrap();
+    let missing = directory.path().join("missing.ogg");
+    assert!(play_sound(NotificationSound::Custom(missing)).is_err());
+}
+
 #[test]
 fn eligibility_skips_status_and_own_messages() {
     assert!(notification_eligibility(
@@ -70,8 +149,11 @@ fn mute_policy_excludes_expired_boundary() {
 
 #[test]
 fn projection_preserves_untrusted_message_text() {
-    let projection =
-        notification_projection(&message("alice@s.whatsapp.net", "ignored"), "Alice".into());
+    let projection = notification_projection(
+        &message("alice@s.whatsapp.net", "ignored"),
+        "Alice".into(),
+        true,
+    );
     assert_eq!(projection.summary.as_ref(), "Alice");
     assert_eq!(projection.body, "ignored");
 
@@ -79,7 +161,7 @@ fn projection_preserves_untrusted_message_text() {
         message: wr::MessageContent::Text("こんにちは\n\"quoted\"\u{0007}".into()),
         ..message("alice@s.whatsapp.net", "ignored")
     };
-    let projection = notification_projection(&message, Arc::from("名前\n\"sender\""));
+    let projection = notification_projection(&message, Arc::from("名前\n\"sender\""), true);
     assert_eq!(projection.summary.as_ref(), "名前\n\"sender\"");
     assert_eq!(projection.body, "こんにちは\n\"quoted\"\u{0007}");
 }

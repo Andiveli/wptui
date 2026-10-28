@@ -49,8 +49,26 @@ Your WhatsApp data — database, media, and session — lives in `~/.local/share
 machine. It is not uploaded anywhere; the client only exchanges data with the WhatsApp servers
 when it links or syncs, like any official client.
 
+Preferences live in your OS configuration directory (`~/.config/wptui/settings.conf` on Linux).
+An existing `settings.conf` in the data directory is copied there on first use if no config
+file exists; the legacy file is left untouched. Set `composer_direction=rtl` or
+`composer_direction=auto` to choose the composer direction.
+
+Eligible desktop notifications play the bundled `assets/sounds/attention.wav` by default,
+even when the notification server does not support sound hints. To use your OS/theme sound
+instead, set `notification_sound=system` in `settings.conf` (this requests a system sound hint;
+it depends on your notification server). To play your own sound directly, set
+`notification_sound=/absolute/path/to/alert.ogg` (WAV, MP3 and OGG/Vorbis are supported).
+Absent or invalid settings use the bundled sound. Direct playback does not request a second
+system sound; an unreadable file or missing audio device is logged without suppressing the
+desktop notification. Messages timestamped before this app session started still show desktop
+notices, but request neither bundled/custom audio nor a system sound hint. Messages from the
+startup second onward remain audible, even while synchronization progress is visible. If the
+startup clock is unavailable, audio remains enabled for eligible notices. Muted chats, open
+chats and explicit sync traffic remain silent.
+
 Mouse capture is enabled by default during the pointer-support preview. Add `mouse=disable` to
-`~/.local/share/wptui/settings.conf` and restart to restore terminal-native selection, or use
+that config file and restart to restore terminal-native selection, or use
 `mouse=enable` to explicitly enable terminal-wide capture. When capture is on, Shift+drag may
 allow native text selection depending on your terminal; it cannot be enabled for individual panes.
 In this preview, the wheel scrolls painted lists. Clicking a section enters its list, clicking
@@ -70,15 +88,15 @@ terminal.
 
 - **Debian / Ubuntu**
   ```
-  sudo apt install libchafa0t64 libglib2.0-0 libwayland-client0
+  sudo apt install libchafa0t64 libglib2.0-0 libwayland-client0 libasound2
   ```
 - **Fedora**
   ```
-  sudo dnf install chafa glib2 wayland
+  sudo dnf install chafa glib2 wayland alsa-lib
   ```
 - **Arch Linux**
   ```
-  sudo pacman -S chafa glib2 wayland
+  sudo pacman -S chafa glib2 wayland alsa-lib
   ```
 - **macOS**
   ```
@@ -94,7 +112,7 @@ terminal.
 - Go with CGO enabled
 - A C compiler supported by CGO
 - On Linux, the development packages `libwayland-dev`, `libchafa-dev` and
-  `libglib2.0-dev`; on macOS, `chafa` from Homebrew
+  `libglib2.0-dev`, `libasound2-dev`; on macOS, `chafa` from Homebrew
 - Optional: `mpv` for opening media externally
 
 ## Installation
@@ -110,6 +128,8 @@ curl -sSL https://raw.githubusercontent.com/Andiveli/wptui/main/install.sh | bas
 
 The script downloads the matching binary from the latest release into
 `~/.local/bin` (override with `PREFIX`, e.g. `PREFIX=/opt/wptui ./install.sh`).
+New release archives include the bundled tone's MIT notice; the installer keeps
+it next to the binary as `wp-tui-THIRD_PARTY_NOTICES.md`.
 Make sure the runtime libraries listed in [Requirements](#requirements) are
 present first.
 
@@ -160,6 +180,10 @@ Check for and install the latest stable release when using a standalone binary:
 ```bash
 wp-tui update
 ```
+
+The updater accepts older binary-only archives and newer archives containing the
+bundled tone's MIT notices. It keeps `wp-tui-THIRD_PARTY_NOTICES.md` beside the
+updated executable.
 
 When running through Cargo, separate application arguments with `--`:
 
