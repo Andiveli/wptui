@@ -50,6 +50,14 @@ impl App<'_> {
                 self.composer.cancel_mention_picker();
                 self.vim_composer_mode = None;
                 self.conversation_mode = ConversationMode::MessageNavigation;
+            } else if self.composer.vim_yank_pending() {
+                if let Some(character) = vim_plain_character(&key) {
+                    if let Some(text) = self.composer.vim_yank_key(character) {
+                        self.copy_vim_composer_text(text);
+                    }
+                } else {
+                    self.composer.clear_vim_word_prefix();
+                }
             } else if self.composer.vim_word_prefix_pending() {
                 if let Some(character) = vim_plain_character(&key) {
                     self.composer.vim_word_key(character);
@@ -68,7 +76,11 @@ impl App<'_> {
                 self.dispatch_composer_action(ComposerAction::Edit(Key::k(direction)));
             } else if let Some(character) = vim_plain_character(&key) {
                 if !self.composer_blocked() {
-                    self.composer.vim_word_key(character);
+                    if character == 'y' {
+                        self.composer.vim_yank_key(character);
+                    } else {
+                        self.composer.vim_word_key(character);
+                    }
                 }
             }
             return true;
@@ -106,6 +118,14 @@ impl App<'_> {
         }
 
         true
+    }
+
+    fn copy_vim_composer_text(&mut self, text: String) {
+        self.action_notice = Some(if self.clipboard_writer.write_text(&text).is_ok() {
+            crate::app::actions::ActionNotice::CopiedText(text)
+        } else {
+            crate::app::actions::ActionNotice::Unavailable("Could not copy composer text".into())
+        });
     }
 
     pub(crate) fn dispatch_composer_action(&mut self, action: ComposerAction) {

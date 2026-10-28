@@ -233,6 +233,8 @@ removes the local row, but does not itself prove removal from every recipient's 
 | Vim composer Normal | Next / previous word end | `e` / `ge` |
 | Vim composer Normal | Next / previous WORD start | `W` / `B` |
 | Vim composer Normal | Next / previous WORD end | `E` / `gE` |
+| Vim composer Normal | Yank to system clipboard (word/WORD motion) | `yw`/`yb`/`ye`/`yge`/`yW`/`yB`/`yE`/`ygE` |
+| Vim composer Normal | Yank current line (including newline) | `yy` |
 | Vim composer Normal | Insert / return to chat (draft kept) | `i` / `Esc` |
 | Vim composer Insert | Return to Normal | `Esc` |
 | Reaction picker | Move / confirm | `j`/`k` or Up/Down arrows / `Enter` |
@@ -241,9 +243,10 @@ removes the local row, but does not itself prove removal from every recipient's 
 The optional Vim composer starts in Normal mode; its border title shows Normal or Insert.
 Ordinary `i` composition remains unchanged. These motions move only the cursor: a word
 separates letters/digits/underscores from punctuation, while a WORD is any non-whitespace
-run. Counts and operators are not supported; composer yank (`y`) is deferred to a later
-slice, and this is not full Vim emulation. Search, substitution, and deletion are not
-available here. Pasted files are queued as attachments. When text
+run. In Normal mode, `y` waits for a supported motion or another `y`; `Esc` cancels it.
+Yanks copy to the system clipboard, without changing the draft or cursor. `p` (paste from a
+Vim register) is deferred; there are no registers or counts, and this is not full Vim emulation.
+Search, substitution, and deletion are not available here. Pasted files are queued as attachments. When text
 is included, it becomes the caption of the first attachment.
 
 ## Development
