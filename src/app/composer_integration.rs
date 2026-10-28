@@ -10,6 +10,19 @@ use crate::app::runtime_diagnostics::Phase;
 use crate::input_key::Key;
 use whatsrust as wr;
 
+fn vim_plain_character(key: &Key) -> Option<char> {
+    let KeyCode::Char(character) = key.code else {
+        return None;
+    };
+    if *key == Key::k(KeyCode::Char(character))
+        || (character.is_ascii_uppercase() && *key == Key::c(character))
+    {
+        Some(character)
+    } else {
+        None
+    }
+}
+
 impl App<'_> {
     pub(crate) fn set_composer_viewport_width(&mut self, width: u16) {
         self.composer_viewport_width = width.max(1);
@@ -38,12 +51,8 @@ impl App<'_> {
                 self.vim_composer_mode = None;
                 self.conversation_mode = ConversationMode::MessageNavigation;
             } else if self.composer.vim_word_prefix_pending() {
-                if let KeyCode::Char(character) = key.code {
-                    if key == Key::k(KeyCode::Char(character)) {
-                        self.composer.vim_word_key(character);
-                    } else {
-                        self.composer.clear_vim_word_prefix();
-                    }
+                if let Some(character) = vim_plain_character(&key) {
+                    self.composer.vim_word_key(character);
                 } else {
                     self.composer.clear_vim_word_prefix();
                 }
@@ -57,8 +66,8 @@ impl App<'_> {
                 _ => None,
             } {
                 self.dispatch_composer_action(ComposerAction::Edit(Key::k(direction)));
-            } else if let KeyCode::Char(character) = key.code {
-                if key == Key::k(KeyCode::Char(character)) && !self.composer_blocked() {
+            } else if let Some(character) = vim_plain_character(&key) {
+                if !self.composer_blocked() {
                     self.composer.vim_word_key(character);
                 }
             }

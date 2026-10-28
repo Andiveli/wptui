@@ -255,6 +255,9 @@ impl Composer<'_> {
 
     fn move_word(&mut self, big: bool, motion: WordMotion) {
         let chars: Vec<char> = self.text().chars().collect();
+        if chars.is_empty() {
+            return;
+        }
         let offset = self.cursor_offset().min(chars.len());
         let class = |index: usize| word_class(chars[index], big);
         let target = match motion {
