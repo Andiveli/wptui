@@ -11,6 +11,8 @@ use std::os::unix::process::CommandExt;
 
 use whatsrust::FileKind;
 
+pub mod preview;
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum MediaLaunchError {
     UnconfiguredMediaRoot,

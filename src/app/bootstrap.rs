@@ -151,6 +151,9 @@ pub(crate) fn with_data_dir_and_picker_and_ports(
         sticker_playback: HashMap::new(),
         deferred_sticker_previews: HashSet::new(),
         animation_slots: sticker_animation::AnimationSlots::new(),
+        media_preview_read: Arc::new(crate::media::preview::FilesystemMediaPreview::new(
+            data_dir.join("media"),
+        )),
         pending_sticker_previews: VecDeque::new(),
         visible_stickers: HashSet::new(),
         audio_durations: HashMap::new(),
