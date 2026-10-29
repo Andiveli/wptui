@@ -43,12 +43,22 @@ impl App<'_> {
                 )
             }
             AppEvent::SetFilePreview(message_id, file_path, img) => {
+                if !self.preview_result_is_current(&message_id, &file_path) {
+                    return false;
+                }
                 self.cache_file_preview(message_id.clone(), file_path, img);
                 if let Some(viewer) = self.attachment_viewer.as_mut()
                     && viewer.message_id == message_id
                 {
                     viewer.status = ViewerStatus::Ready;
                 }
+                true
+            }
+            AppEvent::SetStickerPreview(message_id, path, playback) => {
+                if !self.preview_result_is_current(&message_id, &path) {
+                    return false;
+                }
+                self.cache_sticker_preview(message_id, path, playback);
                 true
             }
             AppEvent::LoadViewerPreview(key) => {
@@ -135,9 +145,25 @@ impl App<'_> {
                                 }
                                 _ => file.path.to_string(),
                             };
-                            let image_res = MediaRoot::new(&media_path)
-                                .and_then(|root| root.media_file(Path::new(&preview_path)))
-                                .ok()
+                            let absolute = MediaRoot::new(&media_path)
+                                .and_then(|root| root.media_file(Path::new(&preview_path))).ok();
+                            if matches!(file.kind, wr::FileKind::Sticker) {
+                                if let Some(bytes) = absolute.as_ref().and_then(|path| std::fs::metadata(path).ok()
+                                    .filter(|meta| meta.len() <= 8 * 1024 * 1024)
+                                    .and_then(|_| std::fs::read(path).ok())) {
+                                    if let Ok(Some(animation)) = crate::app::sticker_animation::decode_animated_webp(&bytes) {
+                                        if animation.frames.len() > 1 {
+                                            let playback = crate::app::sticker_animation::StickerPlayback::prepare(
+                                                animation, &mut picker.lock().unwrap(),
+                                                Size::new(IMAGE_WIDTH as u16, IMAGE_HEIGHT as u16));
+                                            permit.send(&tx, AppInput::App(AppEvent::SetStickerPreview(
+                                                message_id, file.path, playback)));
+                                            return;
+                                        }
+                                    }
+                                }
+                            }
+                            let image_res = absolute
                                 .and_then(|path| image::ImageReader::open(path).ok())
                                 .and_then(|reader| reader.decode().ok());
                             if let Some(mut image_src) = image_res {

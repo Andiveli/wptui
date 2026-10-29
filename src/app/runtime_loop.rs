@@ -182,6 +182,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
     let initial_draw_started = app.runtime_diagnostics.draw_started();
     let mut media_render_plan = MediaRenderPlan::default();
     let mut visibility_plan = crate::app::read_receipts::VisibilityPlan::default();
+    app.visible_stickers.clear();
     let draw_result = terminal_session
         .terminal_mut()
         .draw(|frame| ui::draw_with_plan(frame, app, &mut media_render_plan, &mut visibility_plan));
@@ -216,11 +217,20 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
     if let Ok(area) = terminal_session.terminal_mut().size() {
         app.schedule_avatar_viewport(area.into());
     }
+    app.advance_visible_stickers(std::time::Instant::now());
     app.dispatch_read_receipts();
 
     loop {
         let now = app.now();
-        let msg = match app.selected_presence.redraw_after(now) {
+        let sticker_timeout = app
+            .sticker_deadline()
+            .map(|deadline| deadline.saturating_duration_since(std::time::Instant::now()));
+        let timeout = match (app.selected_presence.redraw_after(now), sticker_timeout) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) | (None, Some(a)) => Some(a),
+            (None, None) => None,
+        };
+        let msg = match timeout {
             Some(timeout) => match app.rx.recv_timeout(timeout) {
                 Ok(input) => Ok(input),
                 Err(mpsc::RecvTimeoutError::Timeout) => Ok(AppInput::Draw(DrawSource::Ordinary)),
@@ -274,11 +284,13 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
 
         app.sync_selected_presence();
 
-        if should_draw {
+        let sticker_changed = app.advance_visible_stickers(std::time::Instant::now());
+        if should_draw || sticker_changed {
             app.runtime_diagnostics.record_should_draw();
             let started = app.runtime_diagnostics.draw_started();
             let mut media_render_plan = MediaRenderPlan::default();
             let mut visibility_plan = crate::app::read_receipts::VisibilityPlan::default();
+            app.visible_stickers.clear();
             let draw_result = terminal_session.terminal_mut().draw(|frame| {
                 ui::draw_with_plan(frame, app, &mut media_render_plan, &mut visibility_plan)
             });
@@ -298,6 +310,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
                 &mut media_jobs,
             );
             app.apply_visibility_plan(visibility_plan);
+            app.advance_visible_stickers(std::time::Instant::now());
             if let Ok(area) = terminal_session.terminal_mut().size() {
                 app.schedule_avatar_viewport(area.into());
             }
