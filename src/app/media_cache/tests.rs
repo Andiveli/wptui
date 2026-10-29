@@ -70,7 +70,7 @@ fn late_preview_result_requires_loading_and_same_path() {
 fn only_visible_stickers_schedule_playback() {
     let mut app = TestApp::new();
     let path = Arc::<str>::from("stickers/animated.webp");
-    let animation = super::super::sticker_animation::decode_animated_webp(include_bytes!(
+    let animation = super::super::sticker_decode::decode_animated_webp(include_bytes!(
         "../../../tests/fixtures/sticker-animated.webp"
     ))
     .unwrap()
@@ -118,7 +118,7 @@ fn fifth_visible_animation_keeps_first_frame_without_evicting_playback() {
             .insert(id.clone().into(), file_message(&id, &path));
         app.metadata
             .insert(id.clone().into(), Metadata::File(FileMeta::Loading));
-        let animation = super::super::sticker_animation::decode_animated_webp(include_bytes!(
+        let animation = super::super::sticker_decode::decode_animated_webp(include_bytes!(
             "../../../tests/fixtures/sticker-animated.webp"
         ))
         .unwrap()

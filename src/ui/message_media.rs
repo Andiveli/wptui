@@ -283,7 +283,8 @@ mod tests {
     };
     use whatsrust::{FileContent, FileKind};
 
-    use crate::app::sticker_animation::{StickerPlayback, decode_animated_webp};
+    use crate::app::sticker_animation::StickerPlayback;
+    use crate::app::sticker_decode::decode_animated_webp;
     use crate::app::test_support::TestApp;
     use crate::app::{FileMeta, Metadata};
     use ratatui::layout::Size;
