@@ -228,6 +228,9 @@ impl App<'_> {
                         }
                     };
                     if still_painted {
+                        if self.vim_composer_mode.take().is_some() {
+                            self.conversation_mode = ConversationMode::MessageNavigation;
+                        }
                         match target {
                             ContactTarget::Status(_) => self.status_selection.select(Some(index)),
                             ContactTarget::Chat(_) | ContactTarget::Community(_) => {
