@@ -1,0 +1,25 @@
+# Animated sticker architecture cleanup
+
+Branch: `preview/animated-stickers`. Refactor the verified sticker feature before integration; preserve its behavior and resource bounds.
+
+## Specs
+
+S1. "Okay, terminamos entonces, revisemos que sigamos la estructura del proyecto, resposabilidad única, lo demás que estamos priorizando"
+S2. "Creo que arquitectura hexagonal, puedes revisar en la memoria"
+S3. "Dale, refactoricemos eso antes de integrar"
+
+## Tasks
+
+- [~] T1 (S1-S3): Move sticker visibility/cache bookkeeping out of the renderer into App through an existing render-plan seam, with behavior and boundary checks. Route: inline or bounded worker on a real trigger. Commit: pending.
+- [ ] T2 (S1-S3): Isolate sticker media-read and preview worker integration from the shared event handler; retain existing image/video behavior and bounded worker slots. Route: inline or bounded worker on a real trigger. Commit: pending.
+- [ ] T3 (S1-S3): Separate WebP decoding/resource limits from terminal-protocol preparation and playback timing without new ports for pure policy. Route: inline or bounded worker on a real trigger. Commit: pending.
+- [ ] T4 (S1-S3): Verify structural boundaries and behavior regressions, assess risk and close without integrating or publishing. Route: parent and independent verifier if high-risk. Commit: pending.
+
+## Log
+
+L1. Dale, refactoricemos eso antes de integrar
+L2. Earlier user criteria verbatim: "Okay, terminamos entonces, revisemos que sigamos la estructura del proyecto, resposabilidad única, lo demás que estamos priorizando" and "Creo que arquitectura hexagonal, puedes revisar en la memoria".
+L3. Read-only review found candidate-introduced UI/App state coupling in `src/ui/message_media.rs:153-170`, direct sticker file I/O in `src/app/runtime_media_viewer_events.rs:203-206`, and mixed decoder, worker, playback and terminal protocol reasons to change in `src/app/sticker_animation.rs`. Baseline already has mutable App image rendering, image I/O in the event handler and an image cache plus audio probe in `src/app/media_cache.rs`; do not enlarge scope to unrelated inherited debt.
+L4. Architecture memory: App owns application state and use-case policy; UI reports visibility and paints prepared frames; media filesystem/OS effects belong behind a cohesive capability/adapter, while pure policies, App events and render plans require no ports. Preserve four simultaneous visible animations, two decode jobs, still fallback, normalized timing and the live seven-sticker outcome. User previously required GitHub Actions for tests, not local Cargo. No push, PR or merge authorized for this cleanup.
+L5. Feature worktree starts clean at local `59d2d26`, branch ahead three docs-only commits of `origin/preview/animated-stickers`; last behavior commit `7d25301` passed preview Actions run 40614270636 (540 Rust tests, Go/fmt/release) and user confirmed live all seven move. The architecture cleanup must not claim new RED for behavior-preserving refactor without a meaningful failing structural boundary assertion.
+L6. T1 worker added a structural architecture test and observed a static boundary RED before implementation, GREEN afterward; local rustfmt --edition 2024 --check and git diff --check passed. Parent review corrected the UI to report every loaded visible sticker without consulting deferred cache policy; App alone filters and updates visible_stickers/LRU after successful draw. Existing frame selection remains presentation. Focused tests cover deferred/ordinary still visibility and clipped previews. Local structural GREEN passed; no local Cargo run. Full Rust tests require preview Actions.

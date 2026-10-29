@@ -182,7 +182,6 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
     let initial_draw_started = app.runtime_diagnostics.draw_started();
     let mut media_render_plan = MediaRenderPlan::default();
     let mut visibility_plan = crate::app::read_receipts::VisibilityPlan::default();
-    app.visible_stickers.clear();
     let draw_result = terminal_session
         .terminal_mut()
         .draw(|frame| ui::draw_with_plan(frame, app, &mut media_render_plan, &mut visibility_plan));
@@ -206,6 +205,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
     if let Some(started) = initial_draw_started {
         app.runtime_diagnostics.record_draw_finished(started);
     }
+    app.apply_sticker_render_plan(&media_render_plan);
     dispatch_media_render_plan_after_draw(
         app,
         draw_result,
@@ -294,7 +294,6 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
             let started = app.runtime_diagnostics.draw_started();
             let mut media_render_plan = MediaRenderPlan::default();
             let mut visibility_plan = crate::app::read_receipts::VisibilityPlan::default();
-            app.visible_stickers.clear();
             let draw_result = terminal_session.terminal_mut().draw(|frame| {
                 ui::draw_with_plan(frame, app, &mut media_render_plan, &mut visibility_plan)
             });
@@ -306,6 +305,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
             if let Some(started) = started {
                 app.runtime_diagnostics.record_draw_finished(started);
             }
+            app.apply_sticker_render_plan(&media_render_plan);
             dispatch_media_render_plan_after_draw(
                 app,
                 draw_result,
