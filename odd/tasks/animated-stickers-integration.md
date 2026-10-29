@@ -12,7 +12,7 @@ S4. "Sí, push de ramas y creación de PRs"
 ## Tasks
 
 - [x] T1 (S1, S3): Document the inherited path race separately and create the relevant approved feature issue. Route: parent. Commit: none (remote issues #471 and #472; approval verified).
-- [x] T2 (S1-S4): Plan cohesive review slices of the already-tested feature and its architecture cleanup; record target branch and conflicts. Route: parent. Commit: pending tracking-document commit.
+- [x] T2 (S1-S4): Plan cohesive review slices of the already-tested feature and its architecture cleanup; record target branch and conflicts. Route: parent. Commit: c75cdf2 (tracking document and L6 slice boundaries).
 - [ ] T3 (S2-S4): Create the tracker branch from current default branch, publish a draft/no-merge tracker PR linked to #472. Route: parent. Commit: pending.
 - [ ] T4 (S1-S4): Publish ordered child PRs with one coherent slice per PR and clean base-relative diffs. Route: parent (exploration subagent unavailable). Commit: pending.
 - [ ] T5 (S1-S4): Read back PR metadata and GitHub Actions checks; report failed, skipped or pending proof and defer merge. Route: parent. Commit: pending.
