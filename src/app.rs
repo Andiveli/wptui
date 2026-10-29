@@ -49,6 +49,7 @@ pub mod logout;
 pub mod media_cache;
 pub mod media_download_port;
 pub mod media_jobs;
+pub mod media_preview_port;
 pub mod media_support;
 pub mod message_action_diagnostics;
 pub mod message_actions;
@@ -88,6 +89,7 @@ pub mod status_projection;
 pub mod status_publish;
 pub mod status_retention;
 pub mod sticker_animation;
+pub mod sticker_preview_worker;
 pub mod terminal_input_translation;
 pub mod terminal_session;
 #[cfg(test)]
@@ -281,6 +283,7 @@ pub struct App<'a> {
     pub(crate) sticker_playback: HashMap<Arc<str>, sticker_animation::StickerPlayback>,
     pub(crate) deferred_sticker_previews: HashSet<Arc<str>>,
     pub(crate) animation_slots: Arc<sticker_animation::AnimationSlots>,
+    pub(crate) media_preview_read: Arc<dyn media_preview_port::MediaPreviewRead>,
     pub(crate) pending_sticker_previews: VecDeque<(wr::MessageId, Arc<str>)>,
     pub(crate) visible_stickers: HashSet<Arc<str>>,
     /// Probed audio duration in seconds, keyed by file path. Populated lazily
