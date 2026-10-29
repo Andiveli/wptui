@@ -288,6 +288,145 @@ fn clicking_a_painted_plain_message_opens_its_enter_actions() {
     );
 }
 
+#[test]
+fn clicking_a_message_exits_vim_without_reactivating_it_on_ordinary_insert() {
+    let mut app = TestApp::with_settings("mouse=enable\n");
+    let chat: JID = "vim-click@example.test".to_owned().into();
+    app.open_chat_by_jid(chat.clone());
+    app.add_message(message(&chat, "target", 1, "VIM-CONTEXT"));
+    app.composer.insert_text("draft");
+    app.focus_pane = FocusPane::Conversation;
+    for character in [' ', 'v'] {
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            KeyCode::Char(character),
+            KeyModifiers::NONE,
+        )));
+    }
+    let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+    draw(&mut app, &mut terminal);
+    let conversation =
+        ui::navigation_areas(terminal.backend().buffer().area, app.pane_visibility).conversation;
+    let (x, y) = painted_in(&terminal, conversation, "VIM-CONTEXT");
+
+    app.on_terminal_event(mouse(MouseEventKind::Down(MouseButton::Left), x, y));
+    assert_eq!(
+        app.conversation_mode,
+        wp_tui::app::actions::ConversationMode::MessageNavigation
+    );
+    app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+    for character in ['i', 'X'] {
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            KeyCode::Char(character),
+            KeyModifiers::NONE,
+        )));
+    }
+    assert_eq!(app.composer.text(), "draftX");
+}
+
+#[test]
+fn clicking_another_chat_exits_vim_before_ordinary_composition() {
+    let mut app = TestApp::with_settings("mouse=enable\n");
+    let alice: JID = "alice-vim@example.test".to_owned().into();
+    let bob: JID = "bob-vim@example.test".to_owned().into();
+    app.contacts.insert(alice.clone(), "AliceVim".into());
+    app.contacts.insert(bob.clone(), "BobVim".into());
+    app.open_chat_by_jid(alice.clone());
+    app.open_chat_by_jid(bob);
+    app.focus_pane = FocusPane::Conversation;
+    for character in [' ', 'v'] {
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            KeyCode::Char(character),
+            KeyModifiers::NONE,
+        )));
+    }
+    let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+    draw(&mut app, &mut terminal);
+    let contacts = ui::navigation_areas(terminal.backend().buffer().area, app.pane_visibility)
+        .chat_list
+        .unwrap();
+    let (x, y) = painted_in(&terminal, contacts, "AliceVim");
+    app.on_terminal_event(mouse(MouseEventKind::Down(MouseButton::Left), x, y));
+    assert_eq!(app.open_chat(), Some(alice));
+    for character in ['i', 'X'] {
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            KeyCode::Char(character),
+            KeyModifiers::NONE,
+        )));
+    }
+    assert_eq!(app.composer.text(), "X");
+}
+
+#[test]
+fn switching_sections_or_filters_exits_vim_composer_mode() {
+    for filter_click in [false, true] {
+        let mut app = TestApp::with_settings("mouse=enable\n");
+        app.open_chat_by_jid("section-vim@example.test".to_owned().into());
+        app.focus_pane = FocusPane::Conversation;
+        for character in [' ', 'v'] {
+            app.on_terminal_event(Event::Key(KeyEvent::new(
+                KeyCode::Char(character),
+                KeyModifiers::NONE,
+            )));
+        }
+        let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+        draw(&mut app, &mut terminal);
+        let area = if filter_click {
+            Rect::new(0, 0, 100, 1)
+        } else {
+            ui::navigation_areas(terminal.backend().buffer().area, app.pane_visibility)
+                .section_rail
+                .unwrap()
+        };
+        let (x, y) = painted_in(
+            &terminal,
+            area,
+            if filter_click { "Unread" } else { "Status" },
+        );
+        app.on_terminal_event(mouse(MouseEventKind::Down(MouseButton::Left), x, y));
+        if filter_click {
+            assert_eq!(app.chat_filter, ChatFilter::Unread);
+        } else {
+            assert_eq!(app.selected_section, Section::Status);
+        }
+        assert_eq!(app.vim_composer_mode, None);
+        assert_eq!(
+            app.conversation_mode,
+            wp_tui::app::actions::ConversationMode::MessageNavigation
+        );
+    }
+}
+
+#[test]
+fn reentering_vim_after_filter_click_discards_pending_word_prefix() {
+    let mut app = TestApp::with_settings("mouse=enable\n");
+    app.open_chat_by_jid("word-prefix@example.test".to_owned().into());
+    app.composer.insert_text("ab,cd");
+    app.focus_pane = FocusPane::Conversation;
+    let key = |app: &mut TestApp, character| {
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            KeyCode::Char(character),
+            KeyModifiers::NONE,
+        )));
+    };
+    for character in [' ', 'v'] {
+        key(&mut app, character);
+    }
+    for _ in 0..5 {
+        key(&mut app, 'h');
+    }
+    key(&mut app, 'g');
+    let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+    draw(&mut app, &mut terminal);
+    let (x, y) = painted_in(&terminal, Rect::new(0, 0, 100, 1), "Unread");
+    app.on_terminal_event(mouse(MouseEventKind::Down(MouseButton::Left), x, y));
+    assert_eq!(app.vim_composer_mode, None);
+    app.focus_pane = FocusPane::Conversation;
+    for character in [' ', 'v', 'e', 'i', 'X'] {
+        key(&mut app, character);
+    }
+    assert_eq!(app.composer.text(), "aXb,cd");
+}
+
 #[derive(Clone, Default)]
 struct RecordingUrlOpener(Rc<RefCell<Vec<wp_tui::url::UrlLaunchPlan>>>);
 

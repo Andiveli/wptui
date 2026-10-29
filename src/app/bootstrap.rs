@@ -207,6 +207,7 @@ fn with_dirs_and_picker_and_ports(
         pane_visibility: PaneVisibility::default(),
         selected_section: Section::default(),
         conversation_mode: ConversationMode::MessageNavigation,
+        vim_composer_mode: None,
         edit_message: None,
         message_editor: Box::new(crate::message_mutation::WhatsAppMessageEditor),
         message_reactor: Box::new(crate::message_mutation::WhatsAppMessageReactor),
