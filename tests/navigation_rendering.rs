@@ -33,7 +33,6 @@ fn navigation_symbols_have_bounded_module_ownership() {
         "render_section_rail",
         "render_structural_placeholder",
         "render_logout_placeholder",
-        "render_logs",
     ] {
         assert!(
             NAVIGATION_SOURCE.contains(symbol),
@@ -52,7 +51,6 @@ fn draw_keeps_navigation_branch_and_overlay_order() {
         .map(|(source, _)| source)
         .expect("draw source should be present");
     let order = [
-        "render_logs",
         "render_section_rail",
         "render_logout_placeholder",
         "render_chats",
@@ -71,11 +69,10 @@ fn draw_keeps_navigation_branch_and_overlay_order() {
 }
 
 #[test]
-fn navigation_renders_labels_logs_logout_and_placeholders() {
+fn navigation_renders_labels_logout_and_placeholders() {
     let mut app = TestApp::new();
     app.focus_pane = FocusPane::SectionRail;
     app.selected_section = Section::Communities;
-    app.show_logs = true;
 
     let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
     terminal
@@ -96,14 +93,12 @@ fn navigation_renders_labels_logs_logout_and_placeholders() {
         "Chats",
         "Status",
         "Communities",
-        "Logs",
         "No communities",
     ] {
         assert!(rendered.contains(expected), "missing {expected}");
     }
 
     app.rail_on_logout = true;
-    app.show_logs = false;
     terminal
         .draw(|frame| {
             let mut media_render_plan = MediaRenderPlan::default();
@@ -144,11 +139,10 @@ fn navigation_is_safe_in_a_narrow_frame() {
 }
 
 #[test]
-fn runtime_overlay_layering_keeps_logs_and_branch_below_final_file_picker() {
+fn runtime_overlay_layering_keeps_branch_below_final_file_picker() {
     let mut app = TestApp::new();
     app.focus_pane = FocusPane::SectionRail;
     app.selected_section = Section::Communities;
-    app.show_logs = true;
     app.attachment_viewer = Some(AttachmentViewerState::from_attachments(
         vec![ViewerAttachment {
             message_id: "overlay-message".into(),
@@ -190,10 +184,7 @@ fn runtime_overlay_layering_keeps_logs_and_branch_below_final_file_picker() {
         .unwrap();
     let rendered = rows(&terminal).join("\n");
 
-    assert!(
-        rendered.contains("Logs"),
-        "logs must remain rendered: {rendered:?}"
-    );
+    assert!(!rendered.contains("Logs"), "removed panel must not render");
     assert!(
         rendered.contains("Communities"),
         "selected branch must remain rendered: {rendered:?}"

@@ -55,14 +55,7 @@ fn contact_avatar_targets(app: &mut App, area: Rect) -> Vec<AvatarTarget> {
 
 impl App<'_> {
     pub(crate) fn schedule_avatar_viewport(&mut self, terminal_area: Rect) {
-        let content_area = if self.show_logs {
-            let [content_area, _] =
-                Layout::horizontal([Constraint::Percentage(67), Constraint::Percentage(33)])
-                    .areas(terminal_area);
-            content_area
-        } else {
-            terminal_area
-        };
+        let content_area = terminal_area;
         let (_, body_area) = chat_filter_areas(content_area, show_chat_filter_header(self));
         let targets = if self.rail_on_logout || self.selected_section == Section::Status {
             Vec::new()

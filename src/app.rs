@@ -44,7 +44,6 @@ pub mod inputs;
 pub mod leader_menu;
 pub mod lifecycle_control;
 pub mod lifecycle_settings_dispatch;
-pub mod log_toggle;
 pub mod logout;
 pub mod media_cache;
 pub mod media_download_port;
@@ -331,8 +330,6 @@ pub struct App<'a> {
     pub next_local_send_id: u64,
 
     pub kh: KeybindHandler,
-
-    pub show_logs: bool,
 
     pub contact_search_active: bool,
     pub contact_search: TextInput,

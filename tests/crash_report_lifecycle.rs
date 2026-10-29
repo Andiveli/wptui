@@ -9,7 +9,9 @@ const HELPER_EXISTING: &str = "WPTUI_CRASH_REPORT_TEST_EXISTING";
 fn installing_reporter_preserves_or_omits_file_until_a_panic() {
     let directory = tempfile::tempdir().unwrap();
     for existing in [false, true] {
-        let path = directory.path().join(if existing { "existing.log" } else { "new.log" });
+        let path = directory
+            .path()
+            .join(if existing { "existing.log" } else { "new.log" });
         if existing {
             fs::write(&path, "previous crash report").unwrap();
         }

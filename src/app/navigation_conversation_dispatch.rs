@@ -146,7 +146,6 @@ impl App<'_> {
             AppAction::Composer(action) => self.dispatch_composer_action(action),
             action @ (AppAction::Quit
             | AppAction::Logout
-            | AppAction::ToggleLogs
             | AppAction::ToggleSectionRail
             | AppAction::ToggleChatList
             | AppAction::FocusPane(_)
@@ -220,8 +219,8 @@ mod tests {
         let mut app = TestApp::new();
 
         assert_eq!(
-            app.dispatch_navigation_conversation_action(AppAction::ToggleLogs),
-            Err(AppAction::ToggleLogs)
+            app.dispatch_navigation_conversation_action(AppAction::Logout),
+            Err(AppAction::Logout)
         );
     }
 }

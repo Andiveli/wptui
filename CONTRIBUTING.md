@@ -119,8 +119,8 @@ Keep commits atomic — one logical change per commit. Never add AI attribution 
 - Use the templates in `.github/ISSUE_TEMPLATE/` — a bug report or feature request form will be
   offered automatically.
 - For bugs, include environment details: OS, display server (Wayland/X11), terminal emulator, and
-  `wp-tui` version or commit. Paste error messages verbatim. If you can, reproduce with the
-  log view open (`Ctrl+Shift+L`).
+  `wp-tui` version or commit. Paste error messages verbatim. If the app panics, attach the
+  generated crash report after checking it for sensitive information.
 - For feature requests, explain the problem you're trying to solve and the proposed solution.
 
 ## License
