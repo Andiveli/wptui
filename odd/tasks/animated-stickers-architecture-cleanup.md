@@ -13,7 +13,7 @@ S3. "Dale, refactoricemos eso antes de integrar"
 - [x] T1 (S1-S3): Move sticker visibility/cache bookkeeping out of the renderer into App through an existing render-plan seam, with behavior and boundary checks. Route: bounded worker plus parent correction. Commit: 74eff59 (preview run 40628911518 passed).
 - [x] T2 (S1-S3): Isolate sticker media-read and preview worker integration from the shared event handler; retain existing image/video behavior and bounded worker slots. Route: bounded worker plus independent verifier. Commit: 55bbc44 (preview run 40814547188 passed).
 - [x] T3 (S1-S3): Separate WebP decoding/resource limits from terminal-protocol preparation and playback timing without new ports for pure policy. Route: bounded worker plus parent structural readback. Commit: bf02fe9 (preview run 40817403510 passed).
-- [x] T4 (S1-S3): Verify structural boundaries and behavior regressions, assess risk and close without integrating or publishing. Route: parent and independent item-2/item-4 verifiers. Evidence: Actions 40628911518, 40814547188, 40817403510; live user check L15. Commit: closure log in this work unit.
+- [x] T4 (S1-S3): Verify structural boundaries and behavior regressions, assess risk and close without integrating or publishing. Route: parent and independent item-2/item-4 verifiers. Evidence: Actions 40628911518, 40814547188, 40817403510; live user check L15. Commit: b20864e (closure log).
 
 ## Log
 
