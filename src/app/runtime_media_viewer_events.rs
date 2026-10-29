@@ -153,6 +153,7 @@ impl App<'_> {
                     let tx = self.tx.clone();
                     let media_path = self.media_path.to_owned();
                     let picker = Arc::clone(&self.picker);
+                    let preview_reader = Arc::clone(&self.media_preview_read);
                     let file = match &self.messages.get(&message_id).unwrap().message {
                         wr::MessageContent::File(file) => Some(file.clone()),
                         _ => None,
@@ -198,24 +199,25 @@ impl App<'_> {
                                 _ => file.path.to_string(),
                             };
                             let absolute = MediaRoot::new(&media_path)
-                                .and_then(|root| root.media_file(Path::new(&preview_path))).ok();
-                            if animation_slot.is_some() {
-                                if let Some(bytes) = absolute.as_ref().and_then(|path| std::fs::metadata(path).ok()
-                                    .filter(|meta| meta.len() <= 8 * 1024 * 1024)
-                                    .and_then(|_| std::fs::read(path).ok())) {
-                                    if let Ok(Some(animation)) = crate::app::sticker_animation::decode_animated_webp(&bytes) {
-                                        if animation.frames.len() > 1 {
-                                            let mut playback = crate::app::sticker_animation::StickerPlayback::prepare(
-                                                animation, &mut picker.lock().unwrap(),
-                                                Size::new(IMAGE_WIDTH as u16, IMAGE_HEIGHT as u16));
-                                            playback.slot = animation_slot;
-                                            permit.send(&tx, AppInput::App(AppEvent::SetStickerPreview(
-                                                message_id, file.path, playback)));
-                                            return;
-                                        }
-                                    }
+                                .and_then(|root| root.media_file(Path::new(&preview_path)))
+                                .ok();
+                            let animation_slot = if let Some(slot) = animation_slot {
+                                match crate::app::sticker_preview_worker::try_animated_preview(
+                                    preview_reader.as_ref(),
+                                    Path::new(&preview_path),
+                                    message_id.clone(),
+                                    file.path.clone(),
+                                    slot,
+                                    &picker,
+                                    &permit,
+                                    &tx,
+                                ) {
+                                    Ok(()) => return,
+                                    Err(slot) => Some(slot),
                                 }
-                            }
+                            } else {
+                                None
+                            };
                             let image_res = absolute
                                 .and_then(|path| image::ImageReader::open(path).ok())
                                 .and_then(|reader| reader.decode().ok());

@@ -97,6 +97,16 @@ const CONTACT_WRITER_FACTORIES: [(&str, &str); 5] = [
 ];
 
 #[test]
+fn sticker_preview_io_and_protocol_work_stay_out_of_shared_handler() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let handler = fs::read_to_string(root.join("src/app/runtime_media_viewer_events.rs")).unwrap();
+    assert!(!handler.contains("std::fs::metadata("));
+    assert!(!handler.contains("std::fs::read("));
+    assert!(!handler.contains("decode_animated_webp("));
+    assert!(!handler.contains("StickerPlayback::prepare("));
+}
+
+#[test]
 fn sticker_visibility_bookkeeping_stays_out_of_ui_renderer() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let ui = fs::read_to_string(root.join("src/ui/message_media.rs")).unwrap();
