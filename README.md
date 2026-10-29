@@ -227,6 +227,7 @@ or editor state.
 | Action | Key |
 |---|---|
 | Start composing | `i` |
+| Start optional Vim composer (Chats/Communities conversation only) | `Space`, then `v` |
 | Copy selected text | `y` |
 | React | `r` |
 | Share | `s` |
@@ -252,11 +253,32 @@ removes the local row, but does not itself prove removal from every recipient's 
 |---|---|---|
 | Composer | Send | `Enter` |
 | Composer | Paste text, files, or an image | `Ctrl+V` |
+| Vim composer Normal | Move cursor | `h`/`j`/`k`/`l` |
+| Vim composer Normal | Next / previous word start | `w` / `b` |
+| Vim composer Normal | Next / previous word end | `e` / `ge` |
+| Vim composer Normal | Next / previous WORD start | `W` / `B` |
+| Vim composer Normal | Next / previous WORD end | `E` / `gE` |
+| Vim composer Normal | Yank to system clipboard (word/WORD motion) | `yw`/`yb`/`ye`/`yge`/`yW`/`yB`/`yE`/`ygE` |
+| Vim composer Normal | Yank current line (including newline) | `yy` |
+| Vim composer Normal | Paste system clipboard text at cursor | `p` |
+| Vim composer Normal | Insert before / append after current grapheme | `i` / `a` |
+| Vim composer Normal | Return to chat (draft kept) | `Esc` |
+| Vim composer Insert | Return to Normal | `Esc` |
 | Reaction picker | Move / confirm | `j`/`k` or Up/Down arrows / `Enter` |
 | Media viewer | Previous / next | `h`/`l` or arrows |
 
-Pasted files are queued as attachments. When text is included, it becomes the caption of the first
-attachment.
+The optional Vim composer starts in Normal mode; its border title shows Normal or Insert.
+`i` enters Insert at the current cursor; `a` advances past the current grapheme within the
+same line before entering Insert (and stays put at the end of a line or an empty draft).
+Ordinary `i` composition remains unchanged. These motions move only the cursor: a word
+separates letters/digits/underscores from punctuation, while a WORD is any non-whitespace
+run. In Normal mode, `y` waits for a supported motion or another `y`; `Esc` cancels it.
+Yanks copy to the system clipboard, without changing the draft or cursor. In Normal mode,
+`p` inserts the clipboard's text at the cursor, even after `yy`; it does not use a Vim register
+or Vim's after-cursor/linewise put positioning. `p` does not attach images or files; use
+`Ctrl+V` while editing to paste those. There are no registers or counts, and this is not full
+Vim emulation. Search, substitution, and deletion are not available here. Files pasted with
+`Ctrl+V` are queued as attachments; text becomes the caption of the first attachment.
 
 ## Development
 
