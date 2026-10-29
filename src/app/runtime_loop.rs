@@ -205,6 +205,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
     if let Some(started) = initial_draw_started {
         app.runtime_diagnostics.record_draw_finished(started);
     }
+    app.apply_sticker_render_plan(&media_render_plan);
     dispatch_media_render_plan_after_draw(
         app,
         draw_result,
@@ -216,11 +217,24 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
     if let Ok(area) = terminal_session.terminal_mut().size() {
         app.schedule_avatar_viewport(area.into());
     }
+    if app.advance_visible_stickers(std::time::Instant::now())
+        && app.tx.send(AppInput::Draw(DrawSource::Ordinary)).is_err()
+    {
+        error!("Failed to schedule sticker preview redraw");
+    }
     app.dispatch_read_receipts();
 
     loop {
         let now = app.now();
-        let msg = match app.selected_presence.redraw_after(now) {
+        let sticker_timeout = app
+            .sticker_deadline()
+            .map(|deadline| deadline.saturating_duration_since(std::time::Instant::now()));
+        let timeout = match (app.selected_presence.redraw_after(now), sticker_timeout) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) | (None, Some(a)) => Some(a),
+            (None, None) => None,
+        };
+        let msg = match timeout {
             Some(timeout) => match app.rx.recv_timeout(timeout) {
                 Ok(input) => Ok(input),
                 Err(mpsc::RecvTimeoutError::Timeout) => Ok(AppInput::Draw(DrawSource::Ordinary)),
@@ -274,7 +288,8 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
 
         app.sync_selected_presence();
 
-        if should_draw {
+        let sticker_changed = app.advance_visible_stickers(std::time::Instant::now());
+        if should_draw || sticker_changed {
             app.runtime_diagnostics.record_should_draw();
             let started = app.runtime_diagnostics.draw_started();
             let mut media_render_plan = MediaRenderPlan::default();
@@ -290,6 +305,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
             if let Some(started) = started {
                 app.runtime_diagnostics.record_draw_finished(started);
             }
+            app.apply_sticker_render_plan(&media_render_plan);
             dispatch_media_render_plan_after_draw(
                 app,
                 draw_result,
@@ -298,6 +314,11 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
                 &mut media_jobs,
             );
             app.apply_visibility_plan(visibility_plan);
+            if app.advance_visible_stickers(std::time::Instant::now())
+                && app.tx.send(AppInput::Draw(DrawSource::Ordinary)).is_err()
+            {
+                error!("Failed to schedule sticker preview redraw");
+            }
             if let Ok(area) = terminal_session.terminal_mut().size() {
                 app.schedule_avatar_viewport(area.into());
             }
