@@ -146,6 +146,53 @@ fn fifth_visible_animation_keeps_first_frame_without_evicting_playback() {
     }
     assert_eq!(app.sticker_playback.len(), 4);
     assert_eq!(app.image_cache.len(), 1);
+
+    // The fifth sticker was initially a stable still preview. Once it is the
+    // only visible one, a slot must be reclaimed and its preview made reloadable.
+    app.visible_stickers.clear();
+    app.visible_stickers.insert(paths[4].clone());
+    app.advance_visible_stickers(Instant::now());
+    assert!(matches!(
+        app.metadata.get(&wr::MessageId::from("sticker-4")),
+        Some(Metadata::File(FileMeta::Downloaded))
+    ));
+    assert!(app.sticker_playback.len() <= 4);
+
+    // Reload through the same App event used by the rendered preview, not by
+    // inserting a playback directly into the cache.
+    std::fs::create_dir_all(&app.media_path).unwrap();
+    std::fs::write(
+        app.media_path.join(paths[4].as_ref()),
+        include_bytes!("../../../tests/fixtures/sticker-animated.webp"),
+    )
+    .unwrap();
+    if let wr::MessageContent::File(file) = &mut app
+        .messages
+        .get_mut(&wr::MessageId::from("sticker-4"))
+        .unwrap()
+        .message
+    {
+        file.kind = wr::FileKind::Sticker;
+    }
+    let mut jobs = MediaJobOwner::new();
+    let (download_tx, _download_rx) = mpsc::channel();
+    app.handle_media_viewer_event(
+        AppEvent::LoadFilePreview("sticker-4".into()),
+        &download_tx,
+        &mut jobs,
+    );
+    let AppInput::App(event) = app.rx.recv_timeout(Duration::from_secs(5)).unwrap() else {
+        panic!("expected animated preview event");
+    };
+    assert!(matches!(&event, AppEvent::SetStickerPreview(..)));
+    app.handle_media_viewer_event(event, &download_tx, &mut jobs);
+    jobs.shutdown();
+    assert!(app.sticker_playback.contains_key(&paths[4]));
+    assert!(app.sticker_playback.len() <= 4);
+    let start = Instant::now();
+    assert!(!app.advance_visible_stickers(start));
+    assert!(app.advance_visible_stickers(start + Duration::from_millis(80)));
+    assert_eq!(app.sticker_playback[&paths[4]].current, 1);
 }
 
 #[test]
