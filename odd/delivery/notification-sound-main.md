@@ -11,4 +11,4 @@ Source specification: `odd/tasks/configurable-notification-sound.md` (included w
 4. Updater compatibility and archive safety: 8c9e977..3eb9550, ~352 lines.
 5. Startup-backlog audio gating and closeout: 4ed0936..bf98f32, ~158 lines.
 
-Children #465–#469 are integrated into draft tracker #464 at 4dbdf0b. Final exact-head CI is still required before main. Every child references issue #463 and keeps its tests and documentation with the behavior. No PR is allowed to bypass failed checks. Main's reviewer exception applies only to the missing external approval for this integration.
+Children #465–#469 were integrated into tracker #464. Final exact-head CI 40629882811 passed at 22665cd; PR #464 merged into main at 1bc9706 with an identical Git tree, closing issue #463. Every child references #463 and keeps its tests and documentation with the behavior. No failed checks were bypassed; the admin exception applied only to the missing external approval.
