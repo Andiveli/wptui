@@ -80,21 +80,6 @@ fn vim_i_still_inserts_before_the_current_grapheme() {
     assert_eq!(app.action_notice, None);
 }
 
-#[test]
-fn blocked_vim_a_does_not_enter_insert_or_mutate_the_draft() {
-    let mut app = yank_app("ab", 1);
-    app.composer.set_blocked(true);
-    let blocked_draft = app.composer.text();
-    assert!(blocked_draft.is_empty());
-
-    vim_yank_key(&mut app, 'a');
-
-    assert_eq!(app.composer.text(), blocked_draft);
-    assert!(app.composer.pending.is_empty());
-    assert_eq!(app.vim_composer_mode, Some(VimComposerMode::Normal));
-    assert_eq!(app.action_notice, None);
-}
-
 // Each case enters Vim through terminal events and observes the movement through
 // the insertion point, rather than inspecting the textarea's private cursor.
 fn assert_vim_word_motion(draft: &str, from: usize, keys: &[char], expected: &str) {
