@@ -212,7 +212,6 @@ or editor state.
 | Action | Key |
 |---|---|
 | Quit | `Ctrl+Q` |
-| Toggle logs | `Ctrl+Shift+L` |
 | Toggle section rail | `Space`, then `1` |
 | Toggle chat list | `Space`, then `2` |
 | Focus previous / next pane | `h` / `l` or `←` / `→` |

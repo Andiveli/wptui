@@ -264,7 +264,6 @@ fn with_dirs_and_picker_and_ports(
         contact_search: TextInput::new(),
         chat_filter: super::ChatFilter::All,
         filtered_chats: Vec::new(),
-        show_logs: false,
         should_quit: false,
         pending_logout: false,
         logout_in_progress: false,

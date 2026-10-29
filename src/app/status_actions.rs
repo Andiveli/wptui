@@ -75,7 +75,6 @@ impl App<'_> {
                                 | crate::app::actions::AppAction::HalfPageUp
                                 | crate::app::actions::AppAction::DeleteMessage
                                 | crate::app::actions::AppAction::Quit
-                                | crate::app::actions::AppAction::ToggleLogs
                         ) =>
                     {
                         self.dispatch_action(action)

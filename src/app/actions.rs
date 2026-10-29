@@ -9,7 +9,6 @@ pub const STATUS_REACTION: &str = "💚";
 pub enum AppAction {
     Quit,
     Logout,
-    ToggleLogs,
     ToggleSectionRail,
     ToggleChatList,
     FocusPane(FocusPane),

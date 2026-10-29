@@ -77,8 +77,6 @@ pub fn default_bindings() -> Vec<(Vec<Key>, AppAction)> {
     bindings.extend(vec![
         (vec![Key::ctrl('q')], AppAction::Quit),
         (vec![Key::ctrl_shift('O')], AppAction::Logout),
-        (vec![Key::ctrl_shift('L')], AppAction::ToggleLogs),
-        (vec![Key::ctrl_shift('l')], AppAction::ToggleLogs),
         (
             vec![Key::c('1')],
             AppAction::FocusPane(FocusPane::SectionRail),
