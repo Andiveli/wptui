@@ -8,7 +8,11 @@ on:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
 
@@ -22,7 +26,13 @@ jobs:
           go-version: "stable"
 
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libwayland-dev libchafa-dev libglib2.0-dev libasound2-dev
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update
+            sudo apt-get install -y libwayland-dev libchafa-dev libglib2.0-dev libasound2-dev
+          else
+            brew install chafa
+          fi
 
       - name: Go vet and tests (rustmeow bridge)
         working-directory: whatsrust/lib

@@ -28,8 +28,13 @@ run_installer() {
     env PATH="$tmp/mock-bin:$tmp/prefix:$PATH" PREFIX="$tmp/prefix" TMPDIR="$tmp" \
         MOCK_ARCHIVE="$1" bash "$repo/install.sh" > "$tmp/stdout" 2> "$tmp/stderr"
 }
+case "$(uname -s)/$(uname -m)" in
+    Linux/x86_64) asset="wptui-x86_64-unknown-linux-gnu.tar.gz" ;;
+    Darwin/arm64) asset="wptui-aarch64-apple-darwin.tar.gz" ;;
+    *) printf 'unsupported installer test target: %s/%s\n' "$(uname -s)" "$(uname -m)" >&2; exit 1 ;;
+esac
+
 assert_success() {
-    local asset="wptui-x86_64-unknown-linux-gnu.tar.gz"
     [[ "$(< "$tmp/stdout")" == "$(printf 'Downloading %s ...\nInstalled wp-tui to %s' "$asset" "$tmp/prefix")" ]]
     [[ ! -s "$tmp/stderr" ]]
 }
@@ -54,7 +59,7 @@ for invalid in "$tmp/bad-extra.tar.gz" "$tmp/bad-link.tar.gz"; do
         echo 'unsafe archive unexpectedly installed' >&2
         exit 1
     fi
-    [[ "$(< "$tmp/stdout")" == 'Downloading wptui-x86_64-unknown-linux-gnu.tar.gz ...' ]]
+    [[ "$(< "$tmp/stdout")" == "Downloading ${asset} ..." ]]
     [[ "$(< "$tmp/stderr")" == 'error: release archive is unsafe' ]]
     [[ "$(< "$tmp/prefix/wp-tui")" == 'old binary' ]]
     [[ "$(< "$tmp/prefix/wp-tui-THIRD_PARTY_NOTICES.md")" == 'MIT notice' ]]
