@@ -97,6 +97,27 @@ const CONTACT_WRITER_FACTORIES: [(&str, &str); 5] = [
 ];
 
 #[test]
+fn sticker_decoder_stays_independent_of_terminal_and_playback() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let decoder = fs::read_to_string(root.join("src/app/sticker_decode.rs"))
+        .expect("sticker decoding must have its own module");
+    for forbidden in [
+        "ratatui",
+        "StickerPlayback",
+        "AnimationSlot",
+        "Picker",
+        "StatefulProtocol",
+    ] {
+        assert!(
+            !decoder.contains(forbidden),
+            "decoder must not depend on {forbidden}"
+        );
+    }
+    let playback = fs::read_to_string(root.join("src/app/sticker_animation.rs")).unwrap();
+    assert!(!playback.contains("pub fn decode_animated_webp"));
+}
+
+#[test]
 fn sticker_preview_io_and_protocol_work_stay_out_of_shared_handler() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let handler = fs::read_to_string(root.join("src/app/runtime_media_viewer_events.rs")).unwrap();

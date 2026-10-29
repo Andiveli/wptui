@@ -11,7 +11,8 @@ use crate::app::{
     events::{AppEvent, AppInput},
     media_jobs::MediaJobPermit,
     media_preview_port::MediaPreviewRead,
-    sticker_animation::{AnimationSlot, StickerPlayback, decode_animated_webp},
+    sticker_animation::{AnimationSlot, StickerPlayback},
+    sticker_decode::decode_animated_webp,
 };
 use crate::ui::message_list::{IMAGE_HEIGHT, IMAGE_WIDTH};
 
