@@ -18,6 +18,28 @@ use crate::ui::message_list::{IMAGE_HEIGHT, IMAGE_WIDTH, VIDEO_HEIGHT, VIDEO_WID
 type DownloadSender = Sender<(wr::MessageId, wr::FileId)>;
 
 impl App<'_> {
+    fn retry_pending_sticker_previews(
+        &mut self,
+        download_tx: &DownloadSender,
+        media_jobs: &mut MediaJobOwner,
+    ) {
+        while let Some((id, path)) = self.pending_sticker_previews.pop_front() {
+            if !self.preview_result_is_current(&id, &path) {
+                continue;
+            }
+            // Only dispatch when a slot can be acquired. UI dispatch is single-threaded;
+            // release this probe before LoadFilePreview claims the slot.
+            let Some(slot) = self.animation_slots.try_acquire() else {
+                self.pending_sticker_previews.push_front((id, path));
+                break;
+            };
+            drop(slot);
+            self.metadata
+                .insert(id.clone(), Metadata::File(FileMeta::Downloaded));
+            self.handle_media_viewer_event(AppEvent::LoadFilePreview(id), download_tx, media_jobs);
+        }
+    }
+
     pub(crate) fn handle_media_viewer_event(
         &mut self,
         event: AppEvent,
@@ -44,9 +66,11 @@ impl App<'_> {
             }
             AppEvent::SetFilePreview(message_id, file_path, img) => {
                 if !self.preview_result_is_current(&message_id, &file_path) {
+                    self.retry_pending_sticker_previews(download_tx, media_jobs);
                     return false;
                 }
                 self.cache_file_preview(message_id.clone(), file_path, img);
+                self.retry_pending_sticker_previews(download_tx, media_jobs);
                 if let Some(viewer) = self.attachment_viewer.as_mut()
                     && viewer.message_id == message_id
                 {
@@ -56,9 +80,12 @@ impl App<'_> {
             }
             AppEvent::SetStickerPreview(message_id, path, playback) => {
                 if !self.preview_result_is_current(&message_id, &path) {
+                    drop(playback);
+                    self.retry_pending_sticker_previews(download_tx, media_jobs);
                     return false;
                 }
                 self.cache_sticker_preview(message_id, path, playback);
+                self.retry_pending_sticker_previews(download_tx, media_jobs);
                 true
             }
             AppEvent::LoadViewerPreview(key) => {
@@ -131,6 +158,31 @@ impl App<'_> {
                         _ => None,
                     };
                     if let Some(file) = file {
+                        // Only animated work needs a slot; still and other media jobs stay unchanged.
+                        let animation_slot = if matches!(file.kind, wr::FileKind::Sticker) {
+                            match self.animation_slots.try_acquire() {
+                                Some(slot) => Some(slot),
+                                None if self.pending_sticker_previews.len() >= 256 => {
+                                    // At capacity, keep a stable still preview instead of
+                                    // repeatedly requesting an unqueued animation.
+                                    None
+                                }
+                                None => {
+                                    // Loading stays pending until a result releases a slot.
+                                    if !self
+                                        .pending_sticker_previews
+                                        .iter()
+                                        .any(|(id, _)| id == &message_id)
+                                    {
+                                        self.pending_sticker_previews
+                                            .push_back((message_id, file.path));
+                                    }
+                                    return false;
+                                }
+                            }
+                        } else {
+                            None
+                        };
                         media_jobs.spawn(move |permit| {
                             let preview_path = match file.kind {
                                 wr::FileKind::Video => {
@@ -147,15 +199,16 @@ impl App<'_> {
                             };
                             let absolute = MediaRoot::new(&media_path)
                                 .and_then(|root| root.media_file(Path::new(&preview_path))).ok();
-                            if matches!(file.kind, wr::FileKind::Sticker) {
+                            if animation_slot.is_some() {
                                 if let Some(bytes) = absolute.as_ref().and_then(|path| std::fs::metadata(path).ok()
                                     .filter(|meta| meta.len() <= 8 * 1024 * 1024)
                                     .and_then(|_| std::fs::read(path).ok())) {
                                     if let Ok(Some(animation)) = crate::app::sticker_animation::decode_animated_webp(&bytes) {
                                         if animation.frames.len() > 1 {
-                                            let playback = crate::app::sticker_animation::StickerPlayback::prepare(
+                                            let mut playback = crate::app::sticker_animation::StickerPlayback::prepare(
                                                 animation, &mut picker.lock().unwrap(),
                                                 Size::new(IMAGE_WIDTH as u16, IMAGE_HEIGHT as u16));
+                                            playback.slot = animation_slot;
                                             permit.send(&tx, AppInput::App(AppEvent::SetStickerPreview(
                                                 message_id, file.path, playback)));
                                             return;
@@ -181,6 +234,7 @@ impl App<'_> {
                                     &Resize::Scale(None),
                                     Size::new(preview_width as u16, preview_height as u16),
                                 );
+                                drop(animation_slot);
                                 permit.send(
                                     &tx,
                                     AppInput::App(AppEvent::SetFilePreview(
@@ -190,6 +244,7 @@ impl App<'_> {
                                     )),
                                 );
                             } else if matches!(file.kind, wr::FileKind::Video) {
+                                drop(animation_slot);
                                 permit.send(
                                     &tx,
                                     AppInput::App(AppEvent::SetFileState(
@@ -198,6 +253,7 @@ impl App<'_> {
                                     )),
                                 );
                             } else {
+                                drop(animation_slot);
                                 permit.send(
                                     &tx,
                                     AppInput::App(AppEvent::SetFileState(
@@ -214,6 +270,7 @@ impl App<'_> {
                 false
             }
             AppEvent::SetFileState(message_id, state) => {
+                self.retry_pending_sticker_previews(download_tx, media_jobs);
                 if let Some(viewer) = self.attachment_viewer.as_mut()
                     && viewer.message_id == message_id
                 {

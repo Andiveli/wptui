@@ -1,5 +1,9 @@
 use std::{
     io::Cursor,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -7,6 +11,33 @@ use ratatui::layout::Size;
 use ratatui_image::{Resize, ResizeEncodeRender, picker::Picker, protocol::StatefulProtocol};
 
 use image::{AnimationDecoder, Frame, ImageDecoder, RgbaImage, codecs::webp::WebPDecoder};
+
+const MAX_ANIMATION_JOBS: usize = 2;
+
+pub struct AnimationSlots(AtomicUsize);
+
+impl AnimationSlots {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self(AtomicUsize::new(0)))
+    }
+
+    pub fn try_acquire(self: &Arc<Self>) -> Option<AnimationSlot> {
+        self.0
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+                (n < MAX_ANIMATION_JOBS).then_some(n + 1)
+            })
+            .ok()?;
+        Some(AnimationSlot(Arc::clone(self)))
+    }
+}
+
+pub struct AnimationSlot(Arc<AnimationSlots>);
+
+impl Drop for AnimationSlot {
+    fn drop(&mut self) {
+        self.0.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
 
 const MAX_DIMENSION: u32 = 512;
 const MAX_SOURCE_FRAMES: usize = 256;
@@ -30,6 +61,7 @@ pub struct StickerPlayback {
     pub durations: Vec<Duration>,
     pub current: usize,
     pub deadline: Option<Instant>,
+    pub(crate) slot: Option<AnimationSlot>,
 }
 
 impl StickerPlayback {
@@ -48,6 +80,7 @@ impl StickerPlayback {
             durations,
             current: 0,
             deadline: None,
+            slot: None,
         }
     }
 
@@ -147,6 +180,17 @@ mod tests {
             0,
             Delay::from_numer_denom_ms(millis, 1),
         ))
+    }
+
+    #[test]
+    fn slots_remain_bounded_until_result_is_consumed_or_dropped() {
+        let slots = AnimationSlots::new();
+        let first = slots.try_acquire().unwrap();
+        let second = slots.try_acquire().unwrap();
+        assert!(slots.try_acquire().is_none());
+        drop(first);
+        assert!(slots.try_acquire().is_some());
+        drop(second);
     }
 
     #[test]
