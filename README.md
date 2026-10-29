@@ -236,12 +236,15 @@ removes the local row, but does not itself prove removal from every recipient's 
 | Vim composer Normal | Yank to system clipboard (word/WORD motion) | `yw`/`yb`/`ye`/`yge`/`yW`/`yB`/`yE`/`ygE` |
 | Vim composer Normal | Yank current line (including newline) | `yy` |
 | Vim composer Normal | Paste system clipboard text at cursor | `p` |
-| Vim composer Normal | Insert / return to chat (draft kept) | `i` / `Esc` |
+| Vim composer Normal | Insert before / append after current grapheme | `i` / `a` |
+| Vim composer Normal | Return to chat (draft kept) | `Esc` |
 | Vim composer Insert | Return to Normal | `Esc` |
 | Reaction picker | Move / confirm | `j`/`k` or Up/Down arrows / `Enter` |
 | Media viewer | Previous / next | `h`/`l` or arrows |
 
 The optional Vim composer starts in Normal mode; its border title shows Normal or Insert.
+`i` enters Insert at the current cursor; `a` advances past the current grapheme within the
+same line before entering Insert (and stays put at the end of a line or an empty draft).
 Ordinary `i` composition remains unchanged. These motions move only the cursor: a word
 separates letters/digits/underscores from punctuation, while a WORD is any non-whitespace
 run. In Normal mode, `y` waits for a supported motion or another `y`; `Esc` cancels it.

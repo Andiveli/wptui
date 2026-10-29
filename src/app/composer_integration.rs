@@ -64,6 +64,9 @@ impl App<'_> {
                 } else {
                     self.composer.clear_vim_word_prefix();
                 }
+            } else if key == Key::c('a') && !self.composer_blocked() {
+                self.composer.vim_append();
+                self.vim_composer_mode = Some(VimComposerMode::Insert);
             } else if key == Key::c('i') && !self.composer_blocked() {
                 self.vim_composer_mode = Some(VimComposerMode::Insert);
             } else if let Some(direction) = match &key {

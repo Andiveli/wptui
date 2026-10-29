@@ -1,6 +1,23 @@
 use super::Composer;
+use unicode_segmentation::UnicodeSegmentation;
 
 impl Composer<'_> {
+    pub(crate) fn vim_append(&mut self) {
+        let ratatui_textarea::DataCursor(row, column) = self.input.cursor();
+        let next_column = self.input.lines().get(row).and_then(|line| {
+            let mut end = 0;
+            line.graphemes(true).find_map(|grapheme| {
+                end += grapheme.chars().count();
+                (end > column).then_some(end)
+            })
+        });
+        if let Some(next_column) = next_column {
+            self.set_cursor_offset(self.cursor_offset() + next_column - column);
+            self.caret_affinity = None;
+            self.preferred_visual_column = None;
+        }
+    }
+
     pub(crate) fn vim_word_key(&mut self, key: char) {
         if self.pending_vim_g {
             self.pending_vim_g = false;

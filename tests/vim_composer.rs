@@ -45,6 +45,53 @@ fn vim_navigation_moves_the_caret_without_inserting_commands_or_sending() {
     }
 }
 
+#[test]
+fn vim_a_enters_insert_after_the_current_grapheme_without_crossing_lines() {
+    for (draft, from_end, expected) in [
+        ("ab", 2, "aXb"),
+        ("ab", 0, "abX"),
+        ("", 0, "X"),
+        ("ab\ncd", 3, "abX\ncd"),
+        ("e\u{301}x", 2, "e\u{301}Xx"),
+        ("🙂x", 2, "🙂Xx"),
+    ] {
+        let mut app = yank_app(draft, from_end);
+
+        vim_yank_key(&mut app, 'a');
+
+        assert_eq!(app.composer.text(), draft, "draft: {draft:?}");
+        assert_eq!(app.vim_composer_mode, Some(VimComposerMode::Insert));
+        assert_eq!(app.action_notice, None);
+        assert!(app.composer.pending.is_empty());
+        vim_yank_key(&mut app, 'X');
+        assert_eq!(app.composer.text(), expected, "draft: {draft:?}");
+    }
+}
+
+#[test]
+fn vim_i_still_inserts_before_the_current_grapheme() {
+    let mut app = yank_app("ab", 2);
+
+    vim_yank_key(&mut app, 'i');
+    vim_yank_key(&mut app, 'X');
+
+    assert_eq!(app.composer.text(), "Xab");
+    assert_eq!(app.vim_composer_mode, Some(VimComposerMode::Insert));
+    assert_eq!(app.action_notice, None);
+}
+
+#[test]
+fn blocked_vim_a_does_not_enter_insert_or_mutate_the_draft() {
+    let mut app = yank_app("ab", 1);
+    app.composer.set_blocked(true);
+
+    vim_yank_key(&mut app, 'a');
+
+    assert_eq!(app.composer.text(), "ab");
+    assert_eq!(app.vim_composer_mode, Some(VimComposerMode::Normal));
+    assert_eq!(app.action_notice, None);
+}
+
 // Each case enters Vim through terminal events and observes the movement through
 // the insertion point, rather than inspecting the textarea's private cursor.
 fn assert_vim_word_motion(draft: &str, from: usize, keys: &[char], expected: &str) {
