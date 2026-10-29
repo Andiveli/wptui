@@ -347,6 +347,11 @@ fn clicking_another_chat_exits_vim_before_ordinary_composition() {
     let (x, y) = painted_in(&terminal, contacts, "AliceVim");
     app.on_terminal_event(mouse(MouseEventKind::Down(MouseButton::Left), x, y));
     assert_eq!(app.open_chat(), Some(alice));
+    assert_eq!(app.vim_composer_mode, None);
+    assert_eq!(
+        app.conversation_mode,
+        wp_tui::app::actions::ConversationMode::MessageNavigation
+    );
     for character in ['i', 'X'] {
         app.on_terminal_event(Event::Key(KeyEvent::new(
             KeyCode::Char(character),
