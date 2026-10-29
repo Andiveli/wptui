@@ -89,6 +89,7 @@ pub mod status_projection;
 pub mod status_publish;
 pub mod status_retention;
 pub mod sticker_animation;
+pub mod sticker_decode;
 pub mod sticker_preview_worker;
 pub mod terminal_input_translation;
 pub mod terminal_session;
