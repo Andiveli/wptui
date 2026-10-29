@@ -235,6 +235,7 @@ removes the local row, but does not itself prove removal from every recipient's 
 | Vim composer Normal | Next / previous WORD end | `E` / `gE` |
 | Vim composer Normal | Yank to system clipboard (word/WORD motion) | `yw`/`yb`/`ye`/`yge`/`yW`/`yB`/`yE`/`ygE` |
 | Vim composer Normal | Yank current line (including newline) | `yy` |
+| Vim composer Normal | Paste system clipboard text at cursor | `p` |
 | Vim composer Normal | Insert / return to chat (draft kept) | `i` / `Esc` |
 | Vim composer Insert | Return to Normal | `Esc` |
 | Reaction picker | Move / confirm | `j`/`k` or Up/Down arrows / `Enter` |
@@ -244,10 +245,12 @@ The optional Vim composer starts in Normal mode; its border title shows Normal o
 Ordinary `i` composition remains unchanged. These motions move only the cursor: a word
 separates letters/digits/underscores from punctuation, while a WORD is any non-whitespace
 run. In Normal mode, `y` waits for a supported motion or another `y`; `Esc` cancels it.
-Yanks copy to the system clipboard, without changing the draft or cursor. `p` (paste from a
-Vim register) is deferred; there are no registers or counts, and this is not full Vim emulation.
-Search, substitution, and deletion are not available here. Pasted files are queued as attachments. When text
-is included, it becomes the caption of the first attachment.
+Yanks copy to the system clipboard, without changing the draft or cursor. In Normal mode,
+`p` inserts the clipboard's text at the cursor, even after `yy`; it does not use a Vim register
+or Vim's after-cursor/linewise put positioning. `p` does not attach images or files; use
+`Ctrl+V` while editing to paste those. There are no registers or counts, and this is not full
+Vim emulation. Search, substitution, and deletion are not available here. Files pasted with
+`Ctrl+V` are queued as attachments; text becomes the caption of the first attachment.
 
 ## Development
 

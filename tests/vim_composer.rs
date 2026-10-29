@@ -2,10 +2,11 @@ use ratatui::crossterm::event::{
     Event, KeyCode as TerminalKeyCode, KeyEvent, KeyModifiers as TerminalKeyModifiers,
 };
 use wp_tui::app::actions::{
-    ActionNotice, ClipboardWriteError, ClipboardWriter, FocusPane, VimComposerMode,
+    ActionNotice, ClipboardReader, ClipboardWriteError, ClipboardWriter, FocusPane, VimComposerMode,
 };
 mod common;
 use common::TestApp;
+use wp_tui::clipboard::{ClipboardError, ClipboardPaste};
 
 #[test]
 fn vim_navigation_moves_the_caret_without_inserting_commands_or_sending() {
@@ -325,4 +326,134 @@ fn failed_vim_yank_keeps_draft_and_caret_available_for_editing() {
     vim_yank_key(&mut app, 'i');
     vim_yank_key(&mut app, 'X');
     assert_eq!(app.composer.text(), "Xalpha beta");
+}
+
+struct TextClipboard(String);
+
+impl ClipboardReader for TextClipboard {
+    fn read_paste(&mut self) -> Result<ClipboardPaste, ClipboardError> {
+        panic!("Vim p must read raw text, not classify attachments")
+    }
+
+    fn read_text(&mut self) -> Result<Option<String>, ClipboardError> {
+        Ok(Some(self.0.clone()))
+    }
+}
+
+struct UnavailableTextClipboard;
+
+impl ClipboardReader for UnavailableTextClipboard {
+    fn read_paste(&mut self) -> Result<ClipboardPaste, ClipboardError> {
+        Err(ClipboardError::ClipboardUnavailable)
+    }
+}
+
+struct ImageClipboard;
+
+impl ClipboardReader for ImageClipboard {
+    fn read_paste(&mut self) -> Result<ClipboardPaste, ClipboardError> {
+        Ok(ClipboardPaste::Png(vec![1, 2, 3]))
+    }
+}
+
+#[test]
+fn vim_p_inserts_system_clipboard_text_at_the_caret_without_leaving_normal() {
+    let mut app = yank_app("hello world", 5);
+    app.clipboard_reader = Box::new(TextClipboard("X".into()));
+
+    vim_yank_key(&mut app, 'p');
+
+    assert_eq!(app.composer.text(), "hello Xworld");
+    assert_eq!(app.composer.pending.len(), 0);
+    assert_eq!(app.action_notice, None);
+    assert_eq!(app.vim_composer_mode, Some(VimComposerMode::Normal));
+    vim_yank_key(&mut app, 'i');
+    vim_yank_key(&mut app, '!');
+    assert_eq!(app.composer.text(), "hello X!world");
+}
+
+#[test]
+fn vim_p_inserts_yy_text_at_the_caret_without_linewise_repositioning() {
+    let mut app = yank_app("first\nsecond\nthird", 12);
+    vim_yank_key(&mut app, 'y');
+    vim_yank_key(&mut app, 'y');
+    assert_eq!(app.clipboard_writer.written_text(), Some("second\n"));
+    app.clipboard_reader = Box::new(TextClipboard("second\n".into()));
+
+    vim_yank_key(&mut app, 'p');
+
+    assert_eq!(app.composer.text(), "first\nsecond\nsecond\nthird");
+    assert_eq!(app.composer.pending.len(), 0);
+    assert_eq!(
+        app.action_notice,
+        Some(ActionNotice::CopiedText("second\n".into()))
+    );
+    assert_eq!(app.vim_composer_mode, Some(VimComposerMode::Normal));
+}
+
+#[test]
+fn vim_p_treats_clipboard_paths_as_literal_text_not_attachments() {
+    let mut app = yank_app("draft", 5);
+    app.clipboard_reader = Box::new(TextClipboard("/tmp/example.png".into()));
+
+    vim_yank_key(&mut app, 'p');
+
+    assert_eq!(app.composer.text(), "/tmp/example.pngdraft");
+    assert!(app.composer.pending.is_empty());
+    assert_eq!(app.action_notice, None);
+}
+
+#[test]
+fn vim_p_non_text_clipboard_does_not_enqueue_attachments() {
+    let mut app = yank_app("hello world", 5);
+    app.clipboard_reader = Box::new(ImageClipboard);
+
+    vim_yank_key(&mut app, 'p');
+
+    assert_eq!(
+        app.action_notice,
+        Some(ActionNotice::Unavailable("Clipboard has no text".into()))
+    );
+    assert_eq!(app.composer.text(), "hello world");
+    assert!(app.composer.pending.is_empty());
+    assert_eq!(app.vim_composer_mode, Some(VimComposerMode::Normal));
+    vim_yank_key(&mut app, 'i');
+    vim_yank_key(&mut app, '!');
+    assert_eq!(app.composer.text(), "hello !world");
+}
+
+#[test]
+fn p_still_inserts_a_character_in_vim_insert_mode() {
+    let mut app = yank_app("draft", 5);
+
+    vim_yank_key(&mut app, 'i');
+    vim_yank_key(&mut app, 'p');
+
+    assert_eq!(app.composer.text(), "pdraft");
+    assert_eq!(app.vim_composer_mode, Some(VimComposerMode::Insert));
+    assert_eq!(app.action_notice, None);
+}
+
+#[test]
+fn vim_p_clipboard_failure_preserves_draft_attachments_and_caret() {
+    let mut app = yank_app("hello world", 5);
+    app.composer
+        .queue_attachment("existing.pdf".into(), whatsrust::FileKind::Document);
+    app.clipboard_reader = Box::new(UnavailableTextClipboard);
+
+    vim_yank_key(&mut app, 'p');
+
+    assert_eq!(
+        app.action_notice,
+        Some(ActionNotice::Unavailable(
+            "Could not paste clipboard text: ClipboardUnavailable".into()
+        ))
+    );
+    assert_eq!(app.composer.text(), "hello world");
+    assert_eq!(app.composer.pending.len(), 1);
+    assert_eq!(app.composer.pending[0].path.as_ref(), "existing.pdf");
+    assert_eq!(app.vim_composer_mode, Some(VimComposerMode::Normal));
+    vim_yank_key(&mut app, 'i');
+    vim_yank_key(&mut app, '!');
+    assert_eq!(app.composer.text(), "hello !world");
 }

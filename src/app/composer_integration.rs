@@ -78,6 +78,8 @@ impl App<'_> {
                 if !self.composer_blocked() {
                     if character == 'y' {
                         self.composer.vim_yank_key(character);
+                    } else if character == 'p' {
+                        self.paste_vim_composer_text();
                     } else {
                         self.composer.vim_word_key(character);
                     }
@@ -126,6 +128,14 @@ impl App<'_> {
         } else {
             crate::app::actions::ActionNotice::Unavailable("Could not copy composer text".into())
         });
+    }
+
+    fn paste_vim_composer_text(&mut self) {
+        match self.clipboard_reader.read_text() {
+            Ok(Some(text)) => self.composer.insert_text(&text),
+            Ok(None) => self.unavailable("Clipboard has no text"),
+            Err(error) => self.unavailable(&format!("Could not paste clipboard text: {error:?}")),
+        }
     }
 
     pub(crate) fn dispatch_composer_action(&mut self, action: ComposerAction) {
