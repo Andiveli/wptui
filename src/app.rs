@@ -87,6 +87,7 @@ pub mod status_input;
 pub mod status_projection;
 pub mod status_publish;
 pub mod status_retention;
+pub mod sticker_animation;
 pub mod terminal_input_translation;
 pub mod terminal_session;
 #[cfg(test)]
