@@ -228,6 +228,7 @@ or editor state.
 |---|---|
 | Start composing | `i` |
 | Search messages in the open chat history | `/` with the conversation focused; `Enter` accepts, `Esc` cancels |
+| Next / previous matching message (wraps) | `n` / `N` after a chat search; `j` / `k` still navigate every message |
 | Start optional Vim composer (Chats/Communities conversation only) | `Space`, then `v` |
 | Copy selected text | `y` |
 | React | `r` |

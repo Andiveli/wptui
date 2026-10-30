@@ -168,6 +168,6 @@ fn jumping_to_a_distant_match_brings_it_into_the_message_viewport() {
     }
     press(&mut app, KeyCode::Enter);
     press(&mut app, KeyCode::Char('n'));
-    assert!(screen(&mut app).contains("DISTANT-NEEDLE"));
+    assert_eq!(screen(&mut app).matches("DISTANT-NEEDLE").count(), 2);
     assert_eq!(selected_id(&app).as_deref(), Some("msg-2"));
 }

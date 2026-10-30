@@ -17,7 +17,7 @@ impl App<'_> {
         }
 
         if let Some(search) = &mut self.conversation_search {
-            if search.chat == self.open_chat.as_ref().unwrap().clone() {
+            if self.open_chat.as_ref() == Some(&search.chat) {
                 if search.editing {
                     match key.code {
                         KeyCode::Esc => self.conversation_search = None,
@@ -40,6 +40,10 @@ impl App<'_> {
                     self.conversation_search = None;
                     return true;
                 }
+                if key == Key::c('n') || key == Key::c('N') {
+                    self.jump_to_search_match(key == Key::c('n'));
+                    return true;
+                }
             }
         }
 
@@ -54,6 +58,43 @@ impl App<'_> {
             return true;
         }
         false
+    }
+
+    fn jump_to_search_match(&mut self, toward_older: bool) {
+        let Some(search) = self.conversation_search.as_ref() else {
+            return;
+        };
+        let Some(ids) = self.chat_messages.get(&search.chat) else {
+            return;
+        };
+        let matches = ids
+            .iter()
+            .rev()
+            .filter(|id| self.messages.contains_key(*id))
+            .enumerate()
+            .filter_map(|(index, id)| match &self.messages[id].message {
+                wr::MessageContent::Text(body) if body.contains(&search.query) => Some(index),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let current = self.message_list_state.selected;
+        let next = if toward_older {
+            matches
+                .iter()
+                .copied()
+                .find(|index| current.is_none_or(|current| *index > current))
+                .or_else(|| matches.first().copied())
+        } else {
+            matches
+                .iter()
+                .copied()
+                .rev()
+                .find(|index| current.is_none_or(|current| *index < current))
+                .or_else(|| matches.last().copied())
+        };
+        if let Some(index) = next {
+            self.message_list_state.select(Some(index));
+        }
     }
 
     fn in_chat_history(&self) -> bool {
