@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -64,17 +65,51 @@ func TestWriteDownloadRejectsSymlinkedRootsAndFinalPaths(t *testing.T) {
 	if err := writeDownload(link, "file.jpg", []byte("data")); err == nil {
 		t.Fatal("symlinked root was accepted")
 	}
+	if _, err := os.Stat(filepath.Join(outside, "file.jpg")); !os.IsNotExist(err) {
+		t.Fatalf("rejected root changed outside destination: %v", err)
+	}
 	if err := writeDownload(root, "nested/file.jpg", []byte("data")); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := os.ReadFile(filepath.Join(root, "nested/file.jpg")); err != nil || string(got) != "data" {
 		t.Fatalf("download = %q, %v", got, err)
 	}
-	if err := os.Symlink(filepath.Join(outside, "escape.jpg"), filepath.Join(root, "escape.jpg")); err != nil {
+	outsideFile := filepath.Join(outside, "escape.jpg")
+	if err := os.WriteFile(outsideFile, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideFile, filepath.Join(root, "escape.jpg")); err != nil {
 		t.Fatal(err)
 	}
 	if err := writeDownload(root, "escape.jpg", []byte("data")); err == nil {
 		t.Fatal("symlinked final path was replaced")
+	}
+	got, err := os.ReadFile(outsideFile)
+	if err != nil || string(got) != "original" {
+		t.Fatalf("rejected final symlink changed outside file: %q, %v", got, err)
+	}
+}
+
+func TestMacOSSystemVarAliasDoesNotAllowOtherSymlinkAncestors(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS system /var alias")
+	}
+	root := t.TempDir()
+	outside := t.TempDir()
+	link := filepath.Join(root, "linked")
+	destination := filepath.Join(outside, "file.jpg")
+	if err := os.WriteFile(destination, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeDownload(link, "file.jpg", []byte("data")); err == nil {
+		t.Fatal("caller-controlled symlink root was accepted")
+	}
+	got, err := os.ReadFile(destination)
+	if err != nil || string(got) != "original" {
+		t.Fatalf("rejected root changed outside destination: %q, %v", got, err)
 	}
 }
 
