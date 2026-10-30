@@ -7,8 +7,13 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-and-test:
-    runs-on: ubuntu-latest
+  platform_suite:
+    name: Platform suite (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
 
@@ -22,7 +27,13 @@ jobs:
           go-version: "stable"
 
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libwayland-dev libchafa-dev libglib2.0-dev libasound2-dev
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update
+            sudo apt-get install -y libwayland-dev libchafa-dev libglib2.0-dev libasound2-dev
+          else
+            brew install chafa
+          fi
 
       - name: Go vet and tests (rustmeow bridge)
         working-directory: whatsrust/lib
@@ -41,6 +52,15 @@ jobs:
 
       - name: Test
         run: cargo test --locked -- --test-threads=1
+
+  build-and-test:
+    # Preserve the required branch-protection check while gating both platforms.
+    needs: platform_suite
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require Linux and macOS suites
+        run: test "${{ needs.platform_suite.result }}" = success
 
   nix-build-and-devshell:
     runs-on: ubuntu-latest

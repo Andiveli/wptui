@@ -95,10 +95,10 @@ fn dispatch_media_render_plan(
     }
 }
 
-fn should_draw_for_source(app: &App<'_>, source: DrawSource) -> bool {
+fn should_draw_for_source(_app: &App<'_>, source: DrawSource) -> bool {
     match source {
         DrawSource::Ordinary => true,
-        DrawSource::GoLog => app.show_logs,
+        DrawSource::GoLog => false,
     }
 }
 
@@ -106,12 +106,7 @@ fn refresh_composer_viewport_width(app: &mut App<'_>, terminal_session: &mut Ter
     let Ok(area) = terminal_session.terminal_mut().size() else {
         return;
     };
-    let width = crate::ui::composer_viewport_width(
-        area.width,
-        area.height,
-        app.pane_visibility,
-        app.show_logs,
-    );
+    let width = crate::ui::composer_viewport_width(area.width, area.height, app.pane_visibility);
     app.set_composer_viewport_width(width);
 }
 
@@ -205,6 +200,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
     if let Some(started) = initial_draw_started {
         app.runtime_diagnostics.record_draw_finished(started);
     }
+    app.apply_sticker_render_plan(&media_render_plan);
     dispatch_media_render_plan_after_draw(
         app,
         draw_result,
@@ -216,11 +212,24 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
     if let Ok(area) = terminal_session.terminal_mut().size() {
         app.schedule_avatar_viewport(area.into());
     }
+    if app.advance_visible_stickers(std::time::Instant::now())
+        && app.tx.send(AppInput::Draw(DrawSource::Ordinary)).is_err()
+    {
+        error!("Failed to schedule sticker preview redraw");
+    }
     app.dispatch_read_receipts();
 
     loop {
         let now = app.now();
-        let msg = match app.selected_presence.redraw_after(now) {
+        let sticker_timeout = app
+            .sticker_deadline()
+            .map(|deadline| deadline.saturating_duration_since(std::time::Instant::now()));
+        let timeout = match (app.selected_presence.redraw_after(now), sticker_timeout) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) | (None, Some(a)) => Some(a),
+            (None, None) => None,
+        };
+        let msg = match timeout {
             Some(timeout) => match app.rx.recv_timeout(timeout) {
                 Ok(input) => Ok(input),
                 Err(mpsc::RecvTimeoutError::Timeout) => Ok(AppInput::Draw(DrawSource::Ordinary)),
@@ -274,7 +283,8 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
 
         app.sync_selected_presence();
 
-        if should_draw {
+        let sticker_changed = app.advance_visible_stickers(std::time::Instant::now());
+        if should_draw || sticker_changed {
             app.runtime_diagnostics.record_should_draw();
             let started = app.runtime_diagnostics.draw_started();
             let mut media_render_plan = MediaRenderPlan::default();
@@ -290,6 +300,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
             if let Some(started) = started {
                 app.runtime_diagnostics.record_draw_finished(started);
             }
+            app.apply_sticker_render_plan(&media_render_plan);
             dispatch_media_render_plan_after_draw(
                 app,
                 draw_result,
@@ -298,6 +309,11 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
                 &mut media_jobs,
             );
             app.apply_visibility_plan(visibility_plan);
+            if app.advance_visible_stickers(std::time::Instant::now())
+                && app.tx.send(AppInput::Draw(DrawSource::Ordinary)).is_err()
+            {
+                error!("Failed to schedule sticker preview redraw");
+            }
             if let Ok(area) = terminal_session.terminal_mut().size() {
                 app.schedule_avatar_viewport(area.into());
             }
@@ -470,27 +486,16 @@ mod tests {
     }
 
     #[test]
-    fn hidden_log_panel_suppresses_only_go_log_draws() {
-        let mut app = TestApp::new();
-        app.show_logs = false;
+    fn go_log_draws_are_suppressed_without_a_panel() {
+        let app = TestApp::new();
 
         assert!(!should_draw_for_source(&app, DrawSource::GoLog));
         assert!(should_draw_for_source(&app, DrawSource::Ordinary));
     }
 
     #[test]
-    fn visible_log_panel_requests_go_log_draws() {
-        let mut app = TestApp::new();
-        app.show_logs = true;
-
-        assert!(should_draw_for_source(&app, DrawSource::GoLog));
-        assert!(should_draw_for_source(&app, DrawSource::Ordinary));
-    }
-
-    #[test]
-    fn draw_event_order_is_preserved_while_only_hidden_go_logs_are_suppressed() {
-        let mut app = TestApp::new();
-        app.show_logs = false;
+    fn draw_event_order_is_preserved_while_go_logs_are_suppressed() {
+        let app = TestApp::new();
 
         let results = [DrawSource::GoLog, DrawSource::Ordinary, DrawSource::GoLog]
             .map(|source| should_draw_for_source(&app, source));

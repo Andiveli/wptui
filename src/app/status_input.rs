@@ -8,7 +8,6 @@ pub(crate) fn status_view_allows(action: &AppAction) -> bool {
         action,
         AppAction::Quit
             | AppAction::Logout
-            | AppAction::ToggleLogs
             | AppAction::ToggleSectionRail
             | AppAction::ToggleChatList
             | AppAction::ToggleComposerDirection
@@ -45,7 +44,6 @@ mod tests {
         for allowed in [
             AppAction::Quit,
             AppAction::Logout,
-            AppAction::ToggleLogs,
             AppAction::ToggleSectionRail,
             AppAction::ToggleChatList,
             AppAction::ToggleComposerDirection,

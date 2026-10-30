@@ -150,12 +150,26 @@ pub fn render_file(
             }
             FileMeta::Loaded => match data.kind {
                 FileKind::Image | FileKind::Sticker | FileKind::Video => {
+                    if render_image && matches!(data.kind, FileKind::Sticker) {
+                        media_render_plan.record_visible_sticker(data.path.clone());
+                    }
                     let placeholder = if matches!(data.kind, FileKind::Video) {
                         "🎬"
                     } else {
                         "🖼"
                     };
-                    if !render_image || app.image_cache.get_mut(&data.path).is_none() {
+                    if render_image
+                        && matches!(data.kind, FileKind::Sticker)
+                        && app.sticker_playback.contains_key(&data.path)
+                    {
+                        if let Some(playback) = app.sticker_playback.get_mut(&data.path) {
+                            StatefulImage::default().render(
+                                media_area,
+                                buf,
+                                &mut playback.frames[playback.current],
+                            );
+                        }
+                    } else if !render_image || app.image_cache.get_mut(&data.path).is_none() {
                         Paragraph::new(placeholder)
                             .alignment(alignment)
                             .render(media_area, buf);
@@ -269,7 +283,16 @@ mod tests {
     };
     use whatsrust::{FileContent, FileKind};
 
+    use crate::app::sticker_animation::StickerPlayback;
+    use crate::app::sticker_decode::decode_animated_webp;
     use crate::app::test_support::TestApp;
+    use crate::app::{FileMeta, Metadata};
+    use ratatui::layout::Size;
+    use ratatui_image::picker::{Picker, ProtocolType};
+    use std::{
+        sync::Arc,
+        time::{Duration, Instant},
+    };
 
     #[test]
     fn caption_cells_use_visual_lines_after_logical_wrapping() {
@@ -307,6 +330,248 @@ mod tests {
             preview_height(&FileKind::Image),
             super::super::message_layout::IMAGE_HEIGHT
         );
+    }
+
+    #[test]
+    fn deferred_sticker_still_preview_is_tracked_as_visible() {
+        let mut app = TestApp::new();
+        let path = Arc::<str>::from("stickers/deferred.webp");
+        let animation =
+            decode_animated_webp(include_bytes!("../../tests/fixtures/sticker-animated.webp"))
+                .unwrap()
+                .unwrap();
+        let still =
+            StickerPlayback::prepare(animation, &mut Picker::halfblocks(), Size::new(20, 14))
+                .frames
+                .into_iter()
+                .next()
+                .unwrap();
+        app.image_cache.insert(path.clone(), still);
+        app.deferred_sticker_previews.insert(path.clone());
+        app.metadata
+            .insert("deferred".into(), Metadata::File(FileMeta::Loaded));
+        let file = FileContent {
+            kind: FileKind::Sticker,
+            path: path.clone(),
+            ..Default::default()
+        };
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 20, 14));
+        let mut plan = crate::app::events::MediaRenderPlan::default();
+        super::render_file(
+            &mut buffer,
+            &"deferred".into(),
+            &file,
+            None,
+            &mut app,
+            &mut plan,
+            Rect::new(0, 0, 20, 14),
+            true,
+            Alignment::Left,
+            MessageTextMode::Chat,
+        );
+        assert!(plan.visible_stickers().contains(&path));
+        assert!(app.visible_stickers.is_empty());
+        app.apply_sticker_render_plan(&plan);
+        assert!(app.visible_stickers.contains(&path));
+
+        // Visibility is a viewport observation, not a decision about whether
+        // this particular still preview is deferred for animation.
+        app.deferred_sticker_previews.remove(&path);
+        app.visible_stickers.clear();
+        let mut plain_plan = crate::app::events::MediaRenderPlan::default();
+        super::render_file(
+            &mut buffer,
+            &"deferred".into(),
+            &file,
+            None,
+            &mut app,
+            &mut plain_plan,
+            Rect::new(0, 0, 20, 14),
+            true,
+            Alignment::Left,
+            MessageTextMode::Chat,
+        );
+        assert_eq!(plain_plan.visible_stickers(), &[path]);
+        assert!(app.visible_stickers.is_empty());
+    }
+
+    #[test]
+    fn clipped_sticker_does_not_report_visibility() {
+        let mut app = TestApp::new();
+        let path = Arc::<str>::from("stickers/clipped.webp");
+        app.deferred_sticker_previews.insert(path.clone());
+        app.metadata
+            .insert("clipped".into(), Metadata::File(FileMeta::Loaded));
+        let file = FileContent {
+            kind: FileKind::Sticker,
+            path,
+            ..Default::default()
+        };
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 20, 14));
+        let mut plan = crate::app::events::MediaRenderPlan::default();
+        super::render_file(
+            &mut buffer,
+            &"clipped".into(),
+            &file,
+            None,
+            &mut app,
+            &mut plan,
+            Rect::new(0, 0, 20, 14),
+            false,
+            Alignment::Left,
+            MessageTextMode::Chat,
+        );
+        assert!(plan.visible_stickers().is_empty());
+        assert!(app.visible_stickers.is_empty());
+    }
+
+    #[test]
+    fn two_visible_sticker_previews_advance_together() {
+        let mut app = TestApp::new();
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 20, 28));
+        let mut plan = crate::app::events::MediaRenderPlan::default();
+        let mut paths = Vec::new();
+        for (index, y) in [(0, 0), (1, 14)] {
+            let id = format!("sticker-{index}");
+            let path = Arc::<str>::from(format!("stickers/{id}.webp"));
+            let animation =
+                decode_animated_webp(include_bytes!("../../tests/fixtures/sticker-animated.webp"))
+                    .unwrap()
+                    .unwrap();
+            app.sticker_playback.insert(
+                path.clone(),
+                StickerPlayback::prepare(animation, &mut Picker::halfblocks(), Size::new(20, 14)),
+            );
+            app.metadata
+                .insert(id.clone().into(), Metadata::File(FileMeta::Loaded));
+            let file = FileContent {
+                kind: FileKind::Sticker,
+                path: path.clone(),
+                ..Default::default()
+            };
+            super::render_file(
+                &mut buffer,
+                &id.into(),
+                &file,
+                None,
+                &mut app,
+                &mut plan,
+                Rect::new(0, y, 20, 14),
+                true,
+                Alignment::Left,
+                MessageTextMode::Chat,
+            );
+            paths.push(path);
+        }
+        assert_eq!(plan.visible_stickers().len(), 2);
+        assert!(app.visible_stickers.is_empty());
+        app.apply_sticker_render_plan(&plan);
+        assert!(plan.into_effects().is_empty());
+        assert_eq!(app.visible_stickers.len(), 2);
+        assert!(paths.iter().all(|path| app.visible_stickers.contains(path)));
+        let start = Instant::now();
+        assert!(!app.advance_visible_stickers(start));
+        assert!(app.advance_visible_stickers(start + Duration::from_millis(80)));
+        assert!(
+            paths
+                .iter()
+                .all(|path| app.sticker_playback[path].current == 1)
+        );
+        assert_ne!(buffer[(0, 0)].symbol(), " ");
+        assert_ne!(buffer[(0, 14)].symbol(), " ");
+    }
+
+    #[test]
+    fn two_visible_kitty_stickers_emit_distinct_frames() {
+        let mut app = TestApp::new();
+        let mut picker = Picker::halfblocks();
+        picker.set_protocol_type(ProtocolType::Kitty);
+        let mut paths = Vec::new();
+        for index in 0..2 {
+            let id = format!("kitty-sticker-{index}");
+            let path = Arc::<str>::from(format!("stickers/{id}.webp"));
+            let animation =
+                decode_animated_webp(include_bytes!("../../tests/fixtures/sticker-animated.webp"))
+                    .unwrap()
+                    .unwrap();
+            app.sticker_playback.insert(
+                path.clone(),
+                StickerPlayback::prepare(animation, &mut picker, Size::new(20, 14)),
+            );
+            app.metadata
+                .insert(id.into(), Metadata::File(FileMeta::Loaded));
+            paths.push(path);
+        }
+
+        let paint = |app: &mut TestApp| {
+            let mut buffer = Buffer::empty(Rect::new(0, 0, 20, 28));
+            let mut plan = crate::app::events::MediaRenderPlan::default();
+            for (index, path) in paths.iter().enumerate() {
+                let file = FileContent {
+                    kind: FileKind::Sticker,
+                    path: path.clone(),
+                    ..Default::default()
+                };
+                super::render_file(
+                    &mut buffer,
+                    &format!("kitty-sticker-{index}").into(),
+                    &file,
+                    None,
+                    app,
+                    &mut plan,
+                    Rect::new(0, index as u16 * 14, 20, 14),
+                    true,
+                    Alignment::Left,
+                    MessageTextMode::Chat,
+                );
+            }
+            assert_eq!(plan.visible_stickers().len(), 2);
+            app.apply_sticker_render_plan(&plan);
+            assert!(plan.into_effects().is_empty());
+            [
+                buffer[(0, 0)].symbol().to_owned(),
+                buffer[(0, 14)].symbol().to_owned(),
+            ]
+        };
+
+        let first = paint(&mut app);
+        assert_eq!(app.visible_stickers.len(), 2);
+        let image_id = |symbol: &str| {
+            let header = symbol
+                .split("\x1b_Gq=2,i=")
+                .nth(1)
+                .expect("Kitty transmission");
+            header.split(',').next().unwrap().to_owned()
+        };
+        let first_ids = first.each_ref().map(|symbol| image_id(symbol));
+        assert_ne!(first_ids[0], first_ids[1], "distinct virtual image IDs");
+        for symbol in &first {
+            assert!(
+                symbol.contains(",a=T,U=1,"),
+                "virtual placement transmission"
+            );
+            assert!(symbol.contains("\u{10EEEE}"), "Kitty image placeholder");
+        }
+
+        let start = Instant::now();
+        assert!(!app.advance_visible_stickers(start));
+        assert!(app.advance_visible_stickers(start + Duration::from_millis(80)));
+        assert!(
+            paths
+                .iter()
+                .all(|path| app.sticker_playback[path].current == 1)
+        );
+        let second = paint(&mut app);
+        let second_ids = second.each_ref().map(|symbol| image_id(symbol));
+        assert_ne!(second_ids[0], second_ids[1]);
+        for index in 0..2 {
+            assert_ne!(first_ids[index], second_ids[index], "new frame image ID");
+            assert_ne!(
+                first[index], second[index],
+                "changed Kitty frame placeholder"
+            );
+            assert!(second[index].contains(",a=T,U=1,"));
+        }
     }
 
     #[test]

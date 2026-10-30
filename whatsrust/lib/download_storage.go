@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"golang.org/x/sys/unix"
@@ -82,6 +83,19 @@ func openDownloadRoot(basePath string) (int, error) {
 	path, err := filepath.Abs(basePath)
 	if err != nil {
 		return -1, err
+	}
+	// macOS exposes /var as a system symlink to /private/var. Resolve only
+	// that fixed system alias; all caller-controlled path components still
+	// require O_NOFOLLOW below.
+	if runtime.GOOS == "darwin" && (path == "/var" || strings.HasPrefix(path, "/var/")) {
+		link, linkErr := os.Readlink("/var")
+		if linkErr != nil {
+			return -1, linkErr
+		}
+		if link != "private/var" && link != "/private/var" {
+			return -1, errors.New("unexpected macOS /var symlink target")
+		}
+		path = "/private" + path
 	}
 	fd, err := unix.Open("/", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {

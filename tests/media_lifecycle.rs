@@ -2,7 +2,7 @@ use std::{
     ffi::OsString,
     fs,
     path::{Path, PathBuf},
-    process::Child,
+    process::{Child, Command},
     sync::{Arc, Mutex, MutexGuard},
 };
 
@@ -21,6 +21,11 @@ use wp_tui::media::{
 use wp_tui::ui::{composer_cursor_position, viewer_preview_layout};
 mod common;
 use common::TestApp;
+
+#[cfg(target_os = "macos")]
+const FD_PATH_PREFIX: &str = "/dev/fd/";
+#[cfg(not(target_os = "macos"))]
+const FD_PATH_PREFIX: &str = "/proc/self/fd/";
 
 #[test]
 fn viewer_preview_requests_are_dimension_aware_deduplicated_and_failure_stable() {
@@ -232,7 +237,7 @@ fn app_injected_launch_executor_handles_viewer_media_and_document_opening() {
     assert!(launches.iter().all(|(_, arguments)| {
         arguments
             .iter()
-            .any(|argument| argument.starts_with("/proc/self/fd/"))
+            .any(|argument| argument.starts_with(FD_PATH_PREFIX))
     }));
 }
 
@@ -379,7 +384,7 @@ fn metacharacter_filenames_remain_one_literal_argument() {
     assert_eq!(plan.executable(), Path::new("mpv"));
     assert_eq!(plan.arguments()[0], PathBuf::from("--force-window"));
     assert_eq!(plan.arguments()[1], PathBuf::from("--keep-open=yes"));
-    assert!(plan.arguments()[2].starts_with("/proc/self/fd/"));
+    assert!(plan.arguments()[2].starts_with(FD_PATH_PREFIX));
 }
 
 #[test]
@@ -417,7 +422,7 @@ fn media_launch_passes_one_canonical_argument_to_a_structured_executor() {
     assert_eq!(executor.calls[0].1.len(), 3);
     assert_eq!(executor.calls[0].1[0], PathBuf::from("--force-window"));
     assert_eq!(executor.calls[0].1[1], PathBuf::from("--keep-open=yes"));
-    assert!(executor.calls[0].1[2].starts_with("/proc/self/fd/"));
+    assert!(executor.calls[0].1[2].starts_with(FD_PATH_PREFIX));
 }
 
 #[cfg(unix)]
@@ -440,7 +445,19 @@ fn media_launch_keeps_a_stable_contained_file_when_the_original_path_is_replaced
 
     execute_launch(&plan, &mut executor).unwrap();
 
-    assert_eq!(fs::read(&executor.calls[0].1[2]).unwrap(), b"inside");
+    let pinned_path = &executor.calls[0].1[2];
+    // /dev/fd on macOS duplicates the descriptor and shares its file offset;
+    // reading it in the parent first would leave the child at EOF.
+    #[cfg(target_os = "linux")]
+    assert_eq!(fs::read(pinned_path).unwrap(), b"inside");
+    let child = Command::new("cat").arg(pinned_path).output().unwrap();
+    assert!(child.status.success(), "{child:?}");
+    assert_eq!(child.stdout, b"inside");
+    assert!(child.stderr.is_empty());
+    assert_eq!(
+        fs::read(outside.path().join("outside.mp4")).unwrap(),
+        b"outside"
+    );
 }
 
 #[test]
@@ -472,7 +489,7 @@ fn document_openers_select_pdf_case_insensitively_and_keep_paths_as_safe_argumen
 
     assert_eq!(plan.executable(), Path::new("zathura"));
     assert_eq!(plan.arguments().len(), 1);
-    assert!(plan.arguments()[0].starts_with("/proc/self/fd/"));
+    assert!(plan.arguments()[0].starts_with(FD_PATH_PREFIX));
 
     let name = "notes;touch pwn.odt";
     fs::write(root.path().join(name), []).unwrap();
@@ -483,7 +500,7 @@ fn document_openers_select_pdf_case_insensitively_and_keep_paths_as_safe_argumen
 
     assert_eq!(plan.executable(), Path::new("libreoffice"));
     assert_eq!(plan.arguments().len(), 1);
-    assert!(plan.arguments()[0].starts_with("/proc/self/fd/"));
+    assert!(plan.arguments()[0].starts_with(FD_PATH_PREFIX));
 }
 
 #[test]
@@ -549,7 +566,7 @@ fn feh_opens_one_stable_image_after_an_option_terminator() {
 
     assert_eq!(plan.arguments()[0], PathBuf::from("--"));
     assert_eq!(plan.arguments().len(), 2);
-    assert!(plan.arguments()[1].starts_with("/proc/self/fd/"));
+    assert!(plan.arguments()[1].starts_with(FD_PATH_PREFIX));
 }
 
 #[test]
@@ -563,12 +580,12 @@ fn exact_mpv_gets_keep_open_override_but_custom_players_do_not() {
         .unwrap();
     assert_eq!(mpv.arguments()[0], PathBuf::from("--force-window"));
     assert_eq!(mpv.arguments()[1], PathBuf::from("--keep-open=yes"));
-    assert!(mpv.arguments()[2].starts_with("/proc/self/fd/"));
+    assert!(mpv.arguments()[2].starts_with(FD_PATH_PREFIX));
     let custom = media
         .plan_launch(Path::new("mpv-wrapper"), Path::new("clip.mp4"))
         .unwrap();
     assert_eq!(custom.arguments().len(), 1);
-    assert!(custom.arguments()[0].starts_with("/proc/self/fd/"));
+    assert!(custom.arguments()[0].starts_with(FD_PATH_PREFIX));
     assert_eq!(resolve_media_player(None), Ok(PathBuf::from("mpv")));
 }
 

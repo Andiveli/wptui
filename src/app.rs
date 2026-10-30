@@ -44,11 +44,11 @@ pub mod inputs;
 pub mod leader_menu;
 pub mod lifecycle_control;
 pub mod lifecycle_settings_dispatch;
-pub mod log_toggle;
 pub mod logout;
 pub mod media_cache;
 pub mod media_download_port;
 pub mod media_jobs;
+pub mod media_preview_port;
 pub mod media_support;
 pub mod message_action_diagnostics;
 pub mod message_actions;
@@ -87,6 +87,9 @@ pub mod status_input;
 pub mod status_projection;
 pub mod status_publish;
 pub mod status_retention;
+pub mod sticker_animation;
+pub mod sticker_decode;
+pub mod sticker_preview_worker;
 pub mod terminal_input_translation;
 pub mod terminal_session;
 #[cfg(test)]
@@ -99,7 +102,7 @@ use crate::app::actions::{
     ActionNotice, ClipboardReader, ClipboardWriter, ConversationMode, FocusPane, MessageEditor,
     MessageForwarder, MessageMenuAction, MessageReactor, MessageRevoker, PaneVisibility, Section,
     StatusCompositionState, SystemClipboardReader, SystemClipboardWriter, SystemUrlOpener,
-    UnavailableClipboardReader, UnavailableClipboardWriter, UrlOpener,
+    UnavailableClipboardReader, UnavailableClipboardWriter, UrlOpener, VimComposerMode,
 };
 pub use crate::app::chat_projection::{ChatFilter, ChatRow, ContactRow};
 pub use crate::app::chat_read_sync_port::ChatReadSyncPort;
@@ -277,6 +280,12 @@ pub struct App<'a> {
     pub metadata: HashMap<wr::MessageId, Metadata>,
     pub image_cache: HashMap<Arc<str>, StatefulProtocol>,
     pub image_cache_order: VecDeque<Arc<str>>,
+    pub(crate) sticker_playback: HashMap<Arc<str>, sticker_animation::StickerPlayback>,
+    pub(crate) deferred_sticker_previews: HashSet<Arc<str>>,
+    pub(crate) animation_slots: Arc<sticker_animation::AnimationSlots>,
+    pub(crate) media_preview_read: Arc<dyn media_preview_port::MediaPreviewRead>,
+    pub(crate) pending_sticker_previews: VecDeque<(wr::MessageId, Arc<str>)>,
+    pub(crate) visible_stickers: HashSet<Arc<str>>,
     /// Probed audio duration in seconds, keyed by file path. Populated lazily
     /// by a background thread once the file is on disk.
     pub audio_durations: HashMap<Arc<str>, u64>,
@@ -291,6 +300,7 @@ pub struct App<'a> {
     pub pane_visibility: PaneVisibility,
     pub selected_section: Section,
     pub conversation_mode: ConversationMode,
+    pub vim_composer_mode: Option<VimComposerMode>,
     pub edit_message: Option<wr::Message>,
     pub message_editor: Box<dyn MessageEditor>,
     pub message_reactor: Box<dyn MessageReactor>,
@@ -331,8 +341,6 @@ pub struct App<'a> {
     pub next_local_send_id: u64,
 
     pub kh: KeybindHandler,
-
-    pub show_logs: bool,
 
     pub contact_search_active: bool,
     pub contact_search: TextInput,

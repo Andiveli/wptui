@@ -2,8 +2,9 @@ use ratatui::crossterm::event::{
     Event, KeyCode as TerminalKeyCode, KeyEvent, KeyModifiers as TerminalKeyModifiers,
 };
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
-use wp_tui::app::actions::ComposerAction;
-use wp_tui::app::actions::{AppAction, ConversationMode};
+use wp_tui::app::actions::{
+    AppAction, ComposerAction, ConversationMode, FocusPane, Section, VimComposerMode,
+};
 use wp_tui::app::composer::Composer;
 use wp_tui::app::events::MediaRenderPlan;
 use wp_tui::app::inputs::composer_action_for_editing_key;
@@ -120,6 +121,126 @@ fn empty_and_blank_submits_are_silent_no_ops() {
 }
 
 #[test]
+fn vim_composer_title_shows_the_active_mode_without_changing_standard_input_title() {
+    let mut app = TestApp::new();
+    app.open_chat_by_jid(whatsrust::JID("alice@s.whatsapp.net".into()));
+    app.focus_pane = FocusPane::Conversation;
+    let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+    let mut title = |app: &mut TestApp| {
+        terminal
+            .draw(|frame| {
+                let mut media = MediaRenderPlan::default();
+                let mut visibility = VisibilityPlan::default();
+                render_chats_with_plan(
+                    frame,
+                    app,
+                    &mut media,
+                    &mut visibility,
+                    Rect::new(0, 0, 80, 20),
+                );
+            })
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>()
+    };
+    assert!(title(&mut app).contains("Message input"));
+    for character in [' ', 'v'] {
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            TerminalKeyCode::Char(character),
+            TerminalKeyModifiers::NONE,
+        )));
+    }
+    assert!(title(&mut app).contains("Vim Normal"));
+    app.on_terminal_event(Event::Key(KeyEvent::new(
+        TerminalKeyCode::Char('i'),
+        TerminalKeyModifiers::NONE,
+    )));
+    assert!(title(&mut app).contains("Vim Insert"));
+}
+
+#[test]
+fn conversation_leader_enters_vim_and_escape_returns_to_chat_without_losing_draft() {
+    let mut app = TestApp::new();
+    app.open_chat_by_jid(whatsrust::JID("alice@s.whatsapp.net".into()));
+    app.focus_pane = wp_tui::app::actions::FocusPane::Conversation;
+    app.composer.insert_text("draft");
+    fn key(app: &mut TestApp, code: TerminalKeyCode) {
+        app.on_terminal_event(Event::Key(KeyEvent::new(code, TerminalKeyModifiers::NONE)));
+    }
+
+    key(&mut app, TerminalKeyCode::Char(' '));
+    key(&mut app, TerminalKeyCode::Char('v'));
+    assert_eq!(app.conversation_mode, ConversationMode::ComposerEditing);
+    assert_eq!(app.vim_composer_mode, Some(VimComposerMode::Normal));
+    assert_eq!(app.composer.text(), "draft");
+    key(&mut app, TerminalKeyCode::Char('i'));
+    assert_eq!(app.vim_composer_mode, Some(VimComposerMode::Insert));
+    key(&mut app, TerminalKeyCode::Char('X'));
+    assert_eq!(app.composer.text(), "draftX");
+    key(&mut app, TerminalKeyCode::Esc);
+    assert_eq!(app.conversation_mode, ConversationMode::ComposerEditing);
+    assert_eq!(app.vim_composer_mode, Some(VimComposerMode::Normal));
+    assert_eq!(app.composer.text(), "draftX");
+    key(&mut app, TerminalKeyCode::Esc);
+    assert_eq!(app.conversation_mode, ConversationMode::MessageNavigation);
+    assert_eq!(app.vim_composer_mode, None);
+    assert_eq!(app.composer.text(), "draftX");
+
+    let mut other = TestApp::new();
+    key(&mut other, TerminalKeyCode::Char(' '));
+    key(&mut other, TerminalKeyCode::Char('v'));
+    assert_eq!(other.conversation_mode, ConversationMode::MessageNavigation);
+    assert!(other.composer.text().is_empty());
+}
+
+#[test]
+fn vim_leader_entry_requires_unblocked_open_conversation() {
+    for (section, focus, blocked) in [
+        (Section::Chats, FocusPane::ChatList, false),
+        (Section::Status, FocusPane::Conversation, false),
+        (Section::Chats, FocusPane::Conversation, true),
+    ] {
+        let mut app = TestApp::new();
+        let chat = whatsrust::JID(
+            if blocked {
+                "admins@g.us"
+            } else {
+                "alice@s.whatsapp.net"
+            }
+            .into(),
+        );
+        app.open_chat_by_jid(chat.clone());
+        app.selected_section = section;
+        app.focus_pane = focus;
+        if blocked {
+            app.group_permissions.insert(
+                chat.clone(),
+                whatsrust::GroupInfo {
+                    jid: chat,
+                    name: "Admins only".into(),
+                    is_announce: true,
+                    is_admin: false,
+                },
+            );
+            app.composer.set_blocked(true);
+        }
+        for character in [' ', 'v'] {
+            app.on_terminal_event(Event::Key(KeyEvent::new(
+                TerminalKeyCode::Char(character),
+                TerminalKeyModifiers::NONE,
+            )));
+        }
+        assert_eq!(app.conversation_mode, ConversationMode::MessageNavigation);
+        assert_eq!(app.vim_composer_mode, None);
+    }
+}
+
+#[test]
 fn escape_cancels_reply_and_attachment_modes_without_leaking_to_the_next_draft() {
     let mut app = TestApp::new();
     app.focus_pane = wp_tui::app::actions::FocusPane::Conversation;
@@ -138,7 +259,7 @@ fn escape_cancels_reply_and_attachment_modes_without_leaking_to_the_next_draft()
 }
 
 #[test]
-fn ctrl_shift_l_toggles_logs_without_mutating_the_active_composer() {
+fn ctrl_shift_l_no_longer_opens_logs_or_mutates_the_active_composer() {
     for character in ['L', 'l'] {
         let mut app = TestApp::new();
         app.focus_pane = wp_tui::app::actions::FocusPane::Conversation;
@@ -151,7 +272,27 @@ fn ctrl_shift_l_toggles_logs_without_mutating_the_active_composer() {
             TerminalKeyModifiers::CONTROL | TerminalKeyModifiers::SHIFT,
         )));
 
-        assert!(app.show_logs, "character: {character:?}");
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        terminal
+            .draw(|frame| {
+                let mut media_render_plan = MediaRenderPlan::default();
+                let mut visibility_plan = VisibilityPlan::default();
+                wp_tui::ui::draw_with_plan(
+                    frame,
+                    &mut app,
+                    &mut media_render_plan,
+                    &mut visibility_plan,
+                );
+            })
+            .unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(!rendered.contains("Logs"), "character: {character:?}");
         assert_eq!(app.composer.text(), "draft", "character: {character:?}");
         assert_eq!(app.kh.buffered_keys(), &[Key::c('g')]);
     }
@@ -166,6 +307,36 @@ fn attachment_only_drafts_are_sendable() {
 
     assert!(outcome.text_messages().is_empty());
     assert_eq!(outcome.file_messages().len(), 1);
+}
+
+#[test]
+fn exiting_vim_normal_dismisses_a_picker_reopened_by_navigation() {
+    let mut app = TestApp::new();
+    app.open_chat_by_jid(whatsrust::JID("123@g.us".into()));
+    app.composer
+        .set_group_participants(vec![whatsrust::GroupParticipant {
+            jid: whatsrust::JID("111@s.whatsapp.net".into()),
+            phone_number: whatsrust::JID("111@s.whatsapp.net".into()),
+            name: "Alice".into(),
+        }]);
+    app.composer.insert_text("@a ");
+    app.composer.cancel_mention_picker();
+    assert!(!app.composer.mention_picker_active());
+    app.focus_pane = FocusPane::Conversation;
+    for character in [' ', 'v', 'h'] {
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            TerminalKeyCode::Char(character),
+            TerminalKeyModifiers::NONE,
+        )));
+    }
+    assert!(app.composer.mention_picker_active());
+    app.on_terminal_event(Event::Key(KeyEvent::new(
+        TerminalKeyCode::Esc,
+        TerminalKeyModifiers::NONE,
+    )));
+    assert_eq!(app.conversation_mode, ConversationMode::MessageNavigation);
+    assert_eq!(app.composer.text(), "@a ");
+    assert!(!app.composer.mention_picker_active());
 }
 
 #[test]

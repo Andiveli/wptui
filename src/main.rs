@@ -14,7 +14,7 @@ struct Args {
     phone: Option<String>,
     #[clap(long, hide = true)]
     no_view: bool,
-    /// Write a persistent panic report here (default: ./wptui-crash.log).
+    /// Write a report here only on panic (default: ./wptui-crash.log).
     #[clap(
         long,
         hide = true,

@@ -53,6 +53,12 @@ pub fn leader_bindings() -> Vec<LeaderBinding> {
             label: "Composer direction",
             implementation: BindingImplementation::Implemented,
         },
+        LeaderBinding {
+            key: Key::c('v'),
+            action: AppAction::StartVimComposer,
+            label: "Vim composer",
+            implementation: BindingImplementation::Implemented,
+        },
     ]
 }
 
@@ -71,8 +77,6 @@ pub fn default_bindings() -> Vec<(Vec<Key>, AppAction)> {
     bindings.extend(vec![
         (vec![Key::ctrl('q')], AppAction::Quit),
         (vec![Key::ctrl_shift('O')], AppAction::Logout),
-        (vec![Key::ctrl_shift('L')], AppAction::ToggleLogs),
-        (vec![Key::ctrl_shift('l')], AppAction::ToggleLogs),
         (
             vec![Key::c('1')],
             AppAction::FocusPane(FocusPane::SectionRail),
