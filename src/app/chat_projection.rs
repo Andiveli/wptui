@@ -40,6 +40,7 @@ pub struct ChatListViewModel {
     pub rows: Vec<ChatRow>,
     pub items: Vec<crate::ui::contact_list::ContactListItem>,
     pub visible_indices: Vec<usize>,
+    pub search_contact_start: usize,
     pub revision: u64,
     pub query: String,
     pub filter: ChatFilter,
@@ -557,10 +558,12 @@ impl App<'_> {
                     )
                 })
                 .collect::<Vec<_>>();
+            let search_contact_start = rows.len();
             self.chat_list_view = Some(ChatListViewModel {
                 rows,
                 items,
                 visible_indices: Vec::new(),
+                search_contact_start,
                 revision: self.chat_list_revision,
                 query: "\0".into(),
                 filter: ChatFilter::All,
@@ -579,6 +582,44 @@ impl App<'_> {
             .as_ref()
             .is_none_or(|view| view.query != query || view.filter != self.chat_filter);
         if visibility_changed {
+            let view = self.chat_list_view.as_mut().expect("chat view is built");
+            view.rows.truncate(view.search_contact_start);
+            view.items.truncate(view.search_contact_start);
+            if !query.is_empty() && self.chat_filter == ChatFilter::All {
+                let mut matches = self
+                    .contacts
+                    .keys()
+                    .filter_map(|jid| {
+                        let name = self.searchable_saved_contact_name(jid)?;
+                        if !name.to_lowercase().contains(&query)
+                            || self.verified_phones.iter().any(|(lid, phone)| {
+                                self.chats.contains_key(lid)
+                                    && jid.0.as_ref() == format!("{phone}@s.whatsapp.net")
+                            })
+                        {
+                            return None;
+                        }
+                        Some(ChatRow {
+                            label: name.to_string(),
+                            members: vec![jid.clone()],
+                            target: jid.clone(),
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                matches.sort_by(|left, right| {
+                    left.label
+                        .cmp(&right.label)
+                        .then_with(|| left.target.0.cmp(&right.target.0))
+                });
+                let view = self.chat_list_view.as_mut().expect("chat view is built");
+                for row in matches {
+                    view.items
+                        .push(crate::ui::contact_list::ContactListItem::from_summary(
+                            &row, None, None, 0, false,
+                        ));
+                    view.rows.push(row);
+                }
+            }
             let view = self.chat_list_view.as_ref().expect("chat view is built");
             let indices = self.build_visible_chat_indices(&view.rows, &view.items, &query);
             let view = self.chat_list_view.as_mut().expect("chat view is built");

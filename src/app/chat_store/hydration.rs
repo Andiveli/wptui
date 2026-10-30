@@ -109,6 +109,14 @@ impl App<'_> {
             })
     }
 
+    pub(crate) fn searchable_saved_contact_name(&self, jid: &wr::JID) -> Option<Arc<str>> {
+        if !jid.0.ends_with("@s.whatsapp.net") || self.chats.contains_key(jid) {
+            return None;
+        }
+        self.saved_display_name(jid)
+            .map(|name| canonical_contact_name(name))
+    }
+
     pub fn contact_name(&self, jid: &wr::JID) -> Arc<str> {
         let saved = self.fresh_contact_name(jid);
         self.saved_display_name(jid)

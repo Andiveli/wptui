@@ -404,6 +404,43 @@ fn saved_phone_contact_is_searchable_by_name_in_verified_lid_chat() {
 }
 
 #[test]
+fn search_finds_saved_contact_without_chat_but_not_unsaved_or_group() {
+    let mut app = TestApp::new();
+    let saved = jid("15551234567@s.whatsapp.net");
+    app.apply_contact_refresh(vec![
+        (saved.clone(), "Alice".into()),
+        (jid("group@g.us"), "Alice Group".into()),
+        (jid("15559876543@s.whatsapp.net"), "15559876543".into()),
+    ]);
+    app.contact_search.input = "alice".into();
+
+    assert_eq!(
+        app.visible_chat_rows()
+            .iter()
+            .map(|row| &row.target)
+            .collect::<Vec<_>>(),
+        vec![&saved]
+    );
+    app.contact_search.input = "".into();
+    assert!(app.visible_chat_rows().is_empty());
+}
+
+#[test]
+fn opening_a_search_result_creates_a_chat_for_a_saved_contact() {
+    let mut app = TestApp::new();
+    let saved = jid("15551234567@s.whatsapp.net");
+    app.apply_contact_refresh(vec![(saved.clone(), "Alice".into())]);
+    app.contact_search.input = "alice".into();
+    app.chat_list_state.select(Some(0));
+
+    app.dispatch_action(crate::app::actions::AppAction::OpenChat);
+
+    assert_eq!(app.open_chat(), Some(saved.clone()));
+    assert!(app.chats.contains_key(&saved));
+    assert_eq!(app.focus_pane, crate::app::actions::FocusPane::Conversation);
+}
+
+#[test]
 fn selected_chat_follows_the_visible_row_target() {
     let mut app = TestApp::new();
     let chat = jid("alice@s.whatsapp.net");
