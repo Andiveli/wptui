@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -16,6 +17,9 @@ func TestSafeDownloadTargetRejectsUnsafePathsAndPreservesNestedPaths(t *testing.
 		}
 	}
 	if got, err := safeDownloadTarget(root, "nested/file.jpg"); err != nil || got != filepath.Join(root, "nested/file.jpg") {
+		if err != nil {
+			reportTempRootAncestors(t, root)
+		}
 		t.Fatalf("nested target = %q, %v", got, err)
 	}
 	if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
@@ -23,6 +27,31 @@ func TestSafeDownloadTargetRejectsUnsafePathsAndPreservesNestedPaths(t *testing.
 	}
 	if err := writeDownload(root, "escape/file.jpg", []byte("data")); err == nil {
 		t.Fatal("symlink escape was accepted")
+	}
+}
+
+// reportTempRootAncestors records only fixture paths, and only when the root open fails.
+func reportTempRootAncestors(t *testing.T, root string) {
+	t.Helper()
+	path, err := filepath.Abs(root)
+	if err != nil {
+		t.Logf("temp root %q: absolute path error: %v", root, err)
+		return
+	}
+	t.Logf("temp root: %q", path)
+	ancestor := string(filepath.Separator)
+	for _, part := range strings.Split(strings.TrimPrefix(path, ancestor), ancestor) {
+		if part != "" {
+			ancestor = filepath.Join(ancestor, part)
+		}
+		info, statErr := os.Lstat(ancestor)
+		if statErr != nil {
+			t.Logf("temp ancestor %q: lstat error: %v", ancestor, statErr)
+		} else if info.Mode()&os.ModeSymlink != 0 {
+			t.Logf("temp ancestor %q: symlink", ancestor)
+		} else if !info.IsDir() {
+			t.Logf("temp ancestor %q: non-directory (%s)", ancestor, info.Mode())
+		}
 	}
 }
 

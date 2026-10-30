@@ -6,11 +6,14 @@ Scope: PR test coverage and issue #482; issue #471 remains separate.
 S1. "Okay, primero agreguemos mac en las pr antes de seguir al fix de la carrera"
 S2. "El CI no se ejecutaba ya para mac? Si le damos soporte debería hacerlo, no? Pasar la suit por ahí?"
 S3. "CI macOS + corregir #482"
+S4. "Sí, corregir Go en el mismo PR #483"
 
 ## Tasks
 - [x] T1 [S1-S2] route:inline commit:f3e4246,9a28b82 — Configure supported build/test suite for macOS PRs; adapt installer fixture and describe coverage.
 - [ ] T2 [S3] route:inline commit:3e5b496 — Make inherited media FD argument usable on macOS without weakening pinned-file behavior; test public launch plan.
 - [ ] T3 [S1-S3] route:verify commit:pending — Assess security and CI diff, verify platform checks, record open proof and delivery decision.
+- [ ] T4 [S2,S4] route:diagnostic commit:pending — Emit failure-only temp root and ancestor types for representative Go test; use next macOS runner to identify failing component before considering a fix.
+- [ ] T5 [S2,S4] route:inline commit:pending — Correct proven macOS Go temp-root portability while preserving symlink rejection; verify Linux and macOS suites.
 
 ## Log
 L1. User request verbatim: "Okay, primero agreguemos mac en las pr antes de seguir al fix de la carrera"
@@ -24,3 +27,6 @@ L8. T2 implementation: Mac uses /dev/fd/N instead of Linux-only /proc/self/fd/N,
 L9. Required branch-protection context is exactly `build-and-test` (GitHub Actions app 15368). Matrix conversion would rename that check and could block all PRs. Corrected CI to keep a `build-and-test` aggregate job requiring both platform suites, without changing repository protection. PyYAML structure and git diff check pass; correction commit 9a28b82.
 L10. origin/main advanced concurrently by 46 Vim-composer integration commits to c8bda1039fe739aea1cdce910f28df3d02a62ca9; non-destructive clean merge commit 4046826 into this branch; origin/main...HEAD remains six intended CI/media/docs files. No Cargo locally.
 L11. Independent gentle-ai-verify mvu56ate-9-mvyr: source-level S1 satisfied, S2 and S3 source-level satisfied but macOS runner proof pending. On merged HEAD, rustfmt --check, bash -n, Linux installer fixture and git diff --check passed; no Cargo or Go executed. Native ASSESS returned high-risk independent verifier plan, but its diff scan was unavailable because it selected the session's other root with untracked files. User separately authorized publishing only ci/macos-pr-suite and opening one PR, without merge or sticker documentation publication.
+L12. Published only ci/macos-pr-suite HEAD 1725b0e and opened PR #483 https://github.com/Andiveli/wptui/pull/483 against main; macOS/Linux PR Actions wait launched as background job-34. No merge, release or sticker-documentation push.
+L13. macOS run 40970799440 failed four t.TempDir tests, but logs lack temp paths. No security exception yet: diagnose the exact failing ancestor first.
+L14. T4 adds failure-only fixture root and symlink/non-directory ancestor logging to the first representative Go test, preserving its assertion. `gofmt -w` completed; focused Go test timed out after 120s while fetching dependencies, and offline retry timed out after 30s. Linux and macOS test proof remains pending; no production change or security exception.
