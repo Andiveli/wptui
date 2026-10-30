@@ -127,9 +127,12 @@ impl App<'_> {
             .keys()
             .filter(|chat| chat.0.ends_with("@lid"))
             .any(|chat| {
-                self.verified_phones.get(chat).is_some_and(|phone| {
-                    jid.0.as_ref() == format!("{phone}@s.whatsapp.net")
-                }) || self.saved_display_name(chat).is_some_and(|alias| alias == name)
+                self.verified_phones
+                    .get(chat)
+                    .is_some_and(|phone| jid.0.as_ref() == format!("{phone}@s.whatsapp.net"))
+                    || self
+                        .saved_display_name(chat)
+                        .is_some_and(|alias| alias == name)
             })
     }
 
