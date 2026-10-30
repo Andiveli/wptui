@@ -446,11 +446,18 @@ fn media_launch_keeps_a_stable_contained_file_when_the_original_path_is_replaced
     execute_launch(&plan, &mut executor).unwrap();
 
     let pinned_path = &executor.calls[0].1[2];
+    // /dev/fd on macOS duplicates the descriptor and shares its file offset;
+    // reading it in the parent first would leave the child at EOF.
+    #[cfg(target_os = "linux")]
     assert_eq!(fs::read(pinned_path).unwrap(), b"inside");
     let child = Command::new("cat").arg(pinned_path).output().unwrap();
     assert!(child.status.success(), "{child:?}");
     assert_eq!(child.stdout, b"inside");
     assert!(child.stderr.is_empty());
+    assert_eq!(
+        fs::read(outside.path().join("outside.mp4")).unwrap(),
+        b"outside"
+    );
 }
 
 #[test]
