@@ -6,7 +6,6 @@ use ratatui::{
     style::{Color, Style},
     widgets::{Block, List, ListItem, Paragraph},
 };
-use tui_logger::TuiLoggerWidget;
 
 pub(super) fn render_section_rail(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut items = Section::ALL
@@ -104,18 +103,4 @@ pub(super) fn render_logout_placeholder(frame: &mut Frame, app: &App, area: Rect
             .style(Style::default().fg(Color::Red)),
         area,
     );
-}
-
-pub(super) fn render_logs(frame: &mut Frame, area: Rect) {
-    let log_widget = TuiLoggerWidget::default()
-        .style_trace(Style::new().dark_gray())
-        .style_debug(Style::new().blue())
-        .style_warn(Style::new().yellow())
-        .style_error(Style::new().red().bold())
-        .block(
-            Block::default()
-                .title("Logs")
-                .borders(ratatui::widgets::Borders::ALL),
-        );
-    frame.render_widget(log_widget, area);
 }
