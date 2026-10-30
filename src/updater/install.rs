@@ -216,7 +216,7 @@ impl super::InstallerPort for StandaloneInstaller {
 mod tests {
     use super::*;
     use crate::updater::InstallerPort;
-    use sha2::{Digest, Sha256};
+    use crate::updater::sha256_hex;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     use tempfile::tempdir;
@@ -245,7 +245,7 @@ mod tests {
         let path = directory.path().join("wp-tui");
         fs::write(&path, b"old").unwrap();
         let bytes = archive(&[("wp-tui", b"new"), ("extra", b"bad")]);
-        let digest = format!("{:x}", Sha256::digest(&bytes));
+        let digest = sha256_hex(&bytes);
         let mut installer = StandaloneInstaller;
         assert_eq!(
             installer.install(&path, &bytes, &digest).unwrap_err(),
@@ -265,7 +265,7 @@ mod tests {
             fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
         }
         let bytes = archive(&[("wp-tui", b"#!/bin/sh\nprintf 'wp-tui-test-ok\\n'\n")]);
-        let digest = format!("{:x}", Sha256::digest(&bytes));
+        let digest = sha256_hex(&bytes);
         let mut installer = StandaloneInstaller;
         installer.install(&path, &bytes, &digest).unwrap();
         assert_eq!(
@@ -292,7 +292,7 @@ mod tests {
             ("THIRD_PARTY_NOTICES.md", b"MIT notice"),
             ("assets/sounds/LICENSE.md", b"attribution and recipe"),
         ]);
-        let digest = format!("{:x}", Sha256::digest(&bytes));
+        let digest = sha256_hex(&bytes);
         let mut installer = StandaloneInstaller;
         installer.install(&binary, &bytes, &digest).unwrap();
         assert_eq!(fs::read(&binary).unwrap(), b"new");
@@ -334,7 +334,7 @@ mod tests {
         for bytes in invalid {
             fs::write(&binary, b"old").unwrap();
             fs::write(&notice, b"previous notice").unwrap();
-            let digest = format!("{:x}", Sha256::digest(&bytes));
+            let digest = sha256_hex(&bytes);
             let mut installer = StandaloneInstaller;
             assert_eq!(
                 installer.install(&binary, &bytes, &digest).unwrap_err(),
@@ -353,7 +353,7 @@ mod tests {
         for bytes in [oversized_binary_archive(), archive_with_mode(0o4777)] {
             fs::write(&binary, b"old").unwrap();
             fs::write(&notice, b"previous notice").unwrap();
-            let digest = format!("{:x}", Sha256::digest(&bytes));
+            let digest = sha256_hex(&bytes);
             let mut installer = StandaloneInstaller;
             assert_eq!(
                 installer.install(&binary, &bytes, &digest).unwrap_err(),
@@ -368,7 +368,9 @@ mod tests {
     fn rejects_checksum_mismatch_before_archive_processing() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("wp-tui");
+        let notice = directory.path().join(INSTALLED_NOTICE);
         fs::write(&path, b"old").unwrap();
+        fs::write(&notice, b"previous notice").unwrap();
         let mut installer = StandaloneInstaller;
         assert_eq!(
             installer
@@ -377,6 +379,7 @@ mod tests {
             "download checksum mismatch"
         );
         assert_eq!(fs::read(path).unwrap(), b"old");
+        assert_eq!(fs::read(notice).unwrap(), b"previous notice");
     }
 
     #[test]
@@ -389,7 +392,7 @@ mod tests {
             (archive(&[("other", b"new")]), "update archive is unsafe"),
             (symlink_archive(), "update archive is unsafe"),
         ] {
-            let digest = format!("{:x}", Sha256::digest(&bytes));
+            let digest = sha256_hex(&bytes);
             let mut installer = StandaloneInstaller;
             assert_eq!(
                 installer.install(&path, &bytes, &digest).unwrap_err(),
@@ -405,7 +408,7 @@ mod tests {
         let path = directory.path().join("wp-tui");
         fs::write(&path, b"old").unwrap();
         let bytes = symlink_archive();
-        let digest = format!("{:x}", Sha256::digest(&bytes));
+        let digest = sha256_hex(&bytes);
         let mut installer = StandaloneInstaller;
         assert_eq!(
             installer.install(&path, &bytes, &digest).unwrap_err(),

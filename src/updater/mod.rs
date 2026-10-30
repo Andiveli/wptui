@@ -123,8 +123,15 @@ fn valid_digest(value: Option<&str>) -> Option<&str> {
     .then_some(digest)
 }
 
+fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 fn verify_digest(bytes: &[u8], expected: &str) -> Result<(), String> {
-    let actual = format!("{:x}", Sha256::digest(bytes));
+    let actual = sha256_hex(bytes);
     (actual.eq_ignore_ascii_case(expected))
         .then_some(())
         .ok_or_else(|| "download checksum mismatch".into())
@@ -174,6 +181,17 @@ mod tests {
                 .unwrap()
                 .version,
             Version::new(99, 0, 0)
+        );
+    }
+
+    #[test]
+    fn sha256_hex_matches_known_digest_and_accepts_uppercase() {
+        let expected = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        assert_eq!(sha256_hex(b"abc"), expected);
+        assert!(verify_digest(b"abc", &expected.to_uppercase()).is_ok());
+        assert_eq!(
+            verify_digest(b"abc", &"00".repeat(32)).unwrap_err(),
+            "download checksum mismatch"
         );
     }
 
