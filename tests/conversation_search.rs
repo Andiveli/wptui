@@ -1,5 +1,5 @@
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use ratatui::{Terminal, backend::TestBackend, layout::Rect};
+use ratatui::{Terminal, backend::TestBackend, buffer::Buffer, layout::Rect, style::Color};
 use wp_tui::app::actions::{ConversationMode, FocusPane, Section};
 use wp_tui::app::events::MediaRenderPlan;
 use wp_tui::app::read_receipts::VisibilityPlan;
@@ -39,7 +39,7 @@ fn selected_id(app: &TestApp) -> Option<String> {
         .map(|id| id.to_string())
 }
 
-fn screen(app: &mut TestApp) -> String {
+fn buffer(app: &mut TestApp) -> Buffer {
     let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
     terminal
         .draw(|frame| {
@@ -52,9 +52,11 @@ fn screen(app: &mut TestApp) -> String {
             );
         })
         .unwrap();
-    terminal
-        .backend()
-        .buffer()
+    terminal.backend().buffer().clone()
+}
+
+fn screen(app: &mut TestApp) -> String {
+    buffer(app)
         .content()
         .iter()
         .map(|cell| cell.symbol())
@@ -174,4 +176,67 @@ fn jumping_to_a_distant_match_brings_it_into_the_message_viewport() {
     press(&mut app, KeyCode::Char('n'));
     assert_eq!(screen(&mut app).matches("DISTANT-NEEDLE").count(), 2);
     assert_eq!(selected_id(&app).as_deref(), Some("msg-2"));
+}
+
+#[test]
+fn search_highlights_only_matching_text_in_the_open_chat_and_clears_on_escape() {
+    let mut app = TestApp::new();
+    let chat: whatsrust::JID = "highlight@s.whatsapp.net".to_owned().into();
+    app.open_chat_by_jid(chat.clone());
+    app.add_message(message(&chat, "text", 1, "before needle after"));
+    app.focus_pane = FocusPane::Conversation;
+
+    let plain = buffer(&mut app);
+    let row = (0..20)
+        .find(|&y| {
+            (0..80)
+                .map(|x| plain[(x, y)].symbol())
+                .collect::<String>()
+                .contains("before needle after")
+        })
+        .expect("message text must be painted");
+    let line = (0..80)
+        .map(|x| plain[(x, row)].symbol())
+        .collect::<String>();
+    let start = line.find("before needle after").unwrap() as u16;
+    let match_x = start + "before ".len() as u16;
+    assert_eq!(plain[(match_x, row)].bg, Color::Reset);
+
+    press(&mut app, KeyCode::Char('/'));
+    for character in "needle".chars() {
+        press(&mut app, KeyCode::Char(character));
+    }
+    press(&mut app, KeyCode::Enter);
+    let highlighted = buffer(&mut app);
+    let highlighted_row = (0..20)
+        .find(|&y| {
+            (0..80)
+                .map(|x| highlighted[(x, y)].symbol())
+                .collect::<String>()
+                .contains("before needle after")
+        })
+        .expect("matching message must be painted");
+    let highlighted_line = (0..80)
+        .map(|x| highlighted[(x, highlighted_row)].symbol())
+        .collect::<String>();
+    let highlighted_x =
+        highlighted_line.find("before needle after").unwrap() as u16 + "before ".len() as u16;
+    for offset in 0.."needle".len() as u16 {
+        assert_eq!(
+            highlighted[(highlighted_x + offset, highlighted_row)].bg,
+            Color::Yellow
+        );
+    }
+    assert_eq!(
+        highlighted[(highlighted_x - 1, highlighted_row)].bg,
+        Color::Reset
+    );
+    assert_eq!(
+        highlighted[(highlighted_x + "needle".len() as u16, highlighted_row)].bg,
+        Color::Reset
+    );
+
+    press(&mut app, KeyCode::Esc);
+    let cleared = buffer(&mut app);
+    assert_eq!(cleared[(match_x, row)].bg, Color::Reset);
 }
