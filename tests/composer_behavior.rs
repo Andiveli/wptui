@@ -259,7 +259,7 @@ fn escape_cancels_reply_and_attachment_modes_without_leaking_to_the_next_draft()
 }
 
 #[test]
-fn ctrl_shift_l_toggles_logs_without_mutating_the_active_composer() {
+fn ctrl_shift_l_no_longer_opens_logs_or_mutates_the_active_composer() {
     for character in ['L', 'l'] {
         let mut app = TestApp::new();
         app.focus_pane = wp_tui::app::actions::FocusPane::Conversation;
@@ -272,7 +272,27 @@ fn ctrl_shift_l_toggles_logs_without_mutating_the_active_composer() {
             TerminalKeyModifiers::CONTROL | TerminalKeyModifiers::SHIFT,
         )));
 
-        assert!(app.show_logs, "character: {character:?}");
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        terminal
+            .draw(|frame| {
+                let mut media_render_plan = MediaRenderPlan::default();
+                let mut visibility_plan = VisibilityPlan::default();
+                wp_tui::ui::draw_with_plan(
+                    frame,
+                    &mut app,
+                    &mut media_render_plan,
+                    &mut visibility_plan,
+                );
+            })
+            .unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(!rendered.contains("Logs"), "character: {character:?}");
         assert_eq!(app.composer.text(), "draft", "character: {character:?}");
         assert_eq!(app.kh.buffered_keys(), &[Key::c('g')]);
     }

@@ -12,7 +12,6 @@ impl App<'_> {
                 self.should_quit = true;
             }
             AppAction::Logout => self.begin_logout_confirmation(),
-            AppAction::ToggleLogs => self.toggle_logs(),
             AppAction::ToggleSectionRail => {
                 self.pane_visibility.section_rail = !self.pane_visibility.section_rail;
                 self.focus_pane =
