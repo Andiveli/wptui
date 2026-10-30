@@ -32,7 +32,7 @@ impl App<'_> {
                 self.pending_phone_lookup = Some((generation, phone));
                 self.action_notice = None;
             } else {
-                self.unavailable("Number lookup is busy");
+                self.unavailable("Number lookup is unavailable");
             }
         }
         true
