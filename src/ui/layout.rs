@@ -22,14 +22,8 @@ pub(crate) fn composer_viewport_width(
     area_width: u16,
     area_height: u16,
     visibility: PaneVisibility,
-    show_logs: bool,
 ) -> u16 {
-    let content_area = if show_logs {
-        Layout::horizontal([Constraint::Percentage(67), Constraint::Percentage(33)])
-            .areas::<2>(Rect::new(0, 0, area_width, area_height))[0]
-    } else {
-        Rect::new(0, 0, area_width, area_height)
-    };
+    let content_area = Rect::new(0, 0, area_width, area_height);
     navigation_areas(content_area, visibility)
         .conversation
         .width

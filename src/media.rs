@@ -11,6 +11,8 @@ use std::os::unix::process::CommandExt;
 
 use whatsrust::FileKind;
 
+pub mod preview;
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum MediaLaunchError {
     UnconfiguredMediaRoot,
@@ -235,10 +237,17 @@ impl MediaRoot {
         let arguments = {
             use std::os::fd::AsRawFd;
             let fd = stable_file.as_raw_fd();
-            // The child must inherit this descriptor: /proc/self/fd resolves the already-open,
-            // validated inode rather than a path that an attacker can replace before spawn.
-            unsafe { libc::fcntl(fd, libc::F_SETFD, 0) };
-            opener_arguments(executable, PathBuf::from(format!("/proc/self/fd/{fd}")))
+            // The child must inherit the descriptor so its FD path refers to
+            // the already-open file, not a pathname replaced before spawn.
+            if unsafe { libc::fcntl(fd, libc::F_SETFD, 0) } == -1 {
+                return Err(MediaLaunchError::MissingFile);
+            }
+            let fd_path = if cfg!(target_os = "macos") {
+                format!("/dev/fd/{fd}")
+            } else {
+                format!("/proc/self/fd/{fd}")
+            };
+            opener_arguments(executable, PathBuf::from(fd_path))
         };
         #[cfg(not(unix))]
         let arguments = opener_arguments(executable, path);

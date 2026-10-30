@@ -48,6 +48,18 @@ impl wp_tui::app::actions::ClipboardReader for FailingClipboardReader {
     }
 }
 
+struct AttachmentClipboardReader;
+
+impl wp_tui::app::actions::ClipboardReader for AttachmentClipboardReader {
+    fn read_paste(&mut self) -> Result<ClipboardPaste, ClipboardError> {
+        Ok(ClipboardPaste::Paths(vec!["photo.png".into()]))
+    }
+
+    fn read_text(&mut self) -> Result<Option<String>, ClipboardError> {
+        panic!("Ctrl+V must use the existing classified clipboard paste")
+    }
+}
+
 #[test]
 fn existing_paths_take_precedence_over_plain_text() {
     let directory = tempdir().unwrap();
@@ -131,6 +143,26 @@ fn control_v_dispatches_the_semantic_paste_action_while_editing() {
     });
 
     assert_eq!(action, ComposerAction::Paste);
+}
+
+#[test]
+fn control_v_still_queues_file_paths_as_attachments_in_composer() {
+    let mut app = TestApp::new();
+    app.focus_pane = wp_tui::app::actions::FocusPane::Conversation;
+    app.conversation_mode = ConversationMode::ComposerEditing;
+    app.composer.insert_text("caption ");
+    app.clipboard_reader = Box::new(AttachmentClipboardReader);
+
+    app.on_terminal_event(terminal_event(Key::ctrl('v')));
+
+    assert_eq!(app.composer.text(), "caption ");
+    assert_eq!(app.composer.pending.len(), 1);
+    assert_eq!(app.composer.pending[0].path.as_ref(), "photo.png");
+    assert!(matches!(
+        app.composer.pending[0].kind,
+        whatsrust::FileKind::Image
+    ));
+    assert_eq!(app.action_notice, None);
 }
 
 #[test]

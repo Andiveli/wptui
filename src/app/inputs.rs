@@ -6,7 +6,6 @@ pub use crate::app::composer_input_mapping::composer_action_for_editing_key;
 pub use crate::app::composer_input_paste::apply_clipboard_paste;
 use crate::app::input_router::{InputRoute, ModalContext, route_context_key, route_modal_key};
 use crate::app::leader_menu::{LeaderMenuContext, build_leader_menu};
-use crate::app::log_toggle::is_toggle_logs_key;
 use crate::app::status_input::status_view_allows;
 use crate::app::terminal_input_translation::translate_terminal_event;
 use crate::input_key::{Key, KeyCode};
@@ -77,9 +76,7 @@ impl App<'_> {
                 return;
             }
 
-            if is_toggle_logs_key(&key) {
-                self.dispatch_action(AppAction::ToggleLogs);
-            } else if self.handle_composer_input(key.clone()) {
+            if self.handle_composer_input(key.clone()) {
             } else if self.file_picker.is_none() && self.handle_status_composer_input(key.clone()) {
             } else if self.shortcut_popup {
                 if matches!(
@@ -250,7 +247,7 @@ impl App<'_> {
 
     pub fn dispatch_action(&mut self, action: AppAction) {
         if self.status_composition == StatusCompositionState::Submitting
-            && !matches!(action, AppAction::Quit | AppAction::ToggleLogs)
+            && !matches!(action, AppAction::Quit)
         {
             return;
         }
@@ -266,7 +263,6 @@ impl App<'_> {
                     | AppAction::CancelStatusComposition
                     | AppAction::DeleteMessage
                     | AppAction::Quit
-                    | AppAction::ToggleLogs
             )
         {
             return;
@@ -365,7 +361,6 @@ impl App<'_> {
             }
             action @ (AppAction::Quit
             | AppAction::Logout
-            | AppAction::ToggleLogs
             | AppAction::ToggleSectionRail
             | AppAction::ToggleChatList
             | AppAction::FocusPane(_)
@@ -385,6 +380,7 @@ impl App<'_> {
             | AppAction::HalfPageDown
             | AppAction::HalfPageUp
             | AppAction::InsertMode
+            | AppAction::StartVimComposer
             | AppAction::CopyMessage
             | AppAction::ReplyMessage
             | AppAction::ReplyPrivately

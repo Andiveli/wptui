@@ -21,16 +21,16 @@ pub(crate) use layout::{
 };
 
 use crate::app::App;
-use crate::app::actions::{ConversationMode, FocusPane, Section, StatusCompositionState};
+use crate::app::actions::{
+    ConversationMode, FocusPane, Section, StatusCompositionState, VimComposerMode,
+};
 use crate::app::events::{ViewerPreviewKey, ViewerPreviewState, ViewerStatus};
 use crate::app::read_receipts::VisibilityPlan;
 use crate::app::runtime_diagnostics::Phase;
 use crate::keybindings::canonical_shortcuts;
 use contacts::{render_chat_filters, render_contacts};
 use message_list::{get_quoted_text, render_messages_with_plan};
-use navigation::{
-    render_logout_placeholder, render_logs, render_section_rail, render_structural_placeholder,
-};
+use navigation::{render_logout_placeholder, render_section_rail, render_structural_placeholder};
 use ratatui::{
     Frame,
     buffer::Buffer,
@@ -77,15 +77,7 @@ pub fn draw_with_plan(
         status_composition: app.status_composition,
         ..Default::default()
     };
-    let content_area = if app.show_logs {
-        let [content_area, logs_area] =
-            Layout::horizontal([Constraint::Percentage(67), Constraint::Percentage(33)])
-                .areas(frame.area());
-        render_logs(frame, logs_area);
-        content_area
-    } else {
-        frame.area()
-    };
+    let content_area = frame.area();
     let (filter_area, body_area) = chat_filter_areas(content_area, show_chat_filter_header(app));
     if let Some(area) = filter_area {
         render_chat_filters(frame, app, area);
@@ -500,6 +492,12 @@ pub fn render_chats_with_plan(
             " Admin-only group "
         } else if app.conversation_mode == ConversationMode::EditingMessage {
             " Edit message (Enter save, Esc cancel) "
+        } else if app.conversation_mode == ConversationMode::ComposerEditing {
+            match app.vim_composer_mode {
+                Some(VimComposerMode::Normal) => " Vim Normal (i insert, Esc exit) ",
+                Some(VimComposerMode::Insert) => " Vim Insert (Esc normal) ",
+                None => " Message input ",
+            }
         } else {
             " Message input "
         };

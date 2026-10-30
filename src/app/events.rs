@@ -156,15 +156,24 @@ pub(crate) enum MediaRenderEffect {
 #[derive(Default)]
 pub struct MediaRenderPlan {
     effects: Vec<MediaRenderEffect>,
+    visible_stickers: Vec<Arc<str>>,
 }
 
 impl MediaRenderPlan {
     pub fn is_empty(&self) -> bool {
-        self.effects.is_empty()
+        self.effects.is_empty() && self.visible_stickers.is_empty()
     }
 
     pub(crate) fn append(&mut self, effect: MediaRenderEffect) {
         self.effects.push(effect);
+    }
+
+    pub(crate) fn record_visible_sticker(&mut self, path: Arc<str>) {
+        self.visible_stickers.push(path);
+    }
+
+    pub(crate) fn visible_stickers(&self) -> &[Arc<str>] {
+        &self.visible_stickers
     }
 
     pub(crate) fn into_effects(self) -> Vec<MediaRenderEffect> {
@@ -196,6 +205,11 @@ pub enum AppEvent {
     DownloadFileDone(wr::MessageId, FileMeta),
     LoadFilePreview(wr::MessageId),
     SetFilePreview(wr::MessageId, Arc<str>, StatefulProtocol),
+    SetStickerPreview(
+        wr::MessageId,
+        Arc<str>,
+        crate::app::sticker_animation::StickerPlayback,
+    ),
     LoadViewerPreview(ViewerPreviewKey),
     SetViewerPreview(ViewerPreviewKey, Option<StatefulProtocol>),
     SetFileState(wr::MessageId, FileMeta),
@@ -234,6 +248,7 @@ impl AppEvent {
             | Self::DownloadFileDone(_, _)
             | Self::LoadFilePreview(_)
             | Self::SetFilePreview(_, _, _)
+            | Self::SetStickerPreview(_, _, _)
             | Self::LoadViewerPreview(_)
             | Self::SetViewerPreview(_, _)
             | Self::SetFileState(_, _)
@@ -326,6 +341,11 @@ impl fmt::Debug for AppEvent {
             AppEvent::SetFilePreview(message_id, path, _) => f
                 .debug_tuple("SetFilePreview")
                 .field(message_id)
+                .field(path)
+                .finish(),
+            AppEvent::SetStickerPreview(id, path, _) => f
+                .debug_tuple("SetStickerPreview")
+                .field(id)
                 .field(path)
                 .finish(),
             AppEvent::LoadViewerPreview(key) => {

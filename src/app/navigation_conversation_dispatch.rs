@@ -1,5 +1,5 @@
 use crate::app::actions::{
-    AppAction, ConversationMode, FocusPane, Section, StatusCompositionState,
+    AppAction, ConversationMode, FocusPane, Section, StatusCompositionState, VimComposerMode,
 };
 use crate::app::{App, ChatFilter};
 
@@ -16,6 +16,18 @@ impl App<'_> {
             AppAction::JumpBottom => self.jump_bottom(),
             AppAction::HalfPageDown => self.half_page_down(),
             AppAction::HalfPageUp => self.half_page_up(),
+            AppAction::StartVimComposer => {
+                if self.focus_pane == FocusPane::Conversation
+                    && matches!(self.selected_section, Section::Chats | Section::Communities)
+                    && self.conversation_mode == ConversationMode::MessageNavigation
+                    && self.open_chat().is_some()
+                    && !self.composer_blocked()
+                {
+                    self.composer.clear_vim_word_prefix();
+                    self.conversation_mode = ConversationMode::ComposerEditing;
+                    self.vim_composer_mode = Some(VimComposerMode::Normal);
+                }
+            }
             AppAction::InsertMode => {
                 if self.focus_pane == FocusPane::Conversation && !self.composer_blocked() {
                     self.conversation_mode = ConversationMode::ComposerEditing;
@@ -146,7 +158,6 @@ impl App<'_> {
             AppAction::Composer(action) => self.dispatch_composer_action(action),
             action @ (AppAction::Quit
             | AppAction::Logout
-            | AppAction::ToggleLogs
             | AppAction::ToggleSectionRail
             | AppAction::ToggleChatList
             | AppAction::FocusPane(_)
@@ -220,8 +231,8 @@ mod tests {
         let mut app = TestApp::new();
 
         assert_eq!(
-            app.dispatch_navigation_conversation_action(AppAction::ToggleLogs),
-            Err(AppAction::ToggleLogs)
+            app.dispatch_navigation_conversation_action(AppAction::Logout),
+            Err(AppAction::Logout)
         );
     }
 }

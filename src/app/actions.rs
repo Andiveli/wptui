@@ -9,7 +9,6 @@ pub const STATUS_REACTION: &str = "💚";
 pub enum AppAction {
     Quit,
     Logout,
-    ToggleLogs,
     ToggleSectionRail,
     ToggleChatList,
     FocusPane(FocusPane),
@@ -18,6 +17,7 @@ pub enum AppAction {
     CancelStatusComposition,
     ToggleShortcutPopup,
     ToggleComposerDirection,
+    StartVimComposer,
     PlannedLeaderAction(&'static str),
     FocusNext,
     FocusPrevious,
@@ -126,6 +126,14 @@ pub trait ClipboardReader {
     fn read_paste(
         &mut self,
     ) -> Result<crate::clipboard::ClipboardPaste, crate::clipboard::ClipboardError>;
+
+    fn read_text(&mut self) -> Result<Option<String>, crate::clipboard::ClipboardError> {
+        match self.read_paste()? {
+            crate::clipboard::ClipboardPaste::Text(text) => Ok(Some(text)),
+            crate::clipboard::ClipboardPaste::Paths(_)
+            | crate::clipboard::ClipboardPaste::Png(_) => Ok(None),
+        }
+    }
 }
 
 pub struct SystemClipboardReader(pub arboard::Clipboard);
@@ -135,6 +143,13 @@ impl ClipboardReader for SystemClipboardReader {
         &mut self,
     ) -> Result<crate::clipboard::ClipboardPaste, crate::clipboard::ClipboardError> {
         crate::clipboard::read_paste(&mut self.0)
+    }
+
+    fn read_text(&mut self) -> Result<Option<String>, crate::clipboard::ClipboardError> {
+        self.0
+            .get_text()
+            .map(Some)
+            .map_err(|_| crate::clipboard::ClipboardError::ClipboardUnavailable)
     }
 }
 
@@ -241,6 +256,12 @@ pub enum ConversationMode {
     MessageNavigation,
     ComposerEditing,
     EditingMessage,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VimComposerMode {
+    Normal,
+    Insert,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -725,8 +725,6 @@ fn submitting_rejects_chat_actions_but_preserves_global_controls() {
     app.dispatch_action(AppAction::ReplyMessage);
     assert!(app.message_menu.is_none());
     assert_eq!(app.selected_section, Section::Status);
-    app.dispatch_action(AppAction::ToggleLogs);
-    assert!(app.show_logs);
     app.dispatch_action(AppAction::Quit);
     assert!(app.should_quit);
 }
@@ -830,11 +828,6 @@ fn navigating_status_keeps_global_shortcuts() {
     app.selected_section = Section::Status;
     app.dispatch_action(AppAction::StartStatusComposition);
     app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
-    app.on_terminal_event(Event::Key(KeyEvent::new(
-        KeyCode::Char('l'),
-        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-    )));
-    assert!(app.show_logs);
     app.on_terminal_event(Event::Key(KeyEvent::new(
         KeyCode::Char('q'),
         KeyModifiers::CONTROL,

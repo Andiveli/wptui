@@ -1,12 +1,27 @@
 use crate::input_key::KeyCode;
 
 use crate::app::App;
-use crate::app::actions::{AppAction, ComposerAction, ConversationMode, FocusPane, Section};
+use crate::app::actions::{
+    AppAction, ComposerAction, ConversationMode, FocusPane, Section, VimComposerMode,
+};
 use crate::app::composer_input_mapping::composer_action_for_editing_key;
 use crate::app::composer_input_paste::apply_clipboard_paste;
 use crate::app::runtime_diagnostics::Phase;
 use crate::input_key::Key;
 use whatsrust as wr;
+
+fn vim_plain_character(key: &Key) -> Option<char> {
+    let KeyCode::Char(character) = key.code else {
+        return None;
+    };
+    if *key == Key::k(KeyCode::Char(character))
+        || (character.is_ascii_uppercase() && *key == Key::c(character))
+    {
+        Some(character)
+    } else {
+        None
+    }
+}
 
 impl App<'_> {
     pub(crate) fn set_composer_viewport_width(&mut self, width: u16) {
@@ -27,6 +42,63 @@ impl App<'_> {
             return false;
         }
 
+        if self.conversation_mode == ConversationMode::ComposerEditing
+            && self.vim_composer_mode == Some(VimComposerMode::Normal)
+        {
+            if key == Key::k(KeyCode::Esc) {
+                self.composer.clear_vim_word_prefix();
+                self.composer.cancel_mention_picker();
+                self.vim_composer_mode = None;
+                self.conversation_mode = ConversationMode::MessageNavigation;
+            } else if self.composer.vim_yank_pending() {
+                if let Some(character) = vim_plain_character(&key) {
+                    if let Some(text) = self.composer.vim_yank_key(character) {
+                        self.copy_vim_composer_text(text);
+                    }
+                } else {
+                    self.composer.clear_vim_word_prefix();
+                }
+            } else if self.composer.vim_word_prefix_pending() {
+                if let Some(character) = vim_plain_character(&key) {
+                    self.composer.vim_word_key(character);
+                } else {
+                    self.composer.clear_vim_word_prefix();
+                }
+            } else if key == Key::c('a') && !self.composer_blocked() {
+                self.composer.vim_append();
+                self.vim_composer_mode = Some(VimComposerMode::Insert);
+            } else if key == Key::c('i') && !self.composer_blocked() {
+                self.vim_composer_mode = Some(VimComposerMode::Insert);
+            } else if let Some(direction) = match &key {
+                key if *key == Key::c('h') => Some(KeyCode::Left),
+                key if *key == Key::c('j') => Some(KeyCode::Down),
+                key if *key == Key::c('k') => Some(KeyCode::Up),
+                key if *key == Key::c('l') => Some(KeyCode::Right),
+                _ => None,
+            } {
+                self.dispatch_composer_action(ComposerAction::Edit(Key::k(direction)));
+            } else if let Some(character) = vim_plain_character(&key) {
+                if !self.composer_blocked() {
+                    if character == 'y' {
+                        self.composer.vim_yank_key(character);
+                    } else if character == 'p' {
+                        self.paste_vim_composer_text();
+                    } else {
+                        self.composer.vim_word_key(character);
+                    }
+                }
+            }
+            return true;
+        }
+        if self.conversation_mode == ConversationMode::ComposerEditing
+            && self.vim_composer_mode == Some(VimComposerMode::Insert)
+            && key == Key::k(KeyCode::Esc)
+            && !self.composer.mention_picker_active()
+        {
+            self.vim_composer_mode = Some(VimComposerMode::Normal);
+            return true;
+        }
+
         if key == Key::k(KeyCode::Esc) && !self.composer.mention_picker_active() {
             if self.conversation_mode == ConversationMode::EditingMessage {
                 self.cancel_message_edit();
@@ -34,6 +106,7 @@ impl App<'_> {
                 self.composer.apply(ComposerAction::CancelReply);
                 self.composer.pending.clear();
                 self.conversation_mode = ConversationMode::MessageNavigation;
+                self.vim_composer_mode = None;
             }
         } else if key == Key::ctrl('o') {
             self.dispatch_action(AppAction::AttachFile);
@@ -50,6 +123,22 @@ impl App<'_> {
         }
 
         true
+    }
+
+    fn copy_vim_composer_text(&mut self, text: String) {
+        self.action_notice = Some(if self.clipboard_writer.write_text(&text).is_ok() {
+            crate::app::actions::ActionNotice::CopiedText(text)
+        } else {
+            crate::app::actions::ActionNotice::Unavailable("Could not copy composer text".into())
+        });
+    }
+
+    fn paste_vim_composer_text(&mut self) {
+        match self.clipboard_reader.read_text() {
+            Ok(Some(text)) => self.composer.insert_text(&text),
+            Ok(None) => self.unavailable("Clipboard has no text"),
+            Err(error) => self.unavailable(&format!("Could not paste clipboard text: {error:?}")),
+        }
     }
 
     pub(crate) fn dispatch_composer_action(&mut self, action: ComposerAction) {

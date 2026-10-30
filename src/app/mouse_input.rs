@@ -177,6 +177,9 @@ impl App<'_> {
                         self.chat_filter = filter;
                         self.update_filtered_chats(selected);
                         self.focus_pane = FocusPane::ChatList;
+                        if self.vim_composer_mode.take().is_some() {
+                            self.conversation_mode = ConversationMode::MessageNavigation;
+                        }
                     }
                     return;
                 }
@@ -192,6 +195,9 @@ impl App<'_> {
                         self.selected_section = section;
                         self.rail_on_logout = false;
                         self.dispatch_action(AppAction::FocusPane(FocusPane::ChatList));
+                        if self.vim_composer_mode.take().is_some() {
+                            self.conversation_mode = ConversationMode::MessageNavigation;
+                        }
                     } else {
                         self.rail_on_logout = true;
                         self.begin_logout_confirmation();
@@ -222,6 +228,9 @@ impl App<'_> {
                         }
                     };
                     if still_painted {
+                        if self.vim_composer_mode.take().is_some() {
+                            self.conversation_mode = ConversationMode::MessageNavigation;
+                        }
                         match target {
                             ContactTarget::Status(_) => self.status_selection.select(Some(index)),
                             ContactTarget::Chat(_) | ContactTarget::Community(_) => {
@@ -245,6 +254,7 @@ impl App<'_> {
                     self.focus_pane = FocusPane::Conversation;
                     if self.conversation_mode == ConversationMode::ComposerEditing {
                         self.conversation_mode = ConversationMode::MessageNavigation;
+                        self.vim_composer_mode = None;
                     }
                     let mut activated = false;
                     if !self.selected_message_is_deleted() {

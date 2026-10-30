@@ -61,9 +61,9 @@ body:
       label: Terminal emulator
       description: e.g. kitty, alacritty, foot, gnome-terminal, tmux over one of those.
   - type: checkboxes
-    id: logs
+    id: crash_report
     attributes:
-      label: Logs
-      description: The app has a log view toggle with `Ctrl+Shift+L`. If the bug reproduces, please capture it with logs open and include the relevant output.
+      label: Crash report
+      description: If the app panicked, check the generated crash report for sensitive information before attaching it.
       options:
-        - label: I reproduced the bug with logs visible (`Ctrl+Shift+L`) and will attach the relevant output
+        - label: I checked the panic report for sensitive information before attaching it (if applicable)
