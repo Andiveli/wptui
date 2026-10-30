@@ -151,6 +151,20 @@ fn matches_are_scoped_to_the_open_chat_and_navigated_without_changing_jk() {
     screen(&mut app);
     assert_eq!(selected_id(&app), before);
     assert!(!screen(&mut app).contains("/needle"));
+    let painted = buffer(&mut app);
+    let row = (0..20)
+        .find(|&y| {
+            (0..80)
+                .map(|x| painted[(x, y)].symbol())
+                .collect::<String>()
+                .contains("needle in Bob")
+        })
+        .expect("other chat message must be painted");
+    let line = (0..80)
+        .map(|x| painted[(x, row)].symbol())
+        .collect::<String>();
+    let x = line.find("needle in Bob").unwrap() as u16;
+    assert_eq!(painted[(x, row)].bg, Color::Reset);
 }
 
 #[test]
