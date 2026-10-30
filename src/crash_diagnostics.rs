@@ -19,19 +19,14 @@ struct State {
 
 static STATE: OnceLock<Arc<State>> = OnceLock::new();
 
-/// Installs the persistent panic reporter. The report is truncated at the
-/// start of every run and only written when a panic occurs.
+/// Installs the panic reporter without touching an existing report. A new
+/// report is created or replaces the previous one only if a panic occurs.
 pub fn install(path: PathBuf) {
     let state = Arc::new(State {
         path,
         breadcrumbs: Mutex::new(VecDeque::with_capacity(MAX_BREADCRUMBS)),
     });
     let hook_state = Arc::clone(&state);
-    let _ = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(&hook_state.path);
     let previous = panic::take_hook();
     let _ = STATE.set(state);
     panic::set_hook(Box::new(move |info| {

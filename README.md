@@ -212,7 +212,6 @@ or editor state.
 | Action | Key |
 |---|---|
 | Quit | `Ctrl+Q` |
-| Toggle logs | `Ctrl+Shift+L` |
 | Toggle section rail | `Space`, then `1` |
 | Toggle chat list | `Space`, then `2` |
 | Focus previous / next pane | `h` / `l` or `←` / `→` |
@@ -304,7 +303,7 @@ cd whatsrust/lib
 go test ./...
 ```
 
-Continuous integration runs format checks, builds, and both test suites on pushes to `main` and pull requests. For on-demand feature binaries, start a `preview/**` branch from `main`; its pushes run preview checks and upload a Linux binary. To build the integrated `main` on demand, manually dispatch `release.yml` on `main`: it uploads artifacts without publishing a release. Tagged releases remain a separate decision.
+Continuous integration runs format checks, Rust and Go builds/tests, and installer archive tests on both Linux and macOS for pushes to `main` and pull requests. Nix build and dev-shell checks run on Linux. For on-demand feature binaries, start a `preview/**` branch from `main`; its pushes run preview checks and upload a Linux binary. To build the integrated `main` on demand, manually dispatch `release.yml` on `main`: it uploads artifacts without publishing a release. Tagged releases remain a separate decision.
 
 ## Disclaimer
 

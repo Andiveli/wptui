@@ -163,7 +163,7 @@ fn shift_h_no_longer_binds_to_message_history() {
 }
 
 #[test]
-fn keymap_resolves_crossterm_ctrl_shift_l_representations() {
+fn keymap_does_not_bind_crossterm_ctrl_shift_l_representations() {
     for character in ['L', 'l'] {
         let event_key = Key {
             code: KeyCode::Char(character),
@@ -172,7 +172,7 @@ fn keymap_resolves_crossterm_ctrl_shift_l_representations() {
 
         assert_eq!(
             resolve_sequence(&[event_key]),
-            SequenceResolution::Complete(AppAction::ToggleLogs)
+            SequenceResolution::Cancelled
         );
     }
     assert_eq!(
