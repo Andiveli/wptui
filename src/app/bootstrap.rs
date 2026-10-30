@@ -242,6 +242,10 @@ fn with_dirs_and_picker_and_ports(
             tx.clone(),
             Box::new(crate::text_send::WhatsAppTextSendPort),
         ),
+        phone_lookup_worker: crate::app::phone_lookup_worker::Worker::new(
+            tx.clone(),
+            Box::new(crate::phone_lookup::WhatsRustPhoneLookup),
+        ),
         media_download_worker: Some(crate::app::download_worker::spawn_with_port(
             data_dir.join("media"),
             tx.clone(),
@@ -262,6 +266,8 @@ fn with_dirs_and_picker_and_ports(
         kh: KeybindHandler::default(),
         contact_search_active: false,
         contact_search: TextInput::new(),
+        pending_phone_lookup: None,
+        next_phone_lookup_generation: 0,
         chat_filter: super::ChatFilter::All,
         filtered_chats: Vec::new(),
         show_logs: false,

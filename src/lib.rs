@@ -19,6 +19,7 @@ pub mod media;
 pub mod media_download;
 pub mod message_mutation;
 pub mod message_push_name;
+pub mod phone_lookup;
 pub mod presence_diagnostics;
 pub mod presence_subscription;
 pub mod read_receipt_send;

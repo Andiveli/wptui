@@ -31,8 +31,7 @@ https://github.com/user-attachments/assets/f08d20f9-6051-45e2-a1d2-b0a512242e9c
 - Contextual, Vim-inspired keybindings
 - Andiveli welcome mark in the chat panel before any conversation is opened
 
-The Chats list has **All**, **Unread**, **Groups**, and **Archived** views. Search in **All** also finds saved contacts without chat history; entering an unsaved phone number is not supported. All,
-Unread, and Groups exclude archived chats; Archived shows only archived chats.
+The Chats list has **All**, **Unread**, **Groups**, and **Archived** views. Search in **All** also finds saved contacts without chat history. To start a chat with an unsaved number, type `/` in the Chats list, enter `+` followed by 7–15 digits (country code included), and press `Enter`. The app checks whether the number is registered on WhatsApp before opening an empty conversation; it never sends a message automatically. All, Unread, and Groups exclude archived chats; Archived shows only archived chats.
 Filter badges count chats with unread messages (each chat once), not individual
 messages. All, Unread, and Groups count unarchived chats; Archived counts archived
 chats. Zero counts are hidden.
@@ -219,7 +218,7 @@ or editor state.
 | Select previous / next item | `k` / `j` or `↑` / `↓` |
 | Jump to first / last item | `g g` / `G` |
 | Move half a page | `Ctrl+U` / `Ctrl+D` |
-| Search chats and saved contacts to start a conversation | `/` in the Chats list (All filter); type a name, then press `Enter` |
+| Search chats or start a conversation | `/` in the Chats list (All filter); type a name or `+` followed by 7–15 digits, then press `Enter` |
 | Cycle chat filters (All, Unread, Groups, Archived) | `Tab` in the Chats list |
 
 ### Messages

@@ -64,8 +64,9 @@ func lookupPhone(ctx context.Context, phone string, query phoneLookupQuery) phon
 		if response.PhoneNumber.ToNonAD() == requested || response.JID.ToNonAD() == requested {
 			return phoneLookupResult{status: phoneLookupFound, jid: requested.String()}
 		}
+		return phoneLookupResult{status: phoneLookupFailed}
 	}
-	return phoneLookupResult{status: phoneLookupNotRegistered}
+	return phoneLookupResult{status: phoneLookupFailed}
 }
 
 //export C_LookupPhone

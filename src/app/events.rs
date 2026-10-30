@@ -183,6 +183,11 @@ impl MediaRenderPlan {
 
 pub enum AppEvent {
     UpdateAvailable(String),
+    PhoneLookupFinished {
+        generation: u64,
+        phone: String,
+        result: Result<Option<wr::JID>, wr::PhoneLookupError>,
+    },
     OutboundSendSucceeded {
         local_send_id: u64,
         message: wr::Message,
@@ -224,6 +229,7 @@ pub enum AppEvent {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AppEventFamily {
     Updater,
+    PhoneLookup,
     Send,
     ReadReceipt,
     MediaViewer,
@@ -234,6 +240,7 @@ impl AppEvent {
     pub const fn family(&self) -> AppEventFamily {
         match self {
             Self::UpdateAvailable(_) => AppEventFamily::Updater,
+            Self::PhoneLookupFinished { .. } => AppEventFamily::PhoneLookup,
             Self::OutboundSendSucceeded { .. }
             | Self::OutboundSendFailed { .. }
             | Self::StatusSendSucceeded
@@ -280,6 +287,20 @@ impl fmt::Debug for AppEvent {
             AppEvent::UpdateAvailable(version) => {
                 f.debug_tuple("UpdateAvailable").field(version).finish()
             }
+            AppEvent::PhoneLookupFinished {
+                generation, result, ..
+            } => f
+                .debug_struct("PhoneLookupFinished")
+                .field("generation", generation)
+                .field(
+                    "result",
+                    &match result {
+                        Ok(Some(_)) => "registered",
+                        Ok(None) => "not registered",
+                        Err(_) => "error",
+                    },
+                )
+                .finish(),
             AppEvent::OutboundSendSucceeded {
                 local_send_id,
                 message,
@@ -392,6 +413,15 @@ mod tests {
         assert_eq!(
             AppEvent::UpdateAvailable("1.2.3".to_owned()).family(),
             AppEventFamily::Updater
+        );
+        assert_eq!(
+            AppEvent::PhoneLookupFinished {
+                generation: 1,
+                phone: "+15551234567".into(),
+                result: Ok(None),
+            }
+            .family(),
+            AppEventFamily::PhoneLookup
         );
         assert_eq!(
             AppEvent::OutboundSendFailed { local_send_id: 1 }.family(),

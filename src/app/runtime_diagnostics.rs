@@ -39,6 +39,7 @@ const fn app_event_category(family: AppEventFamily) -> usize {
     match family {
         AppEventFamily::Updater | AppEventFamily::MediaViewer | AppEventFamily::Avatar => 3,
         AppEventFamily::Send | AppEventFamily::ReadReceipt => 5,
+        AppEventFamily::PhoneLookup => 7,
     }
 }
 
@@ -684,6 +685,7 @@ mod tests {
         for family in [AppEventFamily::Send, AppEventFamily::ReadReceipt] {
             assert_eq!(app_event_category(family), 5);
         }
+        assert_eq!(app_event_category(AppEventFamily::PhoneLookup), 7);
     }
 
     #[test]
