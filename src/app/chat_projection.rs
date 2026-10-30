@@ -592,10 +592,7 @@ impl App<'_> {
                     .filter_map(|jid| {
                         let name = self.searchable_saved_contact_name(jid)?;
                         if !name.to_lowercase().contains(&query)
-                            || self.verified_phones.iter().any(|(lid, phone)| {
-                                self.chats.contains_key(lid)
-                                    && jid.0.as_ref() == format!("{phone}@s.whatsapp.net")
-                            })
+                            || self.has_chat_for_contact_alias(jid)
                         {
                             return None;
                         }

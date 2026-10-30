@@ -117,6 +117,22 @@ impl App<'_> {
             .map(|name| canonical_contact_name(name))
     }
 
+    /// A saved PN may also be represented by an existing LID conversation.
+    /// Prefer that conversation when its fresh saved alias has the same name.
+    pub(crate) fn has_chat_for_contact_alias(&self, jid: &wr::JID) -> bool {
+        let Some(name) = self.saved_display_name(jid) else {
+            return false;
+        };
+        self.chats
+            .keys()
+            .filter(|chat| chat.0.ends_with("@lid"))
+            .any(|chat| {
+                self.verified_phones.get(chat).is_some_and(|phone| {
+                    jid.0.as_ref() == format!("{phone}@s.whatsapp.net")
+                }) || self.saved_display_name(chat).is_some_and(|alias| alias == name)
+            })
+    }
+
     pub fn contact_name(&self, jid: &wr::JID) -> Arc<str> {
         let saved = self.fresh_contact_name(jid);
         self.saved_display_name(jid)
