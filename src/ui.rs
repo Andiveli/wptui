@@ -489,11 +489,26 @@ pub fn render_chats_with_plan(
         },
     );
 
+    let mut history_area = chat_area;
+    if let Some(search) = &app.conversation_search
+        && app.open_chat.as_ref() == Some(&search.chat)
+        && app.focus_pane == FocusPane::Conversation
+        && app.conversation_mode == ConversationMode::MessageNavigation
+        && !chat_area.is_empty()
+    {
+        let [search_area, remaining] =
+            Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(chat_area);
+        frame.render_widget(
+            Paragraph::new(format!("/{}", search.query)).fg(ratatui::style::Color::Yellow),
+            search_area,
+        );
+        history_area = remaining;
+    }
     if app.open_chat().is_none() {
-        render_chat_empty_state(frame, app, chat_area);
+        render_chat_empty_state(frame, app, history_area);
     } else {
         app.record_phase(Phase::MessageListRenderLayout, |app| {
-            render_messages_with_plan(frame, app, media_render_plan, visibility_plan, chat_area)
+            render_messages_with_plan(frame, app, media_render_plan, visibility_plan, history_area)
         });
     }
 

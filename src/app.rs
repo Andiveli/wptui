@@ -31,6 +31,7 @@ pub mod contact_source_port;
 pub mod contextual_actions;
 pub mod contextual_activation;
 pub mod contextual_routing;
+pub(crate) mod conversation_search;
 pub mod dm_resolution_port;
 pub mod download_worker;
 pub mod events;
@@ -276,6 +277,7 @@ pub struct App<'a> {
     pub(crate) composer_viewport_width: u16,
     pub(crate) preferences_path: PathBuf,
     pub message_list_state: MessageListState,
+    pub(crate) conversation_search: Option<conversation_search::ConversationSearch>,
     pub(crate) mouse_hit_map: mouse_input::MouseHitMap,
     pub timeline: unread_messages::Timeline,
     pub metadata: HashMap<wr::MessageId, Metadata>,

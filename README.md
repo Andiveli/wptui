@@ -227,6 +227,7 @@ or editor state.
 | Action | Key |
 |---|---|
 | Start composing | `i` |
+| Search messages in the open chat history | `/` with the conversation focused; `Enter` accepts, `Esc` cancels |
 | Start optional Vim composer (Chats/Communities conversation only) | `Space`, then `v` |
 | Copy selected text | `y` |
 | React | `r` |
