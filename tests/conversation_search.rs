@@ -9,7 +9,11 @@ mod common;
 use common::TestApp;
 
 fn press(app: &mut TestApp, key: KeyCode) {
-    app.on_terminal_event(Event::Key(KeyEvent::new(key, KeyModifiers::NONE)));
+    let modifiers = match key {
+        KeyCode::Char(character) if character.is_ascii_uppercase() => KeyModifiers::SHIFT,
+        _ => KeyModifiers::NONE,
+    };
+    app.on_terminal_event(Event::Key(KeyEvent::new(key, modifiers)));
 }
 
 fn message(chat: &whatsrust::JID, id: &str, timestamp: i64, body: &str) -> whatsrust::Message {
