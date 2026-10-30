@@ -13,6 +13,12 @@ pub(super) type CEventCallback = extern "C" fn(*const CEvent, *mut c_void);
 pub(super) type CPresenceCallback = extern "C" fn(CJID, bool, i64, *mut c_void);
 
 #[repr(C)]
+pub(super) struct CPhoneLookupResult {
+    pub(super) status: u8,
+    pub(super) jid: *mut c_char,
+}
+
+#[repr(C)]
 pub(super) struct CForwardResult {
     pub(super) succeeded: u32,
     pub(super) failed: u32,
@@ -62,6 +68,8 @@ unsafe extern "C" {
     pub(super) fn C_FreeGroupParticipants(result: CGroupParticipantsResult);
     pub(super) fn C_ResolveDmChatId(jid: CJID) -> *mut c_char;
     pub(super) fn C_FreeResolveDmChatId(value: *mut c_char);
+    pub(super) fn C_LookupPhone(phone: *const c_char) -> CPhoneLookupResult;
+    pub(super) fn C_FreeLookupPhoneResult(result: CPhoneLookupResult);
     pub(super) fn C_Disconnect();
     pub(super) fn C_Logout() -> u8;
     pub(super) fn C_DrainRawPresenceDiagnostics() -> *mut c_char;
