@@ -27,7 +27,11 @@ impl App<'_> {
                     .as_mut()
                     .and_then(|viewer| viewer.save_as.as_mut())
                 {
-                    picker.move_selection(if action == AppAction::ViewerSaveNext { 1 } else { -1 });
+                    picker.move_selection(if action == AppAction::ViewerSaveNext {
+                        1
+                    } else {
+                        -1
+                    });
                 }
             }
             AppAction::ViewerSaveParent => self.navigate_save_directory(true),

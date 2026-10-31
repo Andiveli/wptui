@@ -493,7 +493,13 @@ mod tests {
                 KeyModifiers::NONE,
             )));
         }
-        let picker = app.attachment_viewer.as_ref().unwrap().save_as.as_ref().unwrap();
+        let picker = app
+            .attachment_viewer
+            .as_ref()
+            .unwrap()
+            .save_as
+            .as_ref()
+            .unwrap();
         assert_eq!(picker.filename, "image.jpgx");
         assert!(picker.editing_name);
         assert_eq!(app.attachment_viewer.as_ref().unwrap().index, 0);
@@ -526,7 +532,13 @@ mod tests {
         for code in [TerminalKeyCode::Char('s'), TerminalKeyCode::Down] {
             app.on_terminal_event(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)));
         }
-        let picker = app.attachment_viewer.as_ref().unwrap().save_as.as_ref().unwrap();
+        let picker = app
+            .attachment_viewer
+            .as_ref()
+            .unwrap()
+            .save_as
+            .as_ref()
+            .unwrap();
         assert_eq!(picker.filename, "image.jpg");
         assert_eq!(app.attachment_viewer.as_ref().unwrap().index, 0);
         app.on_terminal_event(Event::Key(KeyEvent::new(

@@ -112,8 +112,10 @@ impl App<'_> {
             return self.unavailable("Edit the filename before confirming save");
         }
         let filename = Path::new(&picker.filename);
-        if !matches!(filename.components().collect::<Vec<_>>().as_slice(), [Component::Normal(_)])
-            || picker.filename.contains('/')
+        if !matches!(
+            filename.components().collect::<Vec<_>>().as_slice(),
+            [Component::Normal(_)]
+        ) || picker.filename.contains('/')
             || picker.filename.contains('\\')
         {
             return self.unavailable("Enter one valid filename (no path separators)");
@@ -276,7 +278,13 @@ mod tests {
     fn save_fixture(app: &mut TestApp, directory: &Path) {
         app.dispatch_action(AppAction::ViewerSaveAs);
         // Start at a fixture directory without changing process-wide cwd.
-        let picker = app.attachment_viewer.as_mut().unwrap().save_as.as_mut().unwrap();
+        let picker = app
+            .attachment_viewer
+            .as_mut()
+            .unwrap()
+            .save_as
+            .as_mut()
+            .unwrap();
         let filename = picker.filename.clone();
         *picker = SaveDirectoryPicker::open(directory.to_path_buf(), filename).unwrap();
     }
@@ -305,18 +313,27 @@ mod tests {
         for index in 0..2 {
             save_fixture(&mut app, destination.path());
             app.dispatch_action(AppAction::ViewerSaveDescend);
-            let target = destination.path().join("nested").join(format!("media{index}.bin"));
+            let target = destination
+                .path()
+                .join("nested")
+                .join(format!("media{index}.bin"));
             app.dispatch_action(AppAction::ViewerSaveConfirm);
             assert!(!target.exists()); // Browsing alone cannot save.
             app.dispatch_action(AppAction::ViewerSaveEditName);
             app.dispatch_action(AppAction::ViewerSaveConfirm);
-            assert_eq!(fs::read(&target).unwrap(), format!("media{index}.bin").as_bytes());
+            assert_eq!(
+                fs::read(&target).unwrap(),
+                format!("media{index}.bin").as_bytes()
+            );
             let viewer = app.attachment_viewer.as_ref().unwrap();
             assert!(viewer.save_as.is_none());
             assert_eq!(viewer.saved_path.as_deref(), target.to_str());
             assert_eq!(
                 app.action_notice,
-                Some(ActionNotice::Unavailable(format!("Media saved to {}", target.display())))
+                Some(ActionNotice::Unavailable(format!(
+                    "Media saved to {}",
+                    target.display()
+                )))
             );
             app.dispatch_action(AppAction::ViewerNext);
             assert!(app.attachment_viewer.as_ref().unwrap().saved_path.is_none());
@@ -344,11 +361,26 @@ mod tests {
         save_fixture(&mut app, destination.path());
         app.dispatch_action(AppAction::ViewerSaveEditName);
         for name in [
-            "", ".", "..", "../escape", "sub/file", "/absolute", "back\\slash", "saved.bin",
+            "",
+            ".",
+            "..",
+            "../escape",
+            "sub/file",
+            "/absolute",
+            "back\\slash",
+            "saved.bin",
         ] {
             // Clear the proposed name using the same public editing actions as the terminal.
-            let length = app.attachment_viewer.as_ref().unwrap()
-                .save_as.as_ref().unwrap().filename.chars().count();
+            let length = app
+                .attachment_viewer
+                .as_ref()
+                .unwrap()
+                .save_as
+                .as_ref()
+                .unwrap()
+                .filename
+                .chars()
+                .count();
             for _ in 0..length {
                 app.dispatch_action(AppAction::ViewerSaveBackspace);
             }
@@ -363,8 +395,16 @@ mod tests {
         }
         for source in ["../outside.bin", "missing.bin"] {
             app.attachment_viewer.as_mut().unwrap().path = source.into();
-            let length = app.attachment_viewer.as_ref().unwrap()
-                .save_as.as_ref().unwrap().filename.chars().count();
+            let length = app
+                .attachment_viewer
+                .as_ref()
+                .unwrap()
+                .save_as
+                .as_ref()
+                .unwrap()
+                .filename
+                .chars()
+                .count();
             for _ in 0..length {
                 app.dispatch_action(AppAction::ViewerSaveBackspace);
             }
@@ -402,7 +442,10 @@ mod tests {
         app.dispatch_action(AppAction::ViewerSaveDescend);
         app.dispatch_action(AppAction::ViewerSaveEditName);
         app.dispatch_action(AppAction::ViewerSaveConfirm);
-        assert_eq!(fs::read(destination.path().join("image.jpg")).unwrap(), b"image");
+        assert_eq!(
+            fs::read(destination.path().join("image.jpg")).unwrap(),
+            b"image"
+        );
     }
 
     #[test]
@@ -422,19 +465,45 @@ mod tests {
             0,
         ));
         save_fixture(&mut app, root.path());
-        app.attachment_viewer.as_mut().unwrap().save_as.as_mut().unwrap()
+        app.attachment_viewer
+            .as_mut()
+            .unwrap()
+            .save_as
+            .as_mut()
+            .unwrap()
             .set_viewport_height(1);
         app.dispatch_action(AppAction::ViewerSaveNext);
         app.dispatch_action(AppAction::ViewerSaveNext);
-        assert_eq!(app.attachment_viewer.as_ref().unwrap().save_as.as_ref().unwrap().offset, 2);
+        assert_eq!(
+            app.attachment_viewer
+                .as_ref()
+                .unwrap()
+                .save_as
+                .as_ref()
+                .unwrap()
+                .offset,
+            2
+        );
         app.dispatch_action(AppAction::ViewerSaveDescend);
         assert_eq!(
-            app.attachment_viewer.as_ref().unwrap().save_as.as_ref().unwrap().directory,
+            app.attachment_viewer
+                .as_ref()
+                .unwrap()
+                .save_as
+                .as_ref()
+                .unwrap()
+                .directory,
             root.path().join("gamma")
         );
         app.dispatch_action(AppAction::ViewerSaveParent);
         assert_eq!(
-            app.attachment_viewer.as_ref().unwrap().save_as.as_ref().unwrap().directory,
+            app.attachment_viewer
+                .as_ref()
+                .unwrap()
+                .save_as
+                .as_ref()
+                .unwrap()
+                .directory,
             root.path()
         );
         app.dispatch_action(AppAction::ViewerSaveCancel);
