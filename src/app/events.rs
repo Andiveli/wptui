@@ -1,5 +1,7 @@
 use core::fmt;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::{fs, io};
 
 use ratatui::crossterm::event::Event;
 
@@ -106,6 +108,91 @@ pub struct ViewerAttachment {
 }
 
 #[derive(Clone, Debug)]
+pub struct SaveDirectoryPicker {
+    pub directory: PathBuf,
+    pub directories: Vec<PathBuf>,
+    pub selected: usize,
+    pub offset: usize,
+    pub viewport_height: usize,
+    pub filename: String,
+    pub editing_name: bool,
+}
+
+impl SaveDirectoryPicker {
+    pub fn open(directory: PathBuf, filename: String) -> io::Result<Self> {
+        let mut picker = Self {
+            directory,
+            directories: Vec::new(),
+            selected: 0,
+            offset: 0,
+            viewport_height: 1,
+            filename,
+            editing_name: false,
+        };
+        picker.reload()?;
+        Ok(picker)
+    }
+
+    fn reload(&mut self) -> io::Result<()> {
+        let mut directories = fs::read_dir(&self.directory)?
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir())
+            .collect::<Vec<_>>();
+        directories.sort();
+        self.directories = directories;
+        self.selected = 0;
+        self.offset = 0;
+        Ok(())
+    }
+
+    pub fn move_selection(&mut self, delta: isize) {
+        self.selected = self
+            .selected
+            .saturating_add_signed(delta)
+            .min(self.directories.len().saturating_sub(1));
+        self.keep_visible();
+    }
+
+    pub fn set_viewport_height(&mut self, height: usize) {
+        self.viewport_height = height.max(1);
+        self.keep_visible();
+    }
+
+    fn keep_visible(&mut self) {
+        if self.selected < self.offset {
+            self.offset = self.selected;
+        } else if self.selected >= self.offset + self.viewport_height {
+            self.offset = self.selected + 1 - self.viewport_height;
+        }
+    }
+
+    pub fn descend(&mut self) -> io::Result<()> {
+        if let Some(path) = self.directories.get(self.selected).cloned() {
+            self.change_directory(&path)?;
+        }
+        Ok(())
+    }
+
+    pub fn parent(&mut self) -> io::Result<()> {
+        if let Some(path) = self.directory.parent().map(Path::to_path_buf) {
+            self.change_directory(&path)?;
+        }
+        Ok(())
+    }
+
+    fn change_directory(&mut self, path: &Path) -> io::Result<()> {
+        let previous = self.directory.clone();
+        self.directory = path.to_path_buf();
+        if let Err(error) = self.reload() {
+            self.directory = previous;
+            return Err(error);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct AttachmentViewerState {
     pub message_id: wr::MessageId,
     pub index: usize,
@@ -114,7 +201,7 @@ pub struct AttachmentViewerState {
     pub path: Arc<str>,
     pub status: ViewerStatus,
     pub attachments: Vec<ViewerAttachment>,
-    pub save_as: Option<String>,
+    pub save_as: Option<SaveDirectoryPicker>,
     pub saved_path: Option<String>,
 }
 

@@ -286,11 +286,12 @@ removes the local row, but does not itself prove removal from every recipient's 
 | Vim composer Insert | Return to Normal | `Esc` |
 | Reaction picker | Move / confirm | `j`/`k` or Up/Down arrows / `Enter` |
 | Media viewer | Previous / next | `h`/`l` or arrows |
-| Media viewer | Save image or video as a file | `s`, edit path, `Enter` (or `Esc` to cancel) |
+| Media viewer | Save image or video as a file | `s` opens folder picker; `j`/`k` or Up/Down selects, `h`/Left goes up, `l`/Right opens folder, `Enter` edits filename, `Enter` saves; `Esc` cancels |
 
-Save As proposes an absolute path in the app's current working directory and shows that path in
-the viewer after saving. You can edit it to choose another location; relative paths also use the
-current working directory. Existing files are never overwritten; choose another name if one exists.
+Save As starts in the app's current working directory. Browse folders in the viewer, then edit the
+separate proposed filename and confirm. The filename must be a single component, not a path.
+The viewer shows the saved destination after success. Existing files are never overwritten;
+choose another name if one exists.
 
 The optional Vim composer starts in Normal mode; its border title shows Normal or Insert.
 `i` enters Insert at the current cursor; `a` advances past the current grapheme within the

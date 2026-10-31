@@ -1,9 +1,11 @@
-use std::path::Path;
+use std::path::{Component, Path};
 use std::{fs, io};
 
 use super::App;
 use crate::app::actions::{ActionNotice, Section};
-use crate::app::events::{AttachmentViewerState, ViewerAttachment, ViewerStatus};
+use crate::app::events::{
+    AttachmentViewerState, SaveDirectoryPicker, ViewerAttachment, ViewerStatus,
+};
 use whatsrust as wr;
 
 impl App<'_> {
@@ -87,12 +89,13 @@ impl App<'_> {
         let Ok(directory) = std::env::current_dir() else {
             return self.unavailable("Could not determine save directory");
         };
-        let destination = directory.join(name);
-        let Some(destination) = destination.to_str() else {
-            return self.unavailable("Save directory is not valid UTF-8");
-        };
-        viewer.saved_path = None;
-        viewer.save_as = Some(destination.to_owned());
+        match SaveDirectoryPicker::open(directory, name) {
+            Ok(picker) => {
+                viewer.saved_path = None;
+                viewer.save_as = Some(picker);
+            }
+            Err(error) => self.unavailable(&format!("Could not open save directory: {error}")),
+        }
     }
 
     pub(crate) fn confirm_viewer_save(&mut self) {
@@ -102,28 +105,27 @@ impl App<'_> {
         if viewer.status != ViewerStatus::Ready {
             return self.unavailable("Media is not downloaded");
         }
-        let Some(destination) = viewer.save_as.as_ref() else {
+        let Some(picker) = viewer.save_as.as_ref() else {
             return self.unavailable("Save as is not active");
         };
-        if destination.trim().is_empty() {
-            return self.unavailable("Enter a destination filename");
+        if !picker.editing_name {
+            return self.unavailable("Edit the filename before confirming save");
         }
+        let filename = Path::new(&picker.filename);
+        if !matches!(filename.components().collect::<Vec<_>>().as_slice(), [Component::Normal(_)])
+            || picker.filename.contains('/')
+            || picker.filename.contains('\\')
+        {
+            return self.unavailable("Enter one valid filename (no path separators)");
+        }
+        let target = picker.directory.join(filename);
         let result = (|| -> io::Result<std::path::PathBuf> {
             let root = crate::media::MediaRoot::new(&self.media_path)
                 .map_err(|error| io::Error::other(format!("Invalid media root: {error:?}")))?;
             let source = root
                 .media_file(Path::new(viewer.path.as_ref()))
                 .map_err(|error| io::Error::other(format!("Invalid source: {error:?}")))?;
-            let target = Path::new(destination);
-            let target = if target.is_absolute() {
-                target.to_path_buf()
-            } else {
-                std::env::current_dir()?.join(target)
-            };
-            let parent = target
-                .parent()
-                .filter(|path| !path.as_os_str().is_empty())
-                .unwrap_or(Path::new("."));
+            let parent = &picker.directory;
             let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
             let mut input = fs::File::open(source)?;
             io::copy(&mut input, &mut temporary)?;
@@ -143,6 +145,23 @@ impl App<'_> {
                     Some(ActionNotice::Unavailable(format!("Media saved to {path}")));
             }
             Err(error) => self.unavailable(&format!("Could not save media: {error}")),
+        }
+    }
+
+    pub(crate) fn navigate_save_directory(&mut self, parent: bool) {
+        let result = self
+            .attachment_viewer
+            .as_mut()
+            .and_then(|viewer| viewer.save_as.as_mut())
+            .map(|picker| {
+                if parent {
+                    picker.parent()
+                } else {
+                    picker.descend()
+                }
+            });
+        if let Some(Err(error)) = result {
+            self.unavailable(&format!("Could not open directory: {error}"));
         }
     }
 
@@ -230,6 +249,7 @@ impl App<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::actions::AppAction;
     use crate::app::test_support::TestApp;
 
     fn media_message(id: &str, kind: wr::FileKind) -> wr::Message {
@@ -253,11 +273,20 @@ mod tests {
         }
     }
 
+    fn save_fixture(app: &mut TestApp, directory: &Path) {
+        app.dispatch_action(AppAction::ViewerSaveAs);
+        // Start at a fixture directory without changing process-wide cwd.
+        let picker = app.attachment_viewer.as_mut().unwrap().save_as.as_mut().unwrap();
+        let filename = picker.filename.clone();
+        *picker = SaveDirectoryPicker::open(directory.to_path_buf(), filename).unwrap();
+    }
+
     #[test]
-    fn save_as_copies_image_and_video_and_navigation_still_works() {
+    fn save_as_navigates_directories_and_copies_image_and_video() {
         let mut app = TestApp::new();
         fs::create_dir_all(&app.media_path).unwrap();
         let destination = tempfile::tempdir().unwrap();
+        fs::create_dir(destination.path().join("nested")).unwrap();
         let attachments = [wr::FileKind::Image, wr::FileKind::Video]
             .into_iter()
             .enumerate()
@@ -274,49 +303,35 @@ mod tests {
             .collect();
         app.attachment_viewer = Some(AttachmentViewerState::from_attachments(attachments, 0));
         for index in 0..2 {
-            app.start_viewer_save();
-            assert_eq!(
-                app.attachment_viewer.as_ref().unwrap().save_as.as_deref(),
-                Some(
-                    std::env::current_dir()
-                        .unwrap()
-                        .join(format!("media{index}.bin"))
-                        .to_str()
-                        .unwrap()
-                )
-            );
-            let target = destination.path().join(format!("saved{index}.bin"));
-            app.attachment_viewer.as_mut().unwrap().save_as =
-                Some(target.to_string_lossy().into_owned());
-            app.confirm_viewer_save();
-            assert_eq!(
-                fs::read(&target).unwrap(),
-                format!("media{index}.bin").as_bytes()
-            );
+            save_fixture(&mut app, destination.path());
+            app.dispatch_action(AppAction::ViewerSaveDescend);
+            let target = destination.path().join("nested").join(format!("media{index}.bin"));
+            app.dispatch_action(AppAction::ViewerSaveConfirm);
+            assert!(!target.exists()); // Browsing alone cannot save.
+            app.dispatch_action(AppAction::ViewerSaveEditName);
+            app.dispatch_action(AppAction::ViewerSaveConfirm);
+            assert_eq!(fs::read(&target).unwrap(), format!("media{index}.bin").as_bytes());
             let viewer = app.attachment_viewer.as_ref().unwrap();
             assert!(viewer.save_as.is_none());
             assert_eq!(viewer.saved_path.as_deref(), target.to_str());
             assert_eq!(
                 app.action_notice,
-                Some(ActionNotice::Unavailable(format!(
-                    "Media saved to {}",
-                    target.display()
-                )))
+                Some(ActionNotice::Unavailable(format!("Media saved to {}", target.display())))
             );
-            app.navigate_viewer(1);
+            app.dispatch_action(AppAction::ViewerNext);
             assert!(app.attachment_viewer.as_ref().unwrap().saved_path.is_none());
         }
         assert_eq!(app.attachment_viewer.as_ref().unwrap().index, 1);
     }
 
     #[test]
-    fn save_as_rejects_existing_destination_and_invalid_sources() {
+    fn save_as_rejects_names_existing_targets_and_invalid_sources() {
         let mut app = TestApp::new();
         fs::create_dir_all(&app.media_path).unwrap();
-        let outside = tempfile::tempdir().unwrap();
-        let target = outside.path().join("saved.bin");
-        fs::write(&target, b"original").unwrap();
         fs::write(app.media_path.join("safe.bin"), b"new").unwrap();
+        let destination = tempfile::tempdir().unwrap();
+        let target = destination.path().join("saved.bin");
+        fs::write(&target, b"original").unwrap();
         app.attachment_viewer = Some(AttachmentViewerState::from_attachments(
             vec![ViewerAttachment {
                 message_id: "image".into(),
@@ -326,38 +341,105 @@ mod tests {
             }],
             0,
         ));
-        app.start_viewer_save();
-        app.attachment_viewer.as_mut().unwrap().save_as =
-            Some(target.to_string_lossy().into_owned());
-        app.confirm_viewer_save();
-        assert_eq!(fs::read(&target).unwrap(), b"original");
-        assert!(app.attachment_viewer.as_ref().unwrap().save_as.is_some());
-
+        save_fixture(&mut app, destination.path());
+        app.dispatch_action(AppAction::ViewerSaveEditName);
+        for name in [
+            "", ".", "..", "../escape", "sub/file", "/absolute", "back\\slash", "saved.bin",
+        ] {
+            // Clear the proposed name using the same public editing actions as the terminal.
+            let length = app.attachment_viewer.as_ref().unwrap()
+                .save_as.as_ref().unwrap().filename.chars().count();
+            for _ in 0..length {
+                app.dispatch_action(AppAction::ViewerSaveBackspace);
+            }
+            for character in name.chars() {
+                app.dispatch_action(AppAction::ViewerSaveCharacter(character));
+            }
+            app.dispatch_action(AppAction::ViewerSaveConfirm);
+            assert_eq!(fs::read(&target).unwrap(), b"original");
+            assert!(!destination.path().join("escape").exists());
+            assert!(!destination.path().join("sub").exists());
+            assert!(app.attachment_viewer.as_ref().unwrap().save_as.is_some());
+        }
         for source in ["../outside.bin", "missing.bin"] {
             app.attachment_viewer.as_mut().unwrap().path = source.into();
-            app.attachment_viewer.as_mut().unwrap().save_as = Some(
-                outside
-                    .path()
-                    .join("absent.bin")
-                    .to_string_lossy()
-                    .into_owned(),
-            );
-            app.confirm_viewer_save();
-            assert!(!outside.path().join("absent.bin").exists());
+            let length = app.attachment_viewer.as_ref().unwrap()
+                .save_as.as_ref().unwrap().filename.chars().count();
+            for _ in 0..length {
+                app.dispatch_action(AppAction::ViewerSaveBackspace);
+            }
+            for character in "absent.bin".chars() {
+                app.dispatch_action(AppAction::ViewerSaveCharacter(character));
+            }
+            app.dispatch_action(AppAction::ViewerSaveConfirm);
+            assert!(!destination.path().join("absent.bin").exists());
+            assert_eq!(fs::read(&target).unwrap(), b"original");
         }
-        app.attachment_viewer.as_mut().unwrap().path = "safe.bin".into();
-        app.attachment_viewer.as_mut().unwrap().save_as = Some("  ".into());
-        app.confirm_viewer_save();
-        assert!(matches!(
-            app.action_notice,
-            Some(ActionNotice::Unavailable(_))
-        ));
         app.attachment_viewer.as_mut().unwrap().status = ViewerStatus::Missing;
-        app.start_viewer_save();
+        app.dispatch_action(AppAction::ViewerSaveAs);
+        assert!(app.attachment_viewer.as_ref().unwrap().save_as.is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_as_can_browse_directory_symlinks_like_the_file_picker() {
+        let mut app = TestApp::new();
+        fs::create_dir_all(&app.media_path).unwrap();
+        fs::write(app.media_path.join("image.jpg"), b"image").unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let destination = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(destination.path(), root.path().join("linked")).unwrap();
+        app.attachment_viewer = Some(AttachmentViewerState::from_attachments(
+            vec![ViewerAttachment {
+                message_id: "image".into(),
+                kind: wr::FileKind::Image,
+                path: "image.jpg".into(),
+                status: ViewerStatus::Ready,
+            }],
+            0,
+        ));
+        save_fixture(&mut app, root.path());
+        app.dispatch_action(AppAction::ViewerSaveDescend);
+        app.dispatch_action(AppAction::ViewerSaveEditName);
+        app.dispatch_action(AppAction::ViewerSaveConfirm);
+        assert_eq!(fs::read(destination.path().join("image.jpg")).unwrap(), b"image");
+    }
+
+    #[test]
+    fn directory_navigation_scrolls_and_cancel_preserves_viewer() {
+        let mut app = TestApp::new();
+        let root = tempfile::tempdir().unwrap();
+        for name in ["alpha", "beta", "gamma"] {
+            fs::create_dir(root.path().join(name)).unwrap();
+        }
+        app.attachment_viewer = Some(AttachmentViewerState::from_attachments(
+            vec![ViewerAttachment {
+                message_id: "image".into(),
+                kind: wr::FileKind::Image,
+                path: "image.jpg".into(),
+                status: ViewerStatus::Ready,
+            }],
+            0,
+        ));
+        save_fixture(&mut app, root.path());
+        app.attachment_viewer.as_mut().unwrap().save_as.as_mut().unwrap()
+            .set_viewport_height(1);
+        app.dispatch_action(AppAction::ViewerSaveNext);
+        app.dispatch_action(AppAction::ViewerSaveNext);
+        assert_eq!(app.attachment_viewer.as_ref().unwrap().save_as.as_ref().unwrap().offset, 2);
+        app.dispatch_action(AppAction::ViewerSaveDescend);
         assert_eq!(
-            app.attachment_viewer.as_ref().unwrap().save_as.as_deref(),
-            Some("  ")
+            app.attachment_viewer.as_ref().unwrap().save_as.as_ref().unwrap().directory,
+            root.path().join("gamma")
         );
+        app.dispatch_action(AppAction::ViewerSaveParent);
+        assert_eq!(
+            app.attachment_viewer.as_ref().unwrap().save_as.as_ref().unwrap().directory,
+            root.path()
+        );
+        app.dispatch_action(AppAction::ViewerSaveCancel);
+        assert!(app.attachment_viewer.as_ref().unwrap().save_as.is_none());
+        assert!(app.attachment_viewer.as_ref().unwrap().saved_path.is_none());
     }
 
     #[test]
