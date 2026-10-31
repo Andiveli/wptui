@@ -466,6 +466,38 @@ fn configured_media_root_symlink_still_opens_its_contained_file() {
     assert_eq!(contents, b"inside");
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn darwin_beneath_open_refuses_an_in_root_ancestor_symlink() {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::symlink;
+
+    let root = tempdir().unwrap();
+    fs::create_dir(root.path().join("nested")).unwrap();
+    fs::write(root.path().join("nested/clip.png"), b"inside").unwrap();
+    symlink("nested", root.path().join("alias")).unwrap();
+    let directory = fs::File::open(root.path()).unwrap();
+
+    // BENEATH alone allows this in-root relative symlink. The kernel must
+    // reject it because NOFOLLOW_ANY protects every ancestor, not only the
+    // final component. An ignored flag must fail this platform proof.
+    let fd = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            c"alias/clip.png".as_ptr(),
+            libc::O_RDONLY | libc::O_CLOEXEC | 0x1000 | 0x20000000,
+        )
+    };
+    if fd >= 0 {
+        assert_eq!(unsafe { libc::close(fd) }, 0);
+        panic!("Darwin ignored O_NOFOLLOW_ANY on an ancestor symlink");
+    }
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::ELOOP)
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn replaced_root_path_cannot_redirect_an_existing_media_root() {
