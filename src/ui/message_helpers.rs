@@ -3,13 +3,13 @@ use std::{ops::Range, sync::Arc};
 use chrono::{DateTime, Local};
 use ratatui::{
     layout::Alignment,
-    style::Style,
+    style::{Color, Style},
     text::{Line, Span},
 };
 use unicode_segmentation::UnicodeSegmentation;
 use whatsrust as wr;
 
-use crate::ui::bidi::{Direction, visual_graphemes_in_paragraph};
+use crate::ui::bidi::{Direction, visual_graphemes_in_paragraph, visual_graphemes_with_ranges};
 
 pub const AUTHOR_GROUP_MAX_GAP: i64 = 5 * 60;
 const REPLY_EXCERPT_MAX_CHARS: usize = 40;
@@ -243,6 +243,16 @@ pub(crate) fn inline_content_lines(
     status: Option<StatusLabel>,
     width: usize,
 ) -> Vec<Line<'static>> {
+    inline_content_lines_with_highlights(body, mention_ranges, status, width, &[])
+}
+
+pub(crate) fn inline_content_lines_with_highlights(
+    body: &str,
+    mention_ranges: &[Range<usize>],
+    status: Option<StatusLabel>,
+    width: usize,
+    highlight_ranges: &[Range<usize>],
+) -> Vec<Line<'static>> {
     let (content, status_range) = if matches!(status, Some(StatusLabel::Deleted)) {
         (
             crate::app::DELETED_MESSAGE_TEXT.to_owned(),
@@ -280,17 +290,30 @@ pub(crate) fn inline_content_lines(
                 .iter()
                 .filter_map(|range| local_range(range, paragraph_start, paragraph_end))
                 .collect::<Vec<_>>();
-            let visual = visual_graphemes_in_paragraph(
-                paragraph,
-                range,
-                status_for_line,
-                &mentions_for_line,
-            );
+            let highlights_for_line = highlight_ranges
+                .iter()
+                .filter_map(|range| local_range(range, paragraph_start, paragraph_end))
+                .collect::<Vec<_>>();
+            let visual = visual_graphemes_with_ranges(paragraph, range)
+                .into_iter()
+                .map(|grapheme| {
+                    let overlaps = |range: &Range<usize>| {
+                        grapheme.source_range.start < range.end
+                            && grapheme.source_range.end > range.start
+                    };
+                    (
+                        grapheme.text,
+                        status_for_line.as_ref().is_some_and(&overlaps),
+                        mentions_for_line.iter().any(&overlaps),
+                        highlights_for_line.iter().any(&overlaps),
+                    )
+                })
+                .collect::<Vec<_>>();
             let graphemes = if visual.is_empty() {
                 paragraph
                     [absolute_range.start - paragraph_start..absolute_range.end - paragraph_start]
                     .graphemes(true)
-                    .map(|grapheme| (grapheme.to_owned(), false, false))
+                    .map(|grapheme| (grapheme.to_owned(), false, false, false))
                     .collect()
             } else {
                 visual
@@ -302,15 +325,20 @@ pub(crate) fn inline_content_lines(
     lines
 }
 
-fn inline_line(graphemes: &[(String, bool, bool)], direction: Direction) -> Line<'static> {
+fn inline_line(graphemes: &[(String, bool, bool, bool)], direction: Direction) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
-    for (grapheme, is_status, is_mention) in graphemes {
+    for (grapheme, is_status, is_mention, is_highlighted) in graphemes {
         let style = if *is_status {
             Style::default().dark_gray()
         } else if *is_mention {
-            Style::default().fg(ratatui::style::Color::Blue).bold()
+            Style::default().fg(Color::Blue).bold()
         } else {
             Style::default()
+        };
+        let style = if *is_highlighted {
+            style.bg(Color::Yellow)
+        } else {
+            style
         };
         append_styled_grapheme(&mut spans, grapheme, style);
     }
@@ -401,14 +429,50 @@ fn reply_excerpt(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use ratatui::{
-        layout::Alignment,
+        buffer::Buffer,
+        layout::{Alignment, Rect},
         style::{Color, Modifier},
         text::Span,
+        widgets::{Paragraph, Widget},
     };
 
     use unicode_segmentation::UnicodeSegmentation;
 
-    use super::inline_content_lines;
+    use super::{StatusLabel, inline_content_lines, inline_content_lines_with_highlights};
+
+    #[test]
+    fn search_marking_preserves_rtl_mention_and_status_styles() {
+        let body = "@שלום hello";
+        let mention_end = body.find(' ').unwrap();
+        let match_start = body.find("שלום").unwrap();
+        let lines = inline_content_lines_with_highlights(
+            body,
+            &[0..mention_end],
+            Some(StatusLabel::Edited),
+            40,
+            &[match_start..mention_end],
+        );
+        let spans = &lines[0].spans;
+        assert_eq!(lines[0].alignment, Some(Alignment::Right));
+        assert!(spans.iter().any(|span| {
+            span.style.bg == Some(Color::Yellow)
+                && span.style.fg == Some(Color::Blue)
+                && span.style.add_modifier.contains(Modifier::BOLD)
+                && span.content.contains('ש')
+        }));
+        assert!(spans.iter().any(|span| {
+            span.content.contains("(edited)")
+                && span.style.fg == Some(Color::DarkGray)
+                && span.style.bg.is_none()
+        }));
+        let mut painted = Buffer::empty(Rect::new(0, 0, 40, 1));
+        Paragraph::new(lines).render(painted.area, &mut painted);
+        assert!(painted.content().iter().any(|cell| {
+            cell.symbol() == "ש" && cell.bg == Color::Yellow && cell.fg == Color::Blue
+        }));
+        let original = inline_content_lines(body, &[0..mention_end], Some(StatusLabel::Edited), 40);
+        assert!(original[0].spans.iter().all(|span| span.style.bg.is_none()));
+    }
 
     #[test]
     fn word_wrapping_prefers_whitespace_boundaries() {
