@@ -226,12 +226,14 @@ fn enter_selects_the_latest_offscreen_match_before_navigating() {
         press(&mut app, KeyCode::Char(character));
     }
     press(&mut app, KeyCode::Enter);
-    assert_eq!(selected_id(&app).as_deref(), Some("msg-8"));
     assert!(screen(&mut app).contains("MARKER newest"));
+    assert_eq!(selected_id(&app).as_deref(), Some("msg-8"));
 
     press(&mut app, KeyCode::Char('n'));
+    screen(&mut app);
     assert_eq!(selected_id(&app).as_deref(), Some("msg-2"));
     press(&mut app, KeyCode::Char('N'));
+    screen(&mut app);
     assert_eq!(selected_id(&app).as_deref(), Some("msg-8"));
 }
 
