@@ -206,6 +206,79 @@ fn jumping_to_a_distant_match_brings_it_into_the_message_viewport() {
 }
 
 #[test]
+fn enter_selects_the_latest_offscreen_match_before_navigating() {
+    let mut app = TestApp::new();
+    let chat: whatsrust::JID = "recent@s.whatsapp.net".to_owned().into();
+    app.open_chat_by_jid(chat.clone());
+    for index in 0..30 {
+        let body = match index {
+            8 => "MARKER older",
+            22 => "MARKER newest",
+            _ => "ordinary filler message",
+        };
+        app.add_message(message(&chat, &format!("msg-{index}"), index, body));
+    }
+    app.focus_pane = FocusPane::Conversation;
+    assert!(!screen(&mut app).contains("MARKER newest"));
+
+    press(&mut app, KeyCode::Char('/'));
+    for character in "MARKER".chars() {
+        press(&mut app, KeyCode::Char(character));
+    }
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(selected_id(&app).as_deref(), Some("msg-22"));
+    assert!(screen(&mut app).contains("MARKER newest"));
+
+    press(&mut app, KeyCode::Char('n'));
+    assert_eq!(selected_id(&app).as_deref(), Some("msg-8"));
+    press(&mut app, KeyCode::Char('N'));
+    assert_eq!(selected_id(&app).as_deref(), Some("msg-22"));
+}
+
+#[test]
+fn search_prompt_reports_matches_and_selected_position() {
+    let mut app = TestApp::new();
+    let chat: whatsrust::JID = "count@s.whatsapp.net".to_owned().into();
+    app.open_chat_by_jid(chat.clone());
+    app.add_message(message(&chat, "old", 1, "find old"));
+    app.add_message(message(&chat, "new", 2, "find new"));
+    app.focus_pane = FocusPane::Conversation;
+
+    press(&mut app, KeyCode::Char('/'));
+    for character in "find".chars() {
+        press(&mut app, KeyCode::Char(character));
+    }
+    press(&mut app, KeyCode::Enter);
+    assert!(screen(&mut app).contains("1/2 coincidencias"));
+    press(&mut app, KeyCode::Char('n'));
+    assert!(screen(&mut app).contains("2/2 coincidencias"));
+}
+
+#[test]
+fn search_prompt_reports_no_matches_without_moving_the_selection() {
+    let mut app = TestApp::new();
+    let chat: whatsrust::JID = "empty@s.whatsapp.net".to_owned().into();
+    app.open_chat_by_jid(chat.clone());
+    app.add_message(message(&chat, "only", 1, "ordinary text"));
+    app.focus_pane = FocusPane::Conversation;
+    screen(&mut app);
+    let before = selected_id(&app);
+
+    press(&mut app, KeyCode::Char('/'));
+    for character in "absent".chars() {
+        press(&mut app, KeyCode::Char(character));
+    }
+    press(&mut app, KeyCode::Enter);
+    assert!(screen(&mut app).contains("Sin coincidencias"));
+    assert_eq!(selected_id(&app), before);
+    press(&mut app, KeyCode::Char('n'));
+    press(&mut app, KeyCode::Char('N'));
+    assert_eq!(selected_id(&app), before);
+    press(&mut app, KeyCode::Esc);
+    assert!(!screen(&mut app).contains("Sin coincidencias"));
+}
+
+#[test]
 fn wrapped_rtl_fragment_is_highlighted_in_visual_order() {
     let mut app = TestApp::new();
     let chat: whatsrust::JID = "rtl@s.whatsapp.net".to_owned().into();
