@@ -448,6 +448,26 @@ fn preview_open_never_reads_outside_during_directory_replacement() {
 
 #[cfg(unix)]
 #[test]
+fn configured_media_root_symlink_still_opens_its_contained_file() {
+    use std::io::Read;
+    use std::os::unix::fs::symlink;
+
+    let root = tempdir().unwrap();
+    let alias = tempdir().unwrap();
+    fs::write(root.path().join("clip.png"), b"inside").unwrap();
+    let link = alias.path().join("media");
+    symlink(root.path(), &link).unwrap();
+    let mut file = MediaRoot::new(&link)
+        .unwrap()
+        .open_media_file(Path::new("clip.png"))
+        .unwrap();
+    let mut contents = Vec::new();
+    file.read_to_end(&mut contents).unwrap();
+    assert_eq!(contents, b"inside");
+}
+
+#[cfg(unix)]
+#[test]
 fn replaced_root_path_cannot_redirect_an_existing_media_root() {
     use std::io::Read;
     use std::os::unix::fs::symlink;
@@ -467,6 +487,34 @@ fn replaced_root_path_cannot_redirect_an_existing_media_root() {
         let mut contents = Vec::new();
         file.read_to_end(&mut contents).unwrap();
         assert_eq!(contents, b"inside", "root replacement escaped media root");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn replaced_root_ancestor_cannot_redirect_an_existing_media_root() {
+    use std::io::Read;
+    use std::os::unix::fs::symlink;
+
+    let holder = tempdir().unwrap();
+    let outside = tempdir().unwrap();
+    let parent = holder.path().join("parent");
+    let root = parent.join("media");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("clip.png"), b"inside").unwrap();
+    fs::create_dir(outside.path().join("media")).unwrap();
+    fs::write(outside.path().join("media/clip.png"), b"outside").unwrap();
+    let media = MediaRoot::new(&root).unwrap();
+    fs::rename(&parent, holder.path().join("original-parent")).unwrap();
+    symlink(outside.path(), &parent).unwrap();
+
+    if let Ok(mut file) = media.open_media_file(Path::new("clip.png")) {
+        let mut contents = Vec::new();
+        file.read_to_end(&mut contents).unwrap();
+        assert_eq!(
+            contents, b"inside",
+            "ancestor replacement escaped media root"
+        );
     }
 }
 

@@ -245,21 +245,7 @@ impl MediaRoot {
             .canonicalize()
             .map_err(|_| MediaLaunchError::UnconfiguredMediaRoot)?;
         #[cfg(unix)]
-        let directory = {
-            // Pin the root, refusing a symlink substituted after canonicalize.
-            let name = CString::new(path.as_os_str().as_bytes())
-                .map_err(|_| MediaLaunchError::UnconfiguredMediaRoot)?;
-            let fd = unsafe {
-                libc::open(
-                    name.as_ptr(),
-                    libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
-                )
-            };
-            if fd < 0 {
-                return Err(MediaLaunchError::UnconfiguredMediaRoot);
-            }
-            unsafe { fs::File::from_raw_fd(fd) }
-        };
+        let directory = open_root_directory(&path)?;
         #[cfg(unix)]
         let is_dir = directory
             .metadata()
@@ -388,32 +374,12 @@ impl MediaRoot {
             }
         };
         #[cfg(target_os = "macos")]
-        let descriptor = {
-            // Old XNU versions may ignore unknown open flags. Require a
-            // specific kernel rejection of an escape before trusting the flag.
-            const BENEATH: libc::c_int = 0x1000; // Darwin O_RESOLVE_BENEATH
-            let escaped = c"../";
-            let probe = unsafe {
-                libc::openat(
-                    self.directory.as_raw_fd(),
-                    escaped.as_ptr(),
-                    libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | BENEATH,
-                )
-            };
-            if probe >= 0 {
-                unsafe { libc::close(probe) };
-                return Err(MediaLaunchError::MissingFile);
-            }
-            if io::Error::last_os_error().raw_os_error() != Some(libc::ENOTCAPABLE) {
-                return Err(MediaLaunchError::MissingFile);
-            }
-            unsafe {
-                libc::openat(
-                    self.directory.as_raw_fd(),
-                    name.as_ptr(),
-                    libc::O_RDONLY | libc::O_CLOEXEC | BENEATH,
-                )
-            }
+        let descriptor = unsafe {
+            libc::openat(
+                self.directory.as_raw_fd(),
+                name.as_ptr(),
+                libc::O_RDONLY | libc::O_CLOEXEC | 0x1000, // O_RESOLVE_BENEATH
+            )
         };
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         return Err(MediaLaunchError::MissingFile);
@@ -439,6 +405,98 @@ impl MediaRoot {
             Ok(file)
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn open_root_directory(path: &Path) -> Result<fs::File, MediaLaunchError> {
+    // The filesystem root itself cannot be replaced by a path component.
+    // Resolve every remaining component in one kernel call, forbidding links
+    // substituted anywhere between the earlier canonicalize and this open.
+    let filesystem = fs::File::open("/").map_err(|_| MediaLaunchError::UnconfiguredMediaRoot)?;
+    let relative = path
+        .strip_prefix("/")
+        .map_err(|_| MediaLaunchError::UnconfiguredMediaRoot)?;
+    if relative.as_os_str().is_empty() {
+        return Ok(filesystem);
+    }
+    let name = CString::new(relative.as_os_str().as_bytes())
+        .map_err(|_| MediaLaunchError::UnconfiguredMediaRoot)?;
+    let how = OpenHow {
+        flags: (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64,
+        mode: 0,
+        resolve: 0x08 | 0x04, // RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS
+    };
+    let fd = unsafe {
+        libc::syscall(
+            libc::SYS_openat2,
+            filesystem.as_raw_fd(),
+            name.as_ptr(),
+            &how as *const OpenHow,
+            std::mem::size_of::<OpenHow>(),
+        ) as libc::c_int
+    };
+    if fd < 0 {
+        return Err(MediaLaunchError::UnconfiguredMediaRoot);
+    }
+    Ok(unsafe { fs::File::from_raw_fd(fd) })
+}
+
+#[cfg(target_os = "macos")]
+fn open_root_directory(path: &Path) -> Result<fs::File, MediaLaunchError> {
+    const BENEATH: libc::c_int = 0x1000; // Darwin O_RESOLVE_BENEATH
+    const NOFOLLOW_ANY: libc::c_int = 0x20000000; // Darwin O_NOFOLLOW_ANY
+    // Old XNU may ignore unknown flags. Probe a known escape from /dev first;
+    // only an explicit ENOTCAPABLE proves the kernel enforces BENEATH.
+    let dev = unsafe {
+        libc::open(
+            c"/dev".as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+        )
+    };
+    if dev < 0 {
+        return Err(MediaLaunchError::UnconfiguredMediaRoot);
+    }
+    let dev = unsafe { fs::File::from_raw_fd(dev) };
+    let probe = unsafe {
+        libc::openat(
+            dev.as_raw_fd(),
+            c"../".as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | BENEATH,
+        )
+    };
+    if probe >= 0 {
+        drop(unsafe { fs::File::from_raw_fd(probe) });
+        return Err(MediaLaunchError::UnconfiguredMediaRoot);
+    }
+    if io::Error::last_os_error().raw_os_error() != Some(libc::ENOTCAPABLE) {
+        return Err(MediaLaunchError::UnconfiguredMediaRoot);
+    }
+
+    let filesystem = fs::File::open("/").map_err(|_| MediaLaunchError::UnconfiguredMediaRoot)?;
+    let relative = path
+        .strip_prefix("/")
+        .map_err(|_| MediaLaunchError::UnconfiguredMediaRoot)?;
+    if relative.as_os_str().is_empty() {
+        return Ok(filesystem);
+    }
+    let name = CString::new(relative.as_os_str().as_bytes())
+        .map_err(|_| MediaLaunchError::UnconfiguredMediaRoot)?;
+    let fd = unsafe {
+        libc::openat(
+            filesystem.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | BENEATH | NOFOLLOW_ANY,
+        )
+    };
+    if fd < 0 {
+        return Err(MediaLaunchError::UnconfiguredMediaRoot);
+    }
+    Ok(unsafe { fs::File::from_raw_fd(fd) })
+}
+
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+fn open_root_directory(_path: &Path) -> Result<fs::File, MediaLaunchError> {
+    Err(MediaLaunchError::UnconfiguredMediaRoot)
 }
 
 fn validate_media_path(relative_path: &Path) -> Result<(), MediaLaunchError> {
