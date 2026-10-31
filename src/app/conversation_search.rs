@@ -26,6 +26,7 @@ impl App<'_> {
                                 self.conversation_search = None;
                             } else {
                                 search.editing = false;
+                                self.select_latest_search_match();
                             }
                         }
                         KeyCode::Char(character) => search.query.push(character),
@@ -60,15 +61,17 @@ impl App<'_> {
         false
     }
 
-    fn jump_to_search_match(&mut self, toward_older: bool) {
+    pub(crate) fn conversation_search_matches(&self) -> Vec<usize> {
         let Some(search) = self.conversation_search.as_ref() else {
-            return;
+            return Vec::new();
         };
+        if self.open_chat.as_ref() != Some(&search.chat) || search.query.is_empty() {
+            return Vec::new();
+        }
         let Some(ids) = self.chat_messages.get(&search.chat) else {
-            return;
+            return Vec::new();
         };
-        let matches = ids
-            .iter()
+        ids.iter()
             .rev()
             .filter(|id| self.messages.contains_key(*id))
             .enumerate()
@@ -76,7 +79,17 @@ impl App<'_> {
                 wr::MessageContent::Text(body) if body.contains(&search.query) => Some(index),
                 _ => None,
             })
-            .collect::<Vec<_>>();
+            .collect()
+    }
+
+    fn select_latest_search_match(&mut self) {
+        if let Some(index) = self.conversation_search_matches().first().copied() {
+            self.message_list_state.select(Some(index));
+        }
+    }
+
+    fn jump_to_search_match(&mut self, toward_older: bool) {
+        let matches = self.conversation_search_matches();
         let current = self.message_list_state.selected;
         let next = if toward_older {
             matches

@@ -498,8 +498,22 @@ pub fn render_chats_with_plan(
     {
         let [search_area, remaining] =
             Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(chat_area);
+        let matches = app.conversation_search_matches();
+        let feedback = if search.query.is_empty() {
+            String::new()
+        } else if matches.is_empty() {
+            " · Sin coincidencias".to_owned()
+        } else if let Some(position) = matches
+            .iter()
+            .position(|index| Some(*index) == app.message_list_state.selected)
+        {
+            format!(" · {}/{} coincidencias", position + 1, matches.len())
+        } else {
+            format!(" · {} coincidencias", matches.len())
+        };
         frame.render_widget(
-            Paragraph::new(format!("/{}", search.query)).fg(ratatui::style::Color::Yellow),
+            Paragraph::new(format!("/{}{feedback}", search.query))
+                .fg(ratatui::style::Color::Yellow),
             search_area,
         );
         history_area = remaining;
