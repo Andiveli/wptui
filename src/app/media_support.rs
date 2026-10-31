@@ -45,19 +45,15 @@ fn generate_video_thumbnail_with_ffmpeg(
         &["-loglevel", "error", "-ss", "1"],
         &["-loglevel", "error"], // Very short videos have no frame at 1s.
     ];
-    #[cfg(target_os = "macos")]
-    let input_fd = "/dev/fd/0";
-    #[cfg(not(target_os = "macos"))]
-    let input_fd = "/proc/self/fd/0";
     for args in attempts {
         video.seek(SeekFrom::Start(0)).ok()?;
         let input = video.try_clone().ok()?;
-        // stdin is a seekable regular file; stdout is a pipe whose bytes we
-        // bound before decoding. No media path is passed to the child.
+        // The seekable fd: input permits only the inherited regular stdin
+        // descriptor. Restrict nested demuxer protocols so crafted media cannot
+        // make ffmpeg open a second local path or network URL.
         let mut child = match Command::new(executable)
             .args(args)
-            .arg("-i")
-            .arg(input_fd)
+            .args(["-protocol_whitelist", "fd", "-i", "fd:"])
             .args(["-frames:v", "1", "-q:v", "4", "-f", "image2pipe"])
             .args(["-vcodec", "mjpeg", "pipe:1"])
             .stdin(Stdio::from(input))

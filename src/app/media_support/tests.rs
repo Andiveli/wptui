@@ -132,15 +132,8 @@ fn video_thumbnail_process_keeps_generated_frame_in_memory() {
         directory.path().join("escape.mp4"),
     )
     .unwrap();
-    let expected_fd = if cfg!(target_os = "macos") {
-        "/dev/fd/0"
-    } else {
-        "/proc/self/fd/0"
-    };
     let executable = directory.path().join("ffmpeg-stub");
-    let script = format!(
-        "#!/bin/sh\ninput=\noutput=\nskip=0\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = -ss ]; then skip=1; fi\n  if [ \"$1\" = -i ]; then shift; input=\"$1\"; fi\n  output=\"$1\"\n  shift\ndone\n[ \"$input\" = \"{expected_fd}\" ] || exit 40\n[ \"$output\" = pipe:1 ] || exit 41\n[ \"$(dd if=\"$input\" bs=1 count=1 2>/dev/null)\" = i ] || exit 42\n[ \"$skip\" -eq 0 ] || exit 1\ndd if=/dev/zero bs=4096 count=1 2>/dev/null\n"
-    );
+    let script = "#!/bin/sh\ninput=\nwhitelist=\noutput=\nskip=0\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = -ss ]; then skip=1; fi\n  if [ \"$1\" = -protocol_whitelist ]; then shift; whitelist=\"$1\"; fi\n  if [ \"$1\" = -i ]; then shift; input=\"$1\"; fi\n  output=\"$1\"\n  shift\ndone\n[ \"$whitelist\" = fd ] || exit 40\n[ \"$input\" = fd: ] || exit 41\n[ \"$output\" = pipe:1 ] || exit 42\n[ \"$(dd bs=1 count=1 2>/dev/null)\" = i ] || exit 43\n[ \"$skip\" -eq 0 ] || exit 1\ndd if=/dev/zero bs=4096 count=1 2>/dev/null\n";
     fs::write(&executable, script).unwrap();
     fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
     let root = MediaRoot::new(directory.path()).unwrap();
