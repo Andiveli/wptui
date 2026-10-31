@@ -114,6 +114,7 @@ pub struct AttachmentViewerState {
     pub path: Arc<str>,
     pub status: ViewerStatus,
     pub attachments: Vec<ViewerAttachment>,
+    pub save_as: Option<String>,
 }
 
 impl AttachmentViewerState {
@@ -129,6 +130,7 @@ impl AttachmentViewerState {
             path: active.map_or_else(|| "".into(), |item| item.path.clone()),
             status: active.map_or(ViewerStatus::Missing, |item| item.status.clone()),
             attachments,
+            save_as: None,
         }
     }
 

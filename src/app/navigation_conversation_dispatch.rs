@@ -161,6 +161,11 @@ impl App<'_> {
             | AppAction::ViewerZoomIn
             | AppAction::ViewerZoomOut
             | AppAction::ViewerOpenExternal
+            | AppAction::ViewerSaveAs
+            | AppAction::ViewerSaveCharacter(_)
+            | AppAction::ViewerSaveBackspace
+            | AppAction::ViewerSaveConfirm
+            | AppAction::ViewerSaveCancel
             | AppAction::CloseAttachmentViewer
             | AppAction::CloseStatusPane
             | AppAction::OpenMessageMenu

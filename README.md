@@ -226,6 +226,10 @@ removes the local row, but does not itself prove removal from every recipient's 
 | Composer | Paste text, files, or an image | `Ctrl+V` |
 | Reaction picker | Move / confirm | `j`/`k` or Up/Down arrows / `Enter` |
 | Media viewer | Previous / next | `h`/`l` or arrows |
+| Media viewer | Save image or video as a file | `s`, edit path, `Enter` (or `Esc` to cancel) |
+
+Save As copies a downloaded attachment to the filename you enter (relative paths use the current
+working directory). Existing files are never overwritten; choose another name if one exists.
 
 Pasted files are queued as attachments. When text is included, it becomes the caption of the first
 attachment.

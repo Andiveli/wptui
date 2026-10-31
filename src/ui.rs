@@ -1004,7 +1004,7 @@ fn render_attachment_viewer(
     }
 
     let hint = format!(
-        "{:?}: {} [{}/{}] {:?} | zoom {}% | h/l arrows nav | -/+ zoom | x open | Esc close",
+        "{:?}: {} [{}/{}] {:?} | zoom {}% | h/l arrows nav | -/+ zoom | x open | s save as | Esc close",
         viewer.kind,
         viewer.path,
         viewer.index + 1,
@@ -1014,7 +1014,14 @@ fn render_attachment_viewer(
     );
     frame.render_widget(Clear, layout.modal);
     frame.render_widget(Block::bordered().title("Attachment viewer"), layout.modal);
-    frame.render_widget(Paragraph::new(hint), layout.hint);
+    if let Some(path) = &viewer.save_as {
+        frame.render_widget(
+            Paragraph::new(format!("Save as: {path}█  Enter save | Esc cancel")),
+            layout.hint,
+        );
+    } else {
+        frame.render_widget(Paragraph::new(hint), layout.hint);
+    }
 
     if matches!(viewer.kind, wr::FileKind::Image | wr::FileKind::Video)
         && viewer.status != ViewerStatus::Failed
