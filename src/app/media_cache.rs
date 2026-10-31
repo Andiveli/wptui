@@ -1,9 +1,12 @@
 use std::collections::VecDeque;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
 use ratatui_image::protocol::StatefulProtocol;
 use whatsrust as wr;
+
+use crate::media::MediaRoot;
 
 use super::media_jobs::MediaJobOwner;
 use super::media_support::probe_audio_duration;
@@ -214,8 +217,10 @@ impl App<'_> {
         let media_path = self.media_path.to_owned();
         let message_id = message_id.clone();
         media_jobs.spawn(move |permit| {
-            let absolute = media_path.join(file.path.as_ref());
-            let duration = probe_audio_duration(&absolute);
+            let duration = MediaRoot::new(&media_path)
+                .ok()
+                .and_then(|root| root.open_media_file(Path::new(file.path.as_ref())).ok())
+                .and_then(probe_audio_duration);
             permit.send(
                 &tx,
                 AppInput::App(AppEvent::SetAudioDuration(message_id, file.path, duration)),

@@ -26,9 +26,15 @@ fn probe_audio_duration_reads_wav_seconds() {
     wav.resize(44 + data_len as usize, 0);
     std::fs::write(&path, &wav).unwrap();
 
-    assert_eq!(probe_audio_duration(&path), Some(2));
     assert_eq!(
-        probe_audio_duration(&directory.path().join("missing.ogg")),
+        probe_audio_duration(fs::File::open(&path).unwrap()),
+        Some(2)
+    );
+    let root = MediaRoot::new(directory.path()).unwrap();
+    assert_eq!(
+        root.open_media_file(Path::new("missing.ogg"))
+            .ok()
+            .and_then(probe_audio_duration),
         None
     );
 }
@@ -108,7 +114,10 @@ fn probe_audio_duration_reads_ogg_opus_with_oga_extension() {
     oga.extend_from_slice(&page2);
     std::fs::write(&path, &oga).unwrap();
 
-    assert_eq!(probe_audio_duration(&path), Some(3));
+    assert_eq!(
+        probe_audio_duration(fs::File::open(&path).unwrap()),
+        Some(3)
+    );
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -188,7 +197,7 @@ fn probe_real_whatsapp_audio_diagnostic() {
         return;
     };
     let path = std::path::Path::new(&path);
-    let result = probe_audio_duration(path);
+    let result = probe_audio_duration(fs::File::open(path).unwrap());
     eprintln!("probe({}) = {result:?}", path.display());
     assert!(
         result.is_some(),
