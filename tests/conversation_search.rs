@@ -3,7 +3,7 @@ use ratatui::{Terminal, backend::TestBackend, buffer::Buffer, layout::Rect, styl
 use wp_tui::app::actions::{ConversationMode, FocusPane, Section};
 use wp_tui::app::events::MediaRenderPlan;
 use wp_tui::app::read_receipts::VisibilityPlan;
-use wp_tui::ui::{message_list::render_messages_with_plan, render_chats_with_plan};
+use wp_tui::ui::render_chats_with_plan;
 
 mod common;
 use common::TestApp;
@@ -61,6 +61,22 @@ fn screen(app: &mut TestApp) -> String {
         .iter()
         .map(|cell| cell.symbol())
         .collect()
+}
+
+fn painted_column(buffer: &Buffer, row: u16, needle: &str) -> u16 {
+    let symbols = needle
+        .chars()
+        .map(|character| character.to_string())
+        .collect::<Vec<_>>();
+    assert!(symbols.len() <= buffer.area.width as usize);
+    (0..=buffer.area.width - symbols.len() as u16)
+        .find(|&x| {
+            symbols
+                .iter()
+                .enumerate()
+                .all(|(offset, symbol)| buffer[(x + offset as u16, row)].symbol() == symbol)
+        })
+        .expect("text must be painted in the requested row")
 }
 
 #[test]
@@ -160,10 +176,7 @@ fn matches_are_scoped_to_the_open_chat_and_navigated_without_changing_jk() {
                 .contains("needle in Bob")
         })
         .expect("other chat message must be painted");
-    let line = (0..80)
-        .map(|x| painted[(x, row)].symbol())
-        .collect::<String>();
-    let x = line.find("needle in Bob").unwrap() as u16;
+    let x = painted_column(&painted, row, "needle in Bob");
     assert_eq!(painted[(x, row)].bg, Color::Reset);
 }
 
@@ -222,7 +235,7 @@ fn wrapped_rtl_fragment_is_highlighted_in_visual_order() {
         })
         .find(|(_, line)| line.contains("םולש"))
         .expect("wrapped RTL match must be painted in the message viewport");
-    let x = line.find("םולש").unwrap() as u16;
+    let x = painted_column(&painted, y, "םולש");
     for offset in 0..4 {
         assert_eq!(painted[(x + offset, y)].bg, Color::Yellow);
     }
@@ -248,11 +261,7 @@ fn search_highlights_only_matching_text_in_the_open_chat_and_clears_on_escape() 
                 .contains("before needle after")
         })
         .expect("message text must be painted");
-    let line = (0..80)
-        .map(|x| plain[(x, row)].symbol())
-        .collect::<String>();
-    let start = line.find("before needle after").unwrap() as u16;
-    let match_x = start + "before ".len() as u16;
+    let match_x = painted_column(&plain, row, "before needle after") + 7;
     assert_eq!(plain[(match_x, row)].bg, Color::Reset);
 
     press(&mut app, KeyCode::Char('/'));
@@ -262,32 +271,6 @@ fn search_highlights_only_matching_text_in_the_open_chat_and_clears_on_escape() 
     press(&mut app, KeyCode::Enter);
     assert_eq!(app.conversation_mode, ConversationMode::MessageNavigation);
     assert!(screen(&mut app).contains("/needle"));
-    let mut direct = Terminal::new(TestBackend::new(80, 20)).unwrap();
-    direct
-        .draw(|frame| {
-            render_messages_with_plan(
-                frame,
-                &mut app,
-                &mut MediaRenderPlan::default(),
-                &mut VisibilityPlan::default(),
-                Rect::new(0, 0, 80, 20),
-            );
-        })
-        .unwrap();
-    let direct_buffer = direct.backend().buffer();
-    let (direct_row, direct_line) = (0..20)
-        .map(|y| {
-            (
-                y,
-                (0..80)
-                    .map(|x| direct_buffer[(x, y)].symbol())
-                    .collect::<String>(),
-            )
-        })
-        .find(|(_, row)| row.contains("before needle after"))
-        .unwrap();
-    let direct_x = direct_line.find("before needle after").unwrap() as u16 + 7;
-    assert_eq!(direct_buffer[(direct_x, direct_row)].bg, Color::Yellow);
     let highlighted = buffer(&mut app);
     let highlighted_row = (0..20)
         .find(|&y| {
@@ -297,11 +280,7 @@ fn search_highlights_only_matching_text_in_the_open_chat_and_clears_on_escape() 
                 .contains("before needle after")
         })
         .expect("matching message must be painted");
-    let highlighted_line = (0..80)
-        .map(|x| highlighted[(x, highlighted_row)].symbol())
-        .collect::<String>();
-    let highlighted_x =
-        highlighted_line.find("before needle after").unwrap() as u16 + "before ".len() as u16;
+    let highlighted_x = painted_column(&highlighted, highlighted_row, "before needle after") + 7;
     for offset in 0.."needle".len() as u16 {
         assert_eq!(
             highlighted[(highlighted_x + offset, highlighted_row)].bg,

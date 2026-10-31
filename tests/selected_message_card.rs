@@ -208,7 +208,7 @@ fn edited_status_is_inline_and_uses_metadata_style() {
     add_edit(&mut app, "edited", "body");
 
     let buffer = render_buffer(&mut app, 32, 8);
-    let (y, row) = (0..8)
+    let (y, _) = (0..8)
         .map(|y| {
             (
                 y,
@@ -217,8 +217,8 @@ fn edited_status_is_inline_and_uses_metadata_style() {
         })
         .find(|(_, row)| row.contains("body (edited)"))
         .expect("body and edited label should share a row");
-    let status_x = row.find("(edited)").unwrap() as u16;
-    let body_x = row.find("body").unwrap() as u16;
+    let status_x = painted_column(&buffer, y, "(edited)");
+    let body_x = painted_column(&buffer, y, "body");
 
     assert_eq!(buffer[(status_x, y)].fg, Color::DarkGray);
     assert_ne!(buffer[(body_x, y)].fg, Color::DarkGray);
@@ -255,23 +255,23 @@ fn chat_search_highlights_body_without_recoloring_quote_or_edit_status() {
             )
         })
         .collect::<Vec<_>>();
-    let (quote_y, quote_row) = rows
+    let (quote_y, _) = rows
         .iter()
         .find(|(_, row)| row.contains('>') && row.contains("needle quote"))
         .expect("quote should be painted within the selected card");
     assert_eq!(
-        painted[(quote_row.find("needle quote").unwrap() as u16, *quote_y)].bg,
+        painted[(painted_column(&painted, *quote_y, "needle quote"), *quote_y)].bg,
         Color::Reset
     );
-    let (body_y, body_row) = rows
+    let (body_y, _) = rows
         .iter()
         .find(|(_, row)| row.contains("needle body (edited)"))
         .expect("edited body should be painted");
     assert_eq!(
-        painted[(body_row.find("needle body").unwrap() as u16, *body_y)].bg,
+        painted[(painted_column(&painted, *body_y, "needle body"), *body_y)].bg,
         Color::Yellow
     );
-    let status_x = body_row.find("(edited)").unwrap() as u16;
+    let status_x = painted_column(&painted, *body_y, "(edited)");
     assert_eq!(painted[(status_x, *body_y)].bg, Color::Reset);
     assert_eq!(painted[(status_x, *body_y)].fg, Color::DarkGray);
 }
@@ -430,6 +430,22 @@ fn selected_message_scrolls_viewport_to_keep_the_card_with_padding() {
 
     assert_eq!(app.message_list_state.offset, 4);
     assert!(third_rows.iter().any(|row| row.contains("│ first body")));
+}
+
+fn painted_column(buffer: &ratatui::buffer::Buffer, row: u16, needle: &str) -> u16 {
+    let symbols = needle
+        .chars()
+        .map(|character| character.to_string())
+        .collect::<Vec<_>>();
+    assert!(symbols.len() <= buffer.area.width as usize);
+    (0..=buffer.area.width - symbols.len() as u16)
+        .find(|&x| {
+            symbols
+                .iter()
+                .enumerate()
+                .all(|(offset, symbol)| buffer[(x + offset as u16, row)].symbol() == symbol)
+        })
+        .expect("text must be painted in the requested row")
 }
 
 fn render_rows(app: &mut App<'_>, width: u16, height: u16) -> Vec<String> {
