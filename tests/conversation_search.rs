@@ -3,7 +3,7 @@ use ratatui::{Terminal, backend::TestBackend, buffer::Buffer, layout::Rect, styl
 use wp_tui::app::actions::{ConversationMode, FocusPane, Section};
 use wp_tui::app::events::MediaRenderPlan;
 use wp_tui::app::read_receipts::VisibilityPlan;
-use wp_tui::ui::render_chats_with_plan;
+use wp_tui::ui::{message_list::render_messages_with_plan, render_chats_with_plan};
 
 mod common;
 use common::TestApp;
@@ -262,6 +262,32 @@ fn search_highlights_only_matching_text_in_the_open_chat_and_clears_on_escape() 
     press(&mut app, KeyCode::Enter);
     assert_eq!(app.conversation_mode, ConversationMode::MessageNavigation);
     assert!(screen(&mut app).contains("/needle"));
+    let mut direct = Terminal::new(TestBackend::new(80, 20)).unwrap();
+    direct
+        .draw(|frame| {
+            render_messages_with_plan(
+                frame,
+                &mut app,
+                &mut MediaRenderPlan::default(),
+                &mut VisibilityPlan::default(),
+                Rect::new(0, 0, 80, 20),
+            );
+        })
+        .unwrap();
+    let direct_buffer = direct.backend().buffer();
+    let (direct_row, direct_line) = (0..20)
+        .map(|y| {
+            (
+                y,
+                (0..80)
+                    .map(|x| direct_buffer[(x, y)].symbol())
+                    .collect::<String>(),
+            )
+        })
+        .find(|(_, row)| row.contains("before needle after"))
+        .unwrap();
+    let direct_x = direct_line.find("before needle after").unwrap() as u16 + 7;
+    assert_eq!(direct_buffer[(direct_x, direct_row)].bg, Color::Yellow);
     let highlighted = buffer(&mut app);
     let highlighted_row = (0..20)
         .find(|&y| {

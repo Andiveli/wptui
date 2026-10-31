@@ -429,9 +429,11 @@ fn reply_excerpt(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use ratatui::{
-        layout::Alignment,
+        buffer::Buffer,
+        layout::{Alignment, Rect},
         style::{Color, Modifier},
         text::Span,
+        widgets::{Paragraph, Widget},
     };
 
     use unicode_segmentation::UnicodeSegmentation;
@@ -462,6 +464,11 @@ mod tests {
             span.content.contains("(edited)")
                 && span.style.fg == Some(Color::DarkGray)
                 && span.style.bg.is_none()
+        }));
+        let mut painted = Buffer::empty(Rect::new(0, 0, 40, 1));
+        Paragraph::new(lines).render(painted.area, &mut painted);
+        assert!(painted.content().iter().any(|cell| {
+            cell.symbol() == "ש" && cell.bg == Color::Yellow && cell.fg == Color::Blue
         }));
         let original = inline_content_lines(body, &[0..mention_end], Some(StatusLabel::Edited), 40);
         assert!(original[0].spans.iter().all(|span| span.style.bg.is_none()));
