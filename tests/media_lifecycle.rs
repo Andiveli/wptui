@@ -370,6 +370,186 @@ fn symlink_escapes_are_rejected_without_a_launch_plan() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn contained_relative_and_absolute_symlinks_open_without_escaping() {
+    use std::io::Read;
+    use std::os::unix::fs::symlink;
+
+    let root = tempdir().unwrap();
+    let outside = tempdir().unwrap();
+    fs::create_dir(root.path().join("nested")).unwrap();
+    fs::write(root.path().join("nested/inside.png"), b"inside").unwrap();
+    fs::write(outside.path().join("outside.png"), b"outside").unwrap();
+    symlink("nested", root.path().join("relative-dir")).unwrap();
+    symlink(
+        root.path().join("nested/inside.png"),
+        root.path().join("absolute-file.png"),
+    )
+    .unwrap();
+    symlink(
+        outside.path().join("outside.png"),
+        root.path().join("outside.png"),
+    )
+    .unwrap();
+    let media = MediaRoot::new(root.path()).unwrap();
+
+    for path in ["relative-dir/inside.png", "absolute-file.png"] {
+        let mut contents = Vec::new();
+        media
+            .open_media_file(Path::new(path))
+            .unwrap()
+            .read_to_end(&mut contents)
+            .unwrap();
+        assert_eq!(contents, b"inside");
+    }
+    assert!(matches!(
+        media.open_media_file(Path::new("outside.png")),
+        Err(MediaLaunchError::SymlinkEscape)
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn preview_open_never_reads_outside_during_directory_replacement() {
+    use std::io::Read;
+    use std::os::unix::fs::symlink;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let root = tempdir().unwrap();
+    let outside = tempdir().unwrap();
+    fs::create_dir(root.path().join("nested")).unwrap();
+    fs::write(root.path().join("nested/clip.png"), b"inside").unwrap();
+    fs::write(outside.path().join("clip.png"), b"outside").unwrap();
+    let media = MediaRoot::new(root.path()).unwrap();
+    let active = AtomicBool::new(true);
+
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            while active.load(Ordering::Relaxed) {
+                let current = root.path().join("nested");
+                let parked = outside.path().join("parked");
+                fs::rename(&current, &parked).unwrap();
+                symlink(outside.path(), &current).unwrap();
+                fs::remove_file(&current).unwrap();
+                fs::rename(&parked, &current).unwrap();
+            }
+        });
+        for _ in 0..512 {
+            if let Ok(mut file) = media.open_media_file(Path::new("nested/clip.png")) {
+                let mut contents = Vec::new();
+                file.read_to_end(&mut contents).unwrap();
+                assert_eq!(contents, b"inside", "preview opened outside media root");
+            }
+        }
+        active.store(false, Ordering::Relaxed);
+    });
+}
+
+#[cfg(unix)]
+#[test]
+fn configured_media_root_symlink_still_opens_its_contained_file() {
+    use std::io::Read;
+    use std::os::unix::fs::symlink;
+
+    let root = tempdir().unwrap();
+    let alias = tempdir().unwrap();
+    fs::write(root.path().join("clip.png"), b"inside").unwrap();
+    let link = alias.path().join("media");
+    symlink(root.path(), &link).unwrap();
+    let mut file = MediaRoot::new(&link)
+        .unwrap()
+        .open_media_file(Path::new("clip.png"))
+        .unwrap();
+    let mut contents = Vec::new();
+    file.read_to_end(&mut contents).unwrap();
+    assert_eq!(contents, b"inside");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn darwin_beneath_open_refuses_an_in_root_ancestor_symlink() {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::symlink;
+
+    let root = tempdir().unwrap();
+    fs::create_dir(root.path().join("nested")).unwrap();
+    fs::write(root.path().join("nested/clip.png"), b"inside").unwrap();
+    symlink("nested", root.path().join("alias")).unwrap();
+    let directory = fs::File::open(root.path()).unwrap();
+
+    // BENEATH alone allows this in-root relative symlink. The kernel must
+    // reject it because NOFOLLOW_ANY protects every ancestor, not only the
+    // final component. An ignored flag must fail this platform proof.
+    let fd = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            c"alias/clip.png".as_ptr(),
+            libc::O_RDONLY | libc::O_CLOEXEC | 0x1000 | 0x20000000,
+        )
+    };
+    if fd >= 0 {
+        assert_eq!(unsafe { libc::close(fd) }, 0);
+        panic!("Darwin ignored O_NOFOLLOW_ANY on an ancestor symlink");
+    }
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::ELOOP)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn replaced_root_path_cannot_redirect_an_existing_media_root() {
+    use std::io::Read;
+    use std::os::unix::fs::symlink;
+
+    let holder = tempdir().unwrap();
+    let outside = tempdir().unwrap();
+    let root_path = holder.path().join("media");
+    let parked = holder.path().join("original-media");
+    fs::create_dir(&root_path).unwrap();
+    fs::write(root_path.join("clip.png"), b"inside").unwrap();
+    fs::write(outside.path().join("clip.png"), b"outside").unwrap();
+    let media = MediaRoot::new(&root_path).unwrap();
+    fs::rename(&root_path, &parked).unwrap();
+    symlink(outside.path(), &root_path).unwrap();
+
+    if let Ok(mut file) = media.open_media_file(Path::new("clip.png")) {
+        let mut contents = Vec::new();
+        file.read_to_end(&mut contents).unwrap();
+        assert_eq!(contents, b"inside", "root replacement escaped media root");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn replaced_root_ancestor_cannot_redirect_an_existing_media_root() {
+    use std::io::Read;
+    use std::os::unix::fs::symlink;
+
+    let holder = tempdir().unwrap();
+    let outside = tempdir().unwrap();
+    let parent = holder.path().join("parent");
+    let root = parent.join("media");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("clip.png"), b"inside").unwrap();
+    fs::create_dir(outside.path().join("media")).unwrap();
+    fs::write(outside.path().join("media/clip.png"), b"outside").unwrap();
+    let media = MediaRoot::new(&root).unwrap();
+    fs::rename(&parent, holder.path().join("original-parent")).unwrap();
+    symlink(outside.path(), &parent).unwrap();
+
+    if let Ok(mut file) = media.open_media_file(Path::new("clip.png")) {
+        let mut contents = Vec::new();
+        file.read_to_end(&mut contents).unwrap();
+        assert_eq!(
+            contents, b"inside",
+            "ancestor replacement escaped media root"
+        );
+    }
+}
+
 #[test]
 fn metacharacter_filenames_remain_one_literal_argument() {
     let root = tempdir().unwrap();
