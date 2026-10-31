@@ -8,6 +8,13 @@ use std::{
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
+#[cfg(unix)]
+use std::{
+    collections::VecDeque,
+    ffi::CString,
+    os::fd::{AsRawFd, FromRawFd},
+    os::unix::ffi::OsStrExt,
+};
 
 use whatsrust::FileKind;
 
@@ -211,17 +218,43 @@ pub fn document_opener_from_environment(path: &Path) -> Result<PathBuf, MediaLau
     )
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct MediaRoot(PathBuf);
+#[derive(Debug)]
+pub struct MediaRoot {
+    path: PathBuf,
+    #[cfg(unix)]
+    directory: fs::File,
+}
+
+impl PartialEq for MediaRoot {
+    fn eq(&self, other: &Self) -> bool {
+        self.path == other.path
+    }
+}
+impl Eq for MediaRoot {}
 
 impl MediaRoot {
     pub fn new(path: &Path) -> Result<Self, MediaLaunchError> {
         let path = path
             .canonicalize()
             .map_err(|_| MediaLaunchError::UnconfiguredMediaRoot)?;
-        path.is_dir()
-            .then_some(Self(path))
-            .ok_or(MediaLaunchError::UnconfiguredMediaRoot)
+        #[cfg(unix)]
+        let directory =
+            fs::File::open(&path).map_err(|_| MediaLaunchError::UnconfiguredMediaRoot)?;
+        #[cfg(unix)]
+        let is_dir = directory
+            .metadata()
+            .map_err(|_| MediaLaunchError::UnconfiguredMediaRoot)?
+            .is_dir();
+        #[cfg(not(unix))]
+        let is_dir = path.is_dir();
+        if !is_dir {
+            return Err(MediaLaunchError::UnconfiguredMediaRoot);
+        }
+        Ok(Self {
+            path,
+            #[cfg(unix)]
+            directory,
+        })
     }
 
     pub fn plan_launch(
@@ -230,9 +263,10 @@ impl MediaRoot {
         relative_path: &Path,
     ) -> Result<LaunchPlan, MediaLaunchError> {
         validate_executable(executable)?;
-        let path = self.media_file(relative_path)?;
         #[cfg(unix)]
-        let stable_file = fs::File::open(&path).map_err(|_| MediaLaunchError::MissingFile)?;
+        let stable_file = self.open_media_file(relative_path)?;
+        #[cfg(not(unix))]
+        let path = self.media_file(relative_path)?;
         #[cfg(unix)]
         let arguments = {
             use std::os::fd::AsRawFd;
@@ -260,29 +294,13 @@ impl MediaRoot {
     }
 
     pub fn media_file(&self, relative_path: &Path) -> Result<PathBuf, MediaLaunchError> {
-        if relative_path.is_absolute() {
-            return Err(MediaLaunchError::AbsolutePath);
-        }
-        if relative_path
-            .components()
-            .any(|component| component == Component::ParentDir)
-        {
-            return Err(MediaLaunchError::ParentTraversal);
-        }
-        if relative_path.as_os_str().is_empty()
-            || relative_path
-                .components()
-                .any(|component| !matches!(component, Component::Normal(_)))
-        {
-            return Err(MediaLaunchError::MalformedPath);
-        }
-
+        validate_media_path(relative_path)?;
         let path = self
-            .0
+            .path
             .join(relative_path)
             .canonicalize()
             .map_err(|_| MediaLaunchError::MissingFile)?;
-        if !path.starts_with(&self.0) {
+        if !path.starts_with(&self.path) {
             return Err(MediaLaunchError::SymlinkEscape);
         }
         if !fs::metadata(&path)
@@ -293,6 +311,142 @@ impl MediaRoot {
         }
         Ok(path)
     }
+
+    /// Open from the pinned root directory. No preview or player reads the
+    /// pathname returned by `media_file` after its separate validation step.
+    pub fn open_media_file(&self, relative_path: &Path) -> Result<fs::File, MediaLaunchError> {
+        validate_media_path(relative_path)?;
+        #[cfg(unix)]
+        {
+            self.open_media_file_unix(relative_path)
+        }
+        #[cfg(not(unix))]
+        {
+            fs::File::open(self.media_file(relative_path)?)
+                .map_err(|_| MediaLaunchError::MissingFile)
+        }
+    }
+
+    #[cfg(unix)]
+    fn open_media_file_unix(&self, relative_path: &Path) -> Result<fs::File, MediaLaunchError> {
+        let mut pending: VecDeque<OsString> = relative_path
+            .components()
+            .map(|component| component.as_os_str().to_owned())
+            .collect();
+        let mut directory = self
+            .directory
+            .try_clone()
+            .map_err(|_| MediaLaunchError::MissingFile)?;
+        let mut parent = self.path.clone();
+        let mut links = 0;
+
+        while let Some(name) = pending.pop_front() {
+            let name =
+                CString::new(name.as_bytes()).map_err(|_| MediaLaunchError::MalformedPath)?;
+            // readlinkat only observes a possible link; every subsequent openat
+            // uses O_NOFOLLOW, so changing the entry cannot redirect the open.
+            let mut target = vec![0u8; 256];
+            let link = loop {
+                let length = unsafe {
+                    libc::readlinkat(
+                        directory.as_raw_fd(),
+                        name.as_ptr(),
+                        target.as_mut_ptr().cast(),
+                        target.len(),
+                    )
+                };
+                if length < 0 {
+                    if io::Error::last_os_error().raw_os_error() == Some(libc::EINVAL) {
+                        break None;
+                    }
+                    return Err(MediaLaunchError::MissingFile);
+                }
+                if length as usize == target.len() {
+                    if target.len() >= 1024 * 1024 {
+                        return Err(MediaLaunchError::MalformedPath);
+                    }
+                    target.resize(target.len() * 2, 0);
+                } else {
+                    target.truncate(length as usize);
+                    break Some(PathBuf::from(OsStr::from_bytes(&target)));
+                }
+            };
+            if let Some(target) = link {
+                links += 1;
+                if links > 40 {
+                    return Err(MediaLaunchError::MissingFile);
+                }
+                // Canonicalization is only used to choose a candidate path.
+                // The actual read is always a separate no-follow walk from the
+                // pinned root descriptor, even if entries change meanwhile.
+                let canonical = parent
+                    .join(target)
+                    .canonicalize()
+                    .map_err(|_| MediaLaunchError::MissingFile)?;
+                let contained = canonical
+                    .strip_prefix(&self.path)
+                    .map_err(|_| MediaLaunchError::SymlinkEscape)?;
+                let mut expanded: VecDeque<_> = contained
+                    .components()
+                    .map(|component| component.as_os_str().to_owned())
+                    .collect();
+                expanded.append(&mut pending);
+                pending = expanded;
+                directory = self
+                    .directory
+                    .try_clone()
+                    .map_err(|_| MediaLaunchError::MissingFile)?;
+                parent.clone_from(&self.path);
+                continue;
+            }
+            let flags = libc::O_RDONLY
+                | libc::O_CLOEXEC
+                | libc::O_NOFOLLOW
+                | if pending.is_empty() {
+                    0
+                } else {
+                    libc::O_DIRECTORY
+                };
+            let descriptor = unsafe { libc::openat(directory.as_raw_fd(), name.as_ptr(), flags) };
+            if descriptor < 0 {
+                return Err(MediaLaunchError::MissingFile);
+            }
+            let file = unsafe { fs::File::from_raw_fd(descriptor) };
+            if pending.is_empty() {
+                if !file
+                    .metadata()
+                    .map_err(|_| MediaLaunchError::MissingFile)?
+                    .is_file()
+                {
+                    return Err(MediaLaunchError::NotFile);
+                }
+                return Ok(file);
+            }
+            parent.push(OsStr::from_bytes(name.as_bytes()));
+            directory = file;
+        }
+        Err(MediaLaunchError::NotFile)
+    }
+}
+
+fn validate_media_path(relative_path: &Path) -> Result<(), MediaLaunchError> {
+    if relative_path.is_absolute() {
+        return Err(MediaLaunchError::AbsolutePath);
+    }
+    if relative_path
+        .components()
+        .any(|component| component == Component::ParentDir)
+    {
+        return Err(MediaLaunchError::ParentTraversal);
+    }
+    if relative_path.as_os_str().is_empty()
+        || relative_path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(MediaLaunchError::MalformedPath);
+    }
+    Ok(())
 }
 
 pub fn plan_media_launch(
