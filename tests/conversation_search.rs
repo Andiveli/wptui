@@ -260,6 +260,8 @@ fn search_highlights_only_matching_text_in_the_open_chat_and_clears_on_escape() 
         press(&mut app, KeyCode::Char(character));
     }
     press(&mut app, KeyCode::Enter);
+    assert_eq!(app.conversation_mode, ConversationMode::MessageNavigation);
+    assert!(screen(&mut app).contains("/needle"));
     let highlighted = buffer(&mut app);
     let highlighted_row = (0..20)
         .find(|&y| {
