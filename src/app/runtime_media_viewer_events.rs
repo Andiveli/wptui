@@ -187,21 +187,27 @@ impl App<'_> {
                         };
                         media_jobs.spawn(move |permit| {
                             let preview_path = match file.kind {
-                                wr::FileKind::Video => {
-                                    let video_rel = Path::new(file.path.as_ref());
-                                    let sidecar_rel = video_rel.with_extension("jpg");
-                                    let sidecar_abs = media_path.join(&sidecar_rel);
-                                    if !has_decent_video_thumbnail(&sidecar_abs) {
-                                        let video_abs = media_path.join(video_rel);
-                                        generate_video_thumbnail(&video_abs, &sidecar_abs);
-                                    }
-                                    sidecar_rel.to_string_lossy().to_string()
-                                }
+                                wr::FileKind::Video => Path::new(file.path.as_ref())
+                                    .with_extension("jpg")
+                                    .to_string_lossy()
+                                    .to_string(),
                                 _ => file.path.to_string(),
                             };
-                            let preview_file = MediaRoot::new(&media_path)
-                                .and_then(|root| root.open_media_file(Path::new(&preview_path)))
-                                .ok();
+                            let root = MediaRoot::new(&media_path).ok();
+                            let preview_file = root.as_ref().and_then(|root| {
+                                root.open_media_file(Path::new(&preview_path)).ok()
+                            });
+                            let generated = if matches!(file.kind, wr::FileKind::Video)
+                                && !preview_file
+                                    .as_ref()
+                                    .is_some_and(has_decent_video_thumbnail)
+                            {
+                                root.as_ref().and_then(|root| {
+                                    generate_video_thumbnail(root, Path::new(file.path.as_ref()))
+                                })
+                            } else {
+                                None
+                            };
                             let animation_slot = if let Some(slot) = animation_slot {
                                 match crate::app::sticker_preview_worker::try_animated_preview(
                                     preview_reader.as_ref(),
@@ -219,7 +225,8 @@ impl App<'_> {
                             } else {
                                 None
                             };
-                            let image_res = preview_file.and_then(decode_media_image);
+                            let image_res =
+                                generated.or_else(|| preview_file.and_then(decode_media_image));
                             if let Some(mut image_src) = image_res {
                                 if matches!(file.kind, wr::FileKind::Video) {
                                     apply_video_play_marker(&mut image_src);

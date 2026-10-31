@@ -111,6 +111,84 @@ fn probe_audio_duration_reads_ogg_opus_with_oga_extension() {
     assert_eq!(probe_audio_duration(&path), Some(3));
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn video_thumbnail_process_keeps_generated_frame_in_memory() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let directory = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(directory.path().join("clip.mp4"), b"inside-video").unwrap();
+    fs::write(directory.path().join("clip.jpg"), b"tiny").unwrap();
+    fs::write(outside.path().join("outside.mp4"), b"outside-video").unwrap();
+    fs::write(outside.path().join("outside.jpg"), b"outside-thumbnail").unwrap();
+    symlink(
+        outside.path().join("outside.jpg"),
+        directory.path().join("linked.jpg"),
+    )
+    .unwrap();
+    symlink(
+        outside.path().join("outside.mp4"),
+        directory.path().join("escape.mp4"),
+    )
+    .unwrap();
+    let expected_fd = if cfg!(target_os = "macos") {
+        "/dev/fd/0"
+    } else {
+        "/proc/self/fd/0"
+    };
+    let executable = directory.path().join("ffmpeg-stub");
+    let script = format!(
+        "#!/bin/sh\ninput=\noutput=\nskip=0\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = -ss ]; then skip=1; fi\n  if [ \"$1\" = -i ]; then shift; input=\"$1\"; fi\n  output=\"$1\"\n  shift\ndone\n[ \"$input\" = \"{expected_fd}\" ] || exit 40\n[ \"$output\" = pipe:1 ] || exit 41\n[ \"$(dd if=\"$input\" bs=1 count=1 2>/dev/null)\" = i ] || exit 42\n[ \"$skip\" -eq 0 ] || exit 1\ndd if=/dev/zero bs=4096 count=1 2>/dev/null\n"
+    );
+    fs::write(&executable, script).unwrap();
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+    let root = MediaRoot::new(directory.path()).unwrap();
+
+    let frame = generate_video_thumbnail_with_ffmpeg(&root, Path::new("clip.mp4"), &executable)
+        .expect("fallback attempt produced a frame");
+    assert_eq!(frame.len(), 4096);
+    assert_eq!(
+        fs::read(directory.path().join("clip.jpg")).unwrap(),
+        b"tiny"
+    );
+    assert_eq!(
+        fs::read(outside.path().join("outside.jpg")).unwrap(),
+        b"outside-thumbnail"
+    );
+
+    assert!(
+        generate_video_thumbnail_with_ffmpeg(&root, Path::new("escape.mp4"), &executable).is_none()
+    );
+    assert!(!directory.path().join("escape.jpg").exists());
+    assert_eq!(
+        fs::read(outside.path().join("outside.mp4")).unwrap(),
+        b"outside-video"
+    );
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn video_thumbnail_process_rejects_oversized_output_without_a_sidecar() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(directory.path().join("clip.mp4"), b"inside-video").unwrap();
+    let executable = directory.path().join("ffmpeg-large-stub");
+    fs::write(
+        &executable,
+        "#!/bin/sh\ndd if=/dev/zero bs=1048576 count=9 2>/dev/null\n",
+    )
+    .unwrap();
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+    let root = MediaRoot::new(directory.path()).unwrap();
+
+    assert!(
+        generate_video_thumbnail_with_ffmpeg(&root, Path::new("clip.mp4"), &executable).is_none()
+    );
+    assert!(!directory.path().join("clip.jpg").exists());
+}
+
 #[test]
 fn probe_real_whatsapp_audio_diagnostic() {
     let Some(path) = std::env::var("WPTUI_PROBE_PATH").ok() else {
