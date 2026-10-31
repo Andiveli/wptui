@@ -8,6 +8,20 @@ use std::{
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
+#[cfg(unix)]
+use std::{
+    ffi::CString,
+    os::fd::{AsRawFd, FromRawFd},
+    os::unix::ffi::OsStrExt,
+};
+
+#[cfg(target_os = "linux")]
+#[repr(C)]
+struct OpenHow {
+    flags: u64,
+    mode: u64,
+    resolve: u64,
+}
 
 use whatsrust::FileKind;
 
@@ -211,17 +225,42 @@ pub fn document_opener_from_environment(path: &Path) -> Result<PathBuf, MediaLau
     )
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct MediaRoot(PathBuf);
+#[derive(Debug)]
+pub struct MediaRoot {
+    path: PathBuf,
+    #[cfg(unix)]
+    directory: fs::File,
+}
+
+impl PartialEq for MediaRoot {
+    fn eq(&self, other: &Self) -> bool {
+        self.path == other.path
+    }
+}
+impl Eq for MediaRoot {}
 
 impl MediaRoot {
     pub fn new(path: &Path) -> Result<Self, MediaLaunchError> {
         let path = path
             .canonicalize()
             .map_err(|_| MediaLaunchError::UnconfiguredMediaRoot)?;
-        path.is_dir()
-            .then_some(Self(path))
-            .ok_or(MediaLaunchError::UnconfiguredMediaRoot)
+        #[cfg(unix)]
+        let directory = open_root_directory(&path)?;
+        #[cfg(unix)]
+        let is_dir = directory
+            .metadata()
+            .map_err(|_| MediaLaunchError::UnconfiguredMediaRoot)?
+            .is_dir();
+        #[cfg(not(unix))]
+        let is_dir = path.is_dir();
+        if !is_dir {
+            return Err(MediaLaunchError::UnconfiguredMediaRoot);
+        }
+        Ok(Self {
+            path,
+            #[cfg(unix)]
+            directory,
+        })
     }
 
     pub fn plan_launch(
@@ -230,9 +269,10 @@ impl MediaRoot {
         relative_path: &Path,
     ) -> Result<LaunchPlan, MediaLaunchError> {
         validate_executable(executable)?;
-        let path = self.media_file(relative_path)?;
         #[cfg(unix)]
-        let stable_file = fs::File::open(&path).map_err(|_| MediaLaunchError::MissingFile)?;
+        let stable_file = self.open_media_file(relative_path)?;
+        #[cfg(not(unix))]
+        let path = self.media_file(relative_path)?;
         #[cfg(unix)]
         let arguments = {
             use std::os::fd::AsRawFd;
@@ -259,30 +299,16 @@ impl MediaRoot {
         })
     }
 
+    /// Resolve a pathname for display only. Do not reopen this path for media
+    /// reads: concurrent replacements can invalidate the containment check.
     pub fn media_file(&self, relative_path: &Path) -> Result<PathBuf, MediaLaunchError> {
-        if relative_path.is_absolute() {
-            return Err(MediaLaunchError::AbsolutePath);
-        }
-        if relative_path
-            .components()
-            .any(|component| component == Component::ParentDir)
-        {
-            return Err(MediaLaunchError::ParentTraversal);
-        }
-        if relative_path.as_os_str().is_empty()
-            || relative_path
-                .components()
-                .any(|component| !matches!(component, Component::Normal(_)))
-        {
-            return Err(MediaLaunchError::MalformedPath);
-        }
-
+        validate_media_path(relative_path)?;
         let path = self
-            .0
+            .path
             .join(relative_path)
             .canonicalize()
             .map_err(|_| MediaLaunchError::MissingFile)?;
-        if !path.starts_with(&self.0) {
+        if !path.starts_with(&self.path) {
             return Err(MediaLaunchError::SymlinkEscape);
         }
         if !fs::metadata(&path)
@@ -293,6 +319,204 @@ impl MediaRoot {
         }
         Ok(path)
     }
+
+    /// Open from the pinned root directory. No preview or player reads the
+    /// pathname returned by `media_file` after its separate validation step.
+    pub fn open_media_file(&self, relative_path: &Path) -> Result<fs::File, MediaLaunchError> {
+        validate_media_path(relative_path)?;
+        #[cfg(unix)]
+        {
+            self.open_media_file_unix(relative_path)
+        }
+        #[cfg(not(unix))]
+        {
+            fs::File::open(self.media_file(relative_path)?)
+                .map_err(|_| MediaLaunchError::MissingFile)
+        }
+    }
+
+    #[cfg(unix)]
+    fn open_media_file_unix(&self, relative_path: &Path) -> Result<fs::File, MediaLaunchError> {
+        // This pathname is only a candidate. Canonicalizing it preserves the
+        // prior behavior for relative AND absolute in-root symlinks; no file
+        // content is read until the kernel confines the actual open to the FD.
+        let candidate = self
+            .path
+            .join(relative_path)
+            .canonicalize()
+            .map_err(|_| MediaLaunchError::MissingFile)?;
+        let contained = candidate
+            .strip_prefix(&self.path)
+            .map_err(|_| MediaLaunchError::SymlinkEscape)?;
+        if contained.as_os_str().is_empty() {
+            return Err(MediaLaunchError::NotFile);
+        }
+        let name = CString::new(contained.as_os_str().as_bytes())
+            .map_err(|_| MediaLaunchError::MalformedPath)?;
+
+        #[cfg(target_os = "linux")]
+        let descriptor = {
+            // Linux 5.6+: one beneath-constrained resolution, not a sequence
+            // of openat calls vulnerable to a renamed intermediate directory.
+            let how = OpenHow {
+                flags: (libc::O_RDONLY | libc::O_CLOEXEC) as u64,
+                mode: 0,
+                resolve: 0x08 | 0x02, // RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS
+            };
+            unsafe {
+                libc::syscall(
+                    libc::SYS_openat2,
+                    self.directory.as_raw_fd(),
+                    name.as_ptr(),
+                    &how as *const OpenHow,
+                    std::mem::size_of::<OpenHow>(),
+                ) as libc::c_int
+            }
+        };
+        #[cfg(target_os = "macos")]
+        let descriptor = unsafe {
+            libc::openat(
+                self.directory.as_raw_fd(),
+                name.as_ptr(),
+                libc::O_RDONLY | libc::O_CLOEXEC | 0x1000, // O_RESOLVE_BENEATH
+            )
+        };
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        return Err(MediaLaunchError::MissingFile);
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            if descriptor < 0 {
+                return Err(
+                    if io::Error::last_os_error().raw_os_error() == Some(libc::EXDEV) {
+                        MediaLaunchError::SymlinkEscape
+                    } else {
+                        MediaLaunchError::MissingFile
+                    },
+                );
+            }
+            let file = unsafe { fs::File::from_raw_fd(descriptor) };
+            if !file
+                .metadata()
+                .map_err(|_| MediaLaunchError::MissingFile)?
+                .is_file()
+            {
+                return Err(MediaLaunchError::NotFile);
+            }
+            Ok(file)
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn open_root_directory(path: &Path) -> Result<fs::File, MediaLaunchError> {
+    // The filesystem root itself cannot be replaced by a path component.
+    // Resolve every remaining component in one kernel call, forbidding links
+    // substituted anywhere between the earlier canonicalize and this open.
+    let filesystem = fs::File::open("/").map_err(|_| MediaLaunchError::UnconfiguredMediaRoot)?;
+    let relative = path
+        .strip_prefix("/")
+        .map_err(|_| MediaLaunchError::UnconfiguredMediaRoot)?;
+    if relative.as_os_str().is_empty() {
+        return Ok(filesystem);
+    }
+    let name = CString::new(relative.as_os_str().as_bytes())
+        .map_err(|_| MediaLaunchError::UnconfiguredMediaRoot)?;
+    let how = OpenHow {
+        flags: (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64,
+        mode: 0,
+        resolve: 0x08 | 0x04, // RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS
+    };
+    let fd = unsafe {
+        libc::syscall(
+            libc::SYS_openat2,
+            filesystem.as_raw_fd(),
+            name.as_ptr(),
+            &how as *const OpenHow,
+            std::mem::size_of::<OpenHow>(),
+        ) as libc::c_int
+    };
+    if fd < 0 {
+        return Err(MediaLaunchError::UnconfiguredMediaRoot);
+    }
+    Ok(unsafe { fs::File::from_raw_fd(fd) })
+}
+
+#[cfg(target_os = "macos")]
+fn open_root_directory(path: &Path) -> Result<fs::File, MediaLaunchError> {
+    const BENEATH: libc::c_int = 0x1000; // Darwin O_RESOLVE_BENEATH
+    const NOFOLLOW_ANY: libc::c_int = 0x20000000; // Darwin O_NOFOLLOW_ANY
+    // Old XNU may ignore unknown flags. Probe a known escape from /dev first;
+    // only an explicit ENOTCAPABLE proves the kernel enforces BENEATH.
+    let dev = unsafe {
+        libc::open(
+            c"/dev".as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+        )
+    };
+    if dev < 0 {
+        return Err(MediaLaunchError::UnconfiguredMediaRoot);
+    }
+    let dev = unsafe { fs::File::from_raw_fd(dev) };
+    let probe = unsafe {
+        libc::openat(
+            dev.as_raw_fd(),
+            c"../".as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | BENEATH,
+        )
+    };
+    if probe >= 0 {
+        drop(unsafe { fs::File::from_raw_fd(probe) });
+        return Err(MediaLaunchError::UnconfiguredMediaRoot);
+    }
+    if io::Error::last_os_error().raw_os_error() != Some(libc::ENOTCAPABLE) {
+        return Err(MediaLaunchError::UnconfiguredMediaRoot);
+    }
+
+    let filesystem = fs::File::open("/").map_err(|_| MediaLaunchError::UnconfiguredMediaRoot)?;
+    let relative = path
+        .strip_prefix("/")
+        .map_err(|_| MediaLaunchError::UnconfiguredMediaRoot)?;
+    if relative.as_os_str().is_empty() {
+        return Ok(filesystem);
+    }
+    let name = CString::new(relative.as_os_str().as_bytes())
+        .map_err(|_| MediaLaunchError::UnconfiguredMediaRoot)?;
+    let fd = unsafe {
+        libc::openat(
+            filesystem.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | BENEATH | NOFOLLOW_ANY,
+        )
+    };
+    if fd < 0 {
+        return Err(MediaLaunchError::UnconfiguredMediaRoot);
+    }
+    Ok(unsafe { fs::File::from_raw_fd(fd) })
+}
+
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+fn open_root_directory(_path: &Path) -> Result<fs::File, MediaLaunchError> {
+    Err(MediaLaunchError::UnconfiguredMediaRoot)
+}
+
+fn validate_media_path(relative_path: &Path) -> Result<(), MediaLaunchError> {
+    if relative_path.is_absolute() {
+        return Err(MediaLaunchError::AbsolutePath);
+    }
+    if relative_path
+        .components()
+        .any(|component| component == Component::ParentDir)
+    {
+        return Err(MediaLaunchError::ParentTraversal);
+    }
+    if relative_path.as_os_str().is_empty()
+        || relative_path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(MediaLaunchError::MalformedPath);
+    }
+    Ok(())
 }
 
 pub fn plan_media_launch(
