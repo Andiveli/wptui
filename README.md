@@ -228,8 +228,9 @@ removes the local row, but does not itself prove removal from every recipient's 
 | Media viewer | Previous / next | `h`/`l` or arrows |
 | Media viewer | Save image or video as a file | `s`, edit path, `Enter` (or `Esc` to cancel) |
 
-Save As copies a downloaded attachment to the filename you enter (relative paths use the current
-working directory). Existing files are never overwritten; choose another name if one exists.
+Save As proposes an absolute path in the app's current working directory and shows that path in
+the viewer after saving. You can edit it to choose another location; relative paths also use the
+current working directory. Existing files are never overwritten; choose another name if one exists.
 
 Pasted files are queued as attachments. When text is included, it becomes the caption of the first
 attachment.

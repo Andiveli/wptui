@@ -1020,7 +1020,11 @@ fn render_attachment_viewer(
             layout.hint,
         );
     } else {
-        frame.render_widget(Paragraph::new(hint), layout.hint);
+        let text = viewer
+            .saved_path
+            .as_ref()
+            .map_or(hint, |path| format!("Saved to:\n{path}"));
+        frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), layout.hint);
     }
 
     if matches!(viewer.kind, wr::FileKind::Image | wr::FileKind::Video)

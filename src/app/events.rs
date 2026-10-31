@@ -115,6 +115,7 @@ pub struct AttachmentViewerState {
     pub status: ViewerStatus,
     pub attachments: Vec<ViewerAttachment>,
     pub save_as: Option<String>,
+    pub saved_path: Option<String>,
 }
 
 impl AttachmentViewerState {
@@ -131,10 +132,12 @@ impl AttachmentViewerState {
             status: active.map_or(ViewerStatus::Missing, |item| item.status.clone()),
             attachments,
             save_as: None,
+            saved_path: None,
         }
     }
 
     pub fn navigate(&mut self, delta: isize) {
+        self.saved_path = None;
         self.index = self
             .index
             .saturating_add_signed(delta)
