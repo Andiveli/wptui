@@ -30,6 +30,11 @@ pub(crate) fn status_view_allows(action: &AppAction) -> bool {
             | AppAction::ViewerZoomOut
             | AppAction::CloseAttachmentViewer
             | AppAction::ViewerOpenExternal
+            | AppAction::ViewerSaveAs
+            | AppAction::ViewerSaveCharacter(_)
+            | AppAction::ViewerSaveBackspace
+            | AppAction::ViewerSaveConfirm
+            | AppAction::ViewerSaveCancel
             | AppAction::CloseStatusPane
     )
 }

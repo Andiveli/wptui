@@ -10,7 +10,18 @@ pub(crate) fn attachment_viewer_action(key: &Key) -> Option<AppAction> {
         KeyCode::Char('-') => AppAction::ViewerZoomOut,
         KeyCode::Char('=') => AppAction::ViewerZoomIn,
         KeyCode::Char('x') => AppAction::ViewerOpenExternal,
+        KeyCode::Char('s') => AppAction::ViewerSaveAs,
         KeyCode::Esc | KeyCode::Char('q') => AppAction::CloseAttachmentViewer,
+        _ => return None,
+    })
+}
+
+pub(crate) fn viewer_save_action(key: &Key) -> Option<AppAction> {
+    Some(match key.code {
+        KeyCode::Esc => AppAction::ViewerSaveCancel,
+        KeyCode::Enter => AppAction::ViewerSaveConfirm,
+        KeyCode::Backspace => AppAction::ViewerSaveBackspace,
+        KeyCode::Char(character) => AppAction::ViewerSaveCharacter(character),
         _ => return None,
     })
 }

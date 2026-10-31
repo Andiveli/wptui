@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::{fs, io};
 
 use super::App;
 use crate::app::actions::{ActionNotice, Section};
@@ -69,6 +70,64 @@ impl App<'_> {
             .unwrap_or_default();
         self.attachment_viewer = Some(AttachmentViewerState::from_attachments(attachments, index));
         self.viewer_preview = None;
+    }
+
+    pub(crate) fn start_viewer_save(&mut self) {
+        let Some(viewer) = self.attachment_viewer.as_mut() else {
+            return self.unavailable("Media is not downloaded");
+        };
+        if viewer.status != ViewerStatus::Ready {
+            return self.unavailable("Media is not downloaded");
+        }
+        let name = Path::new(viewer.path.as_ref())
+            .file_name()
+            .filter(|name| !name.is_empty())
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "attachment.bin".to_owned());
+        viewer.save_as = Some(name);
+    }
+
+    pub(crate) fn confirm_viewer_save(&mut self) {
+        let Some(viewer) = self.attachment_viewer.as_ref() else {
+            return self.unavailable("Media is not downloaded");
+        };
+        if viewer.status != ViewerStatus::Ready {
+            return self.unavailable("Media is not downloaded");
+        }
+        let Some(destination) = viewer.save_as.as_ref() else {
+            return self.unavailable("Save as is not active");
+        };
+        if destination.trim().is_empty() {
+            return self.unavailable("Enter a destination filename");
+        }
+        let result = (|| -> io::Result<()> {
+            let root = crate::media::MediaRoot::new(&self.media_path)
+                .map_err(|error| io::Error::other(format!("Invalid media root: {error:?}")))?;
+            let source = root
+                .media_file(Path::new(viewer.path.as_ref()))
+                .map_err(|error| io::Error::other(format!("Invalid source: {error:?}")))?;
+            let target = Path::new(destination);
+            let parent = target
+                .parent()
+                .filter(|path| !path.as_os_str().is_empty())
+                .unwrap_or(Path::new("."));
+            let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+            let mut input = fs::File::open(source)?;
+            io::copy(&mut input, &mut temporary)?;
+            temporary
+                .persist_noclobber(target)
+                .map_err(|error| error.error)?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                if let Some(viewer) = self.attachment_viewer.as_mut() {
+                    viewer.save_as = None;
+                }
+                self.action_notice = Some(ActionNotice::Unavailable("Media saved".into()));
+            }
+            Err(error) => self.unavailable(&format!("Could not save media: {error}")),
+        }
     }
 
     pub(crate) fn navigate_viewer(&mut self, delta: isize) {
@@ -176,6 +235,97 @@ mod tests {
                 ..Default::default()
             }),
         }
+    }
+
+    #[test]
+    fn save_as_copies_image_and_video_and_navigation_still_works() {
+        let mut app = TestApp::new();
+        fs::create_dir_all(&app.media_path).unwrap();
+        let destination = tempfile::tempdir().unwrap();
+        let attachments = [wr::FileKind::Image, wr::FileKind::Video]
+            .into_iter()
+            .enumerate()
+            .map(|(index, kind)| {
+                let name = format!("media{index}.bin");
+                fs::write(app.media_path.join(&name), name.as_bytes()).unwrap();
+                ViewerAttachment {
+                    message_id: name.clone().into(),
+                    kind,
+                    path: name.into(),
+                    status: ViewerStatus::Ready,
+                }
+            })
+            .collect();
+        app.attachment_viewer = Some(AttachmentViewerState::from_attachments(attachments, 0));
+        for index in 0..2 {
+            app.start_viewer_save();
+            assert_eq!(
+                app.attachment_viewer.as_ref().unwrap().save_as.as_deref(),
+                Some(format!("media{index}.bin").as_str())
+            );
+            let target = destination.path().join(format!("saved{index}.bin"));
+            app.attachment_viewer.as_mut().unwrap().save_as =
+                Some(target.to_string_lossy().into_owned());
+            app.confirm_viewer_save();
+            assert_eq!(
+                fs::read(target).unwrap(),
+                format!("media{index}.bin").as_bytes()
+            );
+            assert!(app.attachment_viewer.as_ref().unwrap().save_as.is_none());
+            app.navigate_viewer(1);
+        }
+        assert_eq!(app.attachment_viewer.as_ref().unwrap().index, 1);
+    }
+
+    #[test]
+    fn save_as_rejects_existing_destination_and_invalid_sources() {
+        let mut app = TestApp::new();
+        fs::create_dir_all(&app.media_path).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("saved.bin");
+        fs::write(&target, b"original").unwrap();
+        fs::write(app.media_path.join("safe.bin"), b"new").unwrap();
+        app.attachment_viewer = Some(AttachmentViewerState::from_attachments(
+            vec![ViewerAttachment {
+                message_id: "image".into(),
+                kind: wr::FileKind::Image,
+                path: "safe.bin".into(),
+                status: ViewerStatus::Ready,
+            }],
+            0,
+        ));
+        app.start_viewer_save();
+        app.attachment_viewer.as_mut().unwrap().save_as =
+            Some(target.to_string_lossy().into_owned());
+        app.confirm_viewer_save();
+        assert_eq!(fs::read(&target).unwrap(), b"original");
+        assert!(app.attachment_viewer.as_ref().unwrap().save_as.is_some());
+
+        for source in ["../outside.bin", "missing.bin"] {
+            app.attachment_viewer.as_mut().unwrap().path = source.into();
+            app.attachment_viewer.as_mut().unwrap().save_as = Some(
+                outside
+                    .path()
+                    .join("absent.bin")
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+            app.confirm_viewer_save();
+            assert!(!outside.path().join("absent.bin").exists());
+        }
+        app.attachment_viewer.as_mut().unwrap().path = "safe.bin".into();
+        app.attachment_viewer.as_mut().unwrap().save_as = Some("  ".into());
+        app.confirm_viewer_save();
+        assert!(matches!(
+            app.action_notice,
+            Some(ActionNotice::Unavailable(_))
+        ));
+        app.attachment_viewer.as_mut().unwrap().status = ViewerStatus::Missing;
+        app.start_viewer_save();
+        assert_eq!(
+            app.attachment_viewer.as_ref().unwrap().save_as.as_deref(),
+            Some("  ")
+        );
     }
 
     #[test]
