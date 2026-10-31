@@ -279,3 +279,99 @@ fn search_prompt_reports_no_matches_without_moving_the_selection() {
     press(&mut app, KeyCode::Esc);
     assert!(!screen(&mut app).contains("Sin coincidencias"));
 }
+
+#[test]
+fn wrapped_rtl_fragment_is_highlighted_in_visual_order() {
+    let mut app = TestApp::new();
+    let chat: whatsrust::JID = "rtl@s.whatsapp.net".to_owned().into();
+    app.open_chat_by_jid(chat.clone());
+    app.add_message(message(
+        &chat,
+        "rtl-text",
+        1,
+        &format!("{}שלום tail", "prefix ".repeat(13)),
+    ));
+    app.focus_pane = FocusPane::Conversation;
+    press(&mut app, KeyCode::Char('/'));
+    for character in "שלום".chars() {
+        press(&mut app, KeyCode::Char(character));
+    }
+    press(&mut app, KeyCode::Enter);
+
+    let painted = buffer(&mut app);
+    let (y, line) = (0..20)
+        .map(|y| {
+            (
+                y,
+                (0..80)
+                    .map(|x| painted[(x, y)].symbol())
+                    .collect::<String>(),
+            )
+        })
+        .find(|(_, line)| line.contains("םולש"))
+        .expect("wrapped RTL match must be painted in the message viewport");
+    let x = painted_column(&painted, y, "םולש");
+    for offset in 0..4 {
+        assert_eq!(painted[(x + offset, y)].bg, Color::Yellow);
+    }
+    if x > 0 {
+        assert_eq!(painted[(x - 1, y)].bg, Color::Reset);
+    }
+}
+
+#[test]
+fn search_highlights_only_matching_text_in_the_open_chat_and_clears_on_escape() {
+    let mut app = TestApp::new();
+    let chat: whatsrust::JID = "highlight@s.whatsapp.net".to_owned().into();
+    app.open_chat_by_jid(chat.clone());
+    app.add_message(message(&chat, "text", 1, "before needle after"));
+    app.focus_pane = FocusPane::Conversation;
+
+    let plain = buffer(&mut app);
+    let row = (0..20)
+        .find(|&y| {
+            (0..80)
+                .map(|x| plain[(x, y)].symbol())
+                .collect::<String>()
+                .contains("before needle after")
+        })
+        .expect("message text must be painted");
+    let match_x = painted_column(&plain, row, "before needle after") + 7;
+    assert_eq!(plain[(match_x, row)].bg, Color::Reset);
+
+    press(&mut app, KeyCode::Char('/'));
+    for character in "needle".chars() {
+        press(&mut app, KeyCode::Char(character));
+    }
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.conversation_mode, ConversationMode::MessageNavigation);
+    assert!(screen(&mut app).contains("/needle"));
+    let highlighted = buffer(&mut app);
+    let highlighted_row = (0..20)
+        .find(|&y| {
+            (0..80)
+                .map(|x| highlighted[(x, y)].symbol())
+                .collect::<String>()
+                .contains("before needle after")
+        })
+        .expect("matching message must be painted");
+    let highlighted_x = painted_column(&highlighted, highlighted_row, "before needle after") + 7;
+    for offset in 0.."needle".len() as u16 {
+        assert_eq!(
+            highlighted[(highlighted_x + offset, highlighted_row)].bg,
+            Color::Yellow
+        );
+    }
+    assert_eq!(
+        highlighted[(highlighted_x - 1, highlighted_row)].bg,
+        Color::Reset
+    );
+    assert_eq!(
+        highlighted[(highlighted_x + "needle".len() as u16, highlighted_row)].bg,
+        Color::Reset
+    );
+
+    press(&mut app, KeyCode::Esc);
+    let cleared = buffer(&mut app);
+    assert_eq!(cleared[(match_x, row)].bg, Color::Reset);
+}
