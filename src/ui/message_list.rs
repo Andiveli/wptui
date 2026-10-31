@@ -12,6 +12,7 @@ use ratatui::{
 use whatsrust as wr;
 
 use crate::app::App;
+use crate::app::actions::{ConversationMode, FocusPane};
 use crate::app::events::MediaRenderPlan;
 use crate::app::read_receipts::VisibilityPlan;
 
@@ -41,7 +42,8 @@ pub use message_helpers::{
 };
 use message_helpers::{
     StatusLabel, directionally_ordered_spans, fit_text_to_width, forwarding_indicator_lines,
-    forwarding_label, inline_content_lines, reply_summary_for_width,
+    forwarding_label, inline_content_lines, inline_content_lines_with_highlights,
+    reply_summary_for_width,
 };
 pub use message_layout::{
     IMAGE_HEIGHT, IMAGE_WIDTH, MESSAGE_HEIGHT_CACHE_CAPACITY, MessageHeightCache, VIDEO_HEIGHT,
@@ -799,8 +801,31 @@ fn render_message(
     match &message.message {
         wr::MessageContent::Text(text) => {
             let mention_ranges = wr::message_mention_ranges(&message.info.id, text);
-            let lines =
-                inline_content_lines(text, &mention_ranges, status, content_area.width as usize);
+            let highlight_ranges = app
+                .conversation_search
+                .as_ref()
+                .filter(|search| {
+                    matches!(text_mode, MessageTextMode::Chat)
+                        && app.focus_pane == FocusPane::Conversation
+                        && app.conversation_mode == ConversationMode::MessageNavigation
+                        && app.open_chat.as_ref() == Some(&search.chat)
+                        && message.info.chat == search.chat
+                        && !search.query.is_empty()
+                        && !matches!(status, Some(StatusLabel::Deleted))
+                })
+                .map(|search| {
+                    text.match_indices(&search.query)
+                        .map(|(start, match_text)| start..start + match_text.len())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let lines = inline_content_lines_with_highlights(
+                text,
+                &mention_ranges,
+                status,
+                content_area.width as usize,
+                &highlight_ranges,
+            );
             Paragraph::new(lines)
                 .style(if is_pending {
                     Style::default().dim()

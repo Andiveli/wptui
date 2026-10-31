@@ -226,6 +226,8 @@ or editor state.
 | Action | Key |
 |---|---|
 | Start composing | `i` |
+| Search messages in the open chat history | `/` with the conversation focused; `Enter` accepts, `Esc` cancels |
+| Next / previous matching message (wraps) | `n` / `N` after a chat search; `j` / `k` still navigate every message |
 | Start optional Vim composer (Chats/Communities conversation only) | `Space`, then `v` |
 | Copy selected text | `y` |
 | React | `r` |
@@ -237,6 +239,14 @@ or editor state.
 | Open downloaded media | `x` |
 | View selected image or video | `v` |
 | Open message actions | `Enter` |
+
+With the message history focused, `/` searches the open chat's locally loaded text messages
+using a literal, case-sensitive substring. Type a query and press `Enter` to jump to its newest
+match, even if it is outside the viewport. The search line shows the match count and current
+position, or `Sin coincidencias` when nothing matches. Use `n` for older matches or `N` for newer
+matches (both wrap); `j`/`k` still visit every message. `Esc` clears the search. In the Contacts
+list, `/` still searches contacts, and `/` in the composer remains ordinary text. This does not
+search other chats, remote history, file captions, or media.
 
 Use `j`/`k` or the arrow keys inside menus, then press `Enter` to confirm. Available actions depend
 on the selected message. In Status, press `Enter` on your own contact to open the Create status
