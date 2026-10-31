@@ -116,6 +116,12 @@ terminal.
   `libglib2.0-dev`, `libasound2-dev`; on macOS, `chafa` from Homebrew
 - Optional: `mpv` for opening media externally
 
+Media previews and external opening require a kernel-confined file open (Linux
+`openat2` or macOS `O_RESOLVE_BENEATH`). On older systems without that support,
+these operations fail closed; downloads and chat still work. Symlinks whose
+resolved targets remain inside the media directory, including absolute links,
+remain usable on supported systems.
+
 ## Installation
 
 ### Prebuilt binary
