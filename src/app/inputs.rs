@@ -129,13 +129,10 @@ impl App<'_> {
                     .as_ref()
                     .is_some_and(|v| v.save_as.is_some())
                 {
-                    let editing_name = self
-                        .attachment_viewer
-                        .as_ref()
-                        .and_then(|viewer| viewer.save_as.as_ref())
-                        .is_some_and(|picker| picker.editing_name);
+                    let picker = self.attachment_viewer.as_ref().and_then(|viewer| viewer.save_as.as_ref()).unwrap();
+                    let (editing_name, searching) = (picker.editing_name, picker.searching);
                     if let Some(action) =
-                        crate::app::input_mapping::viewer_save_action(&key, editing_name)
+                        crate::app::input_mapping::viewer_save_action(&key, editing_name, searching)
                     {
                         self.dispatch_action(action);
                     }
@@ -285,6 +282,11 @@ impl App<'_> {
                         | AppAction::ViewerSaveParent
                         | AppAction::ViewerSaveDescend
                         | AppAction::ViewerSaveEditName
+                        | AppAction::ViewerSaveSearch
+                        | AppAction::ViewerSaveEndSearch
+                        | AppAction::ViewerSaveBrowse
+                        | AppAction::ViewerSaveSearchCharacter(_)
+                        | AppAction::ViewerSaveSearchBackspace
                         | AppAction::ViewerSaveCharacter(_)
                         | AppAction::ViewerSaveBackspace
                         | AppAction::ViewerSaveConfirm
@@ -367,6 +369,11 @@ impl App<'_> {
             | AppAction::ViewerSaveParent
             | AppAction::ViewerSaveDescend
             | AppAction::ViewerSaveEditName
+            | AppAction::ViewerSaveSearch
+            | AppAction::ViewerSaveEndSearch
+            | AppAction::ViewerSaveBrowse
+            | AppAction::ViewerSaveSearchCharacter(_)
+            | AppAction::ViewerSaveSearchBackspace
             | AppAction::ViewerSaveCharacter(_)
             | AppAction::ViewerSaveBackspace
             | AppAction::ViewerSaveConfirm
@@ -500,9 +507,32 @@ mod tests {
             .save_as
             .as_ref()
             .unwrap();
-        assert_eq!(picker.filename, "image.jpgx");
+        assert_eq!(picker.filename, "imagex");
+        assert_eq!(picker.extension, "jpg");
         assert!(picker.editing_name);
         assert_eq!(app.attachment_viewer.as_ref().unwrap().index, 0);
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            TerminalKeyCode::Esc,
+            KeyModifiers::NONE,
+        )));
+        assert!(app
+            .attachment_viewer
+            .as_ref()
+            .unwrap()
+            .save_as
+            .as_ref()
+            .is_some_and(|picker| !picker.editing_name));
+        for code in [
+            TerminalKeyCode::Char('/'),
+            TerminalKeyCode::Char('i'),
+            TerminalKeyCode::Esc,
+        ] {
+            app.on_terminal_event(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)));
+        }
+        let picker = app.attachment_viewer.as_ref().unwrap().save_as.as_ref().unwrap();
+        assert!(!picker.searching);
+        assert_eq!(picker.query, "i");
+        assert_eq!(picker.filename, "imagex");
         app.on_terminal_event(Event::Key(KeyEvent::new(
             TerminalKeyCode::Esc,
             KeyModifiers::NONE,
@@ -539,7 +569,8 @@ mod tests {
             .save_as
             .as_ref()
             .unwrap();
-        assert_eq!(picker.filename, "image.jpg");
+        assert_eq!(picker.filename, "image");
+        assert_eq!(picker.extension, "jpg");
         assert_eq!(app.attachment_viewer.as_ref().unwrap().index, 0);
         app.on_terminal_event(Event::Key(KeyEvent::new(
             TerminalKeyCode::Esc,

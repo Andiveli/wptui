@@ -1121,8 +1121,8 @@ fn render_attachment_viewer(
         .areas(inner);
         picker.set_viewport_height(list.height as usize);
         let lines = picker
-            .directories
-            .iter()
+            .visible_directories()
+            .into_iter()
             .enumerate()
             .skip(picker.offset)
             .take(list.height as usize)
@@ -1139,17 +1139,21 @@ fn render_attachment_viewer(
         frame.render_widget(Paragraph::new(lines), list);
         frame.render_widget(
             Paragraph::new(format!(
-                "Filename: {}{}",
+                "Filename: {}{}.{}",
                 picker.filename,
-                if picker.editing_name { "█" } else { "" }
+                if picker.editing_name { "█" } else { "" },
+                picker.extension
             )),
             name,
         );
         let hint_text = if picker.editing_name {
-            "Type filename  Enter save without overwrite  Esc cancel"
+            "Edit basename  Enter save (no overwrite)  Esc browse"
+        } else if picker.searching {
+            "Type folder filter  Enter open match  Esc browse"
         } else {
-            "j/k select  h/← parent  l/→ open  Enter edit filename  Esc cancel"
+            "j/k select  h/← parent  l/→ open  / search  Enter edit name  Esc close"
         };
+        let hint_text = if picker.query.is_empty() { hint_text.to_owned() } else { format!("/{query} | {hint_text}", query = picker.query) };
         frame.render_widget(Paragraph::new(hint_text).wrap(Wrap { trim: true }), hint);
     }
 }

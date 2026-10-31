@@ -36,6 +36,11 @@ pub(crate) fn status_view_allows(action: &AppAction) -> bool {
             | AppAction::ViewerSaveParent
             | AppAction::ViewerSaveDescend
             | AppAction::ViewerSaveEditName
+            | AppAction::ViewerSaveSearch
+            | AppAction::ViewerSaveEndSearch
+            | AppAction::ViewerSaveBrowse
+            | AppAction::ViewerSaveSearchCharacter(_)
+            | AppAction::ViewerSaveSearchBackspace
             | AppAction::ViewerSaveCharacter(_)
             | AppAction::ViewerSaveBackspace
             | AppAction::ViewerSaveConfirm

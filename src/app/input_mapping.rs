@@ -16,18 +16,27 @@ pub(crate) fn attachment_viewer_action(key: &Key) -> Option<AppAction> {
     })
 }
 
-pub(crate) fn viewer_save_action(key: &Key, editing_name: bool) -> Option<AppAction> {
+pub(crate) fn viewer_save_action(key: &Key, editing_name: bool, searching: bool) -> Option<AppAction> {
     Some(if editing_name {
         match key.code {
-            KeyCode::Esc => AppAction::ViewerSaveCancel,
+            KeyCode::Esc => AppAction::ViewerSaveBrowse,
             KeyCode::Enter => AppAction::ViewerSaveConfirm,
             KeyCode::Backspace => AppAction::ViewerSaveBackspace,
             KeyCode::Char(character) => AppAction::ViewerSaveCharacter(character),
             _ => return None,
         }
+    } else if searching {
+        match key.code {
+            KeyCode::Esc => AppAction::ViewerSaveEndSearch,
+            KeyCode::Enter => AppAction::ViewerSaveDescend,
+            KeyCode::Backspace => AppAction::ViewerSaveSearchBackspace,
+            KeyCode::Char(character) => AppAction::ViewerSaveSearchCharacter(character),
+            _ => return None,
+        }
     } else {
         match key.code {
             KeyCode::Esc => AppAction::ViewerSaveCancel,
+            KeyCode::Char('/') => AppAction::ViewerSaveSearch,
             KeyCode::Char('j') | KeyCode::Down => AppAction::ViewerSaveNext,
             KeyCode::Char('k') | KeyCode::Up => AppAction::ViewerSavePrevious,
             KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace => AppAction::ViewerSaveParent,
