@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -12,48 +13,84 @@ mod tests;
 /// messages; anything at least this large is a real extracted frame.
 const VIDEO_THUMBNAIL_MIN_BYTES: u64 = 4096;
 
-/// True when the sidecar already contains a usable video frame (not the tiny
-/// embedded WhatsApp thumbnail that renders as a narrow sliver).
-pub(crate) fn has_decent_video_thumbnail(path: &Path) -> bool {
-    fs::metadata(path)
-        .map(|meta| meta.len() >= VIDEO_THUMBNAIL_MIN_BYTES)
-        .unwrap_or(false)
+/// True when an already-confined sidecar holds a usable frame rather than
+/// WhatsApp's narrow embedded thumbnail.
+pub(crate) fn has_decent_video_thumbnail(file: &fs::File) -> bool {
+    file.metadata()
+        .is_ok_and(|meta| meta.len() >= VIDEO_THUMBNAIL_MIN_BYTES)
 }
 
-/// Extracts a real frame from a video file with ffmpeg into the `.jpg`
-/// sidecar. Used so inline video previews show the actual frame instead of
-/// WhatsApp's tiny embedded thumbnail. Best effort: on any failure the caller
-/// falls back to the existing placeholder rendering.
-pub(crate) fn generate_video_thumbnail(video_path: &Path, sidecar_path: &Path) {
+/// Decode a real video frame in memory without writing a sidecar. On failure
+/// the caller may still decode an existing contained WhatsApp thumbnail.
+pub(crate) fn generate_video_thumbnail(
+    root: &MediaRoot,
+    video_relative: &Path,
+) -> Option<image::DynamicImage> {
+    let jpeg = generate_video_thumbnail_with_ffmpeg(root, video_relative, Path::new("ffmpeg"))?;
+    image::load_from_memory(&jpeg).ok()
+}
+
+fn generate_video_thumbnail_with_ffmpeg(
+    root: &MediaRoot,
+    video_relative: &Path,
+    executable: &Path,
+) -> Option<Vec<u8>> {
+    const MAX_JPEG_BYTES: u64 = 8 * 1024 * 1024;
+
+    // ffmpeg sees only a regular file opened beneath the pinned root. Its
+    // generated image stays in memory, so renames or hardlinks cannot turn a
+    // sidecar write into a write to another file.
+    let mut video = root.open_media_file(video_relative).ok()?;
     let attempts: [&[&str]; 2] = [
-        // Seek 1s in so we skip the common black first frame.
-        &["-y", "-loglevel", "error", "-ss", "1"],
-        // Fallback for very short videos that start past 1s.
-        &["-y", "-loglevel", "error"],
+        &["-loglevel", "error", "-ss", "1"],
+        &["-loglevel", "error"], // Very short videos have no frame at 1s.
     ];
     for args in attempts {
-        let status = Command::new("ffmpeg")
+        video.seek(SeekFrom::Start(0)).ok()?;
+        let input = video.try_clone().ok()?;
+        // The seekable fd: input permits only the inherited regular stdin
+        // descriptor. Restrict nested demuxer protocols so crafted media cannot
+        // make ffmpeg open a second local path or network URL.
+        let mut child = match Command::new(executable)
             .args(args)
-            .arg("-i")
-            .arg(video_path)
-            .args(["-frames:v", "1", "-q:v", "4"])
-            .arg(sidecar_path)
-            .stdout(Stdio::null())
+            .args(["-protocol_whitelist", "fd", "-i", "fd:"])
+            .args(["-frames:v", "1", "-q:v", "4", "-f", "image2pipe"])
+            .args(["-vcodec", "mjpeg", "pipe:1"])
+            .stdin(Stdio::from(input))
+            .stdout(Stdio::piped())
             .stderr(Stdio::null())
-            .status();
-        match status {
-            Ok(status) if status.success() && has_decent_video_thumbnail(sidecar_path) => return,
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(err) => {
+                warn!("ffmpeg thumbnail extraction failed: {err}");
+                return None;
+            }
+        };
+        let Some(stdout) = child.stdout.take() else {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        };
+        let mut jpeg = Vec::new();
+        let read = stdout.take(MAX_JPEG_BYTES + 1).read_to_end(&mut jpeg);
+        if read.is_err() || jpeg.len() as u64 > MAX_JPEG_BYTES {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+        match child.wait() {
+            Ok(status) if status.success() && jpeg.len() as u64 >= VIDEO_THUMBNAIL_MIN_BYTES => {
+                return Some(jpeg);
+            }
             Ok(_) => continue,
             Err(err) => {
                 warn!("ffmpeg thumbnail extraction failed: {err}");
-                return;
+                return None;
             }
         }
     }
-    warn!(
-        "ffmpeg could not extract a thumbnail for {}",
-        video_path.display()
-    );
+    None
 }
 
 /// Reads the duration (in whole seconds) of an audio file with lofty.
