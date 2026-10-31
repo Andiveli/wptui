@@ -212,8 +212,8 @@ fn enter_selects_the_latest_offscreen_match_before_navigating() {
     app.open_chat_by_jid(chat.clone());
     for index in 0..30 {
         let body = match index {
-            8 => "MARKER older",
-            22 => "MARKER newest",
+            2 => "MARKER older",
+            8 => "MARKER newest",
             _ => "ordinary filler message",
         };
         app.add_message(message(&chat, &format!("msg-{index}"), index, body));
@@ -226,13 +226,13 @@ fn enter_selects_the_latest_offscreen_match_before_navigating() {
         press(&mut app, KeyCode::Char(character));
     }
     press(&mut app, KeyCode::Enter);
-    assert_eq!(selected_id(&app).as_deref(), Some("msg-22"));
+    assert_eq!(selected_id(&app).as_deref(), Some("msg-8"));
     assert!(screen(&mut app).contains("MARKER newest"));
 
     press(&mut app, KeyCode::Char('n'));
-    assert_eq!(selected_id(&app).as_deref(), Some("msg-8"));
+    assert_eq!(selected_id(&app).as_deref(), Some("msg-2"));
     press(&mut app, KeyCode::Char('N'));
-    assert_eq!(selected_id(&app).as_deref(), Some("msg-22"));
+    assert_eq!(selected_id(&app).as_deref(), Some("msg-8"));
 }
 
 #[test]
