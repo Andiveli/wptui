@@ -166,6 +166,7 @@ fn with_dirs_and_picker_and_ports(
         status_last_seen: HashMap::new(),
         status_composition: StatusCompositionState::default(),
         message_list_state: MessageListState::default(),
+        conversation_search: None,
         mouse_hit_map: Default::default(),
         timeline: unread_messages::Timeline::default(),
         metadata: HashMap::new(),
