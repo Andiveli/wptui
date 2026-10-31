@@ -399,11 +399,14 @@ fn audio_duration_events_use_only_contained_media() {
         app.messages.insert(message_id.clone(), message);
         app.spawn_audio_duration_probe_if_missing(&message_id, &mut jobs);
         let input = app.rx.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert!(matches!(
-            &input,
-            AppInput::App(AppEvent::SetAudioDuration(actual_id, actual_path, actual_duration))
-                if actual_id == &message_id && actual_path.as_ref() == path && *actual_duration == expected
-        ));
+        assert!(
+            matches!(
+                &input,
+                AppInput::App(AppEvent::SetAudioDuration(actual_id, actual_path, actual_duration))
+                    if actual_id == &message_id && actual_path.as_ref() == path && *actual_duration == expected
+            ),
+            "duration event for {id}: {input:?}"
+        );
         if let AppInput::App(event) = input {
             app.handle_media_viewer_event(event, &download_tx, &mut jobs);
         }

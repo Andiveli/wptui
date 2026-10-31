@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -93,17 +93,16 @@ fn generate_video_thumbnail_with_ffmpeg(
     None
 }
 
-/// Reads the duration (in whole seconds) of an audio file with lofty.
+/// Reads the duration (in whole seconds) from an already-confined audio file.
 /// Best effort: returns `None` for unreadable files, unsupported formats, or
 /// files whose properties could not be resolved (lofty reports `Duration::ZERO`).
 ///
 /// `guess_file_type()` sniffs the content (first 36 bytes) because the
 /// extension map in lofty lacks `.oga` — the extension WhatsApp uses for
 /// Opus voice notes — so extension-only probing would reject them.
-pub(crate) fn probe_audio_duration(path: &Path) -> Option<u64> {
+pub(crate) fn probe_audio_duration(file: fs::File) -> Option<u64> {
     use lofty::file::AudioFile;
-    let duration = lofty::probe::Probe::open(path)
-        .ok()?
+    let duration = lofty::probe::Probe::new(BufReader::new(file))
         .guess_file_type()
         .ok()?
         .read()
