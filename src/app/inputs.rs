@@ -129,7 +129,11 @@ impl App<'_> {
                     .as_ref()
                     .is_some_and(|v| v.save_as.is_some())
                 {
-                    let picker = self.attachment_viewer.as_ref().and_then(|viewer| viewer.save_as.as_ref()).unwrap();
+                    let picker = self
+                        .attachment_viewer
+                        .as_ref()
+                        .and_then(|viewer| viewer.save_as.as_ref())
+                        .unwrap();
                     let (editing_name, searching) = (picker.editing_name, picker.searching);
                     if let Some(action) =
                         crate::app::input_mapping::viewer_save_action(&key, editing_name, searching)
@@ -515,13 +519,14 @@ mod tests {
             TerminalKeyCode::Esc,
             KeyModifiers::NONE,
         )));
-        assert!(app
-            .attachment_viewer
-            .as_ref()
-            .unwrap()
-            .save_as
-            .as_ref()
-            .is_some_and(|picker| !picker.editing_name));
+        assert!(
+            app.attachment_viewer
+                .as_ref()
+                .unwrap()
+                .save_as
+                .as_ref()
+                .is_some_and(|picker| !picker.editing_name)
+        );
         for code in [
             TerminalKeyCode::Char('/'),
             TerminalKeyCode::Char('i'),
@@ -529,7 +534,13 @@ mod tests {
         ] {
             app.on_terminal_event(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)));
         }
-        let picker = app.attachment_viewer.as_ref().unwrap().save_as.as_ref().unwrap();
+        let picker = app
+            .attachment_viewer
+            .as_ref()
+            .unwrap()
+            .save_as
+            .as_ref()
+            .unwrap();
         assert!(!picker.searching);
         assert_eq!(picker.query, "i");
         assert_eq!(picker.filename, "imagex");

@@ -158,8 +158,11 @@ impl SaveDirectoryPicker {
         self.directories
             .iter()
             .filter(|path| {
-                path.file_name()
-                    .is_some_and(|name| name.to_string_lossy().to_lowercase().contains(&self.query.to_lowercase()))
+                path.file_name().is_some_and(|name| {
+                    name.to_string_lossy()
+                        .to_lowercase()
+                        .contains(&self.query.to_lowercase())
+                })
             })
             .collect()
     }
@@ -191,7 +194,12 @@ impl SaveDirectoryPicker {
     }
 
     pub fn descend(&mut self) -> io::Result<()> {
-        if let Some(path) = self.visible_directories().get(self.selected).cloned().cloned() {
+        if let Some(path) = self
+            .visible_directories()
+            .get(self.selected)
+            .cloned()
+            .cloned()
+        {
             self.change_directory(&path)?;
         }
         Ok(())

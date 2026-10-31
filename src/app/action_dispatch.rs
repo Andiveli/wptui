@@ -36,8 +36,14 @@ impl App<'_> {
             }
             AppAction::ViewerSaveParent => self.navigate_save_directory(true),
             AppAction::ViewerSaveDescend => self.navigate_save_directory(false),
-            action @ (AppAction::ViewerSaveSearch | AppAction::ViewerSaveEndSearch | AppAction::ViewerSaveBrowse) => {
-                if let Some(picker) = self.attachment_viewer.as_mut().and_then(|viewer| viewer.save_as.as_mut()) {
+            action @ (AppAction::ViewerSaveSearch
+            | AppAction::ViewerSaveEndSearch
+            | AppAction::ViewerSaveBrowse) => {
+                if let Some(picker) = self
+                    .attachment_viewer
+                    .as_mut()
+                    .and_then(|viewer| viewer.save_as.as_mut())
+                {
                     match action {
                         AppAction::ViewerSaveSearch => picker.searching = true,
                         AppAction::ViewerSaveEndSearch => picker.searching = false,
@@ -46,13 +52,21 @@ impl App<'_> {
                 }
             }
             AppAction::ViewerSaveSearchCharacter(character) => {
-                if let Some(picker) = self.attachment_viewer.as_mut().and_then(|viewer| viewer.save_as.as_mut()) {
+                if let Some(picker) = self
+                    .attachment_viewer
+                    .as_mut()
+                    .and_then(|viewer| viewer.save_as.as_mut())
+                {
                     picker.query.push(character);
                     picker.update_query();
                 }
             }
             AppAction::ViewerSaveSearchBackspace => {
-                if let Some(picker) = self.attachment_viewer.as_mut().and_then(|viewer| viewer.save_as.as_mut()) {
+                if let Some(picker) = self
+                    .attachment_viewer
+                    .as_mut()
+                    .and_then(|viewer| viewer.save_as.as_mut())
+                {
                     picker.query.pop();
                     picker.update_query();
                 }

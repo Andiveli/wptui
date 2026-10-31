@@ -1153,7 +1153,11 @@ fn render_attachment_viewer(
         } else {
             "j/k select  h/← parent  l/→ open  / search  Enter edit name  Esc close"
         };
-        let hint_text = if picker.query.is_empty() { hint_text.to_owned() } else { format!("/{query} | {hint_text}", query = picker.query) };
+        let hint_text = if picker.query.is_empty() {
+            hint_text.to_owned()
+        } else {
+            format!("/{query} | {hint_text}", query = picker.query)
+        };
         frame.render_widget(Paragraph::new(hint_text).wrap(Wrap { trim: true }), hint);
     }
 }

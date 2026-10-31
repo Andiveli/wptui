@@ -152,7 +152,9 @@ impl App<'_> {
         {
             return self.unavailable("Enter one valid filename (no path separators)");
         }
-        let target = picker.directory.join(format!("{}.{}", picker.filename, picker.extension));
+        let target = picker
+            .directory
+            .join(format!("{}.{}", picker.filename, picker.extension));
         let result = (|| -> io::Result<std::path::PathBuf> {
             let root = crate::media::MediaRoot::new(&self.media_path)
                 .map_err(|error| io::Error::other(format!("Invalid media root: {error:?}")))?;
@@ -343,7 +345,13 @@ mod tests {
         ] {
             app.attachment_viewer.as_mut().unwrap().path = source.into();
             app.dispatch_action(AppAction::ViewerSaveAs);
-            let picker = app.attachment_viewer.as_ref().unwrap().save_as.as_ref().unwrap();
+            let picker = app
+                .attachment_viewer
+                .as_ref()
+                .unwrap()
+                .save_as
+                .as_ref()
+                .unwrap();
             assert_eq!(picker.extension, expected);
             app.dispatch_action(AppAction::ViewerSaveCancel);
         }
@@ -374,10 +382,7 @@ mod tests {
             .into_iter()
             .enumerate()
             .map(|(index, kind)| {
-                let name = format!(
-                    "media{index}.{}",
-                    if index == 0 { "png" } else { "3gp" }
-                );
+                let name = format!("media{index}.{}", if index == 0 { "png" } else { "3gp" });
                 fs::write(app.media_path.join(&name), name.as_bytes()).unwrap();
                 ViewerAttachment {
                     message_id: name.clone().into(),
@@ -391,24 +396,17 @@ mod tests {
         for index in 0..2 {
             save_fixture(&mut app, destination.path());
             app.dispatch_action(AppAction::ViewerSaveDescend);
-            let target = destination
-                .path()
-                .join("nested")
-                .join(format!(
-                    "media{index}.{}",
-                    if index == 0 { "png" } else { "3gp" }
-                ));
+            let target = destination.path().join("nested").join(format!(
+                "media{index}.{}",
+                if index == 0 { "png" } else { "3gp" }
+            ));
             app.dispatch_action(AppAction::ViewerSaveConfirm);
             assert!(!target.exists()); // Browsing alone cannot save.
             app.dispatch_action(AppAction::ViewerSaveEditName);
             app.dispatch_action(AppAction::ViewerSaveConfirm);
             assert_eq!(
                 fs::read(&target).unwrap(),
-                format!(
-                    "media{index}.{}",
-                    if index == 0 { "png" } else { "3gp" }
-                )
-                .as_bytes()
+                format!("media{index}.{}", if index == 0 { "png" } else { "3gp" }).as_bytes()
             );
             let viewer = app.attachment_viewer.as_ref().unwrap();
             assert!(viewer.save_as.is_none());
@@ -517,31 +515,68 @@ mod tests {
         for folder in ["alpha", "beta"] {
             fs::create_dir(root.path().join(folder)).unwrap();
         }
-        app.attachment_viewer = Some(AttachmentViewerState::from_attachments(vec![ViewerAttachment {
-            message_id: "image".into(),
-            kind: wr::FileKind::Image,
-            path: "picture.png".into(),
-            status: ViewerStatus::Ready,
-        }], 0));
+        app.attachment_viewer = Some(AttachmentViewerState::from_attachments(
+            vec![ViewerAttachment {
+                message_id: "image".into(),
+                kind: wr::FileKind::Image,
+                path: "picture.png".into(),
+                status: ViewerStatus::Ready,
+            }],
+            0,
+        ));
         save_fixture(&mut app, root.path());
-        assert_eq!(app.attachment_viewer.as_ref().unwrap().save_as.as_ref().unwrap().extension, "png");
+        assert_eq!(
+            app.attachment_viewer
+                .as_ref()
+                .unwrap()
+                .save_as
+                .as_ref()
+                .unwrap()
+                .extension,
+            "png"
+        );
         app.dispatch_action(AppAction::ViewerSaveSearch);
         for character in "bet".chars() {
             app.dispatch_action(AppAction::ViewerSaveSearchCharacter(character));
         }
-        let picker = app.attachment_viewer.as_ref().unwrap().save_as.as_ref().unwrap();
+        let picker = app
+            .attachment_viewer
+            .as_ref()
+            .unwrap()
+            .save_as
+            .as_ref()
+            .unwrap();
         assert_eq!(picker.visible_directories().len(), 1);
         assert_eq!(picker.visible_directories()[0], &root.path().join("beta"));
         app.dispatch_action(AppAction::ViewerSaveEndSearch);
-        let picker = app.attachment_viewer.as_ref().unwrap().save_as.as_ref().unwrap();
+        let picker = app
+            .attachment_viewer
+            .as_ref()
+            .unwrap()
+            .save_as
+            .as_ref()
+            .unwrap();
         assert_eq!(picker.query, "bet");
         app.dispatch_action(AppAction::ViewerSaveDescend);
-        let picker = app.attachment_viewer.as_ref().unwrap().save_as.as_ref().unwrap();
+        let picker = app
+            .attachment_viewer
+            .as_ref()
+            .unwrap()
+            .save_as
+            .as_ref()
+            .unwrap();
         assert_eq!(picker.directory, root.path().join("beta"));
         assert!(picker.query.is_empty());
         app.dispatch_action(AppAction::ViewerSaveEditName);
         app.dispatch_action(AppAction::ViewerSaveBrowse);
-        assert!(app.attachment_viewer.as_ref().unwrap().save_as.as_ref().is_some_and(|picker| !picker.editing_name));
+        assert!(
+            app.attachment_viewer
+                .as_ref()
+                .unwrap()
+                .save_as
+                .as_ref()
+                .is_some_and(|picker| !picker.editing_name)
+        );
         app.dispatch_action(AppAction::ViewerSaveCancel);
         assert!(app.attachment_viewer.as_ref().unwrap().save_as.is_none());
     }

@@ -16,7 +16,11 @@ pub(crate) fn attachment_viewer_action(key: &Key) -> Option<AppAction> {
     })
 }
 
-pub(crate) fn viewer_save_action(key: &Key, editing_name: bool, searching: bool) -> Option<AppAction> {
+pub(crate) fn viewer_save_action(
+    key: &Key,
+    editing_name: bool,
+    searching: bool,
+) -> Option<AppAction> {
     Some(if editing_name {
         match key.code {
             KeyCode::Esc => AppAction::ViewerSaveBrowse,
