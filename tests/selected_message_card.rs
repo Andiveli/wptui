@@ -1,10 +1,19 @@
 use std::sync::Arc;
 use wp_tui::app::read_receipts::VisibilityPlan;
 
-use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Color};
+use ratatui::{
+    Terminal,
+    backend::TestBackend,
+    crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers},
+    layout::Rect,
+    style::Color,
+};
 use whatsrust::{FileContent, FileKind, JID, Message, MessageContent, MessageInfo};
 use wp_tui::{
-    app::{App, FileMeta, MessageAction, MessageActionKind, Metadata, events::MediaRenderPlan},
+    app::{
+        App, FileMeta, MessageAction, MessageActionKind, Metadata, actions::FocusPane,
+        events::MediaRenderPlan,
+    },
     ui::message_list::{AuthorGroupContext, message_height, render_messages_with_plan},
 };
 mod common;
@@ -213,6 +222,58 @@ fn edited_status_is_inline_and_uses_metadata_style() {
 
     assert_eq!(buffer[(status_x, y)].fg, Color::DarkGray);
     assert_ne!(buffer[(body_x, y)].fg, Color::DarkGray);
+}
+
+#[test]
+fn chat_search_highlights_body_without_recoloring_quote_or_edit_status() {
+    let quoted = text_message("quoted", "needle quote");
+    let mut reply = text_message("reply", "needle body");
+    reply.info.quote_id = Some(quoted.info.id.clone());
+    let mut app = app_with_messages(&[quoted, reply]);
+    add_edit(&mut app, "reply", "needle body");
+    app.focus_pane = FocusPane::Conversation;
+    app.message_list_state.set_selected_message("reply".into());
+    for character in "/needle".chars() {
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            KeyCode::Char(character),
+            KeyModifiers::NONE,
+        )));
+    }
+    app.on_terminal_event(Event::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )));
+
+    let painted = render_buffer(&mut app, 80, 16);
+    let rows = (0..16)
+        .map(|y| {
+            (
+                y,
+                (0..80)
+                    .map(|x| painted[(x, y)].symbol())
+                    .collect::<String>(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let (quote_y, quote_row) = rows
+        .iter()
+        .find(|(_, row)| row.contains('>') && row.contains("needle quote"))
+        .expect("quote should be painted within the selected card");
+    assert_eq!(
+        painted[(quote_row.find("needle quote").unwrap() as u16, *quote_y)].bg,
+        Color::Reset
+    );
+    let (body_y, body_row) = rows
+        .iter()
+        .find(|(_, row)| row.contains("needle body (edited)"))
+        .expect("edited body should be painted");
+    assert_eq!(
+        painted[(body_row.find("needle body").unwrap() as u16, *body_y)].bg,
+        Color::Yellow
+    );
+    let status_x = body_row.find("(edited)").unwrap() as u16;
+    assert_eq!(painted[(status_x, *body_y)].bg, Color::Reset);
+    assert_eq!(painted[(status_x, *body_y)].fg, Color::DarkGray);
 }
 
 #[test]

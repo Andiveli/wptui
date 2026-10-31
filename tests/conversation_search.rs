@@ -193,6 +193,45 @@ fn jumping_to_a_distant_match_brings_it_into_the_message_viewport() {
 }
 
 #[test]
+fn wrapped_rtl_fragment_is_highlighted_in_visual_order() {
+    let mut app = TestApp::new();
+    let chat: whatsrust::JID = "rtl@s.whatsapp.net".to_owned().into();
+    app.open_chat_by_jid(chat.clone());
+    app.add_message(message(
+        &chat,
+        "rtl-text",
+        1,
+        &format!("{}שלום tail", "prefix ".repeat(13)),
+    ));
+    app.focus_pane = FocusPane::Conversation;
+    press(&mut app, KeyCode::Char('/'));
+    for character in "שלום".chars() {
+        press(&mut app, KeyCode::Char(character));
+    }
+    press(&mut app, KeyCode::Enter);
+
+    let painted = buffer(&mut app);
+    let (y, line) = (0..20)
+        .map(|y| {
+            (
+                y,
+                (0..80)
+                    .map(|x| painted[(x, y)].symbol())
+                    .collect::<String>(),
+            )
+        })
+        .find(|(_, line)| line.contains("םולש"))
+        .expect("wrapped RTL match must be painted in the message viewport");
+    let x = line.find("םולש").unwrap() as u16;
+    for offset in 0..4 {
+        assert_eq!(painted[(x + offset, y)].bg, Color::Yellow);
+    }
+    if x > 0 {
+        assert_eq!(painted[(x - 1, y)].bg, Color::Reset);
+    }
+}
+
+#[test]
 fn search_highlights_only_matching_text_in_the_open_chat_and_clears_on_escape() {
     let mut app = TestApp::new();
     let chat: whatsrust::JID = "highlight@s.whatsapp.net".to_owned().into();
