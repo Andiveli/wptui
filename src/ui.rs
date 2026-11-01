@@ -1035,7 +1035,7 @@ fn render_attachment_viewer(
     }
 
     let hint = format!(
-        "{:?}: {} [{}/{}] {:?} | zoom {}% | h/l arrows nav | -/+ zoom | x open | Esc close",
+        "{:?}: {} [{}/{}] {:?} | zoom {}% | h/l arrows nav | -/+ zoom | x open | s save as | Esc close",
         viewer.kind,
         viewer.path,
         viewer.index + 1,
@@ -1045,7 +1045,13 @@ fn render_attachment_viewer(
     );
     frame.render_widget(Clear, layout.modal);
     frame.render_widget(Block::bordered().title("Attachment viewer"), layout.modal);
-    frame.render_widget(Paragraph::new(hint), layout.hint);
+    if viewer.save_as.is_none() {
+        let text = viewer
+            .saved_path
+            .as_ref()
+            .map_or(hint, |path| format!("Saved to:\n{path}"));
+        frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), layout.hint);
+    }
 
     if matches!(viewer.kind, wr::FileKind::Image | wr::FileKind::Video)
         && viewer.status != ViewerStatus::Failed
@@ -1098,6 +1104,61 @@ fn render_attachment_viewer(
             Paragraph::new(format!("{:?}: {}", viewer.kind, viewer.path)),
             layout.body,
         ),
+    }
+    if let Some(picker) = app
+        .attachment_viewer
+        .as_mut()
+        .and_then(|viewer| viewer.save_as.as_mut())
+    {
+        let modal = centered_modal_layout(frame.area());
+        let block = Block::bordered().title(format!(" Save to: {} ", picker.directory.display()));
+        let inner = block.inner(modal);
+        let [list, name, hint] = Layout::vertical([
+            Constraint::Min(1),
+            Constraint::Length(1),
+            Constraint::Length(2),
+        ])
+        .areas(inner);
+        picker.set_viewport_height(list.height as usize);
+        let lines = picker
+            .visible_directories()
+            .into_iter()
+            .enumerate()
+            .skip(picker.offset)
+            .take(list.height as usize)
+            .map(|(index, path)| {
+                let cursor = if index == picker.selected { ">" } else { " " };
+                Line::from(format!(
+                    "{cursor} {}/",
+                    path.file_name().unwrap_or_default().to_string_lossy()
+                ))
+            })
+            .collect::<Vec<_>>();
+        frame.render_widget(Clear, modal);
+        frame.render_widget(block, modal);
+        frame.render_widget(Paragraph::new(lines), list);
+        frame.render_widget(
+            Paragraph::new(format!(
+                "Filename: {}{}.{}",
+                picker.filename,
+                if picker.editing_name { "█" } else { "" },
+                picker.extension
+            )),
+            name,
+        );
+        let hint_text = if picker.editing_name {
+            "Edit basename  Enter save (no overwrite)  Esc browse"
+        } else if picker.searching {
+            "Type folder filter  Enter open match  Esc browse"
+        } else {
+            "j/k select  h/← parent  l/→ open  / search  Enter edit name  Esc close"
+        };
+        let hint_text = if picker.query.is_empty() {
+            hint_text.to_owned()
+        } else {
+            format!("/{query} | {hint_text}", query = picker.query)
+        };
+        frame.render_widget(Paragraph::new(hint_text).wrap(Wrap { trim: true }), hint);
     }
 }
 

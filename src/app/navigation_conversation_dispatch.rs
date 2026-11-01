@@ -172,6 +172,21 @@ impl App<'_> {
             | AppAction::ViewerZoomIn
             | AppAction::ViewerZoomOut
             | AppAction::ViewerOpenExternal
+            | AppAction::ViewerSaveAs
+            | AppAction::ViewerSaveNext
+            | AppAction::ViewerSavePrevious
+            | AppAction::ViewerSaveParent
+            | AppAction::ViewerSaveDescend
+            | AppAction::ViewerSaveEditName
+            | AppAction::ViewerSaveSearch
+            | AppAction::ViewerSaveEndSearch
+            | AppAction::ViewerSaveBrowse
+            | AppAction::ViewerSaveSearchCharacter(_)
+            | AppAction::ViewerSaveSearchBackspace
+            | AppAction::ViewerSaveCharacter(_)
+            | AppAction::ViewerSaveBackspace
+            | AppAction::ViewerSaveConfirm
+            | AppAction::ViewerSaveCancel
             | AppAction::CloseAttachmentViewer
             | AppAction::CloseStatusPane
             | AppAction::OpenMessageMenu

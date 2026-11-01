@@ -77,7 +77,10 @@ impl App<'_> {
             }
 
             if self.handle_composer_input(key.clone()) {
-            } else if self.file_picker.is_none() && self.handle_status_composer_input(key.clone()) {
+            } else if self.file_picker.is_none()
+                && self.attachment_viewer.is_none()
+                && self.handle_status_composer_input(key.clone())
+            {
             } else if self.shortcut_popup {
                 if matches!(
                     route_modal_key(&key, ModalContext::ShortcutPopup),
@@ -121,7 +124,23 @@ impl App<'_> {
                     _ => {}
                 }
             } else if self.attachment_viewer.is_some() {
-                if let InputRoute::Action(action) =
+                if self
+                    .attachment_viewer
+                    .as_ref()
+                    .is_some_and(|v| v.save_as.is_some())
+                {
+                    let picker = self
+                        .attachment_viewer
+                        .as_ref()
+                        .and_then(|viewer| viewer.save_as.as_ref())
+                        .unwrap();
+                    let (editing_name, searching) = (picker.editing_name, picker.searching);
+                    if let Some(action) =
+                        crate::app::input_mapping::viewer_save_action(&key, editing_name, searching)
+                    {
+                        self.dispatch_action(action);
+                    }
+                } else if let InputRoute::Action(action) =
                     route_modal_key(&key, ModalContext::AttachmentViewer)
                 {
                     self.dispatch_action(action);
@@ -253,6 +272,31 @@ impl App<'_> {
             return;
         }
         if self.status_composition == StatusCompositionState::Navigating
+            && !(self.attachment_viewer.is_some()
+                && matches!(
+                    action,
+                    AppAction::ViewerNext
+                        | AppAction::ViewerPrevious
+                        | AppAction::ViewerZoomIn
+                        | AppAction::ViewerZoomOut
+                        | AppAction::ViewerOpenExternal
+                        | AppAction::ViewerSaveAs
+                        | AppAction::ViewerSaveNext
+                        | AppAction::ViewerSavePrevious
+                        | AppAction::ViewerSaveParent
+                        | AppAction::ViewerSaveDescend
+                        | AppAction::ViewerSaveEditName
+                        | AppAction::ViewerSaveSearch
+                        | AppAction::ViewerSaveEndSearch
+                        | AppAction::ViewerSaveBrowse
+                        | AppAction::ViewerSaveSearchCharacter(_)
+                        | AppAction::ViewerSaveSearchBackspace
+                        | AppAction::ViewerSaveCharacter(_)
+                        | AppAction::ViewerSaveBackspace
+                        | AppAction::ViewerSaveConfirm
+                        | AppAction::ViewerSaveCancel
+                        | AppAction::CloseAttachmentViewer
+                ))
             && !matches!(
                 action,
                 AppAction::SelectNext
@@ -323,6 +367,21 @@ impl App<'_> {
             | AppAction::ViewerZoomIn
             | AppAction::ViewerZoomOut
             | AppAction::ViewerOpenExternal
+            | AppAction::ViewerSaveAs
+            | AppAction::ViewerSaveNext
+            | AppAction::ViewerSavePrevious
+            | AppAction::ViewerSaveParent
+            | AppAction::ViewerSaveDescend
+            | AppAction::ViewerSaveEditName
+            | AppAction::ViewerSaveSearch
+            | AppAction::ViewerSaveEndSearch
+            | AppAction::ViewerSaveBrowse
+            | AppAction::ViewerSaveSearchCharacter(_)
+            | AppAction::ViewerSaveSearchBackspace
+            | AppAction::ViewerSaveCharacter(_)
+            | AppAction::ViewerSaveBackspace
+            | AppAction::ViewerSaveConfirm
+            | AppAction::ViewerSaveCancel
             | AppAction::CloseAttachmentViewer
             | AppAction::CloseStatusPane
             | AppAction::OpenMessageMenu
@@ -420,6 +479,118 @@ mod tests {
     use crate::app::contextual_actions::ContextualAction;
     use crate::app::test_support::TestApp;
     use ratatui::crossterm::event::{Event, KeyCode as TerminalKeyCode, KeyEvent, KeyModifiers};
+
+    #[test]
+    fn save_as_prompt_takes_precedence_over_status_navigation() {
+        use crate::app::events::{AttachmentViewerState, ViewerAttachment, ViewerStatus};
+        use whatsrust as wr;
+
+        let mut app = TestApp::new();
+        app.selected_section = Section::Status;
+        app.focus_pane = FocusPane::Conversation;
+        app.status_composition = StatusCompositionState::Navigating;
+        app.attachment_viewer = Some(AttachmentViewerState::from_attachments(
+            vec![ViewerAttachment {
+                message_id: "image".into(),
+                kind: wr::FileKind::Image,
+                path: "image.jpg".into(),
+                status: ViewerStatus::Ready,
+            }],
+            0,
+        ));
+        for character in ['s', 'n', 'x'] {
+            app.on_terminal_event(Event::Key(KeyEvent::new(
+                TerminalKeyCode::Char(character),
+                KeyModifiers::NONE,
+            )));
+        }
+        let picker = app
+            .attachment_viewer
+            .as_ref()
+            .unwrap()
+            .save_as
+            .as_ref()
+            .unwrap();
+        assert_eq!(picker.filename, "imagex");
+        assert_eq!(picker.extension, "jpg");
+        assert!(picker.editing_name);
+        assert_eq!(app.attachment_viewer.as_ref().unwrap().index, 0);
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            TerminalKeyCode::Esc,
+            KeyModifiers::NONE,
+        )));
+        assert!(
+            app.attachment_viewer
+                .as_ref()
+                .unwrap()
+                .save_as
+                .as_ref()
+                .is_some_and(|picker| !picker.editing_name)
+        );
+        for code in [
+            TerminalKeyCode::Char('/'),
+            TerminalKeyCode::Char('i'),
+            TerminalKeyCode::Esc,
+        ] {
+            app.on_terminal_event(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)));
+        }
+        let picker = app
+            .attachment_viewer
+            .as_ref()
+            .unwrap()
+            .save_as
+            .as_ref()
+            .unwrap();
+        assert!(!picker.searching);
+        assert_eq!(picker.query, "i");
+        assert_eq!(picker.filename, "imagex");
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            TerminalKeyCode::Esc,
+            KeyModifiers::NONE,
+        )));
+        assert!(app.attachment_viewer.as_ref().unwrap().save_as.is_none());
+        assert_eq!(app.status_composition, StatusCompositionState::Navigating);
+    }
+
+    #[test]
+    fn own_status_save_browse_keys_do_not_navigate_media_or_edit_name() {
+        use crate::app::events::{AttachmentViewerState, ViewerAttachment, ViewerStatus};
+        use whatsrust as wr;
+
+        let mut app = TestApp::new();
+        app.selected_section = Section::Status;
+        app.focus_pane = FocusPane::Conversation;
+        app.status_composition = StatusCompositionState::Navigating;
+        app.attachment_viewer = Some(AttachmentViewerState::from_attachments(
+            vec![ViewerAttachment {
+                message_id: "image".into(),
+                kind: wr::FileKind::Image,
+                path: "image.jpg".into(),
+                status: ViewerStatus::Ready,
+            }],
+            0,
+        ));
+        for code in [TerminalKeyCode::Char('s'), TerminalKeyCode::Down] {
+            app.on_terminal_event(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)));
+        }
+        let picker = app
+            .attachment_viewer
+            .as_ref()
+            .unwrap()
+            .save_as
+            .as_ref()
+            .unwrap();
+        assert_eq!(picker.filename, "image");
+        assert_eq!(picker.extension, "jpg");
+        assert_eq!(app.attachment_viewer.as_ref().unwrap().index, 0);
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            TerminalKeyCode::Esc,
+            KeyModifiers::NONE,
+        )));
+        assert!(app.attachment_viewer.as_ref().unwrap().save_as.is_none());
+        assert!(app.attachment_viewer.is_some());
+        assert_eq!(app.status_composition, StatusCompositionState::Navigating);
+    }
 
     #[test]
     fn status_enter_keeps_status_precedence_over_generic_pane_enter() {
