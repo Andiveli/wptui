@@ -116,6 +116,17 @@ terminal.
   `libglib2.0-dev`, `libasound2-dev`; on macOS, `chafa` from Homebrew
 - Optional: `mpv` for opening media externally
 
+Media previews and external opening require a kernel-confined file open (Linux
+`openat2` or macOS `O_RESOLVE_BENEATH`). On older systems without that support,
+these operations fail closed; downloads and chat still work. Symlinks whose
+resolved targets remain inside the media directory, including absolute links,
+remain usable on supported systems. Video thumbnails are generated from
+confined input handles into bounded memory: generated frames are not saved as
+sidecars and may be regenerated after a restart or cache eviction. FFmpeg must
+support seekable `fd:` input; otherwise an existing contained sidecar remains
+the fallback. Audio duration probes also read already-confined file handles,
+not media pathnames.
+
 ## Installation
 
 ### Prebuilt binary

@@ -348,3 +348,73 @@ fn touching_preview_moves_it_to_the_lru_tail() {
 
     assert_eq!(app.image_cache_order, VecDeque::from([second, first]));
 }
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn audio_duration_events_use_only_contained_media() {
+    use std::os::unix::fs::symlink;
+
+    let mut app = TestApp::new();
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(&app.media_path).unwrap();
+
+    // A two-second PCM WAV makes a successful probe observable through AppInput.
+    let sample_rate: u32 = 8000;
+    let data_len = sample_rate * 2 * 2;
+    let mut wav = Vec::new();
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36 + data_len).to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&sample_rate.to_le_bytes());
+    wav.extend_from_slice(&(sample_rate * 2).to_le_bytes());
+    wav.extend_from_slice(&2u16.to_le_bytes());
+    wav.extend_from_slice(&16u16.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&data_len.to_le_bytes());
+    wav.resize(44 + data_len as usize, 0);
+    std::fs::write(app.media_path.join("tone.wav"), &wav).unwrap();
+    std::fs::write(outside.path().join("outside.wav"), &wav).unwrap();
+    symlink("tone.wav", app.media_path.join("internal.wav")).unwrap();
+    symlink(
+        outside.path().join("outside.wav"),
+        app.media_path.join("escape.wav"),
+    )
+    .unwrap();
+
+    let mut jobs = MediaJobOwner::new();
+    let (download_tx, _download_rx) = mpsc::channel();
+    for (id, path, expected) in [
+        ("ordinary", "tone.wav", Some(2)),
+        ("contained", "internal.wav", Some(2)),
+        ("rejected", "escape.wav", None),
+    ] {
+        let mut message = file_message(id, path);
+        if let wr::MessageContent::File(file) = &mut message.message {
+            file.kind = wr::FileKind::Audio;
+        }
+        let message_id = message.info.id.clone();
+        app.messages.insert(message_id.clone(), message);
+        app.spawn_audio_duration_probe_if_missing(&message_id, &mut jobs);
+        let input = app.rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(
+            matches!(
+                &input,
+                AppInput::App(AppEvent::SetAudioDuration(actual_id, actual_path, actual_duration))
+                    if actual_id == &message_id && actual_path.as_ref() == path && *actual_duration == expected
+            ),
+            "duration event for {id}: {input:?}"
+        );
+        if let AppInput::App(event) = input {
+            app.handle_media_viewer_event(event, &download_tx, &mut jobs);
+        }
+        assert_eq!(app.audio_durations.get(path).copied(), expected);
+    }
+    jobs.shutdown();
+    assert_eq!(
+        std::fs::read(outside.path().join("outside.wav")).unwrap(),
+        wav
+    );
+}

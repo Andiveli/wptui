@@ -26,9 +26,15 @@ fn probe_audio_duration_reads_wav_seconds() {
     wav.resize(44 + data_len as usize, 0);
     std::fs::write(&path, &wav).unwrap();
 
-    assert_eq!(probe_audio_duration(&path), Some(2));
     assert_eq!(
-        probe_audio_duration(&directory.path().join("missing.ogg")),
+        probe_audio_duration(fs::File::open(&path).unwrap()),
+        Some(2)
+    );
+    let root = MediaRoot::new(directory.path()).unwrap();
+    assert_eq!(
+        root.open_media_file(Path::new("missing.ogg"))
+            .ok()
+            .and_then(probe_audio_duration),
         None
     );
 }
@@ -108,7 +114,81 @@ fn probe_audio_duration_reads_ogg_opus_with_oga_extension() {
     oga.extend_from_slice(&page2);
     std::fs::write(&path, &oga).unwrap();
 
-    assert_eq!(probe_audio_duration(&path), Some(3));
+    assert_eq!(
+        probe_audio_duration(fs::File::open(&path).unwrap()),
+        Some(3)
+    );
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn video_thumbnail_process_keeps_generated_frame_in_memory() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let directory = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(directory.path().join("clip.mp4"), b"inside-video").unwrap();
+    fs::write(directory.path().join("clip.jpg"), b"tiny").unwrap();
+    fs::write(outside.path().join("outside.mp4"), b"outside-video").unwrap();
+    fs::write(outside.path().join("outside.jpg"), b"outside-thumbnail").unwrap();
+    symlink(
+        outside.path().join("outside.jpg"),
+        directory.path().join("linked.jpg"),
+    )
+    .unwrap();
+    symlink(
+        outside.path().join("outside.mp4"),
+        directory.path().join("escape.mp4"),
+    )
+    .unwrap();
+    let executable = directory.path().join("ffmpeg-stub");
+    let script = "#!/bin/sh\ninput=\nwhitelist=\noutput=\nskip=0\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = -ss ]; then skip=1; fi\n  if [ \"$1\" = -protocol_whitelist ]; then shift; whitelist=\"$1\"; fi\n  if [ \"$1\" = -i ]; then shift; input=\"$1\"; fi\n  output=\"$1\"\n  shift\ndone\n[ \"$whitelist\" = fd ] || exit 40\n[ \"$input\" = fd: ] || exit 41\n[ \"$output\" = pipe:1 ] || exit 42\n[ \"$(dd bs=1 count=1 2>/dev/null)\" = i ] || exit 43\n[ \"$skip\" -eq 0 ] || exit 1\ndd if=/dev/zero bs=4096 count=1 2>/dev/null\n";
+    fs::write(&executable, script).unwrap();
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+    let root = MediaRoot::new(directory.path()).unwrap();
+
+    let frame = generate_video_thumbnail_with_ffmpeg(&root, Path::new("clip.mp4"), &executable)
+        .expect("fallback attempt produced a frame");
+    assert_eq!(frame.len(), 4096);
+    assert_eq!(
+        fs::read(directory.path().join("clip.jpg")).unwrap(),
+        b"tiny"
+    );
+    assert_eq!(
+        fs::read(outside.path().join("outside.jpg")).unwrap(),
+        b"outside-thumbnail"
+    );
+
+    assert!(
+        generate_video_thumbnail_with_ffmpeg(&root, Path::new("escape.mp4"), &executable).is_none()
+    );
+    assert!(!directory.path().join("escape.jpg").exists());
+    assert_eq!(
+        fs::read(outside.path().join("outside.mp4")).unwrap(),
+        b"outside-video"
+    );
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn video_thumbnail_process_rejects_oversized_output_without_a_sidecar() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(directory.path().join("clip.mp4"), b"inside-video").unwrap();
+    let executable = directory.path().join("ffmpeg-large-stub");
+    fs::write(
+        &executable,
+        "#!/bin/sh\ndd if=/dev/zero bs=1048576 count=9 2>/dev/null\n",
+    )
+    .unwrap();
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+    let root = MediaRoot::new(directory.path()).unwrap();
+
+    assert!(
+        generate_video_thumbnail_with_ffmpeg(&root, Path::new("clip.mp4"), &executable).is_none()
+    );
+    assert!(!directory.path().join("clip.jpg").exists());
 }
 
 #[test]
@@ -117,7 +197,7 @@ fn probe_real_whatsapp_audio_diagnostic() {
         return;
     };
     let path = std::path::Path::new(&path);
-    let result = probe_audio_duration(path);
+    let result = probe_audio_duration(fs::File::open(path).unwrap());
     eprintln!("probe({}) = {result:?}", path.display());
     assert!(
         result.is_some(),
