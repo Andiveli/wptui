@@ -31,6 +31,16 @@ pub(crate) fn status_view_allows(action: &AppAction) -> bool {
             | AppAction::CloseAttachmentViewer
             | AppAction::ViewerOpenExternal
             | AppAction::ViewerSaveAs
+            | AppAction::ViewerSaveNext
+            | AppAction::ViewerSavePrevious
+            | AppAction::ViewerSaveParent
+            | AppAction::ViewerSaveDescend
+            | AppAction::ViewerSaveEditName
+            | AppAction::ViewerSaveSearch
+            | AppAction::ViewerSaveEndSearch
+            | AppAction::ViewerSaveBrowse
+            | AppAction::ViewerSaveSearchCharacter(_)
+            | AppAction::ViewerSaveSearchBackspace
             | AppAction::ViewerSaveCharacter(_)
             | AppAction::ViewerSaveBackspace
             | AppAction::ViewerSaveConfirm

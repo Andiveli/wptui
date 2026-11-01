@@ -21,22 +21,85 @@ impl App<'_> {
             }
             AppAction::ViewerOpenExternal => self.plan_viewer_media_launch(),
             AppAction::ViewerSaveAs => self.start_viewer_save(),
-            AppAction::ViewerSaveCharacter(character) => {
-                if let Some(path) = self
+            action @ (AppAction::ViewerSaveNext | AppAction::ViewerSavePrevious) => {
+                if let Some(picker) = self
                     .attachment_viewer
                     .as_mut()
-                    .and_then(|v| v.save_as.as_mut())
+                    .and_then(|viewer| viewer.save_as.as_mut())
                 {
-                    path.push(character);
+                    picker.move_selection(if action == AppAction::ViewerSaveNext {
+                        1
+                    } else {
+                        -1
+                    });
+                }
+            }
+            AppAction::ViewerSaveParent => self.navigate_save_directory(true),
+            AppAction::ViewerSaveDescend => self.navigate_save_directory(false),
+            action @ (AppAction::ViewerSaveSearch
+            | AppAction::ViewerSaveEndSearch
+            | AppAction::ViewerSaveBrowse) => {
+                if let Some(picker) = self
+                    .attachment_viewer
+                    .as_mut()
+                    .and_then(|viewer| viewer.save_as.as_mut())
+                {
+                    match action {
+                        AppAction::ViewerSaveSearch => picker.searching = true,
+                        AppAction::ViewerSaveEndSearch => picker.searching = false,
+                        _ => picker.editing_name = false,
+                    }
+                }
+            }
+            AppAction::ViewerSaveSearchCharacter(character) => {
+                if let Some(picker) = self
+                    .attachment_viewer
+                    .as_mut()
+                    .and_then(|viewer| viewer.save_as.as_mut())
+                {
+                    picker.query.push(character);
+                    picker.update_query();
+                }
+            }
+            AppAction::ViewerSaveSearchBackspace => {
+                if let Some(picker) = self
+                    .attachment_viewer
+                    .as_mut()
+                    .and_then(|viewer| viewer.save_as.as_mut())
+                {
+                    picker.query.pop();
+                    picker.update_query();
+                }
+            }
+            AppAction::ViewerSaveEditName => {
+                if let Some(picker) = self
+                    .attachment_viewer
+                    .as_mut()
+                    .and_then(|viewer| viewer.save_as.as_mut())
+                {
+                    picker.editing_name = true;
+                }
+            }
+            AppAction::ViewerSaveCharacter(character) => {
+                if let Some(picker) = self
+                    .attachment_viewer
+                    .as_mut()
+                    .and_then(|viewer| viewer.save_as.as_mut())
+                {
+                    if picker.editing_name {
+                        picker.filename.push(character);
+                    }
                 }
             }
             AppAction::ViewerSaveBackspace => {
-                if let Some(path) = self
+                if let Some(picker) = self
                     .attachment_viewer
                     .as_mut()
-                    .and_then(|v| v.save_as.as_mut())
+                    .and_then(|viewer| viewer.save_as.as_mut())
                 {
-                    path.pop();
+                    if picker.editing_name {
+                        picker.filename.pop();
+                    }
                 }
             }
             AppAction::ViewerSaveConfirm => self.confirm_viewer_save(),
