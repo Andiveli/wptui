@@ -84,7 +84,15 @@ impl App<'_> {
             .filter(|name| !name.is_empty())
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| "attachment.bin".to_owned());
-        viewer.save_as = Some(name);
+        let Ok(directory) = std::env::current_dir() else {
+            return self.unavailable("Could not determine save directory");
+        };
+        let destination = directory.join(name);
+        let Some(destination) = destination.to_str() else {
+            return self.unavailable("Save directory is not valid UTF-8");
+        };
+        viewer.saved_path = None;
+        viewer.save_as = Some(destination.to_owned());
     }
 
     pub(crate) fn confirm_viewer_save(&mut self) {
@@ -100,13 +108,18 @@ impl App<'_> {
         if destination.trim().is_empty() {
             return self.unavailable("Enter a destination filename");
         }
-        let result = (|| -> io::Result<()> {
+        let result = (|| -> io::Result<std::path::PathBuf> {
             let root = crate::media::MediaRoot::new(&self.media_path)
                 .map_err(|error| io::Error::other(format!("Invalid media root: {error:?}")))?;
             let source = root
                 .media_file(Path::new(viewer.path.as_ref()))
                 .map_err(|error| io::Error::other(format!("Invalid source: {error:?}")))?;
             let target = Path::new(destination);
+            let target = if target.is_absolute() {
+                target.to_path_buf()
+            } else {
+                std::env::current_dir()?.join(target)
+            };
             let parent = target
                 .parent()
                 .filter(|path| !path.as_os_str().is_empty())
@@ -115,16 +128,19 @@ impl App<'_> {
             let mut input = fs::File::open(source)?;
             io::copy(&mut input, &mut temporary)?;
             temporary
-                .persist_noclobber(target)
+                .persist_noclobber(&target)
                 .map_err(|error| error.error)?;
-            Ok(())
+            Ok(target)
         })();
         match result {
-            Ok(()) => {
+            Ok(path) => {
+                let path = path.to_string_lossy().into_owned();
                 if let Some(viewer) = self.attachment_viewer.as_mut() {
                     viewer.save_as = None;
+                    viewer.saved_path = Some(path.clone());
                 }
-                self.action_notice = Some(ActionNotice::Unavailable("Media saved".into()));
+                self.action_notice =
+                    Some(ActionNotice::Unavailable(format!("Media saved to {path}")));
             }
             Err(error) => self.unavailable(&format!("Could not save media: {error}")),
         }
@@ -261,18 +277,34 @@ mod tests {
             app.start_viewer_save();
             assert_eq!(
                 app.attachment_viewer.as_ref().unwrap().save_as.as_deref(),
-                Some(format!("media{index}.bin").as_str())
+                Some(
+                    std::env::current_dir()
+                        .unwrap()
+                        .join(format!("media{index}.bin"))
+                        .to_str()
+                        .unwrap()
+                )
             );
             let target = destination.path().join(format!("saved{index}.bin"));
             app.attachment_viewer.as_mut().unwrap().save_as =
                 Some(target.to_string_lossy().into_owned());
             app.confirm_viewer_save();
             assert_eq!(
-                fs::read(target).unwrap(),
+                fs::read(&target).unwrap(),
                 format!("media{index}.bin").as_bytes()
             );
-            assert!(app.attachment_viewer.as_ref().unwrap().save_as.is_none());
+            let viewer = app.attachment_viewer.as_ref().unwrap();
+            assert!(viewer.save_as.is_none());
+            assert_eq!(viewer.saved_path.as_deref(), target.to_str());
+            assert_eq!(
+                app.action_notice,
+                Some(ActionNotice::Unavailable(format!(
+                    "Media saved to {}",
+                    target.display()
+                )))
+            );
             app.navigate_viewer(1);
+            assert!(app.attachment_viewer.as_ref().unwrap().saved_path.is_none());
         }
         assert_eq!(app.attachment_viewer.as_ref().unwrap().index, 1);
     }

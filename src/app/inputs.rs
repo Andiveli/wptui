@@ -476,9 +476,10 @@ mod tests {
                 KeyModifiers::NONE,
             )));
         }
+        let expected = std::env::current_dir().unwrap().join("image.jpgx");
         assert_eq!(
             app.attachment_viewer.as_ref().unwrap().save_as.as_deref(),
-            Some("image.jpgx")
+            expected.to_str()
         );
         app.on_terminal_event(Event::Key(KeyEvent::new(
             TerminalKeyCode::Esc,
