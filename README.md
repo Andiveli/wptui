@@ -286,10 +286,13 @@ removes the local row, but does not itself prove removal from every recipient's 
 | Vim composer Insert | Return to Normal | `Esc` |
 | Reaction picker | Move / confirm | `j`/`k` or Up/Down arrows / `Enter` |
 | Media viewer | Previous / next | `h`/`l` or arrows |
-| Media viewer | Save image or video as a file | `s` opens folder picker; `j`/`k` or Up/Down selects, `h`/Left goes up, `l`/Right opens folder, `Enter` edits filename, `Enter` saves; `Esc` cancels |
+| Media viewer | Save image or video as a file | `s` opens folder picker; `j`/`k` or Up/Down selects, `h`/Left goes up, `l`/Right opens folder, `/` filters folders; `Enter` edits basename, `Enter` saves; `Esc` leaves search/editing before closing |
 
 Save As starts in the app's current working directory. Browse folders in the viewer, then edit the
-separate proposed filename and confirm. The filename must be a single component, not a path.
+separate proposed basename and confirm. The extension is displayed but fixed from the source
+media format (or a kind-based fallback). The basename must be a single component, not a path.
+Folder search filters names; `Esc` retains the filter while returning to browsing, and entering a
+folder clears it. `Esc` in name editing returns to browsing; `Esc` in browsing closes Save As.
 The viewer shows the saved destination after success. Existing files are never overwritten;
 choose another name if one exists.
 

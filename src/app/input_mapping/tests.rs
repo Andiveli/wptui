@@ -92,6 +92,7 @@ fn maps_picker_search_and_viewer_keys() {
 
 #[test]
 fn save_directory_and_filename_have_distinct_keys() {
+    let viewer_save_action = |key: &Key, editing| super::viewer_save_action(key, editing, false);
     assert_eq!(
         viewer_save_action(&key(KeyCode::Down), false),
         Some(AppAction::ViewerSaveNext)
@@ -119,7 +120,23 @@ fn save_directory_and_filename_have_distinct_keys() {
     );
     assert_eq!(
         viewer_save_action(&key(KeyCode::Esc), true),
-        Some(AppAction::ViewerSaveCancel)
+        Some(AppAction::ViewerSaveBrowse)
+    );
+    assert_eq!(
+        super::viewer_save_action(&key(KeyCode::Char('/')), false, false),
+        Some(AppAction::ViewerSaveSearch)
+    );
+    assert_eq!(
+        super::viewer_save_action(&key(KeyCode::Char('j')), false, true),
+        Some(AppAction::ViewerSaveSearchCharacter('j'))
+    );
+    assert_eq!(
+        super::viewer_save_action(&key(KeyCode::Esc), false, true),
+        Some(AppAction::ViewerSaveEndSearch)
+    );
+    assert_eq!(
+        super::viewer_save_action(&key(KeyCode::Enter), false, true),
+        Some(AppAction::ViewerSaveDescend)
     );
 }
 

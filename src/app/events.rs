@@ -115,11 +115,14 @@ pub struct SaveDirectoryPicker {
     pub offset: usize,
     pub viewport_height: usize,
     pub filename: String,
+    pub extension: String,
+    pub query: String,
+    pub searching: bool,
     pub editing_name: bool,
 }
 
 impl SaveDirectoryPicker {
-    pub fn open(directory: PathBuf, filename: String) -> io::Result<Self> {
+    pub fn open(directory: PathBuf, filename: String, extension: String) -> io::Result<Self> {
         let mut picker = Self {
             directory,
             directories: Vec::new(),
@@ -127,6 +130,9 @@ impl SaveDirectoryPicker {
             offset: 0,
             viewport_height: 1,
             filename,
+            extension,
+            query: String::new(),
+            searching: false,
             editing_name: false,
         };
         picker.reload()?;
@@ -141,16 +147,36 @@ impl SaveDirectoryPicker {
             .collect::<Vec<_>>();
         directories.sort();
         self.directories = directories;
+        self.query.clear();
+        self.searching = false;
         self.selected = 0;
         self.offset = 0;
         Ok(())
+    }
+
+    pub fn visible_directories(&self) -> Vec<&PathBuf> {
+        self.directories
+            .iter()
+            .filter(|path| {
+                path.file_name().is_some_and(|name| {
+                    name.to_string_lossy()
+                        .to_lowercase()
+                        .contains(&self.query.to_lowercase())
+                })
+            })
+            .collect()
+    }
+
+    pub fn update_query(&mut self) {
+        self.selected = 0;
+        self.offset = 0;
     }
 
     pub fn move_selection(&mut self, delta: isize) {
         self.selected = self
             .selected
             .saturating_add_signed(delta)
-            .min(self.directories.len().saturating_sub(1));
+            .min(self.visible_directories().len().saturating_sub(1));
         self.keep_visible();
     }
 
@@ -168,7 +194,12 @@ impl SaveDirectoryPicker {
     }
 
     pub fn descend(&mut self) -> io::Result<()> {
-        if let Some(path) = self.directories.get(self.selected).cloned() {
+        if let Some(path) = self
+            .visible_directories()
+            .get(self.selected)
+            .cloned()
+            .cloned()
+        {
             self.change_directory(&path)?;
         }
         Ok(())
