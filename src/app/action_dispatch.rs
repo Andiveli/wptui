@@ -20,6 +20,31 @@ impl App<'_> {
                 self.viewer_preview = None;
             }
             AppAction::ViewerOpenExternal => self.plan_viewer_media_launch(),
+            AppAction::ViewerSaveAs => self.start_viewer_save(),
+            AppAction::ViewerSaveCharacter(character) => {
+                if let Some(path) = self
+                    .attachment_viewer
+                    .as_mut()
+                    .and_then(|v| v.save_as.as_mut())
+                {
+                    path.push(character);
+                }
+            }
+            AppAction::ViewerSaveBackspace => {
+                if let Some(path) = self
+                    .attachment_viewer
+                    .as_mut()
+                    .and_then(|v| v.save_as.as_mut())
+                {
+                    path.pop();
+                }
+            }
+            AppAction::ViewerSaveConfirm => self.confirm_viewer_save(),
+            AppAction::ViewerSaveCancel => {
+                if let Some(viewer) = self.attachment_viewer.as_mut() {
+                    viewer.save_as = None;
+                }
+            }
             AppAction::CloseAttachmentViewer => {
                 self.attachment_viewer = None;
                 self.viewer_preview = None;

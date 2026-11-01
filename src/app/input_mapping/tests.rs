@@ -76,6 +76,18 @@ fn maps_picker_search_and_viewer_keys() {
         attachment_viewer_action(&key(KeyCode::Char('l'))),
         Some(AppAction::ViewerNext)
     );
+    assert_eq!(
+        attachment_viewer_action(&key(KeyCode::Char('s'))),
+        Some(AppAction::ViewerSaveAs)
+    );
+    assert_eq!(
+        attachment_viewer_action(&key(KeyCode::Char('x'))),
+        Some(AppAction::ViewerOpenExternal)
+    );
+    assert_eq!(
+        attachment_viewer_action(&key(KeyCode::Esc)),
+        Some(AppAction::CloseAttachmentViewer)
+    );
 }
 
 #[test]
