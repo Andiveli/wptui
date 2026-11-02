@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"testing"
+	"time"
 
 	"go.mau.fi/whatsmeow/appstate"
 	"go.mau.fi/whatsmeow/proto/waCommon"
@@ -78,6 +79,78 @@ func TestMarkChatAsReadEventCopiesRangeIdentity(t *testing.T) {
 	})
 	if !ok || event.chat != chat.String() || event.messageID != id || event.timestamp != 42 || !event.read {
 		t.Fatalf("event = %#v, ok = %v", event, ok)
+	}
+}
+
+// Pin the dependency contract: unread is app-state, not a message receipt,
+// and a chat without messages does not require an invented message identity.
+func TestPinnedMarkChatAsReadSupportsBothStatesAndEmptyChats(t *testing.T) {
+	chat, err := types.ParseJID("group@g.us")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, read := range []bool{false, true} {
+		for _, empty := range []bool{false, true} {
+			var key *waCommon.MessageKey
+			if !empty {
+				key = &waCommon.MessageKey{
+					RemoteJID: proto.String(chat.String()), ID: proto.String("latest"),
+					FromMe: proto.Bool(true), Participant: proto.String("alice@s.whatsapp.net"),
+				}
+			}
+			patch := appstate.BuildMarkChatAsRead(chat, read, time.Unix(42, 0), key)
+			if patch.Type != appstate.WAPatchRegularLow || len(patch.Mutations) != 1 {
+				t.Fatalf("patch = %#v, want one regular-low mutation", patch)
+			}
+			mutation := patch.Mutations[0]
+			if len(mutation.Index) != 2 || mutation.Index[0] != appstate.IndexMarkChatAsRead || mutation.Index[1] != chat.String() {
+				t.Fatalf("index = %#v, want chat-level read action", mutation.Index)
+			}
+			action := mutation.Value.GetMarkChatAsReadAction()
+			if action == nil || action.GetRead() != read || action.GetMessageRange().GetLastMessageTimestamp() != 42 {
+				t.Fatalf("read=%v empty=%v: action = %#v", read, empty, action)
+			}
+			messages := action.GetMessageRange().GetMessages()
+			if empty {
+				if len(messages) != 0 {
+					t.Fatalf("empty chat gained message identities: %#v", messages)
+				}
+			} else if len(messages) != 1 || !proto.Equal(messages[0].GetKey(), key) {
+				t.Fatalf("message/group identity changed: %#v", messages)
+			}
+		}
+	}
+}
+
+func TestMarkChatAsReadEventPreservesUnreadGroupIdentity(t *testing.T) {
+	chat, err := types.ParseJID("group@g.us")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, read := range []bool{false, true} {
+		patch := appstate.BuildMarkChatAsRead(chat, read, time.Unix(42, 0), &waCommon.MessageKey{
+			RemoteJID: proto.String(chat.String()), ID: proto.String("latest"),
+			FromMe: proto.Bool(true), Participant: proto.String("alice@s.whatsapp.net"),
+		})
+		event, ok := markChatAsReadEventFromEvent(&events.MarkChatAsRead{
+			JID: chat, Action: patch.Mutations[0].Value.GetMarkChatAsReadAction(),
+		})
+		if !ok || event.chat != chat.String() || event.read != read || event.messageID != "latest" || event.timestamp != 42 || !event.fromMe || event.participant != "alice@s.whatsapp.net" {
+			t.Fatalf("read=%v: event = %#v, ok = %v", read, event, ok)
+		}
+	}
+}
+
+func TestMarkChatAsReadEventAcceptsUnreadWithoutRange(t *testing.T) {
+	chat, err := types.ParseJID("empty@s.whatsapp.net")
+	if err != nil {
+		t.Fatal(err)
+	}
+	event, ok := markChatAsReadEventFromEvent(&events.MarkChatAsRead{
+		JID: chat, Action: &waSyncAction.MarkChatAsReadAction{Read: proto.Bool(false)},
+	})
+	if !ok || event.chat != chat.String() || event.read || event.messageID != "" || event.timestamp != 0 || event.fromMe || event.participant != "" {
+		t.Fatalf("event = %#v, ok = %v, want unread without fabricated identity", event, ok)
 	}
 }
 

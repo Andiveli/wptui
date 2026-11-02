@@ -375,6 +375,103 @@ fn reaction_event_is_translated_into_reaction_projection() {
 }
 
 #[test]
+fn remote_manual_unread_roundtrip_preserves_cursor_and_never_echoes_sync() {
+    use crate::app::test_support::RecordingChatReadSyncPort;
+    use crate::app::ChatFilter;
+    use crate::ui::contact_list::ContactListItem;
+
+    // Unread app-state can omit a message range, including for empty chats.
+    for empty_range in [false, true] {
+        let mut app = TestApp::new();
+        let chat = wr::JID::from("chat@s.whatsapp.net".to_owned());
+        let cursor = FakeChatReadCursorPort::default();
+        let sync = RecordingChatReadSyncPort::default();
+        app.set_chat_read_cursor(Box::new(cursor.clone()));
+        app.set_chat_read_sync(Box::new(sync.clone()));
+        app.add_message(message(&chat, "latest", 42));
+        app.sort_chats();
+        app.mark_chat_read_at_latest(&chat);
+        let stored = cursor.stored.lock().unwrap().len();
+        let scheduled = sync.calls.lock().unwrap().len();
+        let row = app.visible_contact_rows().remove(0);
+        let before = ContactListItem::from_contact_row(&app, &row);
+        assert!(!before.unread);
+
+        app.handle_whatsapp_event(wr::Event::MarkChatAsRead {
+            chat: chat.clone(),
+            message_id: if empty_range { "" } else { "latest" }.into(),
+            read: false,
+            timestamp: if empty_range { 0 } else { 42 },
+            from_me: false,
+            participant: None,
+        });
+
+        let unread = ContactListItem::from_contact_row(&app, &row);
+        assert!(unread.unread, "remote unread must update the chat indicator");
+        assert_eq!(unread.preview, before.preview);
+        assert!(!unread.attention);
+        assert_eq!(app.pending_new_messages(&chat), 0);
+        assert_eq!(app.pending_chat_activity(&chat), (0, false));
+        assert_eq!(app.unread_boundary(&chat), None);
+        assert_eq!(cursor.stored.lock().unwrap().len(), stored);
+        assert_eq!(sync.calls.lock().unwrap().len(), scheduled);
+        app.chat_filter = ChatFilter::Unread;
+        assert_eq!(app.visible_chat_rows()[0].target, chat);
+
+        // A read update at the unchanged cursor still clears the manual flag.
+        app.handle_whatsapp_event(wr::Event::MarkChatAsRead {
+            chat: chat.clone(),
+            message_id: "latest".into(),
+            read: true,
+            timestamp: 42,
+            from_me: false,
+            participant: None,
+        });
+        assert!(!ContactListItem::from_contact_row(&app, &row).unread);
+        assert!(app.visible_chat_rows().is_empty());
+        assert_eq!(app.pending_new_messages(&chat), 0);
+        assert_eq!(app.unread_boundary(&chat), None);
+        assert_eq!(sync.calls.lock().unwrap().len(), scheduled);
+
+        // A later read receipt must not resurrect messages before the cursor.
+        app.add_message(message(&chat, "later", 43));
+        app.handle_whatsapp_event(wr::Event::Receipt {
+            kind: wr::ReceiptKind::ReadSelf,
+            chat: chat.clone(),
+            message_ids: vec!["latest".into()],
+        });
+        assert_eq!(app.pending_new_messages(&chat), 1);
+        assert_eq!(app.unread_boundary(&chat), Some((1, 43)));
+    }
+}
+
+#[test]
+fn remote_manual_unread_keeps_status_excluded() {
+    use crate::app::test_support::RecordingChatReadSyncPort;
+    let mut app = TestApp::new();
+    let sync = RecordingChatReadSyncPort::default();
+    let cursor = FakeChatReadCursorPort::default();
+    app.set_chat_read_sync(Box::new(sync.clone()));
+    app.set_chat_read_cursor(Box::new(cursor.clone()));
+    let sender = wr::JID::from("alice@s.whatsapp.net".to_owned());
+    app.add_message(status_message(&sender, "status", 42));
+    let unseen_before = app.has_unseen_statuses(&sender);
+
+    app.handle_whatsapp_event(wr::Event::MarkChatAsRead {
+        chat: wr::JID::from("status@broadcast".to_owned()),
+        message_id: "status".into(),
+        read: false,
+        timestamp: 42,
+        from_me: false,
+        participant: None,
+    });
+
+    assert_eq!(app.has_unseen_statuses(&sender), unseen_before);
+    assert!(sync.calls.lock().unwrap().is_empty());
+    assert!(cursor.stored.lock().unwrap().is_empty());
+}
+
+#[test]
 fn remote_read_clears_only_the_covered_unread_range() {
     let mut app = TestApp::new();
     let chat = wr::JID::from("chat@example.test".to_owned());
