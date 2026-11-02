@@ -265,7 +265,7 @@ fn native_stacks_clip_payload_pixels_to_the_actual_visible_rows_and_columns() {
 fn strips_are_real_fitted_pixel_crops_not_squeezed_whole_images() {
     let source: DynamicImage = ImageBuffer::from_fn(240, 240, |x, _| {
         if x < 120 {
-            Rgba([255, 0, 0, 255])
+            Rgba([255_u8, 0, 0, 255])
         } else {
             Rgba([0, 255, 0, 255])
         }
