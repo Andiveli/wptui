@@ -126,13 +126,13 @@ pub(super) fn render_region(
                 visible.width,
                 visible.height,
             );
-            if loaded
-                && let Some(key) = app.stack_previews.key(&file.path, canvas, crop)
-            {
+            if loaded && let Some(key) = app.stack_previews.key(&file.path, canvas, crop) {
                 if app.stack_previews.request(key.clone()) {
                     // Reuse the existing post-draw, ID-deduplicated media effect.
                     // Loaded files prepare queued crops rather than decoding again.
-                    plan.append(crate::app::events::MediaRenderEffect::LoadFilePreview(id.clone()));
+                    plan.append(crate::app::events::MediaRenderEffect::LoadFilePreview(
+                        id.clone(),
+                    ));
                 }
                 if let Some(protocol) = app.stack_previews.get(&key) {
                     ratatui::widgets::Widget::render(
@@ -141,11 +141,13 @@ pub(super) fn render_region(
                         buf,
                     );
                     if step == 0 {
-                        app.mouse_hit_map.media.push(crate::app::mouse_input::MediaHit {
-                            area: visible,
-                            id: front.clone(),
-                            kind: file.kind.clone(),
-                        });
+                        app.mouse_hit_map
+                            .media
+                            .push(crate::app::mouse_input::MediaHit {
+                                area: visible,
+                                id: front.clone(),
+                                kind: file.kind.clone(),
+                            });
                     }
                 }
                 app.touch_image_cache(&file.path);

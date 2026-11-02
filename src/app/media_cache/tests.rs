@@ -39,9 +39,8 @@ fn decoded_stack_sources_follow_preview_eviction_and_stale_result_guards() {
     let path = Arc::<str>::from("old.png");
     app.messages
         .insert("preview".into(), file_message("preview", &path));
-    let source = crate::ui::message_list::bounded_stack_source(&image::DynamicImage::new_rgba8(
-        2048, 2048,
-    ));
+    let source =
+        crate::ui::message_list::bounded_stack_source(&image::DynamicImage::new_rgba8(2048, 2048));
     let event = |source: Arc<image::DynamicImage>| {
         AppEvent::SetFilePreview(
             "preview".into(),
@@ -86,9 +85,9 @@ fn stacked_crop_requests_reuse_the_managed_preview_worker_without_redecoding() {
         let message = file_message(&id, &path);
         app.open_chat = Some(message.info.chat.clone());
         app.add_message(message);
-        let source = crate::ui::message_list::bounded_stack_source(&image::DynamicImage::new_rgba8(
-            240, 240,
-        ));
+        let source = crate::ui::message_list::bounded_stack_source(
+            &image::DynamicImage::new_rgba8(240, 240),
+        );
         app.cache_file_preview(
             id,
             path.clone(),

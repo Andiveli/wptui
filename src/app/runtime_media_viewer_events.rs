@@ -257,21 +257,21 @@ impl App<'_> {
                                     apply_video_play_marker(&mut image_src);
                                 }
                                 let dimensions = (image_src.width(), image_src.height());
-                                let source = matches!(
-                                    file.kind,
-                                    wr::FileKind::Image | wr::FileKind::Video
-                                )
-                                .then(|| crate::ui::message_list::bounded_stack_source(&image_src));
+                                let source =
+                                    matches!(file.kind, wr::FileKind::Image | wr::FileKind::Video)
+                                        .then(|| {
+                                            crate::ui::message_list::bounded_stack_source(
+                                                &image_src,
+                                            )
+                                        });
                                 // Native preview state also owns only bounded pixels,
                                 // not a second retained full-resolution decode.
                                 let preview_pixels = source
                                     .as_ref()
                                     .map(|pixels| (**pixels).clone())
                                     .unwrap_or(image_src);
-                                let mut img = picker
-                                    .lock()
-                                    .unwrap()
-                                    .new_resize_protocol(preview_pixels);
+                                let mut img =
+                                    picker.lock().unwrap().new_resize_protocol(preview_pixels);
                                 let (preview_width, preview_height) =
                                     if matches!(file.kind, wr::FileKind::Video) {
                                         (VIDEO_WIDTH, VIDEO_HEIGHT)

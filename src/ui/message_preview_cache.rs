@@ -124,7 +124,8 @@ impl StackPreviewCache {
             return;
         }
         self.revision = self.revision.wrapping_add(1);
-        self.sources.insert(path, (self.revision, source, dimensions));
+        self.sources
+            .insert(path, (self.revision, source, dimensions));
     }
 
     #[cfg(test)]

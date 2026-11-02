@@ -177,7 +177,9 @@ fn native_crop_payloads_match_the_final_rectangle() {
         let mut cache = StackPreviewCache::default();
         let path: Arc<str> = "native.png".into();
         cache.install(path.clone(), bounded_source(&pixels([255, 0, 0])));
-        let key = cache.key(&path, Size::new(24, 12), Rect::new(20, 5, 4, 3)).unwrap();
+        let key = cache
+            .key(&path, Size::new(24, 12), Rect::new(20, 5, 4, 3))
+            .unwrap();
         assert!(cache.request(key.clone()));
         let mut picker = Picker::from_fontsize(FontSize::new(8, 16));
         picker.set_protocol_type(protocol);
@@ -272,7 +274,9 @@ fn strips_are_real_fitted_pixel_crops_not_squeezed_whole_images() {
     let mut cache = StackPreviewCache::default();
     let path: Arc<str> = "split.png".into();
     cache.install(path.clone(), bounded_source(&source));
-    let key = cache.key(&path, Size::new(24, 12), Rect::new(20, 0, 4, 12)).unwrap();
+    let key = cache
+        .key(&path, Size::new(24, 12), Rect::new(20, 0, 4, 12))
+        .unwrap();
     cache.request(key.clone());
     let work = cache.take_work().unwrap();
     cache.finish(work.prepare(&mut Picker::halfblocks()));
@@ -295,7 +299,9 @@ fn crop_cache_is_bounded_and_stale_sources_cannot_repopulate_it() {
     assert!(source.as_bytes().len() <= 512 * 256 * 4);
     cache.install(path.clone(), source);
     for x in 0..100 {
-        let key = cache.key(&path, Size::new(120, 12), Rect::new(x, 0, 1, 12)).unwrap();
+        let key = cache
+            .key(&path, Size::new(120, 12), Rect::new(x, 0, 1, 12))
+            .unwrap();
         cache.request(key);
     }
     assert_eq!(cache.len(), 64);
@@ -314,11 +320,15 @@ fn crop_jobs_and_pixel_scratch_are_bounded_and_failures_are_stable() {
     cache.install(path.clone(), bounded_source(&pixels([255, 0, 0])));
     let mut keys = Vec::new();
     for x in 0..20 {
-        let key = cache.key(&path, Size::new(120, 12), Rect::new(x, 0, 1, 12)).unwrap();
+        let key = cache
+            .key(&path, Size::new(120, 12), Rect::new(x, 0, 1, 12))
+            .unwrap();
         cache.request(key.clone());
         keys.push(key);
     }
-    let work = (0..4).map(|_| cache.take_work().unwrap()).collect::<Vec<_>>();
+    let work = (0..4)
+        .map(|_| cache.take_work().unwrap())
+        .collect::<Vec<_>>();
     assert!(cache.take_work().is_none(), "at most four jobs at once");
     let mut picker = Picker::from_fontsize(FontSize::new(1000, 1000));
     for batch in work {
@@ -329,7 +339,9 @@ fn crop_jobs_and_pixel_scratch_are_bounded_and_failures_are_stable() {
         !cache.request(keys[0].clone()),
         "oversized geometry is not retried per frame"
     );
-    let remaining = cache.take_work().expect("four batches prepare only sixteen of twenty keys");
+    let remaining = cache
+        .take_work()
+        .expect("four batches prepare only sixteen of twenty keys");
     cache.finish(remaining.prepare(&mut picker));
     assert!(cache.take_work().is_none());
 }
