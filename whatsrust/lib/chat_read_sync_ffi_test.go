@@ -155,6 +155,30 @@ func TestMarkChatAsReadEventAcceptsUnreadWithoutRange(t *testing.T) {
 	}
 }
 
+func TestEmptyChatReadStatePatchSurvivesIncomingAdapter(t *testing.T) {
+	chat, err := types.ParseJID("empty@s.whatsapp.net")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, read := range []bool{false, true} {
+		t.Run(fmt.Sprintf("read=%v", read), func(t *testing.T) {
+			patch, err := buildChatReadStateSyncPatch("empty@s.whatsapp.net", "", read, 0, false, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(patch.Mutations) != 1 {
+				t.Fatalf("mutations = %d, want 1", len(patch.Mutations))
+			}
+			event, ok := markChatAsReadEventFromEvent(&events.MarkChatAsRead{
+				JID: chat, Action: patch.Mutations[0].Value.GetMarkChatAsReadAction(),
+			})
+			if !ok || event.chat != chat.String() || event.read != read || event.messageID != "" || event.timestamp != 0 || event.fromMe || event.participant != "" {
+				t.Fatalf("event = %#v, ok = %v, want read=%v without fabricated identity", event, ok, read)
+			}
+		})
+	}
+}
+
 func TestMarkChatAsReadEventRejectsMissingRange(t *testing.T) {
 	if _, ok := markChatAsReadEventFromEvent(&events.MarkChatAsRead{}); ok {
 		t.Fatal("missing range was accepted")
@@ -246,6 +270,15 @@ func TestMarkChatAsReadEventStillRejectsInvalidRead(t *testing.T) {
 	for _, action := range []*waSyncAction.MarkChatAsReadAction{
 		{Read: proto.Bool(true)},
 		{Read: proto.Bool(true), MessageRange: &waSyncAction.SyncActionMessageRange{}},
+		{
+			Read: proto.Bool(true),
+			MessageRange: &waSyncAction.SyncActionMessageRange{
+				LastMessageTimestamp: proto.Int64(0),
+				Messages: []*waSyncAction.SyncActionMessage{{
+					Key: &waCommon.MessageKey{RemoteJID: proto.String(chat.String()), ID: proto.String("latest"), FromMe: proto.Bool(false)},
+				}},
+			},
+		},
 	} {
 		if event, ok := markChatAsReadEventFromEvent(&events.MarkChatAsRead{JID: chat, Action: action}); ok {
 			t.Fatalf("invalid read accepted: %#v", event)
