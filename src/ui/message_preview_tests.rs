@@ -11,6 +11,7 @@ use ratatui::{
 use ratatui_image::{
     FontSize,
     picker::{Picker, ProtocolType},
+    protocol::Protocol,
 };
 use whatsrust as wr;
 
@@ -123,6 +124,50 @@ fn colored_run(buffer: &ratatui::buffer::Buffer, color: Color) -> Vec<u16> {
         .collect()
 }
 
+// Read dimensions from the transmitted header, not protocol cell metadata.
+// Sixel raster attributes are Pan;Pad;Ph;Pv: aspect parameters need not be 1;1.
+fn native_payload_dimensions(payload: &str) -> Option<(u32, u32)> {
+    if let Some((_, graphics)) = payload.split_once("\x1b_G") {
+        let (header, _) = graphics.split_once(';')?;
+        let mut width = None;
+        let mut height = None;
+        for field in header.split(',') {
+            if let Some(value) = field.strip_prefix("s=") {
+                width = value.parse::<u32>().ok();
+            } else if let Some(value) = field.strip_prefix("v=") {
+                height = value.parse::<u32>().ok();
+            }
+        }
+        return Some((width?, height?));
+    }
+    if !payload.contains("\x1bP") {
+        return None;
+    }
+    let (_, raster) = payload.split_once('"')?;
+    let parameters = raster
+        .split(|c: char| c != ';' && !c.is_ascii_digit())
+        .next()?;
+    let mut fields = parameters.split(';');
+    fields.next()?;
+    fields.next()?;
+    let width = fields.next()?.parse::<u32>().ok()?;
+    let height = fields.next()?.parse::<u32>().ok()?;
+    Some((width, height))
+}
+
+#[test]
+fn native_dimension_headers_allow_sixel_aspect_and_kitty_field_order_variants() {
+    for payload in [
+        "\x1bPq\"1;1;32;48#0;2;100;0;0!32~\x1b\\",
+        "\x1bPq\"1;2;32;48#0;2;100;0;0!32~\x1b\\",
+        "\x1bPq\";;32;48#0;2;100;0;0!32~\x1b\\",
+        "\x1b_Gv=48,s=32,f=32;AAAA\x1b\\",
+    ] {
+        assert_eq!(native_payload_dimensions(payload), Some((32, 48)));
+    }
+    assert_eq!(native_payload_dimensions("plain text"), None);
+}
+
 #[test]
 fn real_right_hand_strips_shift_with_original_selection_and_reverse() {
     for sent in [false, true] {
@@ -195,15 +240,8 @@ fn native_crop_payloads_match_the_final_rectangle() {
         );
         let payload = buffer[(2, 2)].symbol();
         assert!(payload.contains('\x1b'));
-        match image {
-            ratatui_image::protocol::Protocol::Kitty(_) => {
-                assert!(payload.contains("s=32,v=48,"));
-            }
-            ratatui_image::protocol::Protocol::Sixel(_) => {
-                assert!(payload.contains("\"1;1;32;48"));
-            }
-            _ => panic!("expected native image protocol"),
-        }
+        assert!(matches!(image, Protocol::Kitty(_) | Protocol::Sixel(_)));
+        assert_eq!(native_payload_dimensions(payload), Some((32, 48)));
         assert_eq!(buffer[(6, 2)].symbol(), " ");
         assert_eq!(buffer[(2, 5)].symbol(), " ");
         assert!(
@@ -223,41 +261,30 @@ fn native_stacks_clip_payload_pixels_to_the_actual_visible_rows_and_columns() {
         let font = picker.font_size();
         let (buffer, _) = draw_with_picker(&mut app, 80, 8, &mut picker);
         let mut payloads = 0;
+        let mut main_payload = false;
+        let mut neighbor_payload = false;
         for y in 0..8 {
             for x in 0..80 {
                 let symbol = buffer[(x, y)].symbol();
-                let dimensions = if let Some(header) = symbol.split("s=").nth(1) {
-                    let mut fields = header.split(',');
-                    let width = fields.next().unwrap().parse::<u32>().unwrap();
-                    let height = fields
-                        .next()
-                        .unwrap()
-                        .strip_prefix("v=")
-                        .unwrap()
-                        .parse::<u32>()
-                        .unwrap();
-                    Some((width, height))
-                } else if let Some(header) = symbol.split("\"1;1;").nth(1) {
-                    let (width, rest) = header.split_once(';').unwrap();
-                    let height = rest
-                        .chars()
-                        .take_while(char::is_ascii_digit)
-                        .collect::<String>();
-                    Some((
-                        width.parse::<u32>().unwrap(),
-                        height.parse::<u32>().unwrap(),
-                    ))
-                } else {
-                    None
-                };
-                if let Some((width, height)) = dimensions {
+                if let Some((width, height)) = native_payload_dimensions(symbol) {
                     payloads += 1;
+                    assert!(width > 0 && height > 0);
                     assert!(width <= u32::from(80 - x) * u32::from(font.width));
                     assert!(height <= u32::from(8 - y) * u32::from(font.height));
+                    assert!(
+                        height < 240,
+                        "the 240-pixel source must actually be clipped"
+                    );
+                    if width > 4 * u32::from(font.width) {
+                        main_payload = true;
+                    } else {
+                        neighbor_payload = true;
+                    }
                 }
             }
         }
         assert!(payloads >= 2, "main and neighboring real native payloads");
+        assert!(main_payload && neighbor_payload);
     }
 }
 
