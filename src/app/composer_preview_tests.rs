@@ -163,7 +163,10 @@ fn tiny_composer_keeps_text_and_large_composer_keeps_fallback_labels_without_io(
             outcome.file_messages()[0].caption.as_deref(),
             Some("caption")
         );
-        assert!(matches!(outcome.file_messages()[1].kind, wr::FileKind::Document));
+        assert!(matches!(
+            outcome.file_messages()[1].kind,
+            wr::FileKind::Document
+        ));
         assert_eq!(outcome.file_messages()[1].caption, None);
     }
 }
