@@ -44,7 +44,7 @@ pub(crate) struct ComposerPreviews {
 fn same_attachment(left: &PendingAttachment, right: &PendingAttachment) -> bool {
     Arc::ptr_eq(&left.preview_identity, &right.preview_identity)
         && left.path == right.path
-        && left.kind == right.kind
+        && std::mem::discriminant(&left.kind) == std::mem::discriminant(&right.kind)
 }
 
 pub(crate) fn eligible(attachment: &PendingAttachment) -> bool {

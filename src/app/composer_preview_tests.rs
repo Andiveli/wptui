@@ -24,7 +24,7 @@ fn images_videos_and_pasted_images_are_eligible_but_documents_are_not() {
     assert_eq!(requests.len(), 3);
     assert_eq!(requests[0].attachment.display_name(), "photo.png");
     assert_eq!(requests[1].attachment.display_name(), "clip.mp4");
-    assert_eq!(requests[2].attachment.kind, wr::FileKind::Image);
+    assert!(matches!(requests[2].attachment.kind, wr::FileKind::Image));
     assert_eq!(requests[2].attachment.path, app.composer.pending[3].path);
     assert!(app.reconcile_composer_previews().is_empty());
 }
@@ -163,7 +163,7 @@ fn tiny_composer_keeps_text_and_large_composer_keeps_fallback_labels_without_io(
             outcome.file_messages()[0].caption.as_deref(),
             Some("caption")
         );
-        assert_eq!(outcome.file_messages()[1].kind, wr::FileKind::Document);
+        assert!(matches!(outcome.file_messages()[1].kind, wr::FileKind::Document));
         assert_eq!(outcome.file_messages()[1].caption, None);
     }
 }
