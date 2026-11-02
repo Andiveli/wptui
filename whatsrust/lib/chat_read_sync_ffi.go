@@ -47,8 +47,13 @@ func markChatAsReadEventFromEvent(event *events.MarkChatAsRead) (markChatAsReadE
 		return markChatAsReadEvent{}, false
 	}
 	rangeInfo := event.Action.MessageRange
-	if event.Action.GetRead() && (rangeInfo == nil || rangeInfo.GetLastMessageTimestamp() == 0) {
-		return markChatAsReadEvent{}, false
+	if event.Action.GetRead() {
+		if rangeInfo == nil || rangeInfo.LastMessageTimestamp == nil {
+			return markChatAsReadEvent{}, false
+		}
+		if rangeInfo.GetLastMessageTimestamp() == 0 && len(rangeInfo.GetMessages()) > 0 {
+			return markChatAsReadEvent{}, false
+		}
 	}
 	result := markChatAsReadEvent{
 		chat:      event.JID.String(),
