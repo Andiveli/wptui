@@ -18,6 +18,7 @@ pub struct MessageListState {
     pub(crate) selected_message: Option<wr::MessageId>,
     pub update_selected: bool,
     pub(crate) viewport_anchor: Option<ViewportAnchor>,
+    pub(crate) media_fronts: Vec<(wr::MessageId, usize)>,
 }
 
 impl MessageListState {
@@ -46,6 +47,7 @@ impl MessageListState {
         self.selected_message = None;
         self.update_selected = false;
         self.viewport_anchor = None;
+        self.media_fronts.clear();
     }
 
     pub fn select(&mut self, index: Option<usize>) {

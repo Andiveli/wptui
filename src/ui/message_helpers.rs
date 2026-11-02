@@ -17,20 +17,33 @@ const REPLY_EXCERPT_MAX_CHARS: usize = 40;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AuthorGroupContext {
     starts_group: bool,
+    // Zero hides a stack member without removing its original sequence index.
+    pub(crate) stack_count: usize,
 }
 
 impl AuthorGroupContext {
-    pub const STARTS_GROUP: Self = Self { starts_group: true };
+    pub const STARTS_GROUP: Self = Self {
+        starts_group: true,
+        stack_count: 1,
+    };
     pub const CONTINUATION: Self = Self {
         starts_group: false,
+        stack_count: 1,
     };
+
+    pub(crate) fn stack_height(self) -> usize {
+        if self.stack_count > 1 { 2 } else { 0 }
+    }
 
     pub const fn starts_group(self) -> bool {
         self.starts_group
     }
 
     pub(crate) const fn new(starts_group: bool) -> Self {
-        Self { starts_group }
+        Self {
+            starts_group,
+            stack_count: 1,
+        }
     }
 }
 
