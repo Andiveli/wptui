@@ -280,11 +280,20 @@ pub(crate) enum MediaRenderEffect {
 pub struct MediaRenderPlan {
     effects: Vec<MediaRenderEffect>,
     visible_stickers: Vec<Arc<str>>,
+    stack_regions: Vec<(wr::MessageId, ratatui::layout::Rect)>,
 }
 
 impl MediaRenderPlan {
     pub fn is_empty(&self) -> bool {
-        self.effects.is_empty() && self.visible_stickers.is_empty()
+        self.effects.is_empty() && self.visible_stickers.is_empty() && self.stack_regions.is_empty()
+    }
+
+    pub(crate) fn record_stack_region(&mut self, id: wr::MessageId, area: ratatui::layout::Rect) {
+        self.stack_regions.push((id, area));
+    }
+
+    pub(crate) fn take_stack_regions(&mut self) -> Vec<(wr::MessageId, ratatui::layout::Rect)> {
+        std::mem::take(&mut self.stack_regions)
     }
 
     pub(crate) fn append(&mut self, effect: MediaRenderEffect) {
@@ -327,7 +336,13 @@ pub enum AppEvent {
     DownloadFile(wr::MessageId, wr::FileId),
     DownloadFileDone(wr::MessageId, FileMeta),
     LoadFilePreview(wr::MessageId),
-    SetFilePreview(wr::MessageId, Arc<str>, StatefulProtocol),
+    SetFilePreview(
+        wr::MessageId,
+        Arc<str>,
+        StatefulProtocol,
+        Option<(Arc<image::DynamicImage>, (u32, u32))>,
+    ),
+    SetStackCrops(crate::ui::message_list::CropResults),
     SetStickerPreview(
         wr::MessageId,
         Arc<str>,
@@ -371,7 +386,8 @@ impl AppEvent {
             Self::DownloadFile(_, _)
             | Self::DownloadFileDone(_, _)
             | Self::LoadFilePreview(_)
-            | Self::SetFilePreview(_, _, _)
+            | Self::SetFilePreview(_, _, _, _)
+            | Self::SetStackCrops(_)
             | Self::SetStickerPreview(_, _, _)
             | Self::LoadViewerPreview(_)
             | Self::SetViewerPreview(_, _)
@@ -463,7 +479,8 @@ impl fmt::Debug for AppEvent {
             AppEvent::LoadFilePreview(message_id) => {
                 f.debug_tuple("LoadFilePreview").field(message_id).finish()
             }
-            AppEvent::SetFilePreview(message_id, path, _) => f
+            AppEvent::SetStackCrops(_) => f.write_str("SetStackCrops"),
+            AppEvent::SetFilePreview(message_id, path, _, _) => f
                 .debug_tuple("SetFilePreview")
                 .field(message_id)
                 .field(path)

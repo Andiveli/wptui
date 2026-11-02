@@ -180,6 +180,7 @@ fn with_dirs_and_picker_and_ports(
         ),
         presence_diagnostics: PresenceDiagnostics::default(),
         image_cache: HashMap::new(),
+        stack_previews: Default::default(),
         image_cache_order: VecDeque::new(),
         sticker_playback: HashMap::new(),
         deferred_sticker_previews: HashSet::new(),

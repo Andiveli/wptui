@@ -30,10 +30,18 @@ mod message_list_reconciliation;
 mod message_list_state;
 #[path = "message_media.rs"]
 mod message_media;
+#[path = "message_preview_cache.rs"]
+mod message_preview_cache;
+#[cfg(test)]
+#[path = "message_preview_tests.rs"]
+mod message_preview_tests;
 #[path = "message_stacks.rs"]
 mod message_stacks;
 #[path = "message_viewport.rs"]
 mod message_viewport;
+
+pub(crate) use message_preview_cache::bounded_source as bounded_stack_source;
+pub use message_preview_cache::{CropResults, StackPreviewCache};
 
 pub use message_formatting::reaction_chips;
 use message_formatting::{
@@ -750,10 +758,10 @@ fn render_message(
             Constraint::Min(0),
         ])
         .areas(msg_area);
-        let lines = vec![
-            Line::raw("  ┌────────"),
-            Line::raw(format!(" ┌─ {} photos/videos", author_group.stack_count)),
-        ];
+        let lines = vec![Line::raw(format!(
+            "{} photos/videos",
+            author_group.stack_count
+        ))];
         Paragraph::new(lines).dark_gray().render(pile, buf);
         msg_area = detail;
     }
@@ -865,10 +873,21 @@ fn render_message(
                 app,
                 media_render_plan,
                 content_area,
-                render_image,
+                render_image && author_group.stack_count <= 1,
                 alignment,
                 text_mode,
             );
+            if author_group.stack_count > 1 {
+                media_render_plan.record_stack_region(
+                    message.info.id.clone(),
+                    Rect::new(
+                        content_area.x,
+                        content_area.y,
+                        content_area.width,
+                        content_area.height.min(preview_height(&data.kind) as u16),
+                    ),
+                );
+            }
             if is_pending && text_mode == MessageTextMode::Status {
                 buf.set_style(content_area, Style::default().fg(Color::DarkGray).dim());
             }
