@@ -26,8 +26,37 @@ impl App<'_> {
         }
     }
 
+    fn selected_read_toggle_chat(&mut self) -> Option<whatsrust::JID> {
+        if self.focus_pane != crate::app::actions::FocusPane::ChatList
+            || self.selected_section == Section::Status
+        {
+            return None;
+        }
+        self.get_selected_chat().filter(|chat| {
+            !chat.0.is_empty() && !Self::is_status_chat(chat) && self.chats.contains_key(chat)
+        })
+    }
+
     pub fn open_contextual_actions(&mut self) {
-        self.contextual_menu = Some((contextual_menu_rows(self.contextual_context()), 0));
+        let mut rows = contextual_menu_rows(self.contextual_context());
+        if let Some(row) = rows
+            .iter_mut()
+            .find(|row| row.action_token == ContextualAction::MarkRead)
+        {
+            let chat = self.selected_read_toggle_chat();
+            row.display_label = if chat.as_ref().is_some_and(|chat| self.chat_is_unread(chat)) {
+                "Mark as read"
+            } else {
+                "Mark as unread"
+            };
+            row.row_style = if chat.is_some() {
+                crate::app::contextual_actions::RowStyle::Enabled
+            } else {
+                crate::app::contextual_actions::RowStyle::Disabled
+            };
+            row.reason = chat.is_none().then_some("chat required");
+        }
+        self.contextual_menu = Some((rows, 0));
     }
 
     pub fn move_contextual_menu(&mut self, delta: isize) {
@@ -45,6 +74,13 @@ impl App<'_> {
         let Some(row) = rows.get(*selected).copied() else {
             return;
         };
+        if row.action_token == ContextualAction::MarkRead {
+            if let Some(chat) = self.selected_read_toggle_chat() {
+                self.contextual_menu = None;
+                self.toggle_chat_read(&chat);
+            }
+            return;
+        }
         let context = self.contextual_context();
         let available = evaluate_availability(
             crate::app::contextual_actions::CONTEXTUAL_ACTION_METADATA
@@ -125,7 +161,8 @@ mod tests {
     #[test]
     fn contextual_read_toggle_targets_the_visible_selected_chat() {
         use crate::app::test_support::{
-            ChatReadSyncCall, FakeChatReadCursorPort, RecordingChatReadSyncPort, message,
+            ChatReadStateSyncCall, ChatReadSyncCall, FakeChatReadCursorPort,
+            RecordingChatReadSyncPort, message,
         };
         use crate::app::{ChatFilter, ContactRow};
         use crate::ui::contact_list::ContactListItem;
@@ -181,6 +218,8 @@ mod tests {
         let after = ContactListItem::from_contact_row(&app, &row);
         assert!(after.unread, "manual unread must have a visible indicator");
         assert!(!after.attention);
+        assert_eq!(app.cached_contact_view().1[0], after);
+        assert_eq!(app.unread_filter_counts(), [2, 2, 0, 0]);
         assert_eq!(
             after.preview, before.preview,
             "do not invent unread messages"
@@ -199,16 +238,32 @@ mod tests {
         assert!(!ContactListItem::from_contact_row(&app, &row).unread);
         assert!(app.visible_chat_rows().is_empty());
         assert_eq!(app.pending_new_messages(&hidden), 1);
+        assert_eq!(
+            sync.state_calls.lock().unwrap().as_slice(),
+            &[true, false, true].map(|read| ChatReadStateSyncCall {
+                chat: selected.clone(),
+                message_id: Some("latest".into()),
+                read,
+                timestamp: 42,
+                from_me: false,
+                participant: None,
+            })
+        );
+        assert_eq!(app.unread_filter_counts(), [1, 1, 0, 0]);
     }
 
     #[test]
     fn contextual_read_toggle_supports_a_chat_without_messages() {
-        use crate::app::test_support::FakeChatReadCursorPort;
+        use crate::app::test_support::{
+            ChatReadStateSyncCall, FakeChatReadCursorPort, RecordingChatReadSyncPort,
+        };
         use crate::ui::contact_list::ContactListItem;
         let mut app = TestApp::new();
         let chat = whatsrust::JID::from("empty@s.whatsapp.net".to_owned());
         let cursor = FakeChatReadCursorPort::default();
         app.set_chat_read_cursor(Box::new(cursor.clone()));
+        let sync = RecordingChatReadSyncPort::default();
+        app.set_chat_read_sync(Box::new(sync.clone()));
         app.handle_whatsapp_event(whatsrust::Event::Chat {
             jid: chat.clone(),
             last_message_time: 0,
@@ -229,7 +284,19 @@ mod tests {
             assert_eq!(app.pending_new_messages(&chat), 0);
             assert_eq!(app.unread_boundary(&chat), None);
             assert!(cursor.stored.lock().unwrap().is_empty());
+            assert_eq!(app.cached_contact_view().1[0], item);
         }
+        assert_eq!(
+            sync.state_calls.lock().unwrap().as_slice(),
+            &[false, true].map(|read| ChatReadStateSyncCall {
+                chat: chat.clone(),
+                message_id: None,
+                read,
+                timestamp: 0,
+                from_me: false,
+                participant: None,
+            })
+        );
     }
 
     #[test]
@@ -260,6 +327,224 @@ mod tests {
             assert!(cursor.stored.lock().unwrap().is_empty());
             assert_eq!(app.open_chat(), None);
         }
+    }
+
+    #[test]
+    fn rejected_contextual_read_toggle_keeps_local_state_and_reports_failure() {
+        use crate::app::test_support::{
+            FakeChatReadCursorPort, RecordingChatReadSyncPort, message,
+        };
+        use crate::ui::contact_list::ContactListItem;
+        for initially_unread in [false, true] {
+            let mut app = TestApp::new();
+            let chat = whatsrust::JID::from("chat@s.whatsapp.net".to_owned());
+            app.add_message(message(&chat, "latest", 42));
+            app.sort_chats();
+            if !initially_unread {
+                app.mark_chat_read_at_latest(&chat);
+            }
+            let sync = RecordingChatReadSyncPort::default();
+            *sync.schedule_result.lock().unwrap() = false;
+            app.set_chat_read_sync(Box::new(sync.clone()));
+            let cursor = FakeChatReadCursorPort::default();
+            app.set_chat_read_cursor(Box::new(cursor.clone()));
+            app.focus_pane = FocusPane::ChatList;
+            app.chat_list_state.select(Some(0));
+            let before = ContactListItem::from_chat(&app, &chat);
+            let pending = app.pending_new_messages(&chat);
+            let boundary = app.unread_boundary(&chat);
+            open_read_menu(
+                &mut app,
+                if initially_unread {
+                    "Mark as read"
+                } else {
+                    "Mark as unread"
+                },
+            );
+            press(&mut app, 'm');
+            assert_eq!(ContactListItem::from_chat(&app, &chat), before);
+            assert_eq!(app.pending_new_messages(&chat), pending);
+            assert_eq!(app.unread_boundary(&chat), boundary);
+            assert!(cursor.stored.lock().unwrap().is_empty());
+            assert!(matches!(&app.action_notice,
+                Some(crate::app::actions::ActionNotice::Unavailable(text))
+                if text == "Could not schedule chat read/unread sync"));
+            let calls = sync.state_calls.lock().unwrap();
+            assert_eq!(calls.len(), 1);
+            assert_eq!(
+                calls[0],
+                crate::app::test_support::ChatReadStateSyncCall {
+                    chat,
+                    message_id: Some("latest".into()),
+                    read: initially_unread,
+                    timestamp: 42,
+                    from_me: false,
+                    participant: None,
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn opening_manual_unread_preserves_old_anchor_and_actual_pending_messages() {
+        use crate::app::test_support::{
+            ChatReadStateSyncCall, FakeChatReadCursorPort, RecordingChatReadSyncPort, message,
+        };
+        use crate::ui::contact_list::ContactListItem;
+        for direct in [false, true] {
+            let mut app = TestApp::new();
+            let chat = whatsrust::JID::from("chat@s.whatsapp.net".to_owned());
+            app.add_message(message(&chat, "anchor", 10));
+            app.mark_chat_read_at_latest(&chat);
+            app.handle_whatsapp_event(whatsrust::Event::MarkChatAsRead {
+                chat: chat.clone(),
+                message_id: "anchor".into(),
+                read: false,
+                timestamp: 10,
+                from_me: false,
+                participant: None,
+            });
+            app.add_message(message(&chat, "later", 20));
+            app.sort_chats();
+            let sync = RecordingChatReadSyncPort::default();
+            app.set_chat_read_sync(Box::new(sync.clone()));
+            let cursor = FakeChatReadCursorPort::default();
+            app.set_chat_read_cursor(Box::new(cursor.clone()));
+            app.chat_list_state.select(Some(0));
+            if direct {
+                app.open_chat_by_jid(chat.clone());
+            } else {
+                app.open_selected_chat();
+            }
+            assert_eq!(app.open_chat(), Some(chat.clone()));
+            assert_eq!(
+                app.message_list_state.get_selected_message().as_deref(),
+                Some("anchor")
+            );
+            assert_eq!(app.pending_new_messages(&chat), 1);
+            assert_eq!(app.unread_boundary(&chat), Some((1, 20)));
+            assert_eq!(app.read_receipts.pending_len(), 0);
+            assert_eq!(app.read_receipts.in_flight_len(), 0);
+            assert!(cursor.stored.lock().unwrap().is_empty());
+            assert_eq!(
+                sync.state_calls.lock().unwrap().as_slice(),
+                &[ChatReadStateSyncCall {
+                    chat: chat.clone(),
+                    message_id: Some("anchor".into()),
+                    read: true,
+                    timestamp: 10,
+                    from_me: false,
+                    participant: None,
+                }]
+            );
+            // A receipt for the later message clears real unread; the manual flag must be gone.
+            app.handle_whatsapp_event(whatsrust::Event::Receipt {
+                kind: whatsrust::ReceiptKind::ReadSelf,
+                chat: chat.clone(),
+                message_ids: vec!["later".into()],
+            });
+            assert!(!ContactListItem::from_chat(&app, &chat).unread);
+            assert_eq!(app.pending_new_messages(&chat), 0);
+            assert_eq!(sync.state_calls.lock().unwrap().len(), 1);
+        }
+    }
+
+    #[test]
+    fn opening_manual_read_changes_indicator_only_after_queue_acceptance() {
+        use crate::app::test_support::{
+            FakeChatReadCursorPort, RecordingChatReadSyncPort, message,
+        };
+        use crate::ui::contact_list::ContactListItem;
+        for (direct, accepted) in [(false, false), (true, false), (false, true), (true, true)] {
+            let mut app = TestApp::new();
+            let chat = whatsrust::JID::from("chat@s.whatsapp.net".to_owned());
+            app.add_message(message(&chat, "anchor", 10));
+            app.mark_chat_read_at_latest(&chat);
+            app.handle_whatsapp_event(whatsrust::Event::MarkChatAsRead {
+                chat: chat.clone(),
+                message_id: "".into(),
+                read: false,
+                timestamp: 0,
+                from_me: false,
+                participant: None,
+            });
+            app.sort_chats();
+            app.chat_list_state.select(Some(0));
+            let sync = RecordingChatReadSyncPort::default();
+            *sync.schedule_result.lock().unwrap() = accepted;
+            app.set_chat_read_sync(Box::new(sync.clone()));
+            let cursor = FakeChatReadCursorPort::default();
+            app.set_chat_read_cursor(Box::new(cursor.clone()));
+            let before = ContactListItem::from_chat(&app, &chat);
+            if direct {
+                app.open_chat_by_jid(chat.clone());
+            } else {
+                app.open_selected_chat();
+            }
+            let mut expected = before.clone();
+            expected.unread = !accepted;
+            assert_eq!(ContactListItem::from_chat(&app, &chat), expected);
+            assert!(before.unread);
+            assert_eq!(
+                app.message_list_state.get_selected_message().as_deref(),
+                Some("anchor")
+            );
+            assert_eq!(app.pending_new_messages(&chat), 0);
+            assert_eq!(app.unread_boundary(&chat), None);
+            assert!(cursor.stored.lock().unwrap().is_empty());
+            assert_eq!(
+                sync.state_calls.lock().unwrap().as_slice(),
+                &[crate::app::test_support::ChatReadStateSyncCall {
+                    chat,
+                    message_id: Some("anchor".into()),
+                    read: true,
+                    timestamp: 10,
+                    from_me: false,
+                    participant: None,
+                }]
+            );
+            if accepted {
+                assert!(app.action_notice.is_none());
+            } else {
+                assert!(matches!(&app.action_notice,
+                    Some(crate::app::actions::ActionNotice::Unavailable(text))
+                    if text == "Could not schedule chat read/unread sync"));
+            }
+        }
+    }
+
+    #[test]
+    fn contextual_group_toggle_keeps_latest_message_identity() {
+        use crate::app::test_support::{ChatReadStateSyncCall, RecordingChatReadSyncPort, message};
+        let mut app = TestApp::new();
+        let chat = whatsrust::JID::from("team@g.us".to_owned());
+        let sender = whatsrust::JID::from("alice@s.whatsapp.net".to_owned());
+        let mut latest = message(&chat, "latest", 42);
+        latest.info.sender = sender.clone();
+        latest.info.is_from_me = true;
+        app.add_message(latest);
+        app.sort_chats();
+        let sync = RecordingChatReadSyncPort::default();
+        app.set_chat_read_sync(Box::new(sync.clone()));
+        app.focus_pane = FocusPane::ChatList;
+        app.chat_list_state.select(Some(0));
+        open_read_menu(&mut app, "Mark as unread");
+        press(&mut app, 'm');
+        assert_eq!(app.unread_filter_counts(), [1, 1, 1, 0]);
+        assert!(!crate::ui::contact_list::ContactListItem::from_chat(&app, &chat).attention);
+        app.mark_chat_read_at_latest(&chat);
+        assert_eq!(
+            sync.state_calls.lock().unwrap().as_slice(),
+            &[false, true].map(|read| ChatReadStateSyncCall {
+                chat: chat.clone(),
+                message_id: Some("latest".into()),
+                read,
+                timestamp: 42,
+                from_me: true,
+                participant: Some(sender.clone()),
+            })
+        );
+        assert!(!crate::ui::contact_list::ContactListItem::from_chat(&app, &chat).unread);
     }
 
     #[test]

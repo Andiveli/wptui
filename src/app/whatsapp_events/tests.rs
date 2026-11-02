@@ -393,6 +393,7 @@ fn remote_manual_unread_roundtrip_preserves_cursor_and_never_echoes_sync() {
         app.mark_chat_read_at_latest(&chat);
         let stored = cursor.stored.lock().unwrap().len();
         let scheduled = sync.calls.lock().unwrap().len();
+        let state_scheduled = sync.state_calls.lock().unwrap().clone();
         let row = app.visible_contact_rows().remove(0);
         let before = ContactListItem::from_contact_row(&app, &row);
         assert!(!before.unread);
@@ -435,6 +436,8 @@ fn remote_manual_unread_roundtrip_preserves_cursor_and_never_echoes_sync() {
         assert_eq!(app.pending_new_messages(&chat), 0);
         assert_eq!(app.unread_boundary(&chat), None);
         assert_eq!(sync.calls.lock().unwrap().len(), scheduled);
+
+        assert_eq!(*sync.state_calls.lock().unwrap(), state_scheduled);
 
         // A later read receipt must not resurrect messages before the cursor.
         app.add_message(message(&chat, "later", 43));
@@ -530,7 +533,7 @@ fn remote_read_mutates_timeline_before_cursor_storage_panics() {
 }
 
 #[test]
-fn stale_or_unread_events_do_not_move_the_cursor() {
+fn stale_read_and_manual_unread_events_do_not_move_the_cursor() {
     let mut app = TestApp::new();
     let chat = wr::JID::from("chat@example.test".to_owned());
     app.add_message(message(&chat, "old", 10));
@@ -565,6 +568,97 @@ fn stale_or_unread_events_do_not_move_the_cursor() {
         Some("new")
     );
     assert_eq!(app.timeline[&chat].last_read_at, Some(20));
+    assert!(crate::ui::contact_list::ContactListItem::from_chat(&app, &chat).unread);
+}
+
+#[test]
+fn invalid_or_stale_remote_reads_cannot_clear_manual_unread() {
+    use crate::app::test_support::RecordingChatReadSyncPort;
+    use crate::ui::contact_list::ContactListItem;
+    let mut app = TestApp::new();
+    let chat = wr::JID::from("group@g.us".to_owned());
+    let sender = wr::JID::from("alice@s.whatsapp.net".to_owned());
+    for (id, timestamp) in [("old", 10), ("current", 20)] {
+        let mut item = message(&chat, id, timestamp);
+        item.info.sender = sender.clone();
+        app.add_message(item);
+    }
+    app.mark_chat_read_at_latest(&chat);
+    let cursor = FakeChatReadCursorPort::default();
+    let sync = RecordingChatReadSyncPort::default();
+    app.set_chat_read_cursor(Box::new(cursor.clone()));
+    app.set_chat_read_sync(Box::new(sync.clone()));
+    app.handle_whatsapp_event(wr::Event::MarkChatAsRead {
+        chat: chat.clone(),
+        message_id: "".into(),
+        read: false,
+        timestamp: 0,
+        from_me: false,
+        participant: None,
+    });
+    let before = ContactListItem::from_chat(&app, &chat);
+    assert!(before.unread);
+    for (id, timestamp, from_me, participant) in [
+        ("old", 10, false, Some(sender.clone())),
+        ("missing", 20, false, Some(sender.clone())),
+        ("current", 21, false, Some(sender.clone())),
+        ("current", 20, true, Some(sender.clone())),
+        ("current", 20, false, None),
+        (
+            "current",
+            20,
+            false,
+            Some(wr::JID::from("wrong@s.whatsapp.net".to_owned())),
+        ),
+        ("", 20, false, Some(sender.clone())),
+    ] {
+        app.handle_whatsapp_event(wr::Event::MarkChatAsRead {
+            chat: chat.clone(),
+            message_id: id.into(),
+            read: true,
+            timestamp,
+            from_me,
+            participant,
+        });
+        assert_eq!(ContactListItem::from_chat(&app, &chat), before);
+        assert_eq!(app.pending_new_messages(&chat), 0);
+        assert_eq!(app.unread_boundary(&chat), None);
+        assert!(cursor.stored.lock().unwrap().is_empty());
+        assert!(sync.state_calls.lock().unwrap().is_empty());
+        assert!(sync.calls.lock().unwrap().is_empty());
+    }
+    app.handle_whatsapp_event(wr::Event::MarkChatAsRead {
+        chat: chat.clone(),
+        message_id: "current".into(),
+        read: true,
+        timestamp: 20,
+        from_me: false,
+        participant: Some(sender),
+    });
+    assert!(!ContactListItem::from_chat(&app, &chat).unread);
+    assert!(cursor.stored.lock().unwrap().is_empty());
+    assert!(sync.state_calls.lock().unwrap().is_empty());
+    for kind in [wr::ReceiptKind::ReadSelf, wr::ReceiptKind::Read] {
+        app.handle_whatsapp_event(wr::Event::MarkChatAsRead {
+            chat: chat.clone(),
+            message_id: "".into(),
+            read: false,
+            timestamp: 0,
+            from_me: false,
+            participant: None,
+        });
+        app.handle_whatsapp_event(wr::Event::Receipt {
+            kind,
+            chat: chat.clone(),
+            message_ids: vec!["current".into()],
+        });
+        assert!(!ContactListItem::from_chat(&app, &chat).unread);
+        assert_eq!(app.pending_new_messages(&chat), 0);
+        assert_eq!(app.unread_boundary(&chat), None);
+        assert!(cursor.stored.lock().unwrap().is_empty());
+        assert!(sync.state_calls.lock().unwrap().is_empty());
+        assert_eq!(app.messages["current"].info.read_by, 0);
+    }
 }
 
 #[test]

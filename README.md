@@ -33,9 +33,9 @@ https://github.com/user-attachments/assets/f08d20f9-6051-45e2-a1d2-b0a512242e9c
 
 The Chats list has **All**, **Unread**, **Groups**, and **Archived** views. All,
 Unread, and Groups exclude archived chats; Archived shows only archived chats.
-Filter badges count chats with unread messages (each chat once), not individual
-messages. All, Unread, and Groups count unarchived chats; Archived counts archived
-chats. Zero counts are hidden.
+Filter badges count unread chats (each chat once), including manually marked chats,
+not individual messages. All, Unread, and Groups count unarchived chats; Archived
+counts archived chats. Zero counts are hidden.
 Archive status comes from the linked device's WhatsApp settings. Search narrows
 the selected view. Switching views does not change messages or read status;
 a community row contains only groups in that view. Archive changes received
@@ -231,6 +231,19 @@ or editor state.
 | Move half a page | `Ctrl+U` / `Ctrl+D` |
 | Search chats | `/` |
 | Cycle chat filters (All, Unread, Groups, Archived) | `Tab` in the Chats list |
+| Selected chat: mark read / unread | `Space`, then `a`, then `m` in the contact list |
+
+In the contact list, press `Space`, then `a`, then `m` to mark the selected visible
+chat as read or unread. The menu shows the next action and disables it when no
+chat is selected; this toggle is not available in Status. It queues WhatsApp
+chat app-state, not new message read receipts. Empty chats are supported.
+Marking unread adds an indicator and includes the chat in the Unread view without
+rewinding its read cursor or inventing a new-message count or mention alert.
+Opening the chat clears that manual indicator without moving the existing cursor
+anchor or clearing real unread messages. The manual flag is session-only locally:
+it is not restored from the local database after restart, though a subsequent
+WhatsApp app-state update can set it again. A queue rejection shows an error and
+leaves the manual action unapplied; queue acceptance is not server confirmation.
 
 ### Messages
 
