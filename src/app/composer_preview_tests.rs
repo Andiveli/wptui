@@ -283,4 +283,3 @@ fn ready_image_and_static_video_protocols_paint_in_the_composer() {
     assert_eq!(app.composer.text(), "caption");
     assert!(app.reconcile_composer_previews().is_empty());
 }
-
