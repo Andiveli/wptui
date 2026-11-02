@@ -34,7 +34,11 @@ fn media(id: &str, time: i64, sent: bool, video: bool) -> Message {
             forwarding: Default::default(),
         },
         message: MessageContent::File(FileContent {
-            kind: if video { FileKind::Video } else { FileKind::Image },
+            kind: if video {
+                FileKind::Video
+            } else {
+                FileKind::Image
+            },
             path: format!("{id}.png").into(),
             caption: Some(format!("caption-{id}").into()),
             ..Default::default()
@@ -244,7 +248,10 @@ fn hidden_members_do_not_stage_read_receipts_when_the_front_is_visible() {
     ]);
     let (_, visibility) = render(&mut app, 60, 40);
     app.apply_visibility_plan(visibility);
-    let candidate = app.read_receipts.take_staged().expect("visible front receipt");
+    let candidate = app
+        .read_receipts
+        .take_staged()
+        .expect("visible front receipt");
     assert_eq!(candidate.message_id, "new");
     assert_eq!(app.read_receipts.take_staged(), None);
     app.message_list_state.set_selected_message("old".into());
@@ -433,7 +440,10 @@ fn text_search_between_stacks_still_selects_original_text_indexes() {
     for character in "find".chars() {
         key(&mut app, character);
     }
-    app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
+    app.on_terminal_event(Event::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )));
     let (rows, _) = render(&mut app, 60, 60);
     assert!(rows.join("\n").contains("find this text"));
     assert_eq!(
