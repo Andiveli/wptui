@@ -213,15 +213,22 @@ fn clicking_the_front_caption_selects_the_actual_original_message() {
             );
         })
         .unwrap();
-    let (x, y) = (0..40)
-        .find_map(|y| {
-            let row = (0..120)
-                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
-                .collect::<String>();
-            row.find("caption-new")
-                .map(|byte| (row[..byte].chars().count() as u16, y))
+    let buffer = terminal.backend().buffer();
+    let conversation = wp_tui::ui::navigation_areas(buffer.area, app.pane_visibility).conversation;
+    // The sidebar preview also paints this caption; click only the message pane.
+    let needle = "caption-new";
+    let (x, y) = (conversation.top()..conversation.bottom())
+        .flat_map(|y| {
+            (conversation.left()..conversation.right().saturating_sub(needle.len() as u16))
+                .map(move |x| (x, y))
         })
-        .expect("front caption is painted");
+        .find(|&(x, y)| {
+            (0..needle.len())
+                .map(|dx| buffer[(x + dx as u16, y)].symbol())
+                .collect::<String>()
+                == needle
+        })
+        .expect("front caption is painted in the conversation pane");
     app.on_terminal_event(Event::Mouse(MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
         column: x,
