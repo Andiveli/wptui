@@ -24,7 +24,7 @@ chrono = "0.4.43"
 image = "0.25.9"
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 ratatui = "0.30.0"
-ratatui-image = "=11.0.6"
+ratatui-image = "=11.1.0"
 strum = { version = "0.28", features = ["derive"] }
 ratatui-textarea = "0.9.1"
 tui-logger = "0.18.1"
