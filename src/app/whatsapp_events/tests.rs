@@ -376,8 +376,8 @@ fn reaction_event_is_translated_into_reaction_projection() {
 
 #[test]
 fn remote_manual_unread_roundtrip_preserves_cursor_and_never_echoes_sync() {
-    use crate::app::test_support::RecordingChatReadSyncPort;
     use crate::app::ChatFilter;
+    use crate::app::test_support::RecordingChatReadSyncPort;
     use crate::ui::contact_list::ContactListItem;
 
     // Unread app-state can omit a message range, including for empty chats.
@@ -407,7 +407,10 @@ fn remote_manual_unread_roundtrip_preserves_cursor_and_never_echoes_sync() {
         });
 
         let unread = ContactListItem::from_contact_row(&app, &row);
-        assert!(unread.unread, "remote unread must update the chat indicator");
+        assert!(
+            unread.unread,
+            "remote unread must update the chat indicator"
+        );
         assert_eq!(unread.preview, before.preview);
         assert!(!unread.attention);
         assert_eq!(app.pending_new_messages(&chat), 0);

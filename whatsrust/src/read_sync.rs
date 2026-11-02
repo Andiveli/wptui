@@ -4,7 +4,7 @@ use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
-use crate::abi::{C_MarkAsRead, C_MarkChatReadSync};
+use crate::abi::{C_MarkAsRead, C_MarkChatReadStateSync};
 use crate::models::{JID, MessageId};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -52,7 +52,8 @@ const READ_SYNC_QUEUE_CAPACITY: usize = 64;
 
 struct ReadSyncRequest {
     chat: String,
-    message: String,
+    message: Option<String>,
+    read: bool,
     timestamp: i64,
     from_me: bool,
     participant: Option<String>,
@@ -61,14 +62,16 @@ struct ReadSyncRequest {
 impl ReadSyncRequest {
     fn new(
         chat_jid: &JID,
-        message_id: &MessageId,
+        message_id: Option<&MessageId>,
+        read: bool,
         timestamp: i64,
         from_me: bool,
         participant_jid: Option<&JID>,
     ) -> Self {
         Self {
             chat: chat_jid.0.to_string(),
-            message: message_id.to_string(),
+            message: message_id.map(ToString::to_string),
+            read,
             timestamp,
             from_me,
             participant: participant_jid.map(|jid| jid.0.to_string()),
@@ -83,7 +86,7 @@ impl ReadSyncRequest {
                 return;
             }
         };
-        let message_c = match CString::new(self.message) {
+        let message_c = match self.message.map(CString::new).transpose() {
             Ok(value) => value,
             Err(_) => {
                 log::warn!("chat read sync skipped: invalid message ID");
@@ -95,9 +98,12 @@ impl ReadSyncRequest {
             .as_ref()
             .map_or(std::ptr::null(), |value| value.as_ptr());
         let result = unsafe {
-            C_MarkChatReadSync(
+            C_MarkChatReadStateSync(
                 chat_c.as_ptr(),
-                message_c.as_ptr(),
+                message_c
+                    .as_ref()
+                    .map_or(std::ptr::null(), |id| id.as_ptr()),
+                self.read,
                 self.timestamp,
                 self.from_me,
                 participant_ptr,
@@ -138,6 +144,26 @@ impl ReadSyncWorker {
         from_me: bool,
         participant_jid: Option<&JID>,
     ) -> bool {
+        self.schedule_state(
+            chat_jid,
+            Some(message_id),
+            true,
+            timestamp,
+            from_me,
+            participant_jid,
+        )
+    }
+
+    /// Queues read/unread app-state in the same FIFO. `None` identifies an empty chat.
+    pub fn schedule_state(
+        &self,
+        chat_jid: &JID,
+        message_id: Option<&MessageId>,
+        read: bool,
+        timestamp: i64,
+        from_me: bool,
+        participant_jid: Option<&JID>,
+    ) -> bool {
         if self.cancelled.load(Ordering::Acquire) {
             return false;
         }
@@ -146,6 +172,7 @@ impl ReadSyncWorker {
                 tx.try_send(ReadSyncRequest::new(
                     chat_jid,
                     message_id,
+                    read,
                     timestamp,
                     from_me,
                     participant_jid,
@@ -199,7 +226,35 @@ pub fn sync_chat_read(
     from_me: bool,
     participant_jid: Option<&JID>,
 ) {
-    ReadSyncRequest::new(chat_jid, message_id, timestamp, from_me, participant_jid).send();
+    sync_chat_read_state(
+        chat_jid,
+        Some(message_id),
+        true,
+        timestamp,
+        from_me,
+        participant_jid,
+    );
+}
+
+/// Sends read/unread app-state synchronously, with no message key for an empty chat.
+/// Application UI code should use [`ReadSyncWorker::schedule_state`] instead.
+pub fn sync_chat_read_state(
+    chat_jid: &JID,
+    message_id: Option<&MessageId>,
+    read: bool,
+    timestamp: i64,
+    from_me: bool,
+    participant_jid: Option<&JID>,
+) {
+    ReadSyncRequest::new(
+        chat_jid,
+        message_id,
+        read,
+        timestamp,
+        from_me,
+        participant_jid,
+    )
+    .send();
 }
 
 #[cfg(test)]
@@ -216,6 +271,19 @@ mod tests {
                 assert!(!id.is_null() && !chat.is_null() && !sender.is_null());
             })
             .unwrap();
+        }
+    }
+
+    #[test]
+    fn shutdown_rejects_both_states_and_empty_chat_jobs() {
+        let mut worker = ReadSyncWorker::new();
+        worker.shutdown();
+        let chat = JID::from("chat@s.whatsapp.net".to_owned());
+        let id = MessageId::from("latest");
+        for read in [false, true] {
+            for message in [None, Some(&id)] {
+                assert!(!worker.schedule_state(&chat, message, read, 42, false, None));
+            }
         }
     }
 

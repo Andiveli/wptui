@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -157,6 +158,98 @@ func TestMarkChatAsReadEventAcceptsUnreadWithoutRange(t *testing.T) {
 func TestMarkChatAsReadEventRejectsMissingRange(t *testing.T) {
 	if _, ok := markChatAsReadEventFromEvent(&events.MarkChatAsRead{}); ok {
 		t.Fatal("missing range was accepted")
+	}
+}
+
+func TestChatReadStateSyncSendsBothStatesWithOptionalIdentity(t *testing.T) {
+	for _, read := range []bool{false, true} {
+		for _, tt := range []struct {
+			name, chat, message, participant string
+			fromMe                           bool
+		}{
+			{name: "dm", chat: "alice@s.whatsapp.net", message: "latest"},
+			{name: "group", chat: "group@g.us", message: "latest", participant: "alice@s.whatsapp.net", fromMe: true},
+			{name: "empty", chat: "alice@s.whatsapp.net"},
+		} {
+			t.Run(fmt.Sprintf("%s/read=%v", tt.name, read), func(t *testing.T) {
+				calls := 0
+				err := sendChatReadStateSync(context.Background(), tt.chat, tt.message, read, 42, tt.fromMe, tt.participant,
+					func(_ context.Context, patch appstate.PatchInfo) error {
+						calls++
+						if patch.Type != appstate.WAPatchRegularLow || len(patch.Mutations) != 1 {
+							t.Fatalf("patch = %#v, want one app-state mutation", patch)
+						}
+						mutation := patch.Mutations[0]
+						if len(mutation.Index) != 2 || mutation.Index[0] != appstate.IndexMarkChatAsRead || mutation.Index[1] != tt.chat {
+							t.Fatalf("index = %#v", mutation.Index)
+						}
+						action := mutation.Value.GetMarkChatAsReadAction()
+						if action == nil || action.GetRead() != read || action.GetMessageRange().GetLastMessageTimestamp() != 42 {
+							t.Fatalf("action = %#v, want read=%v at 42", action, read)
+						}
+						messages := action.GetMessageRange().GetMessages()
+						if tt.message == "" {
+							if len(messages) != 0 {
+								t.Fatalf("empty chat has fabricated identity: %#v", messages)
+							}
+						} else {
+							want := &waCommon.MessageKey{RemoteJID: proto.String(tt.chat), ID: proto.String(tt.message), FromMe: proto.Bool(tt.fromMe)}
+							if tt.participant != "" {
+								want.Participant = proto.String(tt.participant)
+							}
+							if len(messages) != 1 || !proto.Equal(messages[0].GetKey(), want) {
+								t.Fatalf("messages = %#v, want key %v", messages, want)
+							}
+						}
+						return nil
+					})
+				if err != nil || calls != 1 {
+					t.Fatalf("err=%v calls=%d, want one successful send", err, calls)
+				}
+			})
+		}
+	}
+}
+
+func TestChatReadStateSyncRejectsInvalidChatWithoutSending(t *testing.T) {
+	for _, read := range []bool{false, true} {
+		calls := 0
+		err := sendChatReadStateSync(context.Background(), "", "", read, 0, false, "", func(context.Context, appstate.PatchInfo) error {
+			calls++
+			return nil
+		})
+		if err == nil || err.Error() != "invalid chat JID" || calls != 0 {
+			t.Fatalf("read=%v: err=%v calls=%d", read, err, calls)
+		}
+	}
+	if err := sendChatReadStateSync(context.Background(), "alice@s.whatsapp.net", "", false, 0, false, "", nil); err == nil || err.Error() != "nil chat read sync sender" {
+		t.Fatalf("nil sender error = %v", err)
+	}
+}
+
+func TestChatReadSyncStillRejectsEmptyIdentity(t *testing.T) {
+	calls := 0
+	err := sendChatReadSync(context.Background(), "alice@s.whatsapp.net", "", 42, false, "", func(context.Context, appstate.PatchInfo) error {
+		calls++
+		return nil
+	})
+	if err == nil || err.Error() != "empty message ID" || calls != 0 {
+		t.Fatalf("err=%v calls=%d, want legacy validation without send", err, calls)
+	}
+}
+
+func TestMarkChatAsReadEventStillRejectsInvalidRead(t *testing.T) {
+	chat, err := types.ParseJID("alice@s.whatsapp.net")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range []*waSyncAction.MarkChatAsReadAction{
+		{Read: proto.Bool(true)},
+		{Read: proto.Bool(true), MessageRange: &waSyncAction.SyncActionMessageRange{}},
+	} {
+		if event, ok := markChatAsReadEventFromEvent(&events.MarkChatAsRead{JID: chat, Action: action}); ok {
+			t.Fatalf("invalid read accepted: %#v", event)
+		}
 	}
 }
 

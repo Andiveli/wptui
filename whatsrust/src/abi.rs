@@ -95,6 +95,14 @@ unsafe extern "C" {
         from_me: bool,
         participant_jid: CJID,
     ) -> i32;
+    pub(super) fn C_MarkChatReadStateSync(
+        chat_jid: CJID,
+        msg_id: *const c_char,
+        read: bool,
+        timestamp: i64,
+        from_me: bool,
+        participant_jid: CJID,
+    ) -> i32;
     pub(super) fn C_SetMessageHandler(message_cb: CMessageCallback, data: *mut c_void);
     pub(super) fn C_SetOptimisticTextSentHandler(
         callback: COptimisticTextSentCallback,
