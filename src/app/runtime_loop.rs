@@ -173,6 +173,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
     terminal_session.start_input_reader(&mut app.input_reader, app.tx.clone());
 
     app.sync_selected_presence();
+    app.schedule_composer_previews(&mut media_jobs);
     refresh_composer_viewport_width(app, &mut terminal_session);
     let initial_draw_started = app.runtime_diagnostics.draw_started();
     let mut media_render_plan = MediaRenderPlan::default();
@@ -282,6 +283,9 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
         };
 
         app.sync_selected_presence();
+        if !app.should_quit && !app.logout_in_progress {
+            app.schedule_composer_previews(&mut media_jobs);
+        }
 
         let sticker_changed = app.advance_visible_stickers(std::time::Instant::now());
         if should_draw || sticker_changed {

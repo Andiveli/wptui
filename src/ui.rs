@@ -476,6 +476,11 @@ pub fn render_chats_with_plan(
             0
         } else {
             app.composer.pending.len()
+                + crate::app::composer_preview::preview_rows(
+                    &app.composer.pending,
+                    composer_width,
+                    inner.height,
+                )
         },
     );
 
@@ -621,7 +626,9 @@ pub(super) fn render_composer(
     } else if let Some(hint) = navigation_hint {
         frame.render_widget(Paragraph::new(hint).fg(border_color), input_area);
     } else {
-        if let Some(msg) = &app.composer.quote {
+        if let Some(msg) = &app.composer.quote
+            && input_area.height > 1
+        {
             let [quote_area, remaining] =
                 Layout::vertical([Constraint::Length(1), Constraint::Percentage(100)])
                     .areas(input_area);
@@ -632,15 +639,69 @@ pub(super) fn render_composer(
             );
         }
 
-        for preview in attachment_preview_lines(&app.composer.pending) {
+        use crate::app::composer_preview::{MAX_PREVIEWS, PREVIEW_HEIGHT, PREVIEW_WIDTH, eligible};
+        if input_area.width >= PREVIEW_WIDTH
+            && input_area.height >= PREVIEW_HEIGHT + 2
+            && app.composer.pending.iter().any(eligible)
+        {
+            let [previews, remaining] =
+                Layout::vertical([Constraint::Length(PREVIEW_HEIGHT), Constraint::Min(1)])
+                    .areas(input_area);
+            input_area = remaining;
+            for (index, attachment) in app
+                .composer
+                .pending
+                .iter()
+                .filter(|item| eligible(item))
+                .take(MAX_PREVIEWS.min(usize::from(previews.width / PREVIEW_WIDTH)))
+                .enumerate()
+            {
+                let cell = Rect::new(
+                    previews.x + index as u16 * PREVIEW_WIDTH,
+                    previews.y,
+                    PREVIEW_WIDTH,
+                    PREVIEW_HEIGHT,
+                );
+                if let Some(protocol) = app.composer_previews.protocol_mut(attachment) {
+                    let size = protocol.size_for(
+                        Resize::default(),
+                        Size::new(PREVIEW_WIDTH, PREVIEW_HEIGHT),
+                    );
+                    let image_area = Rect::new(
+                        cell.x + cell.width.saturating_sub(size.width) / 2,
+                        cell.y + cell.height.saturating_sub(size.height) / 2,
+                        size.width,
+                        size.height,
+                    );
+                    StatefulImage::default().render(image_area, frame.buffer_mut(), protocol);
+                } else {
+                    frame.render_widget(
+                        Paragraph::new(truncate_with_ellipsis(
+                            attachment.display_name(),
+                            usize::from(PREVIEW_WIDTH),
+                        ))
+                        .dark_gray(),
+                        cell,
+                    );
+                }
+            }
+        }
+
+        let labels = attachment_preview_lines(&app.composer.pending);
+        let visible_labels = labels
+            .len()
+            .min(usize::from(input_area.height.saturating_sub(1)));
+        for (index, preview) in labels.iter().take(visible_labels).enumerate() {
+            let preview = if index + 1 == visible_labels && labels.len() > visible_labels {
+                format!("+{} attachments", labels.len() - index)
+            } else {
+                format!("🔗 {preview}")
+            };
             let [attach_area, remaining] =
                 Layout::vertical([Constraint::Length(1), Constraint::Percentage(100)])
                     .areas(input_area);
             input_area = remaining;
-            frame.render_widget(
-                Paragraph::new(format!("🔗 {preview}")).dark_gray(),
-                attach_area,
-            );
+            frame.render_widget(Paragraph::new(preview).dark_gray(), attach_area);
         }
 
         let composer_width = area.width.saturating_sub(2);

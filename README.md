@@ -309,6 +309,14 @@ or Vim's after-cursor/linewise put positioning. `p` does not attach images or fi
 Vim emulation. Search, substitution, and deletion are not available here. Files pasted with
 `Ctrl+V` are queued as attachments; text becomes the caption of the first attachment.
 
+Queued images (including clipboard images) and videos show compact still previews
+while composing, before you send. Up to three previews are prepared at a time;
+video frames require FFmpeg with seekable `fd:` input support. The preview reads
+the selected local file without changing it or creating JPEG sidecars. Filenames
+remain the fallback for missing, corrupt, unsupported, or failed media. On small
+terminals, previews and attachment labels give way to the text and cursor;
+additional attachments may be summarized. Sending and captions are unchanged.
+
 ## Development
 
 ### Runtime performance diagnostics

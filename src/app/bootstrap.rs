@@ -195,6 +195,7 @@ fn with_dirs_and_picker_and_ports(
         message_sequence_revisions: HashMap::new(),
         default_protocol_type,
         composer: Composer::default(),
+        composer_previews: Default::default(),
         composer_direction,
         mouse_capture_enabled,
         composer_viewport_width: 80,
