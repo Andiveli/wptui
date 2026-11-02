@@ -86,12 +86,7 @@ fn preview_work_is_bounded_even_when_attachments_are_replaced_while_loading() {
     app.composer
         .queue_attachment("new.png".into(), wr::FileKind::Image);
     assert!(app.reconcile_composer_previews().is_empty());
-    app.finish_composer_previews(
-        requests
-            .into_iter()
-            .map(|r| (r.generation, None))
-            .collect(),
-    );
+    app.finish_composer_previews(requests.into_iter().map(|r| (r.generation, None)).collect());
     assert_eq!(app.reconcile_composer_previews().len(), 1);
 }
 

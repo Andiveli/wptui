@@ -663,10 +663,8 @@ pub(super) fn render_composer(
                     PREVIEW_HEIGHT,
                 );
                 if let Some(protocol) = app.composer_previews.protocol_mut(attachment) {
-                    let size = protocol.size_for(
-                        Resize::default(),
-                        Size::new(PREVIEW_WIDTH, PREVIEW_HEIGHT),
-                    );
+                    let size = protocol
+                        .size_for(Resize::default(), Size::new(PREVIEW_WIDTH, PREVIEW_HEIGHT));
                     let image_area = Rect::new(
                         cell.x + cell.width.saturating_sub(size.width) / 2,
                         cell.y + cell.height.saturating_sub(size.height) / 2,
