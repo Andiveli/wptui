@@ -306,6 +306,11 @@ impl MediaRenderPlan {
 
 pub enum AppEvent {
     UpdateAvailable(String),
+    NewsLoaded(crate::updater::news::NewsHistory),
+    NewsUpdateFinished {
+        target: crate::updater::news_update::UpdateTarget,
+        result: Result<PathBuf, String>,
+    },
     OutboundSendSucceeded {
         local_send_id: u64,
         message: wr::Message,
@@ -356,7 +361,9 @@ pub enum AppEventFamily {
 impl AppEvent {
     pub const fn family(&self) -> AppEventFamily {
         match self {
-            Self::UpdateAvailable(_) => AppEventFamily::Updater,
+            Self::UpdateAvailable(_) | Self::NewsLoaded(_) | Self::NewsUpdateFinished { .. } => {
+                AppEventFamily::Updater
+            }
             Self::OutboundSendSucceeded { .. }
             | Self::OutboundSendFailed { .. }
             | Self::StatusSendSucceeded
@@ -400,6 +407,12 @@ pub enum DrawSource {
 impl fmt::Debug for AppEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            AppEvent::NewsLoaded(history) => f.debug_tuple("NewsLoaded").field(history).finish(),
+            AppEvent::NewsUpdateFinished { target, result } => f
+                .debug_struct("NewsUpdateFinished")
+                .field("target", target)
+                .field("result", result)
+                .finish(),
             AppEvent::UpdateAvailable(version) => {
                 f.debug_tuple("UpdateAvailable").field(version).finish()
             }
