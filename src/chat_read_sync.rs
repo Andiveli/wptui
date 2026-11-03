@@ -26,6 +26,19 @@ impl ChatReadSyncPort for WhatsRustChatReadSync {
             .schedule(chat, message_id, timestamp, from_me, participant)
     }
 
+    fn schedule_state(
+        &mut self,
+        chat: &wr::JID,
+        message_id: Option<&wr::MessageId>,
+        read: bool,
+        timestamp: i64,
+        from_me: bool,
+        participant: Option<&wr::JID>,
+    ) -> bool {
+        self.worker
+            .schedule_state(chat, message_id, read, timestamp, from_me, participant)
+    }
+
     fn shutdown(&mut self) {
         self.worker.shutdown();
     }
