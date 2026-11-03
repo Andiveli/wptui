@@ -110,6 +110,11 @@ pub(super) fn render_statuses_with_plan(
             usize::from(authoring && app.composer.quote.is_some()),
             if authoring {
                 app.composer.pending.len()
+                    + crate::app::composer_preview::preview_rows(
+                        &app.composer.pending,
+                        inner_width.saturating_sub(2),
+                        inner.height,
+                    )
             } else {
                 0
             },

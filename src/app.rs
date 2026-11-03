@@ -26,6 +26,7 @@ pub mod composer;
 pub mod composer_input_mapping;
 pub mod composer_input_paste;
 pub mod composer_integration;
+pub(crate) mod composer_preview;
 pub mod contact_avatars;
 pub mod contact_source_port;
 pub mod contextual_actions;
@@ -273,6 +274,7 @@ pub struct App<'a> {
     presence_diagnostics: PresenceDiagnostics,
 
     pub composer: Composer<'a>,
+    pub(crate) composer_previews: composer_preview::ComposerPreviews,
     pub(crate) composer_direction: ComposerDirection,
     pub(crate) mouse_capture_enabled: bool,
     pub(crate) composer_viewport_width: u16,
@@ -283,6 +285,7 @@ pub struct App<'a> {
     pub timeline: unread_messages::Timeline,
     pub metadata: HashMap<wr::MessageId, Metadata>,
     pub image_cache: HashMap<Arc<str>, StatefulProtocol>,
+    pub(crate) stack_previews: crate::ui::message_list::StackPreviewCache,
     pub image_cache_order: VecDeque<Arc<str>>,
     pub(crate) sticker_playback: HashMap<Arc<str>, sticker_animation::StickerPlayback>,
     pub(crate) deferred_sticker_previews: HashSet<Arc<str>>,

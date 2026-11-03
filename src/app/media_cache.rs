@@ -21,6 +21,22 @@ fn touch_order(order: &mut VecDeque<Arc<str>>, path: &Arc<str>) {
 }
 
 impl App<'_> {
+    pub(crate) fn remove_cached_preview(&mut self, path: &Arc<str>) {
+        self.image_cache.remove(path);
+        self.sticker_playback.remove(path);
+        self.deferred_sticker_previews.remove(path);
+        self.stack_previews.remove(path);
+        self.image_cache_order.retain(|cached| cached != path);
+    }
+
+    pub(crate) fn invalidate_message_preview(&mut self, id: &wr::MessageId) {
+        if let Some(wr::MessageContent::File(file)) = self.messages.get(id).map(|m| &m.message) {
+            let path = file.path.clone();
+            self.remove_cached_preview(&path);
+            self.mark_evicted_preview_reloadable(&path);
+        }
+    }
+
     pub fn touch_image_cache(&mut self, path: &Arc<str>) {
         if self.image_cache.contains_key(path) {
             touch_order(&mut self.image_cache_order, path);
@@ -88,7 +104,7 @@ impl App<'_> {
                     self.mark_evicted_preview_reloadable(&oldest);
                 }
                 self.deferred_sticker_previews.remove(&path);
-                self.image_cache.remove(&path);
+                self.remove_cached_preview(&path);
                 self.image_cache_order.retain(|cached| cached != &path);
                 self.mark_evicted_preview_reloadable(&path);
                 changed = true;
@@ -116,6 +132,7 @@ impl App<'_> {
         path: Arc<str>,
         mut playback: super::sticker_animation::StickerPlayback,
     ) {
+        self.stack_previews.remove(&path);
         // Release the worker slot only once the queued result reaches the UI.
         playback.slot.take();
         if !self.sticker_playback.contains_key(&path)
@@ -133,9 +150,7 @@ impl App<'_> {
             && self.image_cache.len() + self.sticker_playback.len() >= IMAGE_CACHE_CAPACITY
             && let Some(oldest) = self.image_cache_order.pop_front()
         {
-            self.image_cache.remove(&oldest);
-            self.sticker_playback.remove(&oldest);
-            self.deferred_sticker_previews.remove(&oldest);
+            self.remove_cached_preview(&oldest);
             self.mark_evicted_preview_reloadable(&oldest);
         }
         self.sticker_playback.insert(path.clone(), playback);
@@ -157,15 +172,14 @@ impl App<'_> {
         file_path: Arc<str>,
         preview: StatefulProtocol,
     ) {
+        self.stack_previews.remove(&file_path);
         self.deferred_sticker_previews.remove(&file_path);
         if !self.image_cache.contains_key(&file_path)
             && !self.sticker_playback.contains_key(&file_path)
             && self.image_cache.len() + self.sticker_playback.len() >= IMAGE_CACHE_CAPACITY
             && let Some(oldest) = self.image_cache_order.pop_front()
         {
-            self.image_cache.remove(&oldest);
-            self.sticker_playback.remove(&oldest);
-            self.deferred_sticker_previews.remove(&oldest);
+            self.remove_cached_preview(&oldest);
             self.mark_evicted_preview_reloadable(&oldest);
         }
         self.sticker_playback.remove(&file_path);
