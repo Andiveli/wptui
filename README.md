@@ -261,7 +261,25 @@ Known secondary sentinels use `appstate_cause_key_missing`,
 key/MAC values or a confirmed fix. Unknown secondary errors remain
 `appstate_with_cause`.
 Concurrent bridge results may appear between UI snapshots; there are deliberately
-no identifying correlation fields. This enables diagnosis, not a fix or reproduction of the reported mismatch.
+no identifying correlation fields. Tracing alone does not repair synchronization.
+
+### Bounded read-state cache recovery
+
+For the pinned client's compound app-state rejection with a secondary LTHash
+mismatch, the read/unread bridge attempts one official full sync of the affected
+collection, then calls `SendAppState` once more with the unchanged patch. This
+rebuilds that collection's version/hash/MAC cache, not messages, read cursors,
+receipts or the session; synchronized chat settings can refresh. Integrity checks
+remain enabled. Failed repair/resend does not loop or replenish the per-client,
+per-collection attempt budget. Publishing a different client starts a fresh budget.
+A post-accepted-send fetch error never triggers this recovery.
+
+Recovery is disabled when full-sync action-event emission is enabled. Lifecycle
+transitions cancel active repairs without waiting for them or changing disconnect
+ordering; a canceled fetch must not be followed by a resend. The existing request
+deadline is inherited, not restarted per step. It is not a wall-clock guarantee
+while waiting on whatsmeow's non-context-cancellable app-state mutex. A successful
+bridge result still needs real WhatsApp validation; tests do not prove service sync.
 
 ## Keybindings
 

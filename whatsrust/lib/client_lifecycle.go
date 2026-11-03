@@ -46,6 +46,7 @@ type clientLifecycleState struct {
 	resetInProgress      bool
 	aliasLookupPaused    bool
 	aliasSync            contactAliasSyncState
+	chatReadRecovery     chatReadRecoveryState
 }
 
 var lifecycleState clientLifecycleState
@@ -63,6 +64,9 @@ func (state *clientLifecycleState) publishClient(newClient *whatsmeow.Client) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	state.stopChatReadRecoveryLocked()
+	if state.chatReadRecovery.owner != newClient {
+		state.chatReadRecovery = chatReadRecoveryState{owner: newClient}
+	}
 	state.aliasSync.stop()
 	state.client = newClient
 	state.aliasLookupPaused = false

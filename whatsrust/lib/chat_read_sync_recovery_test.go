@@ -70,6 +70,9 @@ func TestChatReadStateRecoverySequenceAndBridgeResult(t *testing.T) {
 						if got, ok := active.Deadline(); !ok || !got.Equal(deadline) {
 							t.Fatal("send changed parent deadline")
 						}
+						if patch.Type != appstate.WAPatchRegularLow || len(patch.Mutations) != 1 {
+							t.Fatal("send changed patch type/count")
+						}
 						mutation := patch.Mutations[0]
 						action := mutation.Value.GetMarkChatAsReadAction()
 						if action.GetRead() != read || action.GetMessageRange().GetLastMessageTimestamp() != timestamp {
@@ -110,7 +113,7 @@ func TestChatReadStateRecoverySequenceAndBridgeResult(t *testing.T) {
 				identity := &whatsmeow.Client{}
 				state.publishClient(identity)
 				var report bytes.Buffer
-				status := markReadResultWithTrace(func() error {
+				request := func() error {
 					return sendChatReadStateSync(ctx, "alice@s.whatsapp.net", messageID, read, timestamp, false, "",
 						func(ctx context.Context, patch appstate.PatchInfo) error {
 							return sendChatReadStatePatch(ctx, patch, client,
@@ -118,7 +121,8 @@ func TestChatReadStateRecoverySequenceAndBridgeResult(t *testing.T) {
 									return state.withChatReadRecovery(ctx, identity, name, operation)
 								})
 						})
-				}, &report)
+				}
+				status := markReadResultWithTrace(request, &report)
 				wantStatus := 2
 				if tt.category == "none" {
 					wantStatus = 0
@@ -126,6 +130,14 @@ func TestChatReadStateRecoverySequenceAndBridgeResult(t *testing.T) {
 				wantReport := fmt.Sprintf("stage=bridge status=%d category=%s\n", wantStatus, tt.category)
 				if int(status) != wantStatus || report.String() != wantReport || !reflect.DeepEqual(calls, tt.want) {
 					t.Fatalf("status=%d report=%q calls=%v; want status=%d report=%q calls=%v", status, report.String(), calls, wantStatus, wantReport, tt.want)
+				}
+				if tt.name == "repair failure" {
+					firstValue = nil
+					report.Reset()
+					status = markReadResultWithTrace(request, &report)
+					if status != 2 || report.String() != "stage=bridge status=2 category=appstate_cause_lt_hash\n" || !reflect.DeepEqual(calls, []string{"send", "fetch", "send"}) {
+						t.Fatalf("queued failure repeated repair: status=%d report=%q calls=%v", status, report.String(), calls)
+					}
 				}
 			})
 		}
@@ -158,35 +170,59 @@ func TestChatReadRecoveryBudgetFollowsClientAndCollection(t *testing.T) {
 	claim(second, appstate.WAPatchRegularLow, true)
 	state.retire(func(*whatsmeow.Client) {})
 	claim(second, appstate.WAPatchRegularLow, false)
-	second.EmitAppStateEventsOnFullSync = true
-	state.publishClient(second)
-	claim(second, appstate.WAPatchRegularLow, false)
+	third := &whatsmeow.Client{EmitAppStateEventsOnFullSync: true}
+	state.publishClient(third)
+	claim(third, appstate.WAPatchRegularLow, false)
 }
 
-func TestChatReadRecoveryLifecycleCancelsAndJoinsActiveRepair(t *testing.T) {
+func TestChatReadRecoveryLifecycleCancelsWithoutJoining(t *testing.T) {
 	for _, transition := range []string{"publish", "reset", "retire", "logout"} {
 		t.Run(transition, func(t *testing.T) {
 			var state clientLifecycleState
-			client := &whatsmeow.Client{}
-			state.publishClient(client)
+			identity := &whatsmeow.Client{}
+			state.publishClient(identity)
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 			started, cancelled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
-			repairDone, transitionStarted, transitioned := make(chan struct{}), make(chan struct{}), make(chan struct{})
-			go func() {
-				defer close(repairDone)
-				_, _ = state.withChatReadRecovery(ctx, client, appstate.WAPatchRegularLow, func(active context.Context) error {
+			defer func() {
+				select {
+				case <-release:
+				default:
+					close(release)
+				}
+			}()
+			repairDone, transitioned := make(chan struct{}), make(chan struct{})
+			var repairErr error
+			sends := 0
+			client := readRecoveryClient{
+				send: func(context.Context, appstate.PatchInfo) error {
+					sends++
+					return fmt.Errorf("%w: %w", whatsmeow.ErrAppStateUpdate, appstate.ErrMismatchingLTHash)
+				},
+				fetch: func(active context.Context, _ appstate.WAPatchName, _, _ bool) error {
 					close(started)
 					<-active.Done()
 					close(cancelled)
-					<-release
-					return active.Err()
-				})
+					<-release // Model a fetch that does not promptly return on cancellation.
+					return nil
+				},
+			}
+			go func() {
+				defer close(repairDone)
+				repairErr = sendChatReadStatePatch(ctx, appstate.PatchInfo{Type: appstate.WAPatchRegularLow}, client,
+					func(ctx context.Context, name appstate.WAPatchName, operation func(context.Context) error) (bool, error) {
+						return state.withChatReadRecovery(ctx, identity, name, operation)
+					})
 			}()
-			<-started
+			select {
+			case <-started:
+			case <-repairDone:
+				t.Fatalf("repair never started: %v", repairErr)
+			case <-ctx.Done():
+				t.Fatal("repair did not start before deadline")
+			}
 			go func() {
 				defer close(transitioned)
-				close(transitionStarted)
 				switch transition {
 				case "publish":
 					state.publishClient(&whatsmeow.Client{})
@@ -198,21 +234,57 @@ func TestChatReadRecoveryLifecycleCancelsAndJoinsActiveRepair(t *testing.T) {
 					_, _ = state.beginLogout()
 				}
 			}()
-			<-transitionStarted
 			select {
 			case <-cancelled:
 			case <-time.After(250 * time.Millisecond):
 				t.Error("lifecycle did not cancel repair")
 			}
+			transitionFinished := false
 			select {
 			case <-transitioned:
-				t.Error("lifecycle returned before active repair finished")
-			default:
+				transitionFinished = true
+			case <-time.After(250 * time.Millisecond):
+				t.Error("lifecycle joined blocked repair")
+			}
+			// Register a new client's lease before allowing the old lease to clean up.
+			newStarted, newDone := make(chan struct{}), make(chan struct{})
+			newCtx, newCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer newCancel()
+			if transition == "publish" && transitionFinished {
+				current := state.clientSnapshot()
+				go func() {
+					defer close(newDone)
+					_, _ = state.withChatReadRecovery(newCtx, current, appstate.WAPatchRegularLow, func(active context.Context) error {
+						close(newStarted)
+						<-active.Done()
+						return active.Err()
+					})
+				}()
+				select {
+				case <-newStarted:
+				case <-newDone:
+					t.Fatal("replacement repair was denied")
+				case <-newCtx.Done():
+					t.Fatal("replacement repair did not start")
+				}
 			}
 			cancel()
 			close(release)
 			<-repairDone
 			<-transitioned
+			if sends != 1 || !errors.Is(repairErr, context.Canceled) {
+				t.Errorf("cancelled repair resent: sends=%d err=%v", sends, repairErr)
+			}
+			if transition == "publish" && transitionFinished {
+				state.retire(func(*whatsmeow.Client) {})
+				select {
+				case <-newDone:
+				case <-time.After(250 * time.Millisecond):
+					t.Error("old cleanup erased replacement lease")
+				}
+				newCancel()
+				<-newDone
+			}
 		})
 	}
 }
