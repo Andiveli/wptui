@@ -149,6 +149,51 @@ func TestReadSyncTracePreservesBridgeResultAndNeverExportsErrorText(t *testing.T
 	}
 }
 
+func TestReadSyncStageSerializationPreservesSafeOutcomes(t *testing.T) {
+	for _, stage := range []string{"initial_send", "recovery_fetch", "resend", "private-stage", "initial_send\nprivate=secret"} {
+		for _, tt := range []struct {
+			category string
+			err      error
+		}{
+			{category: "none"},
+			{category: "appstate_cause_lt_hash", err: fmt.Errorf("%w: private payload: %w", whatsmeow.ErrAppStateUpdate, appstate.ErrMismatchingLTHash)},
+			{category: "appstate_rejected", err: fmt.Errorf("private identity: %w", whatsmeow.ErrAppStateUpdate)},
+			{category: "other", err: errors.New("private-chat@s.whatsapp.net key=secret payload=secret")},
+			{category: "resync_after_send", err: fmt.Errorf("failed to fetch app state after sending update: %w", context.DeadlineExceeded)},
+		} {
+			t.Run(stage+"/"+tt.category, func(t *testing.T) {
+				for _, enabled := range []bool{false, true} {
+					var report bytes.Buffer
+					var output io.Writer
+					if enabled {
+						output = &report
+					}
+					calls := 0
+					send := func() error { calls++; return tt.err }
+					status := markReadResultWithTrace(send, output, stage)
+					wantStatus := 0
+					if tt.err != nil {
+						wantStatus = 2
+					}
+					if int(status) != wantStatus || calls != 1 {
+						t.Fatal("stage serialization changed bridge result or call count")
+					}
+					want := ""
+					if enabled && (stage == "initial_send" || stage == "recovery_fetch" || stage == "resend") {
+						want = fmt.Sprintf("stage=%s status=%d category=%s\n", stage, wantStatus, tt.category)
+					}
+					if report.String() != want {
+						t.Fatal("stage serialization did not produce the exact closed record")
+					}
+					if got := markReadResultWithTrace(send, failingReadSyncReport{}, stage); int(got) != wantStatus || calls != 2 {
+						t.Fatal("report failure changed stage result or call count")
+					}
+				}
+			})
+		}
+	}
+}
+
 type failingReadSyncReport struct{}
 
 func (failingReadSyncReport) Write([]byte) (int, error) { return 0, errors.New("private path") }
