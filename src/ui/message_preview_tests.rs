@@ -147,7 +147,9 @@ fn sixel_number(bytes: &[u8], index: &mut usize) -> Option<u32> {
     let start = *index;
     let mut value = 0_u32;
     while let Some(digit @ b'0'..=b'9') = bytes.get(*index).copied() {
-        value = value.checked_mul(10)?.checked_add(u32::from(digit - b'0'))?;
+        value = value
+            .checked_mul(10)?
+            .checked_add(u32::from(digit - b'0'))?;
         *index += 1;
     }
     (*index > start).then_some(value)
@@ -159,7 +161,10 @@ fn sixel_payload_dimensions(payload: &str) -> Option<(u32, u32)> {
     let (_, dcs) = payload.split_once("\x1bP")?;
     let (sixel, _) = dcs.split_once("\x1b\\")?;
     let (header, body) = sixel.split_once('q')?;
-    if !header.bytes().all(|byte| byte.is_ascii_digit() || byte == b';') {
+    if !header
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || byte == b';')
+    {
         return None;
     }
     let bytes = body.as_bytes();
