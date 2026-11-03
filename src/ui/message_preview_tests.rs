@@ -124,8 +124,8 @@ fn colored_run(buffer: &ratatui::buffer::Buffer, color: Color) -> Vec<u16> {
         .collect()
 }
 
-// Read dimensions from the transmitted header, not protocol cell metadata.
-// Sixel raster attributes are Pan;Pad;Ph;Pv: aspect parameters need not be 1;1.
+// Read transmitted pixels, never protocol cell metadata or expected rectangles.
+// Sixel can omit raster attributes; declared sizes must not hide painted overflow.
 fn native_payload_dimensions(payload: &str) -> Option<(u32, u32)> {
     if let Some((_, graphics)) = payload.split_once("\x1b_G") {
         let (header, _) = graphics.split_once(';')?;
@@ -140,19 +140,101 @@ fn native_payload_dimensions(payload: &str) -> Option<(u32, u32)> {
         }
         return Some((width?, height?));
     }
-    if !payload.contains("\x1bP") {
+    sixel_payload_dimensions(payload)
+}
+
+fn sixel_number(bytes: &[u8], index: &mut usize) -> Option<u32> {
+    let start = *index;
+    let mut value = 0_u32;
+    while let Some(digit @ b'0'..=b'9') = bytes.get(*index).copied() {
+        value = value.checked_mul(10)?.checked_add(u32::from(digit - b'0'))?;
+        *index += 1;
+    }
+    (*index > start).then_some(value)
+}
+
+// Extents only: no pixel allocation or repeat expansion, checked arithmetic,
+// and unsupported/truncated commands fail closed instead of guessing a size.
+fn sixel_payload_dimensions(payload: &str) -> Option<(u32, u32)> {
+    let (_, dcs) = payload.split_once("\x1bP")?;
+    let (sixel, _) = dcs.split_once("\x1b\\")?;
+    let (header, body) = sixel.split_once('q')?;
+    if !header.bytes().all(|byte| byte.is_ascii_digit() || byte == b';') {
         return None;
     }
-    let (_, raster) = payload.split_once('"')?;
-    let parameters = raster
-        .split(|c: char| c != ';' && !c.is_ascii_digit())
-        .next()?;
-    let mut fields = parameters.split(';');
-    fields.next()?;
-    fields.next()?;
-    let width = fields.next()?.parse::<u32>().ok()?;
-    let height = fields.next()?.parse::<u32>().ok()?;
-    Some((width, height))
+    let bytes = body.as_bytes();
+    let mut index = 0;
+    let (mut x, mut band, mut width, mut height) = (0_u32, 0_u32, 0_u32, 0_u32);
+    let (mut declared_width, mut declared_height) = (0_u32, 0_u32);
+    while let Some(&byte) = bytes.get(index) {
+        index += 1;
+        let (columns, mask) = match byte {
+            b'?'..=b'~' => (1, byte - b'?'),
+            b'!' => {
+                let columns = sixel_number(bytes, &mut index)?;
+                let data = *bytes.get(index)?;
+                if columns == 0 || !(b'?'..=b'~').contains(&data) {
+                    return None;
+                }
+                index += 1;
+                (columns, data - b'?')
+            }
+            b'$' => {
+                x = 0;
+                continue;
+            }
+            b'-' => {
+                x = 0;
+                band = band.checked_add(6)?;
+                continue;
+            }
+            b'#' => {
+                sixel_number(bytes, &mut index)?;
+                if bytes.get(index) == Some(&b';') {
+                    index += 1;
+                    if !matches!(sixel_number(bytes, &mut index)?, 1 | 2) {
+                        return None;
+                    }
+                    for _ in 0..3 {
+                        if bytes.get(index) != Some(&b';') {
+                            return None;
+                        }
+                        index += 1;
+                        sixel_number(bytes, &mut index)?;
+                    }
+                }
+                continue;
+            }
+            b'"' => {
+                let mut attributes = [0_u32; 4];
+                for (position, value) in attributes.iter_mut().enumerate() {
+                    if position > 0 {
+                        if bytes.get(index) != Some(&b';') {
+                            return None;
+                        }
+                        index += 1;
+                    }
+                    if bytes.get(index).is_some_and(u8::is_ascii_digit) {
+                        *value = sixel_number(bytes, &mut index)?;
+                    } else if position >= 2 {
+                        return None;
+                    }
+                }
+                declared_width = declared_width.max(attributes[2]);
+                declared_height = declared_height.max(attributes[3]);
+                continue;
+            }
+            _ => return None,
+        };
+        x = x.checked_add(columns)?;
+        if mask != 0 {
+            width = width.max(x);
+            // A final band can paint fewer than six rows; '-' alone paints none.
+            let painted_rows = u8::BITS - mask.leading_zeros();
+            height = height.max(band.checked_add(painted_rows)?);
+        }
+    }
+    Some((width.max(declared_width), height.max(declared_height)))
 }
 
 #[test]
@@ -166,6 +248,35 @@ fn native_dimension_headers_allow_sixel_aspect_and_kitty_field_order_variants() 
         assert_eq!(native_payload_dimensions(payload), Some((32, 48)));
     }
     assert_eq!(native_payload_dimensions("plain text"), None);
+}
+
+#[test]
+fn sixel_dimensions_measure_painted_pixels_and_partial_final_bands() {
+    let captured = "\x1b[4X\x1b[1B\x1b[4X\x1b[1B\x1b[4X\x1b[1B\x1b[3A\x1bP9;1;0q#0;2;100;0;0#0!32~$-#0!32~$-#0!32~$-#0!32~$-#0!32~$-#0!32~$-#0!32~$-#0!32~$-\x1b\\";
+    let full_bands = "#0!240~$-".repeat(16);
+    let partial = format!("\x1bP9;1;0q{full_bands}#0!240N$-\x1b\\");
+    let overflow = format!("\x1bPq\"1;1;240;100{full_bands}#0!240~$-\x1b\\");
+    for (payload, expected) in [
+        (captured, Some((32, 48))),
+        (partial.as_str(), Some((240, 100))),
+        (overflow.as_str(), Some((240, 102))),
+        ("\x1bPq!2@-!3A\x1b\\", Some((3, 8))),
+        ("\x1bPq#0;2;100;0;0!5@$#1;2;0;100;0!3A\x1b\\", Some((5, 2))),
+        ("\x1bPq!3?@\x1b\\", Some((4, 1))),
+        ("\x1bPq~-??$--\x1b\\", Some((1, 6))),
+        ("\x1bPq!32?--\x1b\\", Some((0, 0))),
+        ("\x1bPq\"1;1;2;1!3@\x1b\\", Some((3, 1))),
+        ("\x1bPq!32~", None),
+        ("\x1bPq!~\x1b\\", None),
+        ("\x1bPq!0~\x1b\\", None),
+        ("\x1bPq!4294967296~\x1b\\", None),
+        ("\x1bPq!4294967295@@\x1b\\", None),
+        ("\x1bPq#0;2;100;0~\x1b\\", None),
+        ("\x1bPq\"1;1;32\x1b\\", None),
+        ("\x1bPq>\x1b\\", None),
+    ] {
+        assert_eq!(native_payload_dimensions(payload), expected);
+    }
 }
 
 #[test]
@@ -277,6 +388,7 @@ fn native_crop_payloads_match_the_final_rectangle() {
 fn native_stacks_clip_payload_pixels_to_the_actual_visible_rows_and_columns() {
     let mut observations = Vec::new();
     let mut outcomes = Vec::new();
+    let mut dimensions_by_protocol = Vec::new();
     for protocol in [ProtocolType::Kitty, ProtocolType::Sixel] {
         let mut app = fixture(false, 4);
         let mut picker = Picker::halfblocks();
@@ -287,6 +399,7 @@ fn native_stacks_clip_payload_pixels_to_the_actual_visible_rows_and_columns() {
         let mut main_payload = false;
         let mut neighbor_payload = false;
         let mut escaped_cells = Vec::new();
+        let mut painted_rectangles = Vec::new();
         for y in 0..8 {
             for x in 0..80 {
                 let symbol = buffer[(x, y)].symbol();
@@ -296,13 +409,27 @@ fn native_stacks_clip_payload_pixels_to_the_actual_visible_rows_and_columns() {
                         .flat_map(char::escape_debug)
                         .take(192)
                         .collect::<String>();
-                    escaped_cells.push((x, y, symbol.len(), prefix));
+                    let tail = symbol.chars().rev().take(96).collect::<String>();
+                    let tail = tail
+                        .chars()
+                        .rev()
+                        .flat_map(char::escape_debug)
+                        .take(192)
+                        .collect::<String>();
+                    escaped_cells.push((x, y, symbol.len(), prefix, tail));
                 }
                 if let Some((width, height)) = native_payload_dimensions(symbol) {
                     payloads += 1;
+                    painted_rectangles.push((x, y, width, height));
                     assert!(width > 0 && height > 0);
-                    assert!(width <= u32::from(80 - x) * u32::from(font.width));
-                    assert!(height <= u32::from(8 - y) * u32::from(font.height));
+                    assert!(
+                        width <= u32::from(80 - x) * u32::from(font.width),
+                        "{protocol:?} cell=({x},{y}) pixels=({width},{height}) cells={escaped_cells:?}"
+                    );
+                    assert!(
+                        height <= u32::from(8 - y) * u32::from(font.height),
+                        "{protocol:?} cell=({x},{y}) pixels=({width},{height}) cells={escaped_cells:?}"
+                    );
                     assert!(
                         height < 240,
                         "the 240-pixel source must actually be clipped"
@@ -316,10 +443,11 @@ fn native_stacks_clip_payload_pixels_to_the_actual_visible_rows_and_columns() {
             }
         }
         observations.push(format!(
-            "protocol={protocol:?} font={font:?} viewport={:?} payloads={payloads} main={main_payload} neighbor={neighbor_payload} cells(x,y,bytes,escaped_prefix)={escaped_cells:?}",
+            "protocol={protocol:?} font={font:?} viewport={:?} payloads={payloads} main={main_payload} neighbor={neighbor_payload} cells(x,y,bytes,escaped_prefix,escaped_tail)={escaped_cells:?}",
             buffer.area,
         ));
         outcomes.push((payloads, main_payload, neighbor_payload));
+        dimensions_by_protocol.push(painted_rectangles);
     }
     for (payloads, main_payload, neighbor_payload) in outcomes {
         assert!(
@@ -333,6 +461,14 @@ fn native_stacks_clip_payload_pixels_to_the_actual_visible_rows_and_columns() {
             observations.join("\n")
         );
     }
+    // These opaque fixtures fill each crop. Compare actual Sixel paint with
+    // Kitty's transmitted dimensions, so a 102-row band cannot pass for 100.
+    assert_eq!(
+        dimensions_by_protocol[0],
+        dimensions_by_protocol[1],
+        "{}",
+        observations.join("\n")
+    );
 }
 
 #[test]
