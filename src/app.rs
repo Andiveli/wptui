@@ -285,6 +285,7 @@ pub struct App<'a> {
     pub timeline: unread_messages::Timeline,
     pub metadata: HashMap<wr::MessageId, Metadata>,
     pub image_cache: HashMap<Arc<str>, StatefulProtocol>,
+    pub(crate) stack_previews: crate::ui::message_list::StackPreviewCache,
     pub image_cache_order: VecDeque<Arc<str>>,
     pub(crate) sticker_playback: HashMap<Arc<str>, sticker_animation::StickerPlayback>,
     pub(crate) deferred_sticker_previews: HashSet<Arc<str>>,

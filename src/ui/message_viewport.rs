@@ -240,6 +240,23 @@ pub(super) fn render(
                 });
                 app.mouse_hit_map.media.extend(media_hits);
             }
+            for (front, mut region) in media_render_plan.take_stack_regions() {
+                let y_offset = if too_low || too_high {
+                    region.x = region.x.saturating_add(list_area.left());
+                    top
+                } else {
+                    0
+                };
+                super::message_stacks::render_region(
+                    app,
+                    &front,
+                    region,
+                    list_area,
+                    y_offset,
+                    frame.buffer_mut(),
+                    media_render_plan,
+                );
+            }
         }
 
         y -= height

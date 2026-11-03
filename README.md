@@ -303,12 +303,18 @@ matches (both wrap); `j`/`k` still visit every message. `Esc` clears the search.
 list, `/` still searches contacts, and `/` in the composer remains ordinary text. This does not
 search other chats, remote history, file captions, or media.
 
-Consecutive photos and videos from the same sender appear as a compact pile
-with a count in chat history, for both received and sent messages. Text, other
+Consecutive photos and videos from the same sender share a main preview and
+count in chat history, for both received and sent messages. Up to three narrow
+slices of neighboring previews peek out to its right when space permits; the
+main preview stays anchored rather than right-aligning the whole panel. Text, other
 senders, date changes, deleted messages, and unread boundaries split piles.
 The newest message is shown by default. `j`/`k` still visit each original
 message; selecting a member brings its own preview, caption, quote, and actions
-to the front. Only the displayed member counts as visible for read receipts.
+to the front. The ordered neighbor window shifts horizontally with that
+selection, and reversing navigation restores its previous order; there is no
+timed animation. Preview slices load through the normal media worker and do
+not mark their hidden messages read. Only the front member counts as visible
+for read receipts.
 `v` starts on that member and still browses all photos/videos in the chat, not
 just its pile. Status updates retain their separate cards.
 

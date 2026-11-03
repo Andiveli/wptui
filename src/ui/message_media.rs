@@ -33,6 +33,31 @@ fn should_request_download(message_id: &wr::MessageId) -> bool {
     !App::is_pending_message_id(message_id)
 }
 
+pub(super) fn request_preview(
+    app: &App,
+    id: &wr::MessageId,
+    file: &wr::FileContent,
+    plan: &mut crate::app::events::MediaRenderPlan,
+) {
+    match app.metadata.get(id) {
+        None if should_request_download(id) => {
+            plan.append(MediaRenderEffect::DownloadFile(
+                id.clone(),
+                file.file_id.clone(),
+            ));
+        }
+        Some(Metadata::File(FileMeta::Downloaded))
+            if matches!(
+                file.kind,
+                FileKind::Image | FileKind::Video | FileKind::Sticker
+            ) =>
+        {
+            plan.append(MediaRenderEffect::LoadFilePreview(id.clone()));
+        }
+        _ => {}
+    }
+}
+
 fn caption_lines(
     caption: Option<&str>,
     mention_ranges: &[std::ops::Range<usize>],
@@ -80,12 +105,7 @@ pub fn render_file(
                 alignment,
             )
             .render(media_area, buf);
-            if should_request_download(message_id) {
-                media_render_plan.append(MediaRenderEffect::DownloadFile(
-                    message_id.clone(),
-                    data.file_id.clone(),
-                ));
-            }
+            request_preview(app, message_id, data, media_render_plan);
         }
         Some(Metadata::File(meta)) => match meta {
             FileMeta::Downloaded => {
@@ -98,16 +118,7 @@ pub fn render_file(
                     alignment,
                 )
                 .render(media_area, buf);
-                if matches!(
-                    data.kind,
-                    FileKind::Image | FileKind::Sticker | FileKind::Video
-                ) && !matches!(
-                    app.metadata.get(message_id),
-                    Some(Metadata::File(FileMeta::Loading))
-                ) {
-                    media_render_plan
-                        .append(MediaRenderEffect::LoadFilePreview(message_id.clone()));
-                }
+                request_preview(app, message_id, data, media_render_plan);
             }
             FileMeta::Downloading => super::media_paragraph(
                 data.path.as_ref(),
@@ -175,8 +186,33 @@ pub fn render_file(
                             .render(media_area, buf);
                     } else {
                         app.touch_image_cache(&data.path);
+                        let original_fit = if app.stack_previews.was_downsampled(&data.path) {
+                            let font = app.picker.lock().unwrap().font_size();
+                            app.stack_previews.fit_for(
+                                &data.path,
+                                font,
+                                ratatui::layout::Size::new(media_area.width, media_area.height),
+                            )
+                        } else {
+                            None
+                        };
                         if let Some(image) = app.image_cache.get_mut(&data.path) {
-                            StatefulImage::default().render(media_area, buf, image);
+                            if let Some(size) = original_fit {
+                                StatefulImage::default()
+                                    .resize(ratatui_image::Resize::Scale(None))
+                                    .render(
+                                        Rect::new(
+                                            media_area.x,
+                                            media_area.y,
+                                            size.width,
+                                            size.height,
+                                        ),
+                                        buf,
+                                        image,
+                                    );
+                            } else {
+                                StatefulImage::default().render(media_area, buf, image);
+                            }
                         } else {
                             Paragraph::new(placeholder)
                                 .alignment(alignment)

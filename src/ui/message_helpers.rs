@@ -32,7 +32,7 @@ impl AuthorGroupContext {
     };
 
     pub(crate) fn stack_height(self) -> usize {
-        if self.stack_count > 1 { 2 } else { 0 }
+        usize::from(self.stack_count > 1)
     }
 
     pub const fn starts_group(self) -> bool {
