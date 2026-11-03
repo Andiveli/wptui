@@ -254,6 +254,12 @@ and connection/session categories, never raw error text or IQ codes; unknown IQ
 codes remain `iq_other`, and unrecognized errors remain `other`.
 `appstate_with_cause` only identifies an app-state error with a structurally wrapped
 secondary cause; it does not establish a server code, conflict, or specific cause.
+Known secondary sentinels use `appstate_cause_key_missing`,
+`appstate_cause_content_mac`, `appstate_cause_index_mac`,
+`appstate_cause_lt_hash`, `appstate_cause_patch_mac`, or
+`appstate_cause_previous_set_missing`. These identify error classes, not
+key/MAC values or a confirmed fix. Unknown secondary errors remain
+`appstate_with_cause`.
 Concurrent bridge results may appear between UI snapshots; there are deliberately
 no identifying correlation fields. This enables diagnosis, not a fix or reproduction of the reported mismatch.
 
