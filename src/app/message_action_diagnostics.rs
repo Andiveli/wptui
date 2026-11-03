@@ -113,6 +113,26 @@ impl MessageActionDiagnostics {
                         | "missing_key"
                         | "key_lookup"
                         | "resync_after_send"
+                        | "appstate_rejected"
+                        | "iq_bad_request"
+                        | "iq_not_authorized"
+                        | "iq_forbidden"
+                        | "iq_not_found"
+                        | "iq_not_allowed"
+                        | "iq_not_acceptable"
+                        | "iq_gone"
+                        | "iq_resource_limit"
+                        | "iq_locked"
+                        | "iq_rate_over_limit"
+                        | "iq_internal_server_error"
+                        | "iq_service_unavailable"
+                        | "iq_partial_server_error"
+                        | "iq_other"
+                        | "missing_element"
+                        | "disconnected"
+                        | "not_logged_in"
+                        | "iq_timeout"
+                        | "client_nil"
                 ) {
                     self.trace_line(|| format!("stage=bridge status=2 category={category}\n"));
                 }
@@ -471,6 +491,89 @@ mod tests {
                 | "stage=bridge status=2 category=other"
         )));
         assert!(report.len() < 16 * 1024);
+    }
+
+    #[test]
+    fn read_sync_trace_accepts_closed_bridge_categories_exactly() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("trace.txt");
+        let diagnostics =
+            MessageActionDiagnostics::new(false).with_read_sync_trace(Some(path.clone()));
+        let mut expected = String::new();
+        for category in [
+            "cancelled",
+            "timeout",
+            "other",
+            "missing_key",
+            "key_lookup",
+            "resync_after_send",
+            "appstate_rejected",
+            "iq_bad_request",
+            "iq_not_authorized",
+            "iq_forbidden",
+            "iq_not_found",
+            "iq_not_allowed",
+            "iq_not_acceptable",
+            "iq_gone",
+            "iq_resource_limit",
+            "iq_locked",
+            "iq_rate_over_limit",
+            "iq_internal_server_error",
+            "iq_service_unavailable",
+            "iq_partial_server_error",
+            "iq_other",
+            "missing_element",
+            "disconnected",
+            "not_logged_in",
+            "iq_timeout",
+            "client_nil",
+        ] {
+            let record = format!("stage=bridge status=2 category={category}");
+            diagnostics.record_go_log(&format!("READ_SYNC_TRACE {record}"));
+            expected.push_str(&format!("{record}\n"));
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
+        }
+        for record in [
+            "stage=bridge status=0 category=none",
+            "stage=bridge status=1 category=unavailable",
+        ] {
+            diagnostics.record_go_log(&format!("READ_SYNC_TRACE {record}"));
+            expected.push_str(&format!("{record}\n"));
+        }
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
+    }
+
+    #[test]
+    fn read_sync_trace_rejects_malformed_typed_categories_without_consuming_cap() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("trace.txt");
+        let diagnostics =
+            MessageActionDiagnostics::new(false).with_read_sync_trace(Some(path.clone()));
+        for _ in 0..MAX_DIAGNOSTIC_ENTRIES {
+            for invalid in [
+                "stage=bridge status=2 category=iq_forbidden private=secret",
+                "stage=bridge status=2 category=iq_forbidden\nprivate=secret",
+                "stage=bridge status=2 category=iq_forbidden\n",
+                "stage=bridge status=2 category=iq_forbidden ",
+                "stage=bridge status=2 category=IQ_FORBIDDEN",
+                "stage=bridge status=2 category=iq_987654",
+                "stage=bridge status=2 category=private-chat@s.whatsapp.net",
+                "stage=bridge status=2 category=missing_element tag=private-message-id",
+                "stage=bridge status=2 category=disconnected node=private-payload",
+                "stage=bridge status=0 category=iq_forbidden",
+                "stage=bridge status=1 category=disconnected",
+            ] {
+                diagnostics.record_go_log(&format!("READ_SYNC_TRACE {invalid}"));
+            }
+        }
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
+        for _ in 0..MAX_DIAGNOSTIC_ENTRIES {
+            diagnostics.record_go_log("READ_SYNC_TRACE stage=bridge status=2 category=other");
+        }
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "stage=bridge status=2 category=other\n".repeat(MAX_DIAGNOSTIC_ENTRIES)
+        );
     }
 
     #[test]

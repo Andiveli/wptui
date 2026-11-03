@@ -31,6 +31,7 @@ import (
 	"time"
 	"unsafe"
 
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/appstate"
 	"go.mau.fi/whatsmeow/proto/waCommon"
 	"go.mau.fi/whatsmeow/types"
@@ -118,7 +119,16 @@ func markReadResultWithTrace(send func() error, output io.Writer) C.int {
 	if send == nil {
 		category = "unavailable"
 	} else if err != nil {
+		var iq *whatsmeow.IQError
+		var missing *whatsmeow.ElementMissingError
+		var disconnected *whatsmeow.DisconnectedError
+		isIQ := errors.As(err, &iq)
+		isMissing := errors.As(err, &missing)
+		isDisconnected := errors.As(err, &disconnected)
 		switch {
+		// A typed nil must not reach Error() or a field dereference.
+		case (isIQ && iq == nil) || (isMissing && missing == nil) || (isDisconnected && disconnected == nil):
+			category = "other"
 		case strings.HasPrefix(err.Error(), "failed to fetch app state after sending update:"):
 			category = "resync_after_send"
 		case err.Error() == "no app state keys found, creating app state keys is not yet supported":
@@ -129,6 +139,51 @@ func markReadResultWithTrace(send func() error, output io.Writer) C.int {
 			category = "cancelled"
 		case errors.Is(err, context.DeadlineExceeded):
 			category = "timeout"
+		// Keep follow-up resync classification above all typed errors: the
+		// mutation may already have applied. Only closed labels leave Go.
+		case errors.Is(err, whatsmeow.ErrAppStateUpdate):
+			category = "appstate_rejected"
+		case isIQ:
+			switch iq.Code {
+			case 400:
+				category = "iq_bad_request"
+			case 401:
+				category = "iq_not_authorized"
+			case 403:
+				category = "iq_forbidden"
+			case 404:
+				category = "iq_not_found"
+			case 405:
+				category = "iq_not_allowed"
+			case 406:
+				category = "iq_not_acceptable"
+			case 410:
+				category = "iq_gone"
+			case 419:
+				category = "iq_resource_limit"
+			case 423:
+				category = "iq_locked"
+			case 429:
+				category = "iq_rate_over_limit"
+			case 500:
+				category = "iq_internal_server_error"
+			case 503:
+				category = "iq_service_unavailable"
+			case 530:
+				category = "iq_partial_server_error"
+			default:
+				category = "iq_other"
+			}
+		case isMissing:
+			category = "missing_element"
+		case isDisconnected || errors.Is(err, whatsmeow.ErrNotConnected):
+			category = "disconnected"
+		case errors.Is(err, whatsmeow.ErrNotLoggedIn):
+			category = "not_logged_in"
+		case errors.Is(err, whatsmeow.ErrIQTimedOut):
+			category = "iq_timeout"
+		case errors.Is(err, whatsmeow.ErrClientIsNil):
+			category = "client_nil"
 		default:
 			category = "other"
 		}
