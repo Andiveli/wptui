@@ -249,7 +249,9 @@ Queue acceptance is not delivery confirmation. A bridge status of `0` only means
 the existing call returned successfully; `resync_after_send` means its follow-up
 fetch failed and the update may already have applied. `missing_key`, `key_lookup`,
 `cancelled`, `timeout`, `unavailable` and `other` do not establish server acceptance
-or a root cause; unknown/server failures remain `other`. Concurrent bridge results
+or a root cause. Exported typed errors use closed app-state, IQ, missing-element
+and connection/session categories, never raw error text or IQ codes; unknown IQ
+codes remain `iq_other`, and unrecognized errors remain `other`. Concurrent bridge results
 may appear between UI snapshots; there are deliberately no identifying correlation
 fields. This enables diagnosis, not a fix or reproduction of the reported mismatch.
 
