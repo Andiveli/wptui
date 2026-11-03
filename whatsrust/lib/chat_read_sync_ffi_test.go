@@ -40,14 +40,49 @@ func TestReadSyncTracePreservesBridgeResultAndNeverExportsErrorText(t *testing.T
 		{name: "after send", category: "resync_after_send", err: fmt.Errorf("failed to fetch app state after sending update: %w", context.DeadlineExceeded), status: 2},
 	}
 	privateNode := &binary.Node{Tag: "private-message-id", Content: []byte("private payload key=secret")}
+	privateCause := errors.New("private-chat@s.whatsapp.net private-message-id key=secret payload=secret")
 	typed := []traceCase{
 		{name: "appstate rejected", category: "appstate_rejected", err: whatsmeow.ErrAppStateUpdate},
+		{
+			name: "appstate multi-wrap with cause", category: "appstate_with_cause",
+			err: fmt.Errorf("%w: private response: %w", whatsmeow.ErrAppStateUpdate, privateCause),
+		},
+		{
+			// Join has the same public shape: this label must not imply a numeric code.
+			name: "appstate joined with cause", category: "appstate_with_cause",
+			err: errors.Join(whatsmeow.ErrAppStateUpdate, privateCause),
+		},
+		{
+			name: "appstate joined without cause", category: "appstate_rejected",
+			err: errors.Join(whatsmeow.ErrAppStateUpdate),
+		},
+		{
+			name: "appstate key outside secondary branch", category: "appstate_with_cause",
+			err: errors.Join(errors.Join(whatsmeow.ErrAppStateUpdate, appstate.ErrKeyNotFound), privateCause),
+		},
 		{name: "missing element", category: "missing_element", err: &whatsmeow.ElementMissingError{Tag: "private-tag", In: "private-chat@s.whatsapp.net"}},
 		{name: "disconnected", category: "disconnected", err: &whatsmeow.DisconnectedError{Action: "private-action", Node: privateNode}},
 		{name: "not connected", category: "disconnected", err: whatsmeow.ErrNotConnected},
 		{name: "not logged in", category: "not_logged_in", err: whatsmeow.ErrNotLoggedIn},
 		{name: "iq timeout", category: "iq_timeout", err: whatsmeow.ErrIQTimedOut},
 		{name: "client nil", category: "client_nil", err: whatsmeow.ErrClientIsNil},
+	}
+	for _, secondary := range []struct {
+		cause    error
+		category string
+	}{
+		{appstate.ErrKeyNotFound, "appstate_cause_key_missing"},
+		{appstate.ErrMismatchingContentMAC, "appstate_cause_content_mac"},
+		{appstate.ErrMismatchingIndexMAC, "appstate_cause_index_mac"},
+		{appstate.ErrMismatchingLTHash, "appstate_cause_lt_hash"},
+		{appstate.ErrMismatchingPatchMAC, "appstate_cause_patch_mac"},
+		{appstate.ErrMissingPreviousSetValueOperation, "appstate_cause_previous_set_missing"},
+	} {
+		typed = append(typed, traceCase{
+			name: secondary.category, category: secondary.category,
+			err: fmt.Errorf("%w: %w", whatsmeow.ErrAppStateUpdate,
+				fmt.Errorf("private-message-id key=secret payload=secret: %w", secondary.cause)),
+		})
 	}
 	for _, iq := range []struct {
 		code     int
