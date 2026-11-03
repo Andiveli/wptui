@@ -67,12 +67,20 @@ impl App<'_> {
                     "runtime_loop must route ReadReceipt events to handle_read_receipt_event"
                 )
             }
-            AppEvent::SetFilePreview(message_id, file_path, img) => {
+            AppEvent::SetStackCrops(results) => {
+                self.stack_previews.finish(results);
+                true
+            }
+            AppEvent::SetFilePreview(message_id, file_path, img, source) => {
                 if !self.preview_result_is_current(&message_id, &file_path) {
                     self.retry_pending_sticker_previews(download_tx, media_jobs);
                     return false;
                 }
-                self.cache_file_preview(message_id.clone(), file_path, img);
+                self.cache_file_preview(message_id.clone(), file_path.clone(), img);
+                if let Some((source, dimensions)) = source {
+                    self.stack_previews
+                        .install_original(file_path, source, dimensions);
+                }
                 self.retry_pending_sticker_previews(download_tx, media_jobs);
                 if let Some(viewer) = self.attachment_viewer.as_mut()
                     && viewer.message_id == message_id
@@ -145,6 +153,22 @@ impl App<'_> {
                 }
             }
             AppEvent::LoadFilePreview(message_id) => {
+                if matches!(
+                    self.metadata.get(&message_id),
+                    Some(Metadata::File(FileMeta::Loaded))
+                ) {
+                    // UI queued geometry only. Crop and encode on the existing
+                    // managed worker, with bounded jobs/keys and no extra I/O.
+                    if let Some(work) = self.stack_previews.take_work() {
+                        let picker = Arc::clone(&self.picker);
+                        let tx = self.tx.clone();
+                        media_jobs.spawn(move |permit| {
+                            let results = work.prepare(&mut picker.lock().unwrap());
+                            permit.send(&tx, AppInput::App(AppEvent::SetStackCrops(results)));
+                        });
+                    }
+                    return false;
+                }
                 if !matches!(
                     self.metadata.get(&message_id),
                     Some(Metadata::File(FileMeta::Loading))
@@ -232,7 +256,22 @@ impl App<'_> {
                                 if matches!(file.kind, wr::FileKind::Video) {
                                     apply_video_play_marker(&mut image_src);
                                 }
-                                let mut img = picker.lock().unwrap().new_resize_protocol(image_src);
+                                let dimensions = (image_src.width(), image_src.height());
+                                let source =
+                                    matches!(file.kind, wr::FileKind::Image | wr::FileKind::Video)
+                                        .then(|| {
+                                            crate::ui::message_list::bounded_stack_source(
+                                                &image_src,
+                                            )
+                                        });
+                                // Native preview state also owns only bounded pixels,
+                                // not a second retained full-resolution decode.
+                                let preview_pixels = source
+                                    .as_ref()
+                                    .map(|pixels| (**pixels).clone())
+                                    .unwrap_or(image_src);
+                                let mut img =
+                                    picker.lock().unwrap().new_resize_protocol(preview_pixels);
                                 let (preview_width, preview_height) =
                                     if matches!(file.kind, wr::FileKind::Video) {
                                         (VIDEO_WIDTH, VIDEO_HEIGHT)
@@ -250,6 +289,7 @@ impl App<'_> {
                                         message_id.clone(),
                                         file.path.clone(),
                                         img,
+                                        source.map(|pixels| (pixels, dimensions)),
                                     )),
                                 );
                             } else if matches!(file.kind, wr::FileKind::Video) {

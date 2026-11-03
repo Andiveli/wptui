@@ -107,7 +107,10 @@ fn received_and_sent_mixed_media_paint_one_newest_front_with_a_pile_and_count() 
         let (rows, _) = render(&mut app, 60, 40);
         let painted = rows.join("\n");
         assert!(painted.contains("2 photos/videos"));
-        assert!(painted.contains("┌─"));
+        assert!(
+            !painted.contains("┌─"),
+            "real previews replace the symbolic pile"
+        );
         assert!(painted.contains("caption-new"));
         assert!(!painted.contains("caption-old"));
         assert_eq!(app.chat_messages.values().next().unwrap().len(), 2);

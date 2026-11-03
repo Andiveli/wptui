@@ -32,6 +32,116 @@ fn file_message(id: &str, path: &str) -> wr::Message {
 }
 
 #[test]
+fn decoded_stack_sources_follow_preview_eviction_and_stale_result_guards() {
+    let mut app = TestApp::new();
+    let mut jobs = MediaJobOwner::new();
+    let (download_tx, _) = mpsc::channel();
+    let path = Arc::<str>::from("old.png");
+    app.messages
+        .insert("preview".into(), file_message("preview", &path));
+    let source =
+        crate::ui::message_list::bounded_stack_source(&image::DynamicImage::new_rgba8(2048, 2048));
+    let event = |source: Arc<image::DynamicImage>| {
+        AppEvent::SetFilePreview(
+            "preview".into(),
+            path.clone(),
+            Picker::halfblocks().new_resize_protocol((*source).clone()),
+            Some((source, (2048, 2048))),
+        )
+    };
+    app.handle_media_viewer_event(event(source.clone()), &download_tx, &mut jobs);
+    assert!(!app.stack_previews.contains_source(&path));
+    app.metadata
+        .insert("preview".into(), Metadata::File(FileMeta::Loading));
+    app.handle_media_viewer_event(event(source), &download_tx, &mut jobs);
+    assert!(app.stack_previews.contains_source(&path));
+    for index in 0..50 {
+        app.cache_file_preview(
+            format!("new-{index}").into(),
+            format!("new-{index}.png").into(),
+            Picker::halfblocks().new_resize_protocol(image::DynamicImage::new_rgba8(1, 1)),
+        );
+    }
+    assert!(!app.stack_previews.contains_source(&path));
+    assert!(!app.image_cache.contains_key(&path));
+    assert!(matches!(
+        app.metadata.get(&wr::MessageId::from("preview")),
+        Some(Metadata::File(FileMeta::Downloaded))
+    ));
+    jobs.shutdown();
+}
+
+#[test]
+fn stacked_crop_requests_reuse_the_managed_preview_worker_without_redecoding() {
+    use crate::app::{events::MediaRenderPlan, read_receipts::VisibilityPlan};
+    use ratatui::{Terminal, backend::TestBackend, layout::Rect};
+
+    let mut app = TestApp::new();
+    let mut jobs = MediaJobOwner::new();
+    let (download_tx, _) = mpsc::channel();
+    for index in 0..2 {
+        let id: wr::MessageId = format!("member-{index}").into();
+        let path: Arc<str> = format!("missing-{index}.png").into();
+        let message = file_message(&id, &path);
+        app.open_chat = Some(message.info.chat.clone());
+        app.add_message(message);
+        let source = crate::ui::message_list::bounded_stack_source(
+            &image::DynamicImage::new_rgba8(240, 240),
+        );
+        app.cache_file_preview(
+            id,
+            path.clone(),
+            Picker::halfblocks().new_resize_protocol((*source).clone()),
+        );
+        app.stack_previews.install(path, source);
+    }
+    let mut terminal = Terminal::new(TestBackend::new(80, 40)).unwrap();
+    let mut plan = MediaRenderPlan::default();
+    terminal
+        .draw(|frame| {
+            crate::ui::message_list::render_messages_with_plan(
+                frame,
+                &mut app,
+                &mut plan,
+                &mut VisibilityPlan::default(),
+                Rect::new(0, 0, 80, 40),
+            );
+        })
+        .unwrap();
+    for effect in plan.into_effects() {
+        if let crate::app::events::MediaRenderEffect::LoadFilePreview(id) = effect {
+            app.handle_media_viewer_event(AppEvent::LoadFilePreview(id), &download_tx, &mut jobs);
+        } else {
+            panic!("a loaded crop must not request download or viewer I/O");
+        }
+    }
+    let AppInput::App(event) = app.rx.recv_timeout(Duration::from_secs(5)).unwrap() else {
+        panic!("expected prepared crops");
+    };
+    assert!(matches!(&event, AppEvent::SetStackCrops(_)));
+    assert!(app.handle_media_viewer_event(event, &download_tx, &mut jobs));
+    jobs.shutdown();
+    let mut ready = MediaRenderPlan::default();
+    terminal
+        .draw(|frame| {
+            crate::ui::message_list::render_messages_with_plan(
+                frame,
+                &mut app,
+                &mut ready,
+                &mut VisibilityPlan::default(),
+                Rect::new(0, 0, 80, 40),
+            );
+        })
+        .unwrap();
+    assert!(ready.into_effects().is_empty());
+    assert!(
+        app.metadata
+            .values()
+            .all(|meta| matches!(meta, Metadata::File(FileMeta::Loaded)))
+    );
+}
+
+#[test]
 fn evicted_loaded_preview_becomes_reloadable() {
     let mut app = TestApp::new();
     let message = file_message("preview", "old.png");
