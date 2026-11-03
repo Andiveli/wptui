@@ -251,9 +251,11 @@ fetch failed and the update may already have applied. `missing_key`, `key_lookup
 `cancelled`, `timeout`, `unavailable` and `other` do not establish server acceptance
 or a root cause. Exported typed errors use closed app-state, IQ, missing-element
 and connection/session categories, never raw error text or IQ codes; unknown IQ
-codes remain `iq_other`, and unrecognized errors remain `other`. Concurrent bridge results
-may appear between UI snapshots; there are deliberately no identifying correlation
-fields. This enables diagnosis, not a fix or reproduction of the reported mismatch.
+codes remain `iq_other`, and unrecognized errors remain `other`.
+`appstate_with_cause` only identifies an app-state error with a structurally wrapped
+secondary cause; it does not establish a server code, conflict, or specific cause.
+Concurrent bridge results may appear between UI snapshots; there are deliberately
+no identifying correlation fields. This enables diagnosis, not a fix or reproduction of the reported mismatch.
 
 ## Keybindings
 

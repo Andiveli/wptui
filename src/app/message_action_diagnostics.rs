@@ -114,6 +114,7 @@ impl MessageActionDiagnostics {
                         | "key_lookup"
                         | "resync_after_send"
                         | "appstate_rejected"
+                        | "appstate_with_cause"
                         | "iq_bad_request"
                         | "iq_not_authorized"
                         | "iq_forbidden"
