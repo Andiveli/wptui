@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/appstate"
+	"go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/proto/waCommon"
 	"go.mau.fi/whatsmeow/proto/waSyncAction"
 	"go.mau.fi/whatsmeow/types"
@@ -21,12 +23,13 @@ import (
 // Unknown SendAppState errors deliberately remain "other": their text may
 // contain identities, keys, payloads, or describe a failure after the send.
 func TestReadSyncTracePreservesBridgeResultAndNeverExportsErrorText(t *testing.T) {
-	for _, tt := range []struct {
+	type traceCase struct {
 		name, category string
 		err            error
 		unavailable    bool
 		status         int
-	}{
+	}
+	tests := []traceCase{
 		{name: "ok", category: "none", status: 0},
 		{name: "unavailable", category: "unavailable", unavailable: true, status: 1},
 		{name: "cancelled", category: "cancelled", err: fmt.Errorf("private: %w", context.Canceled), status: 2},
@@ -35,7 +38,53 @@ func TestReadSyncTracePreservesBridgeResultAndNeverExportsErrorText(t *testing.T
 		{name: "missing key", category: "missing_key", err: errors.New("no app state keys found, creating app state keys is not yet supported"), status: 2},
 		{name: "key lookup", category: "key_lookup", err: errors.New("failed to get latest app state key ID: private-key"), status: 2},
 		{name: "after send", category: "resync_after_send", err: fmt.Errorf("failed to fetch app state after sending update: %w", context.DeadlineExceeded), status: 2},
+	}
+	privateNode := &binary.Node{Tag: "private-message-id", Content: []byte("private payload key=secret")}
+	typed := []traceCase{
+		{name: "appstate rejected", category: "appstate_rejected", err: whatsmeow.ErrAppStateUpdate},
+		{name: "missing element", category: "missing_element", err: &whatsmeow.ElementMissingError{Tag: "private-tag", In: "private-chat@s.whatsapp.net"}},
+		{name: "disconnected", category: "disconnected", err: &whatsmeow.DisconnectedError{Action: "private-action", Node: privateNode}},
+		{name: "not connected", category: "disconnected", err: whatsmeow.ErrNotConnected},
+		{name: "not logged in", category: "not_logged_in", err: whatsmeow.ErrNotLoggedIn},
+		{name: "iq timeout", category: "iq_timeout", err: whatsmeow.ErrIQTimedOut},
+		{name: "client nil", category: "client_nil", err: whatsmeow.ErrClientIsNil},
+	}
+	for _, iq := range []struct {
+		code     int
+		category string
+	}{
+		{400, "iq_bad_request"},
+		{401, "iq_not_authorized"},
+		{403, "iq_forbidden"},
+		{404, "iq_not_found"},
+		{405, "iq_not_allowed"},
+		{406, "iq_not_acceptable"},
+		{410, "iq_gone"},
+		{419, "iq_resource_limit"},
+		{423, "iq_locked"},
+		{429, "iq_rate_over_limit"},
+		{500, "iq_internal_server_error"},
+		{503, "iq_service_unavailable"},
+		{530, "iq_partial_server_error"},
+		{987654, "iq_other"}, // Unknown codes must not become raw diagnostic numbers.
 	} {
+		typed = append(typed, traceCase{
+			name: fmt.Sprintf("iq %d", iq.code), category: iq.category,
+			err: &whatsmeow.IQError{Code: iq.code, Text: "private-chat@s.whatsapp.net private text", ErrorNode: privateNode, RawNode: privateNode},
+		})
+	}
+	for _, tt := range typed {
+		// Both errors.Is sentinels and errors.As types must survive wrapping.
+		tests = append(tests, traceCase{
+			name: tt.name, category: tt.category, status: 2,
+			err: fmt.Errorf("private-message-id key=secret: %w", tt.err),
+		}, traceCase{
+			// Fetch failure can follow a successful send: retain this precedence.
+			name: tt.name + " after send", category: "resync_after_send", status: 2,
+			err: fmt.Errorf("failed to fetch app state after sending update: %w", fmt.Errorf("private: %w", tt.err)),
+		})
+	}
+	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			for _, enabled := range []bool{false, true} {
 				var report bytes.Buffer
