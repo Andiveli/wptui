@@ -251,6 +251,60 @@ func TestChatReadRecoveryStageObservationsPreserveResults(t *testing.T) {
 	}
 }
 
+func TestChatReadRecoveryTraceUsesExistingOptInCallback(t *testing.T) {
+	conflict := fmt.Errorf("%w: %w", whatsmeow.ErrAppStateUpdate, appstate.ErrMismatchingLTHash)
+	rejection := fmt.Errorf("private payload: %w", whatsmeow.ErrAppStateUpdate)
+	for _, path := range []string{"", "opt-in-report"} {
+		t.Run(path, func(t *testing.T) {
+			var state clientLifecycleState
+			identity := &whatsmeow.Client{}
+			state.publishClient(identity)
+			var records, calls []string
+			output := readSyncTraceOutput(path, func(record string) { records = append(records, record) })
+			observer := readSyncStageTrace(output)
+			if path == "" && observer != nil {
+				t.Fatal("disabled trace installed an observer")
+			}
+			client := readRecoveryClient{
+				send: func(context.Context, appstate.PatchInfo) error {
+					calls = append(calls, "send")
+					if len(calls) == 1 {
+						return conflict
+					}
+					return rejection
+				},
+				fetch: func(context.Context, appstate.WAPatchName, bool, bool) error {
+					calls = append(calls, "fetch")
+					return nil
+				},
+			}
+			var result error
+			status := markReadResultWithTrace(func() error {
+				result = sendChatReadStatePatch(context.Background(), appstate.PatchInfo{Type: appstate.WAPatchRegularLow}, client,
+					func(ctx context.Context, name appstate.WAPatchName, operation func(context.Context) error) (bool, error) {
+						return state.withChatReadRecovery(ctx, identity, name, operation)
+					}, observer)
+				return result
+			}, output)
+			if result != rejection || status != 2 || !reflect.DeepEqual(calls, []string{"send", "fetch", "send"}) {
+				t.Fatal("trace changed returned error, status, or network call order")
+			}
+			var want []string
+			if path != "" {
+				want = []string{
+					"stage=initial_send status=2 category=appstate_cause_lt_hash",
+					"stage=recovery_fetch status=0 category=none",
+					"stage=resend status=2 category=appstate_rejected",
+					"stage=bridge status=2 category=appstate_rejected",
+				}
+			}
+			if !reflect.DeepEqual(records, want) {
+				t.Fatal("callback did not receive the exact safe stage sequence and legacy result")
+			}
+		})
+	}
+}
+
 func TestChatReadRecoveryBudgetFollowsClientAndCollection(t *testing.T) {
 	var state clientLifecycleState
 	first, second := &whatsmeow.Client{}, &whatsmeow.Client{}

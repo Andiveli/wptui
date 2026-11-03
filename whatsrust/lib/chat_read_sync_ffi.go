@@ -104,8 +104,7 @@ func dispatchMarkChatAsReadEvent(event *events.MarkChatAsRead) {
 	C.free(unsafe.Pointer(payload))
 }
 
-// Only this formatter can produce read-sync bridge records. Never forward err text.
-// The optional stage is inert until the stage grammar has behavioral RED evidence.
+// Only this formatter can produce read-sync result records. Never forward err text.
 func markReadResultWithTrace(send func() error, output io.Writer, stages ...string) C.int {
 	if output == nil {
 		return markReadResult(send)
@@ -116,6 +115,18 @@ func markReadResultWithTrace(send func() error, output io.Writer, stages ...stri
 		wrapped = func() error { err = send(); return err }
 	}
 	status := markReadResult(wrapped)
+	stage := "bridge"
+	if len(stages) != 0 {
+		if len(stages) != 1 {
+			return status
+		}
+		switch stages[0] {
+		case "initial_send", "recovery_fetch", "resend":
+			stage = stages[0]
+		default:
+			return status
+		}
+	}
 	category := "none"
 	if send == nil {
 		category = "unavailable"
@@ -213,8 +224,18 @@ func markReadResultWithTrace(send func() error, output io.Writer, stages ...stri
 		}
 	}
 	// Diagnostic failures must never replace the original bridge result.
-	_, _ = fmt.Fprintf(output, "stage=bridge status=%d category=%s\n", status, category)
+	_, _ = fmt.Fprintf(output, "stage=%s status=%d category=%s\n", stage, status, category)
 	return status
+}
+
+// Keep each stage on the existing opt-in writer and the same safe classifier.
+func readSyncStageTrace(output io.Writer) chatReadStageObserver {
+	if output == nil {
+		return nil
+	}
+	return func(stage string, err error) {
+		markReadResultWithTrace(func() error { return err }, output, stage)
+	}
 }
 
 type readSyncTraceWriter func(string)
@@ -338,7 +359,7 @@ func C_MarkChatReadStateSync(chatJID *C.char, messageID *C.char, read C.bool, ti
 				return sendChatReadStatePatch(ctx, patch, clientSnapshot,
 					func(ctx context.Context, name appstate.WAPatchName, operation func(context.Context) error) (bool, error) {
 						return lifecycleState.withChatReadRecovery(ctx, clientSnapshot, name, operation)
-					})
+					}, readSyncStageTrace(output))
 			})
 	}, output)
 }

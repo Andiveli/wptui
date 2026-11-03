@@ -39,9 +39,17 @@ func rejectedChatReadLTHash(err error) bool {
 		causes[1] != nil && errors.Is(causes[1], appstate.ErrMismatchingLTHash)
 }
 
-// The optional observer is deliberately inert until behavioral RED is observed.
+// Observers run synchronously, only after an operation actually returns.
 func sendChatReadStatePatch(ctx context.Context, patch appstate.PatchInfo, client chatReadStateClient, scope chatReadRecoveryScope, observers ...chatReadStageObserver) error {
+	observe := func(stage string, err error) {
+		for _, observer := range observers {
+			if observer != nil {
+				observer(stage, err)
+			}
+		}
+	}
 	err := client.SendAppState(ctx, patch)
+	observe("initial_send", err)
 	// The pinned concrete SendAppState returns this compound rejection before
 	// its conflict retry, not after an accepted send's follow-up fetch failure.
 	if !rejectedChatReadLTHash(err) || scope == nil || ctx.Err() != nil {
@@ -51,13 +59,17 @@ func sendChatReadStatePatch(ctx context.Context, patch appstate.PatchInfo, clien
 		if err := active.Err(); err != nil {
 			return err
 		}
-		if err := client.FetchAppState(active, patch.Type, true, false); err != nil {
-			return err
+		fetchErr := client.FetchAppState(active, patch.Type, true, false)
+		observe("recovery_fetch", fetchErr)
+		if fetchErr != nil {
+			return fetchErr
 		}
 		if err := active.Err(); err != nil {
 			return err
 		}
-		return client.SendAppState(active, patch)
+		resendErr := client.SendAppState(active, patch)
+		observe("resend", resendErr)
+		return resendErr
 	})
 	if !attempted {
 		return err
