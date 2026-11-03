@@ -340,6 +340,7 @@ pub enum AppEvent {
     ),
     LoadViewerPreview(ViewerPreviewKey),
     SetViewerPreview(ViewerPreviewKey, Option<StatefulProtocol>),
+    SetComposerPreviews(Vec<(u64, Option<StatefulProtocol>)>),
     SetFileState(wr::MessageId, FileMeta),
     SetAudioDuration(wr::MessageId, Arc<str>, Option<u64>),
     ContactAvatar(AvatarResult),
@@ -381,6 +382,7 @@ impl AppEvent {
             | Self::SetStickerPreview(_, _, _)
             | Self::LoadViewerPreview(_)
             | Self::SetViewerPreview(_, _)
+            | Self::SetComposerPreviews(_)
             | Self::SetFileState(_, _)
             | Self::SetAudioDuration(_, _, _) => AppEventFamily::MediaViewer,
             Self::ContactAvatar(_) | Self::ContactAvatarRefreshed { .. } => AppEventFamily::Avatar,
@@ -491,6 +493,10 @@ impl fmt::Debug for AppEvent {
                 .debug_tuple("SetViewerPreview")
                 .field(key)
                 .field(&protocol.is_some())
+                .finish(),
+            AppEvent::SetComposerPreviews(results) => f
+                .debug_tuple("SetComposerPreviews")
+                .field(&results.len())
                 .finish(),
             AppEvent::SetFileState(message_id, state) => f
                 .debug_tuple("SetFileState")

@@ -49,6 +49,7 @@ impl App<'_> {
         media_jobs: &mut MediaJobOwner,
     ) -> bool {
         match event {
+            AppEvent::SetComposerPreviews(results) => self.finish_composer_previews(results),
             AppEvent::OutboundSendSucceeded { .. } | AppEvent::OutboundSendFailed { .. } => {
                 unreachable!("runtime_loop must route Send events to handle_send_event")
             }

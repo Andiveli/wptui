@@ -26,6 +26,7 @@ pub mod composer;
 pub mod composer_input_mapping;
 pub mod composer_input_paste;
 pub mod composer_integration;
+pub(crate) mod composer_preview;
 pub mod contact_avatars;
 pub mod contact_source_port;
 pub mod contextual_actions;
@@ -273,6 +274,7 @@ pub struct App<'a> {
     presence_diagnostics: PresenceDiagnostics,
 
     pub composer: Composer<'a>,
+    pub(crate) composer_previews: composer_preview::ComposerPreviews,
     pub(crate) composer_direction: ComposerDirection,
     pub(crate) mouse_capture_enabled: bool,
     pub(crate) composer_viewport_width: u16,
