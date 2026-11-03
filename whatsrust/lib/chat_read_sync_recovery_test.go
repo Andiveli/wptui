@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"reflect"
 	"testing"
 	"time"
@@ -144,6 +145,163 @@ func TestChatReadStateRecoverySequenceAndBridgeResult(t *testing.T) {
 	}
 	if got := C_MarkChatReadStateSync(nil, nil, false, 0, false, nil); got != 1 {
 		t.Fatalf("unavailable bridge status=%d", got)
+	}
+}
+
+// Stage evidence must retain discarded errors without changing legacy results.
+func TestChatReadRecoveryStageObservationsPreserveResults(t *testing.T) {
+	conflict := fmt.Errorf("%w: %w", whatsmeow.ErrAppStateUpdate, appstate.ErrMismatchingLTHash)
+	fetchFailure := errors.New("private fetch payload")
+	resendFailure := fmt.Errorf("private resend identity: %w", whatsmeow.ErrAppStateUpdate)
+	type observation struct {
+		stage string
+		err   error
+	}
+	for _, tt := range []struct {
+		name, category         string
+		initial, fetch, resend error
+		exhausted              bool
+		wantErr                error
+		wantCalls              []string
+		wantEvents             []observation
+	}{
+		{name: "fetch failure", category: "other", initial: conflict, fetch: fetchFailure, wantErr: fetchFailure,
+			wantCalls: []string{"send", "fetch"}, wantEvents: []observation{{"initial_send", conflict}, {"recovery_fetch", fetchFailure}}},
+		{name: "resend failure", category: "appstate_rejected", initial: conflict, resend: resendFailure, wantErr: resendFailure,
+			wantCalls: []string{"send", "fetch", "send"}, wantEvents: []observation{{"initial_send", conflict}, {"recovery_fetch", nil}, {"resend", resendFailure}}},
+		{name: "resend success", category: "none", initial: conflict,
+			wantCalls: []string{"send", "fetch", "send"}, wantEvents: []observation{{"initial_send", conflict}, {"recovery_fetch", nil}, {"resend", nil}}},
+		{name: "simple rejection", category: "appstate_rejected", initial: whatsmeow.ErrAppStateUpdate, wantErr: whatsmeow.ErrAppStateUpdate,
+			wantCalls: []string{"send"}, wantEvents: []observation{{"initial_send", whatsmeow.ErrAppStateUpdate}}},
+		{name: "exhausted budget", category: "appstate_cause_lt_hash", initial: conflict, fetch: fetchFailure, exhausted: true, wantErr: conflict,
+			wantCalls: []string{"send"}, wantEvents: []observation{{"initial_send", conflict}}},
+	} {
+		for _, enabled := range []bool{false, true} {
+			for _, read := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/observe=%v/read=%v", tt.name, enabled, read), func(t *testing.T) {
+					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					defer cancel()
+					var state clientLifecycleState
+					identity := &whatsmeow.Client{}
+					state.publishClient(identity)
+					var calls []string
+					var events []observation
+					client := readRecoveryClient{
+						send: func(context.Context, appstate.PatchInfo) error {
+							calls = append(calls, "send")
+							if len(calls) == 1 {
+								return tt.initial
+							}
+							return tt.resend
+						},
+						fetch: func(context.Context, appstate.WAPatchName, bool, bool) error {
+							calls = append(calls, "fetch")
+							return tt.fetch
+						},
+					}
+					patch, err := buildChatReadStateSyncPatch("alice@s.whatsapp.net", "latest", read, 42, false, "")
+					if err != nil {
+						t.Fatal(err)
+					}
+					scope := func(ctx context.Context, name appstate.WAPatchName, operation func(context.Context) error) (bool, error) {
+						return state.withChatReadRecovery(ctx, identity, name, operation)
+					}
+					if tt.exhausted {
+						if got := sendChatReadStatePatch(ctx, patch, client, scope); got != fetchFailure || !reflect.DeepEqual(calls, []string{"send", "fetch"}) {
+							t.Fatal("budget setup changed recovery result or calls")
+						}
+						calls = nil
+					}
+					var observers []chatReadStageObserver
+					var report bytes.Buffer
+					var output io.Writer
+					if enabled {
+						observers = append(observers, func(stage string, err error) { events = append(events, observation{stage, err}) })
+						output = &report
+					}
+					var result error
+					status := markReadResultWithTrace(func() error {
+						result = sendChatReadStatePatch(ctx, patch, client, scope, observers...)
+						return result
+					}, output)
+					wantStatus := 0
+					if tt.wantErr != nil {
+						wantStatus = 2
+					}
+					wantReport := ""
+					var wantEvents []observation
+					if enabled {
+						wantReport = fmt.Sprintf("stage=bridge status=%d category=%s\n", wantStatus, tt.category)
+						wantEvents = tt.wantEvents
+					}
+					if result != tt.wantErr || int(status) != wantStatus || !reflect.DeepEqual(calls, tt.wantCalls) || report.String() != wantReport {
+						t.Fatal("observer changed returned error, bridge status/report, or send/fetch order")
+					}
+					if len(events) != len(wantEvents) {
+						t.Fatalf("stage observations missing or changed: got %d events, want %d", len(events), len(wantEvents))
+					}
+					for i, event := range events {
+						if event.stage != wantEvents[i].stage || event.err != wantEvents[i].err {
+							t.Fatalf("stage observation %d changed order or original error", i)
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestChatReadRecoveryTraceUsesExistingOptInCallback(t *testing.T) {
+	conflict := fmt.Errorf("%w: %w", whatsmeow.ErrAppStateUpdate, appstate.ErrMismatchingLTHash)
+	rejection := fmt.Errorf("private payload: %w", whatsmeow.ErrAppStateUpdate)
+	for _, path := range []string{"", "opt-in-report"} {
+		t.Run(path, func(t *testing.T) {
+			var state clientLifecycleState
+			identity := &whatsmeow.Client{}
+			state.publishClient(identity)
+			var records, calls []string
+			output := readSyncTraceOutput(path, func(record string) { records = append(records, record) })
+			observer := readSyncStageTrace(output)
+			if path == "" && observer != nil {
+				t.Fatal("disabled trace installed an observer")
+			}
+			client := readRecoveryClient{
+				send: func(context.Context, appstate.PatchInfo) error {
+					calls = append(calls, "send")
+					if len(calls) == 1 {
+						return conflict
+					}
+					return rejection
+				},
+				fetch: func(context.Context, appstate.WAPatchName, bool, bool) error {
+					calls = append(calls, "fetch")
+					return nil
+				},
+			}
+			var result error
+			status := markReadResultWithTrace(func() error {
+				result = sendChatReadStatePatch(context.Background(), appstate.PatchInfo{Type: appstate.WAPatchRegularLow}, client,
+					func(ctx context.Context, name appstate.WAPatchName, operation func(context.Context) error) (bool, error) {
+						return state.withChatReadRecovery(ctx, identity, name, operation)
+					}, observer)
+				return result
+			}, output)
+			if result != rejection || status != 2 || !reflect.DeepEqual(calls, []string{"send", "fetch", "send"}) {
+				t.Fatal("trace changed returned error, status, or network call order")
+			}
+			var want []string
+			if path != "" {
+				want = []string{
+					"stage=initial_send status=2 category=appstate_cause_lt_hash",
+					"stage=recovery_fetch status=0 category=none",
+					"stage=resend status=2 category=appstate_rejected",
+					"stage=bridge status=2 category=appstate_rejected",
+				}
+			}
+			if !reflect.DeepEqual(records, want) {
+				t.Fatal("callback did not receive the exact safe stage sequence and legacy result")
+			}
+		})
 	}
 }
 

@@ -103,8 +103,17 @@ impl MessageActionDiagnostics {
 
     pub fn record_go_log(&self, message: &str) {
         if let Some(entry) = message.strip_prefix("READ_SYNC_TRACE ") {
-            // Reconstruct from an exact allowlist, not arbitrary Go log fields.
-            if let Some(category) = entry.strip_prefix("stage=bridge status=2 category=") {
+            // Reconstruct from exact stage and outcome allowlists, not arbitrary Go fields.
+            let Some((stage, outcome)) = entry.split_once(' ') else {
+                return;
+            };
+            if !matches!(
+                stage,
+                "stage=bridge" | "stage=initial_send" | "stage=recovery_fetch" | "stage=resend"
+            ) {
+                return;
+            }
+            if let Some(category) = outcome.strip_prefix("status=2 category=") {
                 if matches!(
                     category,
                     "cancelled"
@@ -141,14 +150,13 @@ impl MessageActionDiagnostics {
                         | "iq_timeout"
                         | "client_nil"
                 ) {
-                    self.trace_line(|| format!("stage=bridge status=2 category={category}\n"));
+                    self.trace_line(|| format!("{stage} status=2 category={category}\n"));
                 }
             } else if matches!(
-                entry,
-                "stage=bridge status=0 category=none"
-                    | "stage=bridge status=1 category=unavailable"
+                outcome,
+                "status=0 category=none" | "status=1 category=unavailable"
             ) {
-                self.trace_line(|| format!("{entry}\n"));
+                self.trace_line(|| format!("{stage} {outcome}\n"));
             }
             return;
         }
@@ -591,6 +599,81 @@ mod tests {
     }
 
     #[test]
+    fn read_sync_trace_accepts_closed_recovery_stages_and_legacy_bridge_in_order() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("trace.txt");
+        let diagnostics =
+            MessageActionDiagnostics::new(false).with_read_sync_trace(Some(path.clone()));
+        let mut expected = String::new();
+        for stage in ["initial_send", "recovery_fetch", "resend", "bridge"] {
+            for outcome in [
+                "status=0 category=none",
+                "status=2 category=appstate_cause_lt_hash",
+                "status=2 category=other",
+                "status=2 category=appstate_rejected",
+                "status=2 category=resync_after_send",
+            ] {
+                let record = format!("stage={stage} {outcome}");
+                diagnostics.record_go_log(&format!("READ_SYNC_TRACE {record}"));
+                expected.push_str(&format!("{record}\n"));
+                assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn read_sync_trace_rejects_unknown_stages_and_malformed_stage_outcomes_without_using_cap() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("trace.txt");
+        let diagnostics =
+            MessageActionDiagnostics::new(false).with_read_sync_trace(Some(path.clone()));
+        for _ in 0..MAX_DIAGNOSTIC_ENTRIES {
+            for stage in ["initial_send", "recovery_fetch", "resend"] {
+                for outcome in [
+                    "status=2 category=private-category",
+                    "status=2 category=other payload=secret",
+                    "status=2 category=other\nprivate=secret",
+                    "status=2 category=other\n",
+                    "status=2 category=other ",
+                    "status=2 category=OTHER",
+                    "status=0 category=other",
+                    "status=2 category=none",
+                    "status=1 category=other",
+                ] {
+                    diagnostics.record_go_log(&format!("READ_SYNC_TRACE stage={stage} {outcome}"));
+                }
+            }
+            for stage in [
+                "private-stage",
+                "INITIAL_SEND",
+                "initial_send extra=secret",
+                "",
+            ] {
+                diagnostics.record_go_log(&format!(
+                    "READ_SYNC_TRACE stage={stage} status=2 category=other"
+                ));
+            }
+        }
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
+        let records = [
+            "stage=initial_send status=2 category=appstate_cause_lt_hash",
+            "stage=recovery_fetch status=0 category=none",
+            "stage=resend status=2 category=appstate_rejected",
+            "stage=bridge status=2 category=appstate_rejected",
+        ];
+        for index in 0..MAX_DIAGNOSTIC_ENTRIES + 1 {
+            diagnostics.record_go_log(&format!(
+                "READ_SYNC_TRACE {}",
+                records[index % records.len()]
+            ));
+        }
+        let expected: String = (0..MAX_DIAGNOSTIC_ENTRIES)
+            .map(|index| format!("{}\n", records[index % records.len()]))
+            .collect();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
+    }
+
+    #[test]
     fn disabled_diagnostics_do_no_work_or_print() {
         let diagnostics = MessageActionDiagnostics::new(false);
         let mut evaluated = false;
@@ -599,6 +682,11 @@ mod tests {
             "not recorded".to_owned()
         });
         diagnostics.record_go_log("MESSAGE_ACTION_DIAG classifier=raw result=classified");
+        for stage in ["initial_send", "recovery_fetch", "resend"] {
+            diagnostics.record_go_log(&format!(
+                "READ_SYNC_TRACE stage={stage} status=2 category=other"
+            ));
+        }
         let mut output = Vec::new();
         diagnostics.write_report(&mut output).unwrap();
 
