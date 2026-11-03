@@ -303,6 +303,15 @@ matches (both wrap); `j`/`k` still visit every message. `Esc` clears the search.
 list, `/` still searches contacts, and `/` in the composer remains ordinary text. This does not
 search other chats, remote history, file captions, or media.
 
+Consecutive photos and videos from the same sender appear as a compact pile
+with a count in chat history, for both received and sent messages. Text, other
+senders, date changes, deleted messages, and unread boundaries split piles.
+The newest message is shown by default. `j`/`k` still visit each original
+message; selecting a member brings its own preview, caption, quote, and actions
+to the front. Only the displayed member counts as visible for read receipts.
+`v` starts on that member and still browses all photos/videos in the chat, not
+just its pile. Status updates retain their separate cards.
+
 Use `j`/`k` or the arrow keys inside menus, then press `Enter` to confirm. Available actions depend
 on the selected message. In Status, press `Enter` on your own contact to open the Create status
 pane in navigation. Select one published update with `j`/`k` or `↓`/`↑`, then press `d` to revoke it; `i`

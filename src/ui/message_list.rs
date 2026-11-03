@@ -30,6 +30,8 @@ mod message_list_reconciliation;
 mod message_list_state;
 #[path = "message_media.rs"]
 mod message_media;
+#[path = "message_stacks.rs"]
+mod message_stacks;
 #[path = "message_viewport.rs"]
 mod message_viewport;
 
@@ -659,9 +661,14 @@ fn spacing_after_message(
     author_groups: &[AuthorGroupContext],
     selected: Option<usize>,
 ) -> usize {
-    let has_older_neighbor = index + 1 < author_groups.len();
+    if author_groups[index].stack_count == 0 {
+        return 0;
+    }
+    let older =
+        (index + 1..author_groups.len()).find(|older| author_groups[*older].stack_count != 0);
+    let has_older_neighbor = older.is_some();
     let continuation = !author_groups[index].starts_group();
-    let selected_at_boundary = selected == Some(index) || selected == Some(index + 1);
+    let selected_at_boundary = selected == Some(index) || selected.is_some() && selected == older;
 
     usize::from(has_older_neighbor && (!continuation || selected_at_boundary))
 }
@@ -736,7 +743,20 @@ fn render_message(
     let status = status_label(app, &message.info.id);
     let forwarding = forwarding_label(message);
 
-    let msg_area = message_content_area(msg_block.inner(area), is_selected);
+    let mut msg_area = message_content_area(msg_block.inner(area), is_selected);
+    if author_group.stack_count > 1 {
+        let [pile, detail] = Layout::vertical([
+            Constraint::Length(author_group.stack_height() as u16),
+            Constraint::Min(0),
+        ])
+        .areas(msg_area);
+        let lines = vec![
+            Line::raw("  ┌────────"),
+            Line::raw(format!(" ┌─ {} photos/videos", author_group.stack_count)),
+        ];
+        Paragraph::new(lines).dark_gray().render(pile, buf);
+        msg_area = detail;
+    }
     let quote_lines = message.info.quote_id.as_ref().map(|quote_id| {
         let summary = app
             .messages
@@ -1211,6 +1231,11 @@ fn render_message_items(
         return Some(());
     }
 
+    let author_groups: Arc<[AuthorGroupContext]> = if text_mode == MessageTextMode::Chat {
+        message_stacks::project(app, &items, &author_groups, unread_count).into()
+    } else {
+        author_groups
+    };
     app.mouse_hit_map.message_list = Some(list_area);
     let width = list_area.width as isize;
     let selection_started = app.message_list_phase_started();
