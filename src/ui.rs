@@ -5,6 +5,7 @@ mod contacts;
 pub(crate) mod layout;
 pub mod message_list;
 mod navigation;
+mod news;
 mod status;
 pub mod status_list;
 pub mod text_input;
@@ -92,6 +93,8 @@ pub fn draw_with_plan(
             render_structural_placeholder(frame, app, area);
         }
         render_logout_placeholder(frame, app, areas.conversation);
+    } else if app.selected_section == Section::News {
+        news::render(frame, app, areas.chat_list, areas.conversation);
     } else if app.selected_section == Section::Chats {
         if let Some(area) = areas.chat_list {
             app.record_phase(Phase::ContactsChatProjectionRows, |app| {

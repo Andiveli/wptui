@@ -72,6 +72,7 @@ impl App<'_> {
 
     pub(crate) fn move_chat_selection(&mut self, delta: isize) {
         match self.selected_section {
+            Section::News => self.news.move_selection(delta),
             Section::Status => {
                 if delta > 0 {
                     self.status_selection.select_next();
@@ -107,6 +108,7 @@ impl App<'_> {
                     self.clamp_status_selection();
                 }
                 Section::Chats | Section::Communities => self.chat_list_state.select_first(),
+                Section::News => self.news.select(0),
             },
             FocusPane::Conversation | FocusPane::SectionRail => {}
         }
@@ -120,6 +122,7 @@ impl App<'_> {
                     self.clamp_status_selection();
                 }
                 Section::Chats | Section::Communities => self.chat_list_state.select_last(),
+                Section::News => self.news.select(self.news.note_count() - 1),
             },
             FocusPane::Conversation | FocusPane::SectionRail => {}
         }

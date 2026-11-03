@@ -13,7 +13,7 @@ fn rail_logout_navigation_and_confirmation_preserve_focus_and_section() {
 
     app.dispatch_action(AppAction::JumpBottom);
     assert!(app.rail_on_logout);
-    assert_eq!(app.selected_section, Section::Communities);
+    assert_eq!(app.selected_section, Section::News);
     app.on_terminal_event(Event::Key(KeyEvent::new(
         KeyCode::Enter,
         KeyModifiers::NONE,

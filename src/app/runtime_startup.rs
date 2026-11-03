@@ -14,6 +14,7 @@ mod tests;
 /// handoff to the already-running event loop in their original order.
 pub(crate) fn run(app: &mut App<'_>, phone: Option<String>) {
     crate::updater::startup_check(app.tx.clone());
+    app.refresh_news();
     app.db_handler.init();
     prepare_persisted_state(app);
 

@@ -16,6 +16,8 @@ pub(crate) struct MouseHitMap {
     pub(crate) status_contact: Option<wr::JID>,
     pub(crate) status_composition: StatusCompositionState,
     pub(crate) chat_list: Option<Rect>,
+    pub(crate) news_rows: Vec<(Rect, usize)>,
+    pub(crate) news_body: Option<Rect>,
     pub(crate) section_rows: Vec<SectionHit>,
     pub(crate) filter_labels: Vec<FilterHit>,
     pub(crate) contact_rows: Vec<ContactHit>,
@@ -138,6 +140,48 @@ impl App<'_> {
         }
         if self.mouse_hit_map.picker.is_some() {
             return; // A picker closed since the last draw; do not use stale base hits.
+        }
+        if self.selected_section == Section::News && !self.rail_on_logout {
+            let body = self
+                .mouse_hit_map
+                .news_body
+                .is_some_and(|area| area.contains(point));
+            let list = self
+                .mouse_hit_map
+                .chat_list
+                .is_some_and(|area| area.contains(point));
+            match event.kind {
+                MouseEventKind::ScrollDown | MouseEventKind::ScrollUp if body || list => {
+                    let delta = if event.kind == MouseEventKind::ScrollDown {
+                        1
+                    } else {
+                        -1
+                    };
+                    if body {
+                        self.news.scroll_by(delta * 3);
+                    } else {
+                        self.news.move_selection(delta);
+                    }
+                    return;
+                }
+                MouseEventKind::Down(MouseButton::Left) if body || list => {
+                    if let Some((_, index)) = self
+                        .mouse_hit_map
+                        .news_rows
+                        .iter()
+                        .find(|(area, _)| area.contains(point))
+                    {
+                        self.news.select(*index);
+                    }
+                    self.focus_pane = if body {
+                        FocusPane::Conversation
+                    } else {
+                        FocusPane::ChatList
+                    };
+                    return;
+                }
+                _ => {}
+            }
         }
         match event.kind {
             MouseEventKind::ScrollDown | MouseEventKind::ScrollUp => {
