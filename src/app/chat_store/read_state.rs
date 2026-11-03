@@ -127,7 +127,7 @@ impl App<'_> {
         if id.is_some() && message.is_none() {
             return false;
         }
-        self.chat_read_sync.schedule_state(
+        let accepted = self.chat_read_sync.schedule_state(
             chat,
             id,
             read,
@@ -136,10 +136,14 @@ impl App<'_> {
             message
                 .filter(|_| Self::is_group_chat(chat))
                 .map(|message| &message.info.sender),
-        )
+        );
+        self.message_action_diagnostics.trace_queue(accepted, read);
+        accepted
     }
 
     pub(crate) fn toggle_chat_read(&mut self, chat: &wr::JID) {
+        use super::super::message_action_diagnostics::ReadSyncStage;
+        self.trace_read_sync_snapshot(chat, ReadSyncStage::ToggleBefore);
         let read = self.chat_is_unread(chat);
         let latest = self
             .chat_messages
@@ -148,6 +152,7 @@ impl App<'_> {
             .cloned();
         if !self.schedule_chat_read_state(chat, latest.as_ref(), read) {
             self.unavailable("Could not schedule chat read/unread sync");
+            self.trace_read_sync_snapshot(chat, ReadSyncStage::ToggleAfter);
             return;
         }
         if read {
@@ -155,6 +160,7 @@ impl App<'_> {
         } else {
             self.set_manual_unread(chat, true);
         }
+        self.trace_read_sync_snapshot(chat, ReadSyncStage::ToggleAfter);
     }
 
     /// Opening acknowledges only the manual flag, at the existing read boundary.

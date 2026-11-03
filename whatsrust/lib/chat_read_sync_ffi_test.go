@@ -32,6 +32,9 @@ func TestReadSyncTracePreservesBridgeResultAndNeverExportsErrorText(t *testing.T
 		{name: "cancelled", category: "cancelled", err: fmt.Errorf("private: %w", context.Canceled), status: 2},
 		{name: "timeout", category: "timeout", err: fmt.Errorf("private: %w", context.DeadlineExceeded), status: 2},
 		{name: "unknown", category: "other", err: errors.New("private-chat@s.whatsapp.net private-message-id 1700000042 private message text key=secret payload=secret"), status: 2},
+		{name: "missing key", category: "missing_key", err: errors.New("no app state keys found, creating app state keys is not yet supported"), status: 2},
+		{name: "key lookup", category: "key_lookup", err: errors.New("failed to get latest app state key ID: private-key"), status: 2},
+		{name: "after send", category: "resync_after_send", err: fmt.Errorf("failed to fetch app state after sending update: %w", context.DeadlineExceeded), status: 2},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			for _, enabled := range []bool{false, true} {
@@ -59,6 +62,33 @@ func TestReadSyncTracePreservesBridgeResultAndNeverExportsErrorText(t *testing.T
 				}
 			}
 		})
+	}
+}
+
+type failingReadSyncReport struct{}
+
+func (failingReadSyncReport) Write([]byte) (int, error) { return 0, errors.New("private path") }
+
+func TestReadSyncRuntimeOutputAndReportFailureDoNotChangeResult(t *testing.T) {
+	for _, path := range []string{"", "user-selected-report"} {
+		var records []string
+		output := readSyncTraceOutput(path, func(record string) { records = append(records, record) })
+		calls := 0
+		got := markReadResultWithTrace(func() error { calls++; return nil }, output)
+		want := 0
+		if path != "" {
+			want = 1
+		}
+		if got != 0 || calls != 1 || len(records) != want {
+			t.Fatalf("status=%d calls=%d records=%v", got, calls, records)
+		}
+		if want == 1 && records[0] != "stage=bridge status=0 category=none" {
+			t.Fatalf("record=%q", records[0])
+		}
+	}
+	calls := 0
+	if got := markReadResultWithTrace(func() error { calls++; return context.Canceled }, failingReadSyncReport{}); got != 2 || calls != 1 {
+		t.Fatalf("status=%d calls=%d after report failure", got, calls)
 	}
 }
 
