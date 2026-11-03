@@ -158,6 +158,154 @@ mod tests {
         assert_eq!(row.row_style, RowStyle::Enabled);
     }
 
+    // The injected path models WPTUI_READ_SYNC_TRACE without process-global env mutation.
+    #[test]
+    fn read_sync_trace_observes_menu_toggle_and_queue_without_changing_behavior() {
+        use crate::app::message_action_diagnostics::MessageActionDiagnostics;
+        use crate::app::test_support::{
+            FakeChatReadCursorPort, RecordingChatReadSyncPort, message,
+        };
+        use crate::ui::contact_list::ContactListItem;
+
+        for enabled in [false, true] {
+            for accepted in [false, true] {
+                let directory = tempfile::tempdir().unwrap();
+                let path = directory.path().join("read-sync.txt");
+                let mut app = TestApp::new();
+                app.message_action_diagnostics = MessageActionDiagnostics::new(false)
+                    .with_read_sync_trace(enabled.then_some(path.clone()));
+                let chat = whatsrust::JID::from("private-chat@s.whatsapp.net".to_owned());
+                let mut latest = message(&chat, "private-message-id", 1700000042);
+                latest.message = whatsrust::MessageContent::Text("private message text".into());
+                app.add_message(latest);
+                app.sort_chats();
+                app.focus_pane = FocusPane::ChatList;
+                app.chat_list_state.select(Some(0));
+                let sync = RecordingChatReadSyncPort::default();
+                *sync.schedule_result.lock().unwrap() = accepted;
+                app.set_chat_read_sync(Box::new(sync.clone()));
+                let cursor = FakeChatReadCursorPort::default();
+                app.set_chat_read_cursor(Box::new(cursor.clone()));
+                let before = ContactListItem::from_chat(&app, &chat);
+                let boundary = app.unread_boundary(&chat);
+
+                open_read_menu(&mut app, "Mark as read");
+                press(&mut app, 'm');
+                assert!(app.contextual_menu.is_none());
+                assert_eq!(app.open_chat(), None);
+                assert_eq!(sync.state_calls.lock().unwrap().len(), 1);
+                assert_eq!(sync.state_calls.lock().unwrap()[0].read, true);
+                assert_eq!(cursor.stored.lock().unwrap().len(), usize::from(accepted));
+                if accepted {
+                    assert!(!ContactListItem::from_chat(&app, &chat).unread);
+                    assert_eq!(app.pending_new_messages(&chat), 0);
+                    assert_eq!(app.unread_boundary(&chat), None);
+                    assert!(app.action_notice.is_none());
+                } else {
+                    assert_eq!(ContactListItem::from_chat(&app, &chat), before);
+                    assert_eq!(app.pending_new_messages(&chat), 1);
+                    assert_eq!(app.unread_boundary(&chat), boundary);
+                    assert!(matches!(&app.action_notice,
+                        Some(crate::app::actions::ActionNotice::Unavailable(text))
+                        if text == "Could not schedule chat read/unread sync"));
+                }
+                open_read_menu(
+                    &mut app,
+                    if accepted {
+                        "Mark as unread"
+                    } else {
+                        "Mark as read"
+                    },
+                );
+                if enabled {
+                    let unread = !accepted;
+                    assert_eq!(
+                        std::fs::read_to_string(&path).unwrap(),
+                        format!(
+                            "stage=menu unread=true manual=false pending=1\n\
+                         stage=toggle_before unread=true manual=false pending=1\n\
+                         stage=queue accepted={accepted} read=true\n\
+                         stage=toggle_after unread={unread} manual=false pending={}\n\
+                         stage=menu unread={unread} manual=false pending={}\n",
+                            usize::from(unread),
+                            usize::from(unread),
+                        )
+                    );
+                } else {
+                    assert!(!path.exists(), "disabled tracing must not create a report");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn read_sync_trace_is_bounded_and_observes_manual_unread() {
+        use crate::app::message_action_diagnostics::MessageActionDiagnostics;
+        use crate::app::test_support::RecordingChatReadSyncPort;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("read-sync.txt");
+        let mut app = TestApp::new();
+        app.message_action_diagnostics =
+            MessageActionDiagnostics::new(false).with_read_sync_trace(Some(path.clone()));
+        let sync = RecordingChatReadSyncPort::default();
+        app.set_chat_read_sync(Box::new(sync.clone()));
+        app.handle_whatsapp_event(whatsrust::Event::Chat {
+            jid: whatsrust::JID::from("private-empty@s.whatsapp.net".to_owned()),
+            last_message_time: 0,
+        });
+        app.focus_pane = FocusPane::ChatList;
+        app.chat_list_state.select(Some(0));
+        open_read_menu(&mut app, "Mark as unread");
+        press(&mut app, 'm');
+        open_read_menu(&mut app, "Mark as read");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "stage=menu unread=false manual=false pending=0\n\
+             stage=toggle_before unread=false manual=false pending=0\n\
+             stage=queue accepted=true read=false\n\
+             stage=toggle_after unread=true manual=true pending=0\n\
+             stage=menu unread=true manual=true pending=0\n"
+        );
+        for _ in 0..120 {
+            app.open_contextual_actions();
+        }
+        let report = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            report.lines().count(),
+            100,
+            "stop writing at the report cap"
+        );
+        assert!(report.len() < 16 * 1024);
+        assert_eq!(sync.state_calls.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn read_sync_trace_io_failure_does_not_reject_an_existing_toggle() {
+        use crate::app::message_action_diagnostics::MessageActionDiagnostics;
+        use crate::app::test_support::RecordingChatReadSyncPort;
+
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = TestApp::new();
+        // A directory cannot be opened as a report file; no permissions assumptions.
+        app.message_action_diagnostics = MessageActionDiagnostics::new(false)
+            .with_read_sync_trace(Some(directory.path().to_path_buf()));
+        let sync = RecordingChatReadSyncPort::default();
+        app.set_chat_read_sync(Box::new(sync.clone()));
+        app.handle_whatsapp_event(whatsrust::Event::Chat {
+            jid: whatsrust::JID::from("private-empty@s.whatsapp.net".to_owned()),
+            last_message_time: 0,
+        });
+        app.focus_pane = FocusPane::ChatList;
+        app.chat_list_state.select(Some(0));
+        open_read_menu(&mut app, "Mark as unread");
+        press(&mut app, 'm');
+        open_read_menu(&mut app, "Mark as read");
+        assert_eq!(sync.state_calls.lock().unwrap().len(), 1);
+        assert!(app.action_notice.is_none());
+        assert_eq!(app.open_chat(), None);
+    }
+
     #[test]
     fn contextual_read_toggle_targets_the_visible_selected_chat() {
         use crate::app::test_support::{
