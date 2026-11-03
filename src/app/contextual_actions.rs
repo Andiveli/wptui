@@ -226,10 +226,10 @@ pub const CONTEXTUAL_ACTION_METADATA: [ContextualActionMetadata; 24] = [
     ),
     m(
         ContextualAction::MarkRead,
-        "Mark as read/unread",
+        "Mark as read",
         'm',
         ContextualScope::ChatList,
-        ImplementationStatus::Planned,
+        ImplementationStatus::Implemented,
     ),
     m(
         ContextualAction::ViewContact,

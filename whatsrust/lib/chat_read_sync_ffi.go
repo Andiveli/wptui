@@ -43,12 +43,17 @@ type markChatAsReadEvent struct {
 }
 
 func markChatAsReadEventFromEvent(event *events.MarkChatAsRead) (markChatAsReadEvent, bool) {
-	if event == nil || event.Action == nil || event.Action.MessageRange == nil {
+	if event == nil || event.Action == nil || event.JID.IsEmpty() {
 		return markChatAsReadEvent{}, false
 	}
 	rangeInfo := event.Action.MessageRange
-	if event.JID.IsEmpty() || rangeInfo.GetLastMessageTimestamp() == 0 {
-		return markChatAsReadEvent{}, false
+	if event.Action.GetRead() {
+		if rangeInfo == nil || rangeInfo.LastMessageTimestamp == nil {
+			return markChatAsReadEvent{}, false
+		}
+		if rangeInfo.GetLastMessageTimestamp() == 0 && len(rangeInfo.GetMessages()) > 0 {
+			return markChatAsReadEvent{}, false
+		}
 	}
 	result := markChatAsReadEvent{
 		chat:      event.JID.String(),
@@ -104,13 +109,22 @@ func buildChatReadSyncPatch(chat, messageID string, timestamp int64, fromMe bool
 	if messageID == "" {
 		return appstate.PatchInfo{}, fmt.Errorf("empty message ID")
 	}
-	remoteJID := chat
-	id := messageID
-	key := &waCommon.MessageKey{RemoteJID: &remoteJID, FromMe: &fromMe, ID: &id}
-	if participant != "" {
-		key.Participant = &participant
+	return buildChatReadStateSyncPatch(chat, messageID, true, timestamp, fromMe, participant)
+}
+
+func buildChatReadStateSyncPatch(chat, messageID string, read bool, timestamp int64, fromMe bool, participant string) (appstate.PatchInfo, error) {
+	target, err := types.ParseJID(chat)
+	if err != nil || target.IsEmpty() {
+		return appstate.PatchInfo{}, fmt.Errorf("invalid chat JID")
 	}
-	return appstate.BuildMarkChatAsRead(target, true, time.Unix(timestamp, 0), key), nil
+	var key *waCommon.MessageKey
+	if messageID != "" {
+		key = &waCommon.MessageKey{RemoteJID: &chat, FromMe: &fromMe, ID: &messageID}
+		if participant != "" {
+			key.Participant = &participant
+		}
+	}
+	return appstate.BuildMarkChatAsRead(target, read, time.Unix(timestamp, 0), key), nil
 }
 
 func sendChatReadSync(ctx context.Context, chat, messageID string, timestamp int64, fromMe bool, participant string, send chatReadSyncFunc) error {
@@ -118,6 +132,17 @@ func sendChatReadSync(ctx context.Context, chat, messageID string, timestamp int
 		return fmt.Errorf("nil chat read sync sender")
 	}
 	patch, err := buildChatReadSyncPatch(chat, messageID, timestamp, fromMe, participant)
+	if err != nil {
+		return err
+	}
+	return send(ctx, patch)
+}
+
+func sendChatReadStateSync(ctx context.Context, chat, messageID string, read bool, timestamp int64, fromMe bool, participant string, send chatReadSyncFunc) error {
+	if send == nil {
+		return fmt.Errorf("nil chat read sync sender")
+	}
+	patch, err := buildChatReadStateSyncPatch(chat, messageID, read, timestamp, fromMe, participant)
 	if err != nil {
 		return err
 	}
@@ -141,6 +166,37 @@ func C_MarkChatReadSync(chatJID *C.char, messageID *C.char, timestamp C.longlong
 	}
 	return markReadResult(func() error {
 		return sendChatReadSync(ctx, C.GoString(chatJID), C.GoString(messageID), int64(timestamp), bool(fromMe), participant,
+			func(ctx context.Context, patch appstate.PatchInfo) error {
+				return clientSnapshot.SendAppState(ctx, patch)
+			})
+	})
+}
+
+// C_MarkChatReadStateSync sends chat-level app-state, never message receipts.
+// A nil messageID represents an empty chat; a non-nil ID must not be empty.
+// Status chats must continue using C_MarkAsRead instead.
+//
+//export C_MarkChatReadStateSync
+func C_MarkChatReadStateSync(chatJID *C.char, messageID *C.char, read C.bool, timestamp C.longlong, fromMe C.bool, participantJID C.JID) C.int {
+	clientSnapshot := lifecycleState.clientSnapshot()
+	if clientSnapshot == nil || chatJID == nil {
+		return 1
+	}
+	id := ""
+	if messageID != nil {
+		id = C.GoString(messageID)
+		if id == "" {
+			return markReadResult(func() error { return fmt.Errorf("empty message ID") })
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	participant := ""
+	if participantJID != nil {
+		participant = C.GoString(participantJID)
+	}
+	return markReadResult(func() error {
+		return sendChatReadStateSync(ctx, C.GoString(chatJID), id, bool(read), int64(timestamp), bool(fromMe), participant,
 			func(ctx context.Context, patch appstate.PatchInfo) error {
 				return clientSnapshot.SendAppState(ctx, patch)
 			})
