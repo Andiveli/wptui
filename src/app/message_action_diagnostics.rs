@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
+use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 const MAX_DIAGNOSTIC_ENTRIES: usize = 100;
@@ -17,6 +19,15 @@ struct DiagnosticState {
     census_entries: VecDeque<String>,
     read_sync_entries: VecDeque<String>,
     reported: bool,
+    trace: Option<File>,
+    trace_count: usize,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum ReadSyncStage {
+    Menu,
+    ToggleBefore,
+    ToggleAfter,
 }
 
 impl MessageActionDiagnostics {
@@ -24,6 +35,61 @@ impl MessageActionDiagnostics {
         Self {
             enabled,
             state: Arc::new(Mutex::new(DiagnosticState::default())),
+        }
+    }
+
+    /// A separate, strict report; never exports the broader diagnostic buffers.
+    /// Only a new report may be created; existing files are never overwritten.
+    /// Failure silently disables capture.
+    pub fn with_read_sync_trace(self, path: Option<PathBuf>) -> Self {
+        if let Ok(mut state) = self.state.lock() {
+            state.trace = path.and_then(|path| {
+                OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(path)
+                    .ok()
+            });
+            state.trace_count = 0;
+        }
+        self
+    }
+
+    pub(crate) fn trace_snapshot(
+        &self,
+        stage: ReadSyncStage,
+        unread: bool,
+        manual: bool,
+        pending: usize,
+    ) {
+        let stage = match stage {
+            ReadSyncStage::Menu => "menu",
+            ReadSyncStage::ToggleBefore => "toggle_before",
+            ReadSyncStage::ToggleAfter => "toggle_after",
+        };
+        self.trace_line(|| {
+            format!("stage={stage} unread={unread} manual={manual} pending={pending}\n")
+        });
+    }
+
+    pub(crate) fn trace_queue(&self, accepted: bool, read: bool) {
+        self.trace_line(|| format!("stage=queue accepted={accepted} read={read}\n"));
+    }
+
+    fn trace_line(&self, line: impl FnOnce() -> String) {
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        if state.trace_count >= MAX_DIAGNOSTIC_ENTRIES {
+            return;
+        }
+        if let Some(file) = state.trace.as_mut() {
+            // One shared lock covers UI and bridge callback writes, including the cap.
+            // Never hold this lock while invoking a bridge/network operation.
+            if file.write_all(line().as_bytes()).is_err() {
+                state.trace = None;
+            }
+            state.trace_count += 1;
         }
     }
 
@@ -36,6 +102,29 @@ impl MessageActionDiagnostics {
     }
 
     pub fn record_go_log(&self, message: &str) {
+        if let Some(entry) = message.strip_prefix("READ_SYNC_TRACE ") {
+            // Reconstruct from an exact allowlist, not arbitrary Go log fields.
+            if let Some(category) = entry.strip_prefix("stage=bridge status=2 category=") {
+                if matches!(
+                    category,
+                    "cancelled"
+                        | "timeout"
+                        | "other"
+                        | "missing_key"
+                        | "key_lookup"
+                        | "resync_after_send"
+                ) {
+                    self.trace_line(|| format!("stage=bridge status=2 category={category}\n"));
+                }
+            } else if matches!(
+                entry,
+                "stage=bridge status=0 category=none"
+                    | "stage=bridge status=1 category=unavailable"
+            ) {
+                self.trace_line(|| format!("{entry}\n"));
+            }
+            return;
+        }
         if !self.enabled {
             return;
         }
@@ -345,6 +434,44 @@ fn safe_value(value: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn read_sync_trace_callback_allowlist_and_concurrent_cap_share_one_sink() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("trace.txt");
+        let diagnostics =
+            MessageActionDiagnostics::new(true).with_read_sync_trace(Some(path.clone()));
+        for malicious in [
+            "READ_SYNC_TRACE stage=bridge status=2 category=other secret=private",
+            "READ_SYNC_TRACE stage=bridge status=0 category=missing_key",
+            "READ_SYNC_TRACE stage=bridge status=2 category=private-message-id",
+            "READ_SYNC_TRACE stage=bridge status=2 category=other\nstolen=true",
+            "MESSAGE_ACTION_DIAG classifier=raw chat=private@s.whatsapp.net",
+        ] {
+            diagnostics.record_go_log(malicious);
+        }
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                let diagnostics = &diagnostics;
+                scope.spawn(move || {
+                    for _ in 0..60 {
+                        diagnostics.trace_snapshot(ReadSyncStage::Menu, true, false, 1);
+                        diagnostics
+                            .record_go_log("READ_SYNC_TRACE stage=bridge status=2 category=other");
+                    }
+                });
+            }
+        });
+        let report = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(report.lines().count(), 100);
+        assert!(report.lines().all(|line| matches!(
+            line,
+            "stage=menu unread=true manual=false pending=1"
+                | "stage=bridge status=2 category=other"
+        )));
+        assert!(report.len() < 16 * 1024);
+    }
 
     #[test]
     fn disabled_diagnostics_do_no_work_or_print() {

@@ -23,7 +23,11 @@ import "C"
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"os"
+	"strings"
 	"time"
 	"unsafe"
 
@@ -97,6 +101,55 @@ func dispatchMarkChatAsReadEvent(event *events.MarkChatAsRead) {
 	payload.participant = participant
 	C.callMarkChatAsReadEventCallback(eventHandler, &C.Event{kind: C.uint8_t(EventTypeMarkChatAsRead), data: unsafe.Pointer(payload)})
 	C.free(unsafe.Pointer(payload))
+}
+
+// Only this formatter can produce read-sync bridge records. Never forward err text.
+func markReadResultWithTrace(send func() error, output io.Writer) C.int {
+	if output == nil {
+		return markReadResult(send)
+	}
+	var err error
+	wrapped := send
+	if send != nil {
+		wrapped = func() error { err = send(); return err }
+	}
+	status := markReadResult(wrapped)
+	category := "none"
+	if send == nil {
+		category = "unavailable"
+	} else if err != nil {
+		switch {
+		case strings.HasPrefix(err.Error(), "failed to fetch app state after sending update:"):
+			category = "resync_after_send"
+		case err.Error() == "no app state keys found, creating app state keys is not yet supported":
+			category = "missing_key"
+		case strings.HasPrefix(err.Error(), "failed to get latest app state key ID:"):
+			category = "key_lookup"
+		case errors.Is(err, context.Canceled):
+			category = "cancelled"
+		case errors.Is(err, context.DeadlineExceeded):
+			category = "timeout"
+		default:
+			category = "other"
+		}
+	}
+	// Diagnostic failures must never replace the original bridge result.
+	_, _ = fmt.Fprintf(output, "stage=bridge status=%d category=%s\n", status, category)
+	return status
+}
+
+type readSyncTraceWriter func(string)
+
+func (emit readSyncTraceWriter) Write(record []byte) (int, error) {
+	emit(strings.TrimSuffix(string(record), "\n"))
+	return len(record), nil
+}
+
+func readSyncTraceOutput(path string, emit func(string)) io.Writer {
+	if path == "" {
+		return nil
+	}
+	return readSyncTraceWriter(emit)
 }
 
 type chatReadSyncFunc func(context.Context, appstate.PatchInfo) error
@@ -178,15 +231,20 @@ func C_MarkChatReadSync(chatJID *C.char, messageID *C.char, timestamp C.longlong
 //
 //export C_MarkChatReadStateSync
 func C_MarkChatReadStateSync(chatJID *C.char, messageID *C.char, read C.bool, timestamp C.longlong, fromMe C.bool, participantJID C.JID) C.int {
+	// The existing callback routes this safe record into the app's single capped
+	// report. Go never opens the path or writes a second, independently capped file.
+	output := readSyncTraceOutput(os.Getenv("WPTUI_READ_SYNC_TRACE"), func(record string) {
+		LOG_DEBUG("READ_SYNC_TRACE %s", record)
+	})
 	clientSnapshot := lifecycleState.clientSnapshot()
 	if clientSnapshot == nil || chatJID == nil {
-		return 1
+		return markReadResultWithTrace(nil, output)
 	}
 	id := ""
 	if messageID != nil {
 		id = C.GoString(messageID)
 		if id == "" {
-			return markReadResult(func() error { return fmt.Errorf("empty message ID") })
+			return markReadResultWithTrace(func() error { return fmt.Errorf("empty message ID") }, output)
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -195,10 +253,10 @@ func C_MarkChatReadStateSync(chatJID *C.char, messageID *C.char, read C.bool, ti
 	if participantJID != nil {
 		participant = C.GoString(participantJID)
 	}
-	return markReadResult(func() error {
+	return markReadResultWithTrace(func() error {
 		return sendChatReadStateSync(ctx, C.GoString(chatJID), id, bool(read), int64(timestamp), bool(fromMe), participant,
 			func(ctx context.Context, patch appstate.PatchInfo) error {
 				return clientSnapshot.SendAppState(ctx, patch)
 			})
-	})
+	}, output)
 }
