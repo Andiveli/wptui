@@ -322,6 +322,13 @@ it is not restored from the local database after restart, though a subsequent
 WhatsApp app-state update can set it again. A queue rejection shows an error and
 leaves the manual action unapplied; queue acceptance is not server confirmation.
 
+**Known limitation:** the contact-menu read/unread action has only been verified
+to update local TUI state. Remote WhatsApp app-state sends are still attempted,
+but current manual validation shows no synchronization with the phone. Do not
+rely on WhatsApp's read/unread state reflecting this action; synchronization
+remains unresolved. The diagnostics and bounded recovery described above do not
+establish a service-level fix.
+
 ### Messages
 
 | Action | Key |
