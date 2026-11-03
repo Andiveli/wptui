@@ -218,6 +218,8 @@ fn real_right_hand_strips_shift_with_original_selection_and_reverse() {
 #[test]
 #[allow(deprecated)] // Deterministic font size without querying the test terminal.
 fn native_crop_payloads_match_the_final_rectangle() {
+    let mut observations = Vec::new();
+    let mut parsed_dimensions = Vec::new();
     for protocol in [ProtocolType::Kitty, ProtocolType::Sixel] {
         let mut cache = StackPreviewCache::default();
         let path: Arc<str> = "native.png".into();
@@ -241,7 +243,23 @@ fn native_crop_payloads_match_the_final_rectangle() {
         let payload = buffer[(2, 2)].symbol();
         assert!(payload.contains('\x1b'));
         assert!(matches!(image, Protocol::Kitty(_) | Protocol::Sixel(_)));
-        assert_eq!(native_payload_dimensions(payload), Some((32, 48)));
+        let variant = match image {
+            Protocol::Kitty(_) => "Kitty",
+            Protocol::Sixel(_) => "Sixel",
+            _ => "non-native",
+        };
+        let prefix = payload
+            .chars()
+            .flat_map(char::escape_debug)
+            .take(512)
+            .collect::<String>();
+        let dimensions = native_payload_dimensions(payload);
+        observations.push(format!(
+            "requested={protocol:?} actual={variant} rect={:?} bytes={} dimensions={dimensions:?} prefix={prefix}",
+            Rect::new(2, 2, image.size().width, image.size().height),
+            payload.len(),
+        ));
+        parsed_dimensions.push(dimensions);
         assert_eq!(buffer[(6, 2)].symbol(), " ");
         assert_eq!(buffer[(2, 5)].symbol(), " ");
         assert!(
@@ -250,10 +268,15 @@ fn native_crop_payloads_match_the_final_rectangle() {
         );
         assert!(cache.take_work().is_none());
     }
+    for dimensions in parsed_dimensions {
+        assert_eq!(dimensions, Some((32, 48)), "{}", observations.join("\n"));
+    }
 }
 
 #[test]
 fn native_stacks_clip_payload_pixels_to_the_actual_visible_rows_and_columns() {
+    let mut observations = Vec::new();
+    let mut outcomes = Vec::new();
     for protocol in [ProtocolType::Kitty, ProtocolType::Sixel] {
         let mut app = fixture(false, 4);
         let mut picker = Picker::halfblocks();
@@ -263,9 +286,18 @@ fn native_stacks_clip_payload_pixels_to_the_actual_visible_rows_and_columns() {
         let mut payloads = 0;
         let mut main_payload = false;
         let mut neighbor_payload = false;
+        let mut escaped_cells = Vec::new();
         for y in 0..8 {
             for x in 0..80 {
                 let symbol = buffer[(x, y)].symbol();
+                if symbol.contains('\x1b') && escaped_cells.len() < 8 {
+                    let prefix = symbol
+                        .chars()
+                        .flat_map(char::escape_debug)
+                        .take(192)
+                        .collect::<String>();
+                    escaped_cells.push((x, y, symbol.len(), prefix));
+                }
                 if let Some((width, height)) = native_payload_dimensions(symbol) {
                     payloads += 1;
                     assert!(width > 0 && height > 0);
@@ -283,8 +315,23 @@ fn native_stacks_clip_payload_pixels_to_the_actual_visible_rows_and_columns() {
                 }
             }
         }
-        assert!(payloads >= 2, "main and neighboring real native payloads");
-        assert!(main_payload && neighbor_payload);
+        observations.push(format!(
+            "protocol={protocol:?} font={font:?} viewport={:?} payloads={payloads} main={main_payload} neighbor={neighbor_payload} cells(x,y,bytes,escaped_prefix)={escaped_cells:?}",
+            buffer.area,
+        ));
+        outcomes.push((payloads, main_payload, neighbor_payload));
+    }
+    for (payloads, main_payload, neighbor_payload) in outcomes {
+        assert!(
+            payloads >= 2,
+            "main and neighboring real native payloads\n{}",
+            observations.join("\n")
+        );
+        assert!(
+            main_payload && neighbor_payload,
+            "main and neighbor payloads\n{}",
+            observations.join("\n")
+        );
     }
 }
 
