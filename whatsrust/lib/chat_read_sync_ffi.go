@@ -334,7 +334,10 @@ func C_MarkChatReadStateSync(chatJID *C.char, messageID *C.char, read C.bool, ti
 	return markReadResultWithTrace(func() error {
 		return sendChatReadStateSync(ctx, C.GoString(chatJID), id, bool(read), int64(timestamp), bool(fromMe), participant,
 			func(ctx context.Context, patch appstate.PatchInfo) error {
-				return clientSnapshot.SendAppState(ctx, patch)
+				return sendChatReadStatePatch(ctx, patch, clientSnapshot,
+					func(ctx context.Context, name appstate.WAPatchName, operation func(context.Context) error) (bool, error) {
+						return lifecycleState.withChatReadRecovery(ctx, clientSnapshot, name, operation)
+					})
 			})
 	}, output)
 }
