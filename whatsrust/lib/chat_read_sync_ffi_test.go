@@ -40,8 +40,22 @@ func TestReadSyncTracePreservesBridgeResultAndNeverExportsErrorText(t *testing.T
 		{name: "after send", category: "resync_after_send", err: fmt.Errorf("failed to fetch app state after sending update: %w", context.DeadlineExceeded), status: 2},
 	}
 	privateNode := &binary.Node{Tag: "private-message-id", Content: []byte("private payload key=secret")}
+	privateCause := errors.New("private-chat@s.whatsapp.net private-message-id key=secret payload=secret")
 	typed := []traceCase{
 		{name: "appstate rejected", category: "appstate_rejected", err: whatsmeow.ErrAppStateUpdate},
+		{
+			name: "appstate multi-wrap with cause", category: "appstate_with_cause",
+			err: fmt.Errorf("%w: private response: %w", whatsmeow.ErrAppStateUpdate, privateCause),
+		},
+		{
+			// Join has the same public shape: this label must not imply a numeric code.
+			name: "appstate joined with cause", category: "appstate_with_cause",
+			err: errors.Join(whatsmeow.ErrAppStateUpdate, privateCause),
+		},
+		{
+			name: "appstate joined without cause", category: "appstate_rejected",
+			err: errors.Join(whatsmeow.ErrAppStateUpdate),
+		},
 		{name: "missing element", category: "missing_element", err: &whatsmeow.ElementMissingError{Tag: "private-tag", In: "private-chat@s.whatsapp.net"}},
 		{name: "disconnected", category: "disconnected", err: &whatsmeow.DisconnectedError{Action: "private-action", Node: privateNode}},
 		{name: "not connected", category: "disconnected", err: whatsmeow.ErrNotConnected},
