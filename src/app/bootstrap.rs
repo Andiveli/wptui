@@ -217,6 +217,7 @@ fn with_dirs_and_picker_and_ports(
         action_notice: None,
         update_notice: None,
         news: super::news::NewsState::new(cache_dir.join("news-history.json")),
+        news_update: super::news_update::NewsUpdateState::default(),
         message_menu: None,
         contextual_menu: None,
         leader_menu: None,

@@ -204,7 +204,9 @@ notes for the installed version and reads GitHub's published stable releases,
 newest first, including intermediate newer versions.
 It does not show `main`, drafts, or prereleases. The v0.3.0 release has no supplied
 notes; the bundled text says so rather than inventing highlights. Maintainers
-should update `assets/release-notes.md` with the installed release's notes.
+should update `assets/release-notes.md` with the installed release's notes before
+building and use the same text in the GitHub release description; follow the
+[release checklist](CONTRIBUTING.md#release-checklist).
 
 History is limited to eight pages of 100 entries, 1 MiB per page and a three-second
 request timeout. Reaching the page cap explicitly marks history incomplete.
@@ -221,8 +223,23 @@ Select installed or intermediate release notes with `j`/`k` or arrows; use
 `Ctrl+U`/`Ctrl+D` to scroll long notes. `h`/`l` or
 left/right arrows move pane focus; `Tab` advances focus inside News. The mouse
 wheel selects releases over the list and scrolls notes over the body.
-There are no in-app update/restart controls yet. `wp-tui update` retains its
-existing latest-stable behavior and safety checks.
+Press `u` to install the exact displayed newer stable release, including an
+intermediate version. The confirmation names that version; Cancel is selected by
+default. Use Up/Down to choose, Enter to confirm, or Esc to cancel. Installed-version
+notes cannot be installed. The updater re-fetches the exact tag from the trusted
+GitHub API; cached notes never authorize installation. Package-manager, platform,
+ownership, checksum and archive protections remain enforced. A working status covers
+checking/downloading/installing; errors remain visible and requests are single-flight.
+
+After success, choose **Restart now / Later** (Later is the safe default). Later
+keeps the current version and session running; `R` opens the restart choice again.
+Restart is deferred while drafts, attachments, status composition or pending sends
+exist: finish or discard them and press `R` again. Nothing logs you out. Explicit
+restart shuts down normally, joins update/history work, restores the terminal and
+executes the newly installed binary with the same arguments and environment. If
+relaunch fails, the restored terminal shows an error and exits nonzero; session data
+is untouched. Ordinary quit also waits for an installation to finish.
+`wp-tui update` retains its existing latest-stable behavior and safety checks.
 
 When running through Cargo, separate application arguments with `--`:
 

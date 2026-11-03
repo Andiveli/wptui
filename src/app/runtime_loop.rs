@@ -164,6 +164,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
             let _ = app
                 .message_action_diagnostics
                 .write_report(std::io::stderr());
+            app.join_news_workers();
             execute_terminal_initialization_failure(app, &mut download_worker);
             return;
         }
@@ -182,6 +183,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
         .draw(|frame| ui::draw_with_plan(frame, app, &mut media_render_plan, &mut visibility_plan));
     if let Err(error) = &draw_result {
         error!("Failed to draw terminal UI: {error}");
+        app.join_news_workers();
         app.shutdown_avatar_runtime();
         media_jobs.shutdown();
         download_worker.shutdown();
@@ -325,6 +327,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
         }
     }
 
+    app.join_news_workers();
     app.shutdown_avatar_runtime();
     media_jobs.shutdown();
     download_worker.shutdown();

@@ -110,7 +110,10 @@ pub(super) fn render(frame: &mut Frame, app: &mut App, list_area: Option<Rect>, 
             })
             .collect();
     }
-    let mut status = vec!["j/k or arrows: releases · Ctrl+U/D: scroll · r: refresh".to_string()];
+    let mut status = vec![
+        app.news_update.controls(),
+        "j/k or arrows: releases · Ctrl+U/D: scroll · r: refresh".to_string(),
+    ];
     if app.news.loading {
         status.push("Loading stable release history…".into());
     }

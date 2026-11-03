@@ -87,6 +87,60 @@ impl ReleasePort for GithubReleaseClient {
     }
 }
 
+#[derive(serde::Deserialize)]
+struct SelectedApiRelease {
+    #[serde(flatten)]
+    release: ApiRelease,
+    draft: bool,
+}
+
+impl super::news_update::SelectedReleasePort for GithubReleaseClient {
+    fn selected(&mut self, tag: &str) -> Result<(Release, bool), String> {
+        // Fixed repository and endpoint: no cache-provided URL is ever consulted.
+        let target = super::news_update::UpdateTarget {
+            tag: tag.into(),
+            version: super::stable_version(tag)?,
+        };
+        target.validate()?;
+        let url = format!(
+            "https://api.github.com/repos/{}/releases/tags/{tag}",
+            super::REPOSITORY
+        );
+        let response = self
+            .agent
+            .get(&url)
+            .header("User-Agent", "wp-tui-update")
+            .header("Accept", "application/vnd.github+json")
+            .call()
+            .map_err(|e| e.to_string())?;
+        let selected: SelectedApiRelease = response
+            .into_body()
+            .read_json()
+            .map_err(|e| e.to_string())?;
+        let api = selected.release;
+        Ok((
+            Release {
+                tag: api.tag_name,
+                prerelease: api.prerelease,
+                assets: api
+                    .assets
+                    .into_iter()
+                    .map(|asset| Asset {
+                        name: asset.name,
+                        download_url: asset.browser_download_url,
+                        digest: asset.digest,
+                    })
+                    .collect(),
+            },
+            selected.draft,
+        ))
+    }
+
+    fn download_selected(&mut self, asset: &Asset) -> Result<Vec<u8>, String> {
+        self.download(asset)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

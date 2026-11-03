@@ -20,6 +20,7 @@ pub struct NewsState {
     pub loading: bool,
     pub cache_path: PathBuf,
     pub(crate) source: Arc<NewsSource>,
+    worker: Option<std::thread::JoinHandle<()>>,
 }
 
 impl NewsState {
@@ -31,6 +32,7 @@ impl NewsState {
             scroll: 0,
             loading: false,
             cache_path,
+            worker: None,
             source: Arc::new(|path| {
                 load_history(
                     &mut GithubNewsClient::new(),
@@ -41,7 +43,13 @@ impl NewsState {
         }
     }
 
-    /// T3 can use the selected stable note as its explicit target, not latest/main.
+    pub(crate) fn join(&mut self) {
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+
+    /// The selected stable note is the explicit target, not latest/main.
     pub fn selected_note(&self) -> &ReleaseNote {
         self.history
             .as_ref()
@@ -93,17 +101,23 @@ impl NewsState {
     }
 }
 
+impl Drop for NewsState {
+    fn drop(&mut self) {
+        self.join();
+    }
+}
+
 impl App<'_> {
     pub(crate) fn refresh_news(&mut self) {
         if self.news.loading {
             return;
         }
+        self.news.join();
         self.news.loading = true;
         let source = Arc::clone(&self.news.source);
         let path = self.news.cache_path.clone();
         let tx = self.tx.clone();
-        // One bounded display-only request at a time. On shutdown a disconnected
-        // receiver is harmless; no session or executable is touched by this worker.
+        // Keep one handle so shutdown/restart cannot race atomic cache publication.
         let spawn = std::thread::Builder::new()
             .name("release-news".into())
             .spawn(move || {
@@ -118,14 +132,15 @@ impl App<'_> {
                         });
                 let _ = tx.send(AppInput::App(AppEvent::NewsLoaded(result)));
             });
-        if let Err(error) = spawn {
-            self.news.apply(NewsHistory {
+        match spawn {
+            Ok(worker) => self.news.worker = Some(worker),
+            Err(error) => self.news.apply(NewsHistory {
                 releases: vec![],
                 stale: true,
                 incomplete: true,
                 error: Some(format!("Could not start release history worker: {error}")),
                 cache_error: None,
-            });
+            }),
         }
     }
 
@@ -133,6 +148,9 @@ impl App<'_> {
     pub(crate) fn handle_news_key(&mut self, key: &Key) -> bool {
         if self.selected_section != Section::News || self.rail_on_logout {
             return false;
+        }
+        if self.handle_news_update_key(key) {
+            return true;
         }
         if key == &Key::c('r') {
             self.refresh_news();

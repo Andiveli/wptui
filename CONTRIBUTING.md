@@ -83,6 +83,36 @@ The Nix CI job runs these checks on pull requests and `main`. Keep the committed
 `flake.lock` unchanged when verifying a Go `vendorHash`; if Nix is unavailable
 locally, use the GitHub Actions result instead of claiming a local pass.
 
+## Release checklist
+
+For every new release, publish the same reviewed notes inside the binary and on
+GitHub. Editing the GitHub description after a build does not update bundled notes.
+The existing v0.3.0 release intentionally has no historical notes; do not invent or
+backfill them as part of a new release.
+
+Before building or tagging:
+
+- [ ] Prepare user-facing notes covering only changes included in this release:
+  new features, improvements, fixes, and relevant limitations. Do not describe
+  unreleased `main` changes as available in the release.
+- [ ] Replace `assets/release-notes.md` with those final notes **before building**;
+  News wptui embeds this file at compile time for the installed version.
+- [ ] Review the bundled-notes assertion in `src/updater/news_tests.rs`
+  (`installed_notes_are_bundled_and_honest`): its current expectation is the
+  v0.3.0 missing-notes message. Update it to verify the new release's actual notes.
+- [ ] Confirm that the package version in `Cargo.toml` and the intended release
+  tag agree, and that CI checks and the release build pass for the exact candidate.
+
+When publishing and checking the result:
+
+- [ ] Copy the same notes into the GitHub release description. News wptui reads
+  that description when showing newer stable releases before installation.
+- [ ] Attach binaries built from the candidate containing the final bundled notes.
+  If the notes changed after compilation, rebuild rather than publishing a stale binary.
+- [ ] Check that the released binary's News section shows its bundled notes
+  without a network connection. When available, use an older installation to
+  confirm that the published stable release and its description appear as newer news.
+
 ## Code style
 
 - **Rust**: format with `rustfmt` (enforced by CI). Follow the surrounding code's conventions.
