@@ -105,7 +105,8 @@ func dispatchMarkChatAsReadEvent(event *events.MarkChatAsRead) {
 }
 
 // Only this formatter can produce read-sync bridge records. Never forward err text.
-func markReadResultWithTrace(send func() error, output io.Writer) C.int {
+// The optional stage is inert until the stage grammar has behavioral RED evidence.
+func markReadResultWithTrace(send func() error, output io.Writer, stages ...string) C.int {
 	if output == nil {
 		return markReadResult(send)
 	}
