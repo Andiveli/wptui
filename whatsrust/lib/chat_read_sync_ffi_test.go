@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"testing"
 	"time"
 
@@ -13,6 +16,81 @@ import (
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
 )
+
+// The trace wrapper must retain markReadResult's legacy codes and single call.
+// Unknown SendAppState errors deliberately remain "other": their text may
+// contain identities, keys, payloads, or describe a failure after the send.
+func TestReadSyncTracePreservesBridgeResultAndNeverExportsErrorText(t *testing.T) {
+	for _, tt := range []struct {
+		name, category string
+		err            error
+		unavailable    bool
+		status         int
+	}{
+		{name: "ok", category: "none", status: 0},
+		{name: "unavailable", category: "unavailable", unavailable: true, status: 1},
+		{name: "cancelled", category: "cancelled", err: fmt.Errorf("private: %w", context.Canceled), status: 2},
+		{name: "timeout", category: "timeout", err: fmt.Errorf("private: %w", context.DeadlineExceeded), status: 2},
+		{name: "unknown", category: "other", err: errors.New("private-chat@s.whatsapp.net private-message-id 1700000042 private message text key=secret payload=secret"), status: 2},
+		{name: "missing key", category: "missing_key", err: errors.New("no app state keys found, creating app state keys is not yet supported"), status: 2},
+		{name: "key lookup", category: "key_lookup", err: errors.New("failed to get latest app state key ID: private-key"), status: 2},
+		{name: "after send", category: "resync_after_send", err: fmt.Errorf("failed to fetch app state after sending update: %w", context.DeadlineExceeded), status: 2},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, enabled := range []bool{false, true} {
+				var report bytes.Buffer
+				var output io.Writer
+				if enabled {
+					output = &report
+				}
+				calls := 0
+				var send func() error
+				if !tt.unavailable {
+					send = func() error { calls++; return tt.err }
+				}
+				got := markReadResultWithTrace(send, output)
+				wantCalls := 1
+				if tt.unavailable {
+					wantCalls = 0
+				}
+				want := ""
+				if enabled {
+					want = fmt.Sprintf("stage=bridge status=%d category=%s\n", tt.status, tt.category)
+				}
+				if int(got) != tt.status || calls != wantCalls || report.String() != want {
+					t.Fatalf("status=%d calls=%d report=%q; want status=%d calls=%d report=%q", got, calls, report.String(), tt.status, wantCalls, want)
+				}
+			}
+		})
+	}
+}
+
+type failingReadSyncReport struct{}
+
+func (failingReadSyncReport) Write([]byte) (int, error) { return 0, errors.New("private path") }
+
+func TestReadSyncRuntimeOutputAndReportFailureDoNotChangeResult(t *testing.T) {
+	for _, path := range []string{"", "user-selected-report"} {
+		var records []string
+		output := readSyncTraceOutput(path, func(record string) { records = append(records, record) })
+		calls := 0
+		got := markReadResultWithTrace(func() error { calls++; return nil }, output)
+		want := 0
+		if path != "" {
+			want = 1
+		}
+		if got != 0 || calls != 1 || len(records) != want {
+			t.Fatalf("status=%d calls=%d records=%v", got, calls, records)
+		}
+		if want == 1 && records[0] != "stage=bridge status=0 category=none" {
+			t.Fatalf("record=%q", records[0])
+		}
+	}
+	calls := 0
+	if got := markReadResultWithTrace(func() error { calls++; return context.Canceled }, failingReadSyncReport{}); got != 2 || calls != 1 {
+		t.Fatalf("status=%d calls=%d after report failure", got, calls)
+	}
+}
 
 func TestChatReadSyncBuildsOnePatchWithLatestIdentity(t *testing.T) {
 	tests := []struct {

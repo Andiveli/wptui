@@ -257,6 +257,46 @@ WPTUI_MESSAGE_ACTION_DEBUG=1 cargo run
 
 After quitting, a bounded, redacted trace is printed in the normal terminal.
 
+#### Read/unread synchronization preview
+
+To diagnose a read/unread mismatch, use a **diagnostic-enabled preview**, without
+resetting your account or repairing local state. From the main checkout root:
+
+The parent will provide the diagnostic-enabled binary's source-stamped filename.
+Replace `SOURCE_STAMP` below with that supplied stamp, keeping the old binary.
+The `target` directory must already exist. Each run creates a unique report directory:
+
+```bash
+trace_dir=$(mktemp -d "$PWD/.worktrees/chat-read-unread/target/read-sync-trace.XXXXXX") &&
+  printf 'Read-sync report: %s/trace.txt\n' "$trace_dir" &&
+  WPTUI_READ_SYNC_TRACE="$trace_dir/trace.txt" \
+    .worktrees/chat-read-unread/target/release/wp-tui-SOURCE_STAMP
+```
+
+The report path is printed before the TUI starts. Preserve existing reports,
+archives and binaries; do not delete or overwrite them.
+
+1. Select the affected chat without opening it, then use `Space`, `a`, `m`.
+2. Reopen `Space`, `a` on that same chat and note the label and WhatsApp's state.
+3. Close the TUI normally with `Ctrl+Q` before inspecting the selected report.
+
+The opt-in report is fresh-file-only: if the selected file already exists,
+capture is silently disabled and its bytes remain unchanged. A new report stops
+after 100 records across the app and bridge callbacks. It contains only stage
+enums, booleans, counters, bridge status and a safe error category—no message
+content, identifiers (even hashed),
+absolute message timestamps, keys, credentials, raw errors or server payloads.
+Unset `WPTUI_READ_SYNC_TRACE` to disable it. Report I/O failure is nonfatal and can
+leave a missing or incomplete report; tracing adds no sends or retries.
+
+Queue acceptance is not delivery confirmation. A bridge status of `0` only means
+the existing call returned successfully; `resync_after_send` means its follow-up
+fetch failed and the update may already have applied. `missing_key`, `key_lookup`,
+`cancelled`, `timeout`, `unavailable` and `other` do not establish server acceptance
+or a root cause; unknown/server failures remain `other`. Concurrent bridge results
+may appear between UI snapshots; there are deliberately no identifying correlation
+fields. This enables diagnosis, not a fix or reproduction of the reported mismatch.
+
 ## Keybindings
 
 Keybindings are contextual. Press `Esc` to close the active menu, picker, search, viewer, reply,
