@@ -103,8 +103,17 @@ impl MessageActionDiagnostics {
 
     pub fn record_go_log(&self, message: &str) {
         if let Some(entry) = message.strip_prefix("READ_SYNC_TRACE ") {
-            // Reconstruct from an exact allowlist, not arbitrary Go log fields.
-            if let Some(category) = entry.strip_prefix("stage=bridge status=2 category=") {
+            // Reconstruct from exact stage and outcome allowlists, not arbitrary Go fields.
+            let Some((stage, outcome)) = entry.split_once(' ') else {
+                return;
+            };
+            if !matches!(
+                stage,
+                "stage=bridge" | "stage=initial_send" | "stage=recovery_fetch" | "stage=resend"
+            ) {
+                return;
+            }
+            if let Some(category) = outcome.strip_prefix("status=2 category=") {
                 if matches!(
                     category,
                     "cancelled"
@@ -141,14 +150,13 @@ impl MessageActionDiagnostics {
                         | "iq_timeout"
                         | "client_nil"
                 ) {
-                    self.trace_line(|| format!("stage=bridge status=2 category={category}\n"));
+                    self.trace_line(|| format!("{stage} status=2 category={category}\n"));
                 }
             } else if matches!(
-                entry,
-                "stage=bridge status=0 category=none"
-                    | "stage=bridge status=1 category=unavailable"
+                outcome,
+                "status=0 category=none" | "status=1 category=unavailable"
             ) {
-                self.trace_line(|| format!("{entry}\n"));
+                self.trace_line(|| format!("{stage} {outcome}\n"));
             }
             return;
         }

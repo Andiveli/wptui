@@ -242,8 +242,17 @@ after 100 records across the app and bridge callbacks. It contains only stage
 enums, booleans, counters, bridge status and a safe error category—no message
 content, identifiers (even hashed),
 absolute message timestamps, keys, credentials, raw errors or server payloads.
-Unset `WPTUI_READ_SYNC_TRACE` to disable it. Report I/O failure is nonfatal and can
-leave a missing or incomplete report; tracing adds no sends or retries.
+Without `WPTUI_READ_SYNC_TRACE`, this trace emits no output. Report I/O failure
+is nonfatal and can leave a missing or incomplete report; tracing adds no sends
+or retries.
+
+Each completed bridge operation adds `stage=initial_send`, `stage=recovery_fetch`
+or `stage=resend`, followed by `status=<code> category=<safe-category>` using the
+existing closed outcomes. Omitted operations produce no stage record. The final
+`stage=bridge status=<code> category=<safe-category>` record is retained, so an
+initial rejection remains visible even if recovery succeeds or fails differently.
+These records are opt-in diagnostic evidence, not a synchronization fix or proof
+that WhatsApp applied the change.
 
 Queue acceptance is not delivery confirmation. A bridge status of `0` only means
 the existing call returned successfully; `resync_after_send` means its follow-up
