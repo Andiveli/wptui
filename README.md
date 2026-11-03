@@ -197,10 +197,11 @@ The updater accepts older binary-only archives and newer archives containing the
 bundled tone's MIT notices. It keeps `wp-tui-THIRD_PARTY_NOTICES.md` beside the
 updated executable.
 
-### Release notes backend (News preview)
+### News wptui
 
-The News backend bundles notes for the installed version and reads GitHub's
-published stable releases, newest first, including intermediate newer versions.
+The muted blue-gray **News wptui** section (or **News** on a narrow rail) bundles
+notes for the installed version and reads GitHub's published stable releases,
+newest first, including intermediate newer versions.
 It does not show `main`, drafts, or prereleases. The v0.3.0 release has no supplied
 notes; the bundled text says so rather than inventing highlights. Maintainers
 should update `assets/release-notes.md` with the installed release's notes.
@@ -211,8 +212,17 @@ A failed request returns cached newer-version notes marked stale with an error;
 missing or corrupt cache never implies the installation is up to date. Cache
 replacement is atomic, and cached content is untrusted display data, not authority
 to install a binary. Terminal control sequences are stripped before display.
-This backend does not yet add a News screen, selected-version updates, or restart;
-`wp-tui update` retains its existing latest-stable behavior and safety checks.
+
+History loads asynchronously at startup and `r` refreshes it (one request at a time).
+The dedicated `news-history.json` file lives in the OS cache directory. Installed
+notes remain available offline. Loading, offline/cached, error and incomplete
+history are labeled explicitly; a failed fetch never means “up to date”.
+Select installed or intermediate release notes with `j`/`k` or arrows; use
+`Ctrl+U`/`Ctrl+D` to scroll long notes. `h`/`l` or
+left/right arrows move pane focus; `Tab` advances focus inside News. The mouse
+wheel selects releases over the list and scrolls notes over the body.
+There are no in-app update/restart controls yet. `wp-tui update` retains its
+existing latest-stable behavior and safety checks.
 
 When running through Cargo, separate application arguments with `--`:
 

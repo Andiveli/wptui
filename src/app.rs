@@ -62,6 +62,7 @@ pub mod message_push_name_port;
 pub mod message_reactions;
 pub(crate) mod mouse_input;
 pub mod navigation_conversation_dispatch;
+pub mod news;
 pub mod notifications;
 pub mod optimistic_text_send;
 pub mod preferences;
@@ -310,6 +311,7 @@ pub struct App<'a> {
     pub message_revoker: Box<dyn MessageRevoker>,
     pub action_notice: Option<ActionNotice>,
     pub update_notice: Option<String>,
+    pub news: news::NewsState,
     pub message_menu: Option<(Vec<MessageMenuAction>, usize)>,
     pub contextual_menu: Option<(
         Vec<crate::app::contextual_actions::ContextualMenuRow>,
@@ -362,7 +364,7 @@ pub struct App<'a> {
     pub logout_in_progress: bool,
 
     /// Whether the section rail cursor sits on the Logout slot (below the
-    /// three content sections). When true the content pane shows a logout
+    /// four content sections). When true the content pane shows a logout
     /// placeholder instead of a chat/status/community view, and Enter on the
     /// rail calls `begin_logout_confirmation()`. Independent of
     /// `selected_section`, which keeps driving content selection.

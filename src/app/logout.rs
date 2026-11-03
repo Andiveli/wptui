@@ -115,7 +115,7 @@ impl App<'_> {
             self.rail_on_logout = false;
             self.selected_section = Section::Chats;
             true
-        } else if self.selected_section == Section::Communities {
+        } else if self.selected_section == Section::News {
             self.rail_on_logout = true;
             true
         } else {
@@ -126,7 +126,7 @@ impl App<'_> {
     pub(crate) fn move_logout_selection_previous(&mut self) -> bool {
         if self.rail_on_logout {
             self.rail_on_logout = false;
-            self.selected_section = Section::Communities;
+            self.selected_section = Section::News;
             true
         } else if self.selected_section == Section::Chats {
             self.rail_on_logout = true;
@@ -142,7 +142,7 @@ impl App<'_> {
     }
 
     pub(crate) fn jump_logout_selection_bottom(&mut self) {
-        self.selected_section = Section::Communities;
+        self.selected_section = Section::News;
         self.rail_on_logout = true;
     }
 }

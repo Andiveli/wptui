@@ -4,6 +4,10 @@ use crate::app::events::AppEvent;
 impl App<'_> {
     pub(crate) fn handle_updater_event(&mut self, event: AppEvent) -> bool {
         match event {
+            AppEvent::NewsLoaded(history) => {
+                self.news.apply(history);
+                true
+            }
             AppEvent::UpdateAvailable(version) => {
                 self.update_notice = Some(version);
                 true
