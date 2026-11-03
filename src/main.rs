@@ -48,6 +48,8 @@ fn main() {
     tui_logger::set_default_level(tui_logger::LevelFilter::Warn);
     wp_tui::crash_diagnostics::install(args.crash_log.clone());
 
+    // Keep the original OS arguments, including hidden flags and non-UTF8 paths.
+    let restart_args: Vec<_> = std::env::args_os().skip(1).collect();
     let mut app = App::default();
     app.initialize_read_receipts(!args.no_view);
     app.enable_message_action_diagnostics(mac_debug_enabled(
@@ -57,6 +59,21 @@ fn main() {
         std::env::var("WPTUI_PRESENCE_DEBUG").ok().as_deref(),
     ));
     app.run(args.phone);
+    let restart = app.take_restart_path();
+    // Runtime shutdown restored the terminal and disconnected, never logged out.
+    // Dropping App joins its owned workers before replacing this process image.
+    app.db_handler.stop();
+    drop(app);
+    if let Some(executable) = restart {
+        if let Err(error) = wp_tui::restart::relaunch(
+            &executable,
+            &restart_args,
+            &mut wp_tui::restart::SystemRelaunch,
+        ) {
+            eprintln!("wp-tui: {error}");
+            std::process::exit(1);
+        }
+    }
 }
 
 #[cfg(test)]

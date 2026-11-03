@@ -63,6 +63,7 @@ pub mod message_reactions;
 pub(crate) mod mouse_input;
 pub mod navigation_conversation_dispatch;
 pub mod news;
+pub mod news_update;
 pub mod notifications;
 pub mod optimistic_text_send;
 pub mod preferences;
@@ -312,6 +313,7 @@ pub struct App<'a> {
     pub action_notice: Option<ActionNotice>,
     pub update_notice: Option<String>,
     pub news: news::NewsState,
+    pub news_update: news_update::NewsUpdateState,
     pub message_menu: Option<(Vec<MessageMenuAction>, usize)>,
     pub contextual_menu: Option<(
         Vec<crate::app::contextual_actions::ContextualMenuRow>,
