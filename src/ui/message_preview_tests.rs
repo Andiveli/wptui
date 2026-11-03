@@ -477,6 +477,125 @@ fn native_stacks_clip_payload_pixels_to_the_actual_visible_rows_and_columns() {
 }
 
 #[test]
+#[allow(deprecated)] // Reproduce the verifier's font without querying a terminal.
+fn landscape_stack_previews_prepare_main_and_neighbor_within_resource_limits() {
+    let font = FontSize::new(16, 32);
+    let available = Size::new(77, 12);
+    let mut failures = Vec::new();
+    for dimensions in [(1600_u32, 800_u32), (1600, 400)] {
+        let original: DynamicImage = ImageBuffer::from_pixel(
+            dimensions.0,
+            dimensions.1,
+            Rgba([255_u8, 0, 0, 255]),
+        )
+        .into();
+        let source = bounded_source(&original);
+        for protocol in [ProtocolType::Kitty, ProtocolType::Sixel] {
+            let mut cache = StackPreviewCache::default();
+            let path: Arc<str> = "landscape.png".into();
+            cache.install_original(path.clone(), source.clone(), dimensions);
+            let canvas = cache.fit_for(&path, font, available).unwrap();
+            let main = Rect::new(0, 0, canvas.width, canvas.height);
+            let neighbor = Rect::new(
+                canvas.width.saturating_sub(4),
+                0,
+                canvas.width.min(4),
+                canvas.height,
+            );
+            let main_key = cache.key(&path, canvas, main).unwrap();
+            let neighbor_key = cache.key(&path, canvas, neighbor).unwrap();
+            assert!(cache.request(main_key.clone()));
+            assert!(cache.request(neighbor_key.clone()));
+            let mut picker = Picker::from_fontsize(font);
+            picker.set_protocol_type(protocol);
+            let work = cache.take_work().unwrap();
+            cache.finish(work.prepare(&mut picker));
+
+            let width = u32::from(canvas.width) * u32::from(font.width);
+            let height = u32::from(canvas.height) * u32::from(font.height);
+            // Pin the existing private CropWork::prepare guards, never raise them.
+            let bounded = width > 0
+                && height > 0
+                && width <= 1024
+                && height <= 512
+                && width.saturating_mul(height) <= 262_144;
+            let fits = canvas.width > neighbor.width
+                && canvas.height > 0
+                && canvas.width <= available.width
+                && canvas.height <= available.height
+                && canvas.width + 1 + neighbor.width <= available.width;
+            let content = bounded.then(|| {
+                // Opaque source pixels can leave transparent whole-cell padding.
+                // Measure their fitted content separately from the encoded canvas.
+                let fitted = source.resize(width, height, image::imageops::FilterType::Nearest);
+                (fitted.width(), fitted.height())
+            });
+            for (name, key, crop) in [
+                ("main", main_key, main),
+                ("neighbor", neighbor_key, neighbor),
+            ] {
+                let area = Rect::new(0, 0, crop.width, crop.height);
+                let output = (
+                    u32::from(crop.width) * u32::from(font.width),
+                    u32::from(crop.height) * u32::from(font.height),
+                );
+                let expected = match protocol {
+                    ProtocolType::Kitty => Some(output),
+                    ProtocolType::Sixel => content.map(|(content_width, content_height)| {
+                        (
+                            content_width
+                                .min(u32::from(crop.right()) * u32::from(font.width))
+                                .saturating_sub(u32::from(crop.x) * u32::from(font.width)),
+                            content_height
+                                .min(u32::from(crop.bottom()) * u32::from(font.height))
+                                .saturating_sub(u32::from(crop.y) * u32::from(font.height)),
+                        )
+                    }),
+                    _ => unreachable!("native protocol cases only"),
+                };
+                let image = cache.get(&key);
+                let mut actual = None;
+                let mut native = false;
+                let mut exact_size = false;
+                if let Some(image) = image {
+                    native = matches!(
+                        (protocol, image),
+                        (ProtocolType::Kitty, Protocol::Kitty(_))
+                            | (ProtocolType::Sixel, Protocol::Sixel(_))
+                    );
+                    exact_size = image.size() == Size::new(crop.width, crop.height);
+                    let mut buffer = ratatui::buffer::Buffer::empty(area);
+                    ratatui::widgets::Widget::render(
+                        ratatui_image::Image::new(image),
+                        area,
+                        &mut buffer,
+                    );
+                    actual = native_payload_dimensions(buffer[(0, 0)].symbol());
+                }
+                let positive_and_contained = match actual {
+                    Some((w, h)) => w > 0 && h > 0 && w <= output.0 && h <= output.1,
+                    None => false,
+                };
+                if !(bounded
+                    && fits
+                    && image.is_some()
+                    && native
+                    && exact_size
+                    && positive_and_contained
+                    && actual == expected)
+                {
+                    failures.push(format!(
+                        "source={dimensions:?} protocol={protocol:?} crop={name} canvas={canvas:?} pixels={width}x{height} bounded={bounded} fits={fits} ready={} native={native} exact_size={exact_size} expected={expected:?} actual={actual:?}",
+                        image.is_some(),
+                    ));
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
 fn strips_are_real_fitted_pixel_crops_not_squeezed_whole_images() {
     let source: DynamicImage = ImageBuffer::from_fn(240, 240, |x, _| {
         if x < 120 {
