@@ -483,12 +483,8 @@ fn landscape_stack_previews_prepare_main_and_neighbor_within_resource_limits() {
     let available = Size::new(77, 12);
     let mut failures = Vec::new();
     for dimensions in [(1600_u32, 800_u32), (1600, 400)] {
-        let original: DynamicImage = ImageBuffer::from_pixel(
-            dimensions.0,
-            dimensions.1,
-            Rgba([255_u8, 0, 0, 255]),
-        )
-        .into();
+        let original: DynamicImage =
+            ImageBuffer::from_pixel(dimensions.0, dimensions.1, Rgba([255_u8, 0, 0, 255])).into();
         let source = bounded_source(&original);
         for protocol in [ProtocolType::Kitty, ProtocolType::Sixel] {
             let mut cache = StackPreviewCache::default();
