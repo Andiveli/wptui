@@ -1,5 +1,6 @@
 mod github;
 mod install;
+pub mod news;
 
 use std::path::Path;
 

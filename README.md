@@ -197,6 +197,23 @@ The updater accepts older binary-only archives and newer archives containing the
 bundled tone's MIT notices. It keeps `wp-tui-THIRD_PARTY_NOTICES.md` beside the
 updated executable.
 
+### Release notes backend (News preview)
+
+The News backend bundles notes for the installed version and reads GitHub's
+published stable releases, newest first, including intermediate newer versions.
+It does not show `main`, drafts, or prereleases. The v0.3.0 release has no supplied
+notes; the bundled text says so rather than inventing highlights. Maintainers
+should update `assets/release-notes.md` with the installed release's notes.
+
+History is limited to eight pages of 100 entries, 1 MiB per page and a three-second
+request timeout. Reaching the page cap explicitly marks history incomplete.
+A failed request returns cached newer-version notes marked stale with an error;
+missing or corrupt cache never implies the installation is up to date. Cache
+replacement is atomic, and cached content is untrusted display data, not authority
+to install a binary. Terminal control sequences are stripped before display.
+This backend does not yet add a News screen, selected-version updates, or restart;
+`wp-tui update` retains its existing latest-stable behavior and safety checks.
+
 When running through Cargo, separate application arguments with `--`:
 
 ```bash
