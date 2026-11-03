@@ -114,6 +114,13 @@ impl MessageActionDiagnostics {
                         | "key_lookup"
                         | "resync_after_send"
                         | "appstate_rejected"
+                        | "appstate_with_cause"
+                        | "appstate_cause_key_missing"
+                        | "appstate_cause_content_mac"
+                        | "appstate_cause_index_mac"
+                        | "appstate_cause_lt_hash"
+                        | "appstate_cause_patch_mac"
+                        | "appstate_cause_previous_set_missing"
                         | "iq_bad_request"
                         | "iq_not_authorized"
                         | "iq_forbidden"
@@ -508,6 +515,13 @@ mod tests {
             "key_lookup",
             "resync_after_send",
             "appstate_rejected",
+            "appstate_with_cause",
+            "appstate_cause_key_missing",
+            "appstate_cause_content_mac",
+            "appstate_cause_index_mac",
+            "appstate_cause_lt_hash",
+            "appstate_cause_patch_mac",
+            "appstate_cause_previous_set_missing",
             "iq_bad_request",
             "iq_not_authorized",
             "iq_forbidden",

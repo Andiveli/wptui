@@ -143,6 +143,29 @@ func markReadResultWithTrace(send func() error, output io.Writer) C.int {
 		// mutation may already have applied. Only closed labels leave Go.
 		case errors.Is(err, whatsmeow.ErrAppStateUpdate):
 			category = "appstate_rejected"
+			var multiple interface{ Unwrap() []error }
+			if errors.As(err, &multiple) {
+				causes := multiple.Unwrap()
+				// Inspect only the public secondary branch, never its text.
+				// A joined error alone does not prove a server code or conflict.
+				if len(causes) == 2 && errors.Is(causes[0], whatsmeow.ErrAppStateUpdate) && causes[1] != nil {
+					category = "appstate_with_cause"
+					switch {
+					case errors.Is(causes[1], appstate.ErrKeyNotFound):
+						category = "appstate_cause_key_missing"
+					case errors.Is(causes[1], appstate.ErrMismatchingContentMAC):
+						category = "appstate_cause_content_mac"
+					case errors.Is(causes[1], appstate.ErrMismatchingIndexMAC):
+						category = "appstate_cause_index_mac"
+					case errors.Is(causes[1], appstate.ErrMismatchingLTHash):
+						category = "appstate_cause_lt_hash"
+					case errors.Is(causes[1], appstate.ErrMismatchingPatchMAC):
+						category = "appstate_cause_patch_mac"
+					case errors.Is(causes[1], appstate.ErrMissingPreviousSetValueOperation):
+						category = "appstate_cause_previous_set_missing"
+					}
+				}
+			}
 		case isIQ:
 			switch iq.Code {
 			case 400:
