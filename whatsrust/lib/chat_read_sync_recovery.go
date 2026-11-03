@@ -15,6 +15,9 @@ type chatReadStateClient interface {
 
 type chatReadRecoveryScope func(context.Context, appstate.WAPatchName, func(context.Context) error) (bool, error)
 
+// Internal only: errors must be safely classified before any diagnostic export.
+type chatReadStageObserver func(stage string, err error)
+
 type chatReadRecoveryLease struct{ cancel context.CancelFunc }
 
 type chatReadRecoveryState struct {
@@ -36,7 +39,8 @@ func rejectedChatReadLTHash(err error) bool {
 		causes[1] != nil && errors.Is(causes[1], appstate.ErrMismatchingLTHash)
 }
 
-func sendChatReadStatePatch(ctx context.Context, patch appstate.PatchInfo, client chatReadStateClient, scope chatReadRecoveryScope) error {
+// The optional observer is deliberately inert until behavioral RED is observed.
+func sendChatReadStatePatch(ctx context.Context, patch appstate.PatchInfo, client chatReadStateClient, scope chatReadRecoveryScope, observers ...chatReadStageObserver) error {
 	err := client.SendAppState(ctx, patch)
 	// The pinned concrete SendAppState returns this compound rejection before
 	// its conflict retry, not after an accepted send's follow-up fetch failure.
