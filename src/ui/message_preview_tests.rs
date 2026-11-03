@@ -706,6 +706,23 @@ fn bounded_sources_preserve_original_fit_geometry_without_upscaling_tiny_images(
 }
 
 #[test]
+fn under_limit_fits_keep_their_original_geometry() {
+    for (dimensions, font, available) in [
+        ((1600, 800), FontSize::new(10, 20), Size::new(77, 12)),
+        ((1600, 400), FontSize::new(10, 20), Size::new(77, 12)),
+        ((1600, 400), FontSize::new(16, 32), Size::new(64, 8)),
+        ((2, 2), FontSize::new(16, 32), Size::new(77, 12)),
+    ] {
+        let original = DynamicImage::new_rgba8(dimensions.0, dimensions.1);
+        let expected = ratatui_image::Resize::Fit(None).size_for(&original, font, available);
+        let mut cache = StackPreviewCache::default();
+        let path: Arc<str> = "under-limit.png".into();
+        cache.install_original(path.clone(), bounded_source(&original), dimensions);
+        assert_eq!(cache.fit_for(&path, font, available), Some(expected));
+    }
+}
+
+#[test]
 fn singleton_keeps_its_original_colored_preview_and_caption_without_a_strip() {
     let mut app = fixture(false, 1);
     let (buffer, _) = draw(&mut app, 80, 40);

@@ -20,6 +20,18 @@ const BATCH_SIZE: usize = 4;
 // encoding also has its own bounded copies/encoded representation). Four workers
 // prepare sequential batches; neither a huge terminal nor font can grow a canvas.
 const CROP_PIXELS: u32 = 262_144;
+const CROP_WIDTH: u32 = 1024;
+const CROP_HEIGHT: u32 = 512;
+
+fn crop_canvas_fits(font: FontSize, canvas: Size) -> bool {
+    let width = u32::from(canvas.width) * u32::from(font.width);
+    let height = u32::from(canvas.height) * u32::from(font.height);
+    width != 0
+        && height != 0
+        && width <= CROP_WIDTH
+        && height <= CROP_HEIGHT
+        && width.saturating_mul(height) <= CROP_PIXELS
+}
 
 pub(crate) fn bounded_source(image: &DynamicImage) -> Arc<DynamicImage> {
     let pixels = if image.width() > SOURCE_WIDTH || image.height() > SOURCE_HEIGHT {
@@ -65,14 +77,7 @@ impl CropWork {
             self.0
                 .into_iter()
                 .map(|(key, source)| {
-                    let width = u32::from(key.canvas.width) * u32::from(font.width);
-                    let height = u32::from(key.canvas.height) * u32::from(font.height);
-                    let protocol = if width != 0
-                        && height != 0
-                        && width <= 1024
-                        && height <= 512
-                        && width.saturating_mul(height) <= CROP_PIXELS
-                    {
+                    let protocol = if crop_canvas_fits(font, key.canvas) {
                         let fitted = Resize::Scale(None).resize(&source, font, key.canvas, None);
                         let crop = key.crop;
                         let pixels = fitted.crop_imm(
@@ -141,21 +146,51 @@ impl StackPreviewCache {
             })
     }
 
-    // Preserve original Fit geometry without retaining the original pixel buffer.
+    // Preserve valid original Fit geometry; shrink only canvases preparation
+    // would reject. No original pixels are retained or allocated for fitting.
     pub(crate) fn fit_for(&self, path: &Arc<str>, font: FontSize, available: Size) -> Option<Size> {
         let (_, _, (width, height)) = self.sources.get(path)?;
         if font.width == 0 || font.height == 0 || available.width == 0 || available.height == 0 {
             return None;
         }
-        let ratio = (f64::from(available.width) * f64::from(font.width) / f64::from(*width))
-            .min(f64::from(available.height) * f64::from(font.height) / f64::from(*height))
-            .min(1.0);
-        let width = (f64::from(*width) * ratio).round().max(1.0) as u32;
-        let height = (f64::from(*height) * ratio).round().max(1.0) as u32;
-        Some(Size::new(
-            width.div_ceil(u32::from(font.width)) as u16,
-            height.div_ceil(u32::from(font.height)) as u16,
-        ))
+        let fit = |available: Size| {
+            let ratio = (f64::from(available.width) * f64::from(font.width) / f64::from(*width))
+                .min(f64::from(available.height) * f64::from(font.height) / f64::from(*height))
+                .min(1.0);
+            let width = (f64::from(*width) * ratio).round().max(1.0) as u32;
+            let height = (f64::from(*height) * ratio).round().max(1.0) as u32;
+            Size::new(
+                width.div_ceil(u32::from(font.width)) as u16,
+                height.div_ceil(u32::from(font.height)) as u16,
+            )
+        };
+        let original = fit(available);
+        if crop_canvas_fits(font, original) {
+            return Some(original);
+        }
+        if !crop_canvas_fits(font, Size::new(1, 1)) {
+            return None;
+        }
+        let max_width = (CROP_WIDTH / u32::from(font.width)) as u16;
+        let max_height = (CROP_HEIGHT / u32::from(font.height)) as u16;
+        let mut bounds = Size::new(
+            original.width.min(max_width),
+            original.height.min(max_height),
+        );
+        // Each miss removes one available cell, then refits the original aspect
+        // ratio. At most 1024 + 512 cells are visited; the prechecked 1x1 fits.
+        for _ in 0..CROP_WIDTH + CROP_HEIGHT {
+            let canvas = fit(bounds);
+            if crop_canvas_fits(font, canvas) {
+                return Some(canvas);
+            }
+            if bounds.width > 1 {
+                bounds.width -= 1;
+            } else if bounds.height > 1 {
+                bounds.height -= 1;
+            }
+        }
+        None
     }
 
     pub(crate) fn remove(&mut self, path: &Arc<str>) {
