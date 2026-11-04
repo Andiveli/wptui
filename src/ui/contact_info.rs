@@ -80,9 +80,7 @@ pub(crate) fn render(frame: &mut Frame, app: &mut App<'_>, area: Rect) {
             lines.push(Line::from("Shared groups unavailable"));
         }
         SharedGroups::Ready(groups) => {
-            lines.push(
-                Line::from(format!("Shared groups · {}", groups.len())).fg(Color::DarkGray),
-            );
+            lines.push(Line::from(format!("Shared groups · {}", groups.len())).fg(Color::DarkGray));
             if groups.is_empty() {
                 lines.push(Line::from("No known shared groups"));
             } else {
@@ -107,8 +105,7 @@ pub(crate) fn render(frame: &mut Frame, app: &mut App<'_>, area: Rect) {
             "Known groups · Space a i · Esc close"
         };
         frame.render_widget(
-            Paragraph::new(hint)
-                .style(Style::default().fg(Color::DarkGray)),
+            Paragraph::new(hint).style(Style::default().fg(Color::DarkGray)),
             Rect::new(inner.x, inner.bottom() - 1, inner.width, 1),
         );
     }

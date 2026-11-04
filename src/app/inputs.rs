@@ -337,10 +337,8 @@ impl App<'_> {
                 self.pane_visibility
             };
             if self.contact_info.is_some() {
-                self.focus_pane = crate::app::actions::focus_after_visibility_change(
-                    self.focus_pane,
-                    visibility,
-                );
+                self.focus_pane =
+                    crate::app::actions::focus_after_visibility_change(self.focus_pane, visibility);
                 if (matches!(action, AppAction::FocusPane(FocusPane::SectionRail))
                     && !visibility.section_rail)
                     || (matches!(action, AppAction::FocusPane(FocusPane::ChatList))

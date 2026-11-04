@@ -258,10 +258,9 @@ mod tests {
 
     #[test]
     fn contact_information_help_keeps_contextual_menu_prefix_ownership() {
-        assert!(canonical_shortcuts().contains(&(
-            "Space+a+i".into(),
-            "Contact information".into(),
-        )));
+        assert!(
+            canonical_shortcuts().contains(&("Space+a+i".into(), "Contact information".into(),))
+        );
         assert_eq!(
             resolve_sequence(&[Key::c(' '), Key::c('a')]),
             SequenceResolution::Complete(AppAction::OpenContextualActions)

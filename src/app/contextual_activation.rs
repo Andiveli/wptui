@@ -54,7 +54,8 @@ impl App<'_> {
         let Some(row) = rows.get(*selected).copied() else {
             return;
         };
-        if row.action_token == ContextualAction::ContactInfo && self.contact_info_target().is_none() {
+        if row.action_token == ContextualAction::ContactInfo && self.contact_info_target().is_none()
+        {
             return;
         }
         let context = self.contextual_context();

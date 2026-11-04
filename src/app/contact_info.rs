@@ -92,7 +92,11 @@ impl App<'_> {
 
     pub(crate) fn contact_info_phone(&self, contact: &wr::JID) -> Option<String> {
         phone_digits(contact)
-            .or_else(|| self.verified_phones.get(contact).map(|phone| phone.as_ref()))
+            .or_else(|| {
+                self.verified_phones
+                    .get(contact)
+                    .map(|phone| phone.as_ref())
+            })
             .filter(|phone| !phone.is_empty() && phone.bytes().all(|byte| byte.is_ascii_digit()))
             .map(|phone| format!("+{phone}"))
     }
@@ -211,9 +215,11 @@ impl App<'_> {
     }
 
     pub(crate) fn apply_contact_info_result(&mut self, result: ContactInfoResult) -> bool {
-        let Some(info) = self.contact_info.as_mut().filter(|info| {
-            info.generation == result.generation && info.contact == result.contact
-        }) else {
+        let Some(info) = self
+            .contact_info
+            .as_mut()
+            .filter(|info| info.generation == result.generation && info.contact == result.contact)
+        else {
             return false;
         };
         info.groups = match result.groups {
@@ -246,7 +252,9 @@ fn query_shared_groups(
         }
     }
     groups.sort_by(|left, right| {
-        left.name.cmp(&right.name).then_with(|| left.jid.0.cmp(&right.jid.0))
+        left.name
+            .cmp(&right.name)
+            .then_with(|| left.jid.0.cmp(&right.jid.0))
     });
     Ok(groups)
 }

@@ -107,11 +107,8 @@ fn refresh_composer_viewport_width(app: &mut App<'_>, terminal_session: &mut Ter
         return;
     };
     let width = if app.contact_info.is_some() {
-        let (areas, _) = crate::ui::layout::contact_navigation_areas(
-            area.into(),
-            app.pane_visibility,
-            true,
-        );
+        let (areas, _) =
+            crate::ui::layout::contact_navigation_areas(area.into(), app.pane_visibility, true);
         areas.conversation.width.saturating_sub(4)
     } else {
         crate::ui::composer_viewport_width(area.width, area.height, app.pane_visibility)

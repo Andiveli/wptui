@@ -409,7 +409,8 @@ fn start_runtime(
                     continue;
                 }
                 if !request.refresh && is_user_avatar(&request.target) {
-                    let result = default_portrait_result(&picker, request.generation, request.target);
+                    let result =
+                        default_portrait_result(&picker, request.generation, request.target);
                     let _ = app_tx.send(AppInput::App(AppEvent::ContactAvatar(result)));
                     continue;
                 }
