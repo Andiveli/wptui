@@ -27,6 +27,7 @@ pub mod composer_input_mapping;
 pub mod composer_input_paste;
 pub mod composer_integration;
 pub mod contact_avatars;
+pub mod contact_info;
 pub mod contact_source_port;
 pub mod contextual_actions;
 pub mod contextual_activation;
@@ -297,6 +298,9 @@ pub struct App<'a> {
     pub default_protocol_type: ProtocolType,
     pub picker: Arc<Mutex<Picker>>,
     pub contact_avatars: ContactAvatars,
+    pub(crate) contact_info: Option<contact_info::ContactInfo>,
+    pub(crate) contact_info_generation: u64,
+    pub(crate) contact_info_query: Arc<dyn contact_info::ContactInfoQuery>,
 
     pub focus_pane: FocusPane,
     pub pane_visibility: PaneVisibility,

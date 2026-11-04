@@ -74,6 +74,30 @@ pub fn navigation_areas(area: Rect, visibility: PaneVisibility) -> NavigationAre
     }
 }
 
+/// Preserve the existing three-pane layout when closed. While details are open,
+/// hide navigation panes before shrinking the conversation below 30 columns.
+/// Very small terminals show details alone until Esc closes them.
+pub(crate) fn contact_navigation_areas(
+    area: Rect,
+    mut visibility: PaneVisibility,
+    show_contact: bool,
+) -> (NavigationAreas, Option<Rect>) {
+    if !show_contact {
+        return (navigation_areas(area, visibility), None);
+    }
+    let info_width = 46.min(area.width);
+    let main_width = area.width.saturating_sub(info_width);
+    if main_width < 74 {
+        visibility.section_rail = false;
+    }
+    if main_width < 60 {
+        visibility.chat_list = false;
+    }
+    let main = Rect::new(area.x, area.y, main_width, area.height);
+    let info = Rect::new(main.right(), area.y, info_width, area.height);
+    (navigation_areas(main, visibility), Some(info))
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ViewerPreviewLayout {
     pub modal: Rect,

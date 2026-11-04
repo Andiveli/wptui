@@ -55,6 +55,11 @@ pub enum AvatarResult {
         picture_id: Arc<str>,
         protocol: StatefulProtocol,
     },
+    Fallback {
+        generation: u64,
+        target: AvatarTarget,
+        protocol: StatefulProtocol,
+    },
     Unavailable {
         generation: u64,
         target: AvatarTarget,
@@ -70,6 +75,7 @@ impl AvatarResult {
         match self {
             Self::Cached { generation, .. }
             | Self::Available { generation, .. }
+            | Self::Fallback { generation, .. }
             | Self::Unavailable { generation, .. }
             | Self::Failed { generation, .. } => *generation,
         }
@@ -79,6 +85,7 @@ impl AvatarResult {
         match self {
             Self::Cached { target, .. }
             | Self::Available { target, .. }
+            | Self::Fallback { target, .. }
             | Self::Unavailable { target, .. }
             | Self::Failed { target, .. } => target,
         }
@@ -244,7 +251,8 @@ impl ContactAvatars {
                     });
             if (!self.protocols.contains_key(target) || !self.refreshed.contains(target))
                 && !self.in_flight.contains(target)
-                && !self.unavailable.contains(target)
+                && (!self.unavailable.contains(target)
+                    || (is_user_avatar(target) && !self.protocols.contains_key(target)))
                 && retryable
             {
                 let has_protocol = self.protocols.contains_key(target);
@@ -252,7 +260,8 @@ impl ContactAvatars {
                 let _ = runtime.sender.send(AvatarRequest {
                     generation: self.generation,
                     target: target.clone(),
-                    refresh: !has_protocol || !self.refreshed.contains(target),
+                    refresh: !self.unavailable.contains(target)
+                        && (!has_protocol || !self.refreshed.contains(target)),
                 });
                 #[cfg(test)]
                 {
@@ -287,10 +296,10 @@ impl ContactAvatars {
 
     pub fn apply(&mut self, result: AvatarResult) -> bool {
         let target = result.target().clone();
-        self.in_flight.remove(&target);
         if result.generation() != self.generation || !self.requested.contains(&target) {
             return false;
         }
+        self.in_flight.remove(&target);
         match result {
             AvatarResult::Cached {
                 picture_id,
@@ -304,6 +313,7 @@ impl ContactAvatars {
                 protocol,
                 ..
             } => {
+                self.unavailable.remove(&target);
                 let changed = self
                     .protocols
                     .get(&target)
@@ -311,6 +321,11 @@ impl ContactAvatars {
                 if changed {
                     self.insert(target.clone(), picture_id, protocol);
                 }
+                self.refreshed.insert(target);
+            }
+            AvatarResult::Fallback { protocol, .. } => {
+                self.insert(target.clone(), "default-portrait".into(), protocol);
+                self.unavailable.insert(target.clone());
                 self.refreshed.insert(target);
             }
             AvatarResult::Unavailable { .. } => {
@@ -328,12 +343,20 @@ impl ContactAvatars {
     }
 
     pub fn mark_refreshed(&mut self, generation: u64, target: AvatarTarget) -> bool {
-        self.in_flight.remove(&target);
         if generation != self.generation || !self.requested.contains(&target) {
             return false;
         }
+        self.in_flight.remove(&target);
         self.refreshed.insert(target);
         true
+    }
+
+    pub fn status_label(&self, target: &AvatarTarget) -> &'static str {
+        if self.failures.contains_key(target) || self.unavailable.contains(target) {
+            "Photo unavailable"
+        } else {
+            "Loading photo…"
+        }
     }
 
     pub fn protocol_mut(&mut self, target: &AvatarTarget) -> Option<&mut StatefulProtocol> {
@@ -383,6 +406,11 @@ fn start_runtime(
                 let current = wanted.0 == request.generation && wanted.1.contains(&request.target);
                 drop(wanted);
                 if !current {
+                    continue;
+                }
+                if !request.refresh && is_user_avatar(&request.target) {
+                    let result = default_portrait_result(&picker, request.generation, request.target);
+                    let _ = app_tx.send(AppInput::App(AppEvent::ContactAvatar(result)));
                     continue;
                 }
                 let cache = cache_for_target(&disk_root, &request.target);
@@ -445,10 +473,18 @@ fn start_runtime(
                         }
                     }
                     Ok(wr::ProfilePictureAvailability::Unavailable) => {
-                        Some(AvatarResult::Unavailable {
-                            generation: request.generation,
-                            target: request.target.clone(),
-                        })
+                        if is_user_avatar(&request.target) {
+                            Some(default_portrait_result(
+                                &picker,
+                                request.generation,
+                                request.target.clone(),
+                            ))
+                        } else {
+                            Some(AvatarResult::Unavailable {
+                                generation: request.generation,
+                                target: request.target.clone(),
+                            })
+                        }
                     }
                     Err(_) => Some(AvatarResult::Failed {
                         generation: request.generation,
@@ -470,6 +506,29 @@ fn start_runtime(
         sender,
         desired,
         workers,
+    }
+}
+
+fn is_user_avatar(target: &AvatarTarget) -> bool {
+    matches!(target, AvatarTarget::Contact(jid)
+        if jid.0.ends_with("@s.whatsapp.net") || jid.0.ends_with("@lid"))
+}
+
+fn default_portrait_result(
+    picker: &Arc<Mutex<Picker>>,
+    generation: u64,
+    target: AvatarTarget,
+) -> AvatarResult {
+    match decode_protocol(
+        picker,
+        include_bytes!("../../assets/contact-avatar-default.png"),
+    ) {
+        Some(protocol) => AvatarResult::Fallback {
+            generation,
+            target,
+            protocol,
+        },
+        None => AvatarResult::Failed { generation, target },
     }
 }
 
@@ -683,6 +742,122 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn missing_user_photo_renders_exact_portrait_and_real_photo_takes_precedence() {
+        use crate::app::actions::{AppAction, FocusPane};
+        use crate::app::events::MediaRenderPlan;
+        use crate::app::read_receipts::VisibilityPlan;
+        use ratatui::style::Color;
+
+        for available in [false, true] {
+            let mut app = TestApp::new();
+            let contact = wr::JID::from("15551234567@s.whatsapp.net".to_owned());
+            app.apply_contact_refresh(vec![(contact.clone(), "Photo contact".into())]);
+            app.open_chat_by_jid(contact.clone());
+            app.focus_pane = FocusPane::Conversation;
+            let query = Arc::new(FakeAvatarQuery::default());
+            let picture = if available {
+                let image = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+                    480,
+                    480,
+                    image::Rgb([255, 0, 0]),
+                ));
+                let mut bytes = std::io::Cursor::new(Vec::new());
+                image.write_to(&mut bytes, image::ImageFormat::Png).unwrap();
+                wr::ProfilePictureAvailability::Available(wr::ProfilePicture {
+                    id: "real-photo".into(),
+                    picture_type: "image".into(),
+                    bytes: bytes.into_inner(),
+                })
+            } else {
+                wr::ProfilePictureAvailability::Unavailable
+            };
+            query.contact_results.lock().unwrap().push_back(Ok(picture));
+            app.set_avatar_query(query);
+            app.picker = Arc::new(Mutex::new(Picker::halfblocks()));
+            app.dispatch_action(AppAction::OpenContactInfo);
+            let mut terminal = Terminal::new(TestBackend::new(180, 50)).unwrap();
+            let mut media = MediaRenderPlan::default();
+            let mut visibility = VisibilityPlan::default();
+            terminal
+                .draw(|frame| {
+                    crate::ui::draw_with_plan(frame, &mut app, &mut media, &mut visibility);
+                })
+                .unwrap();
+            app.schedule_avatar_viewport(ratatui::layout::Rect::new(0, 0, 180, 50));
+            let input = app.rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            match input {
+                AppInput::App(event) => assert!(app.handle_avatar_event(event)),
+                other => panic!("unexpected avatar input: {other:?}"),
+            }
+            terminal
+                .draw(|frame| {
+                    crate::ui::draw_with_plan(frame, &mut app, &mut media, &mut visibility);
+                })
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            // Both the list avatar and the large portrait use the worker result.
+            for (left, right, top, bottom) in [(15, 19, 2, 4), (138, 176, 3, 22)] {
+                if available {
+                    assert!(
+                        (top..bottom).any(|y| (left..right).any(|x| {
+                            let cell = &buffer[(x, y)];
+                            cell.fg == Color::Rgb(255, 0, 0) || cell.bg == Color::Rgb(255, 0, 0)
+                        })),
+                        "real photo must replace the default at x={left}"
+                    );
+                } else {
+                    let bytes = include_bytes!("../../assets/contact-avatar-default.png");
+                    let portrait = image::load_from_memory(bytes).unwrap();
+                    let mut reference = Picker::halfblocks().new_resize_protocol(portrait);
+                    let area = ratatui::layout::Rect::new(left, top, right - left, bottom - top);
+                    let mut expected = ratatui::buffer::Buffer::empty(area);
+                    ratatui::widgets::StatefulWidget::render(
+                        ratatui_image::StatefulImage::default(),
+                        area,
+                        &mut expected,
+                        &mut reference,
+                    );
+                    for y in top..bottom {
+                        for x in left..right {
+                            assert_eq!(buffer[(x, y)].symbol(), expected[(x, y)].symbol());
+                            assert_eq!(buffer[(x, y)].fg, expected[(x, y)].fg);
+                            assert_eq!(buffer[(x, y)].bg, expected[(x, y)].bg);
+                        }
+                    }
+                }
+            }
+            // A hidden contact list must not drop the open portrait request.
+            app.pane_visibility.chat_list = false;
+            app.schedule_avatar_viewport(ratatui::layout::Rect::new(0, 0, 80, 24));
+            assert!(
+                app.contact_avatars
+                    .requested_targets()
+                    .contains(&AvatarTarget::Contact(contact))
+            );
+        }
+    }
+
+    #[test]
+    fn stale_portrait_fallback_cannot_replace_a_new_generation_photo() {
+        let root = tempdir().unwrap();
+        let mut avatars = ContactAvatars::new(root.path().into());
+        avatars.generation = 2;
+        avatars.requested = vec![target(1)];
+        assert!(avatars.apply(AvatarResult::Available {
+            generation: 2,
+            target: target(1),
+            picture_id: "real".into(),
+            protocol: protocol(),
+        }));
+        assert!(!avatars.apply(AvatarResult::Fallback {
+            generation: 1,
+            target: target(1),
+            protocol: protocol(),
+        }));
+        assert_eq!(avatars.protocols[&target(1)].0.as_ref(), "real");
     }
 
     #[test]

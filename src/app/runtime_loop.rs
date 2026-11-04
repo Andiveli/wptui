@@ -106,7 +106,16 @@ fn refresh_composer_viewport_width(app: &mut App<'_>, terminal_session: &mut Ter
     let Ok(area) = terminal_session.terminal_mut().size() else {
         return;
     };
-    let width = crate::ui::composer_viewport_width(area.width, area.height, app.pane_visibility);
+    let width = if app.contact_info.is_some() {
+        let (areas, _) = crate::ui::layout::contact_navigation_areas(
+            area.into(),
+            app.pane_visibility,
+            true,
+        );
+        areas.conversation.width.saturating_sub(4)
+    } else {
+        crate::ui::composer_viewport_width(area.width, area.height, app.pane_visibility)
+    };
     app.set_composer_viewport_width(width);
 }
 
@@ -255,6 +264,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
                 ) {
                     // This is terminal shutdown, not ordinary event handling: no job
                     // may access or publish into the media directory while logout clears it.
+                    app.close_contact_info();
                     media_jobs.shutdown();
                     download_worker.shutdown();
                     app.shutdown_read_sync_worker();
@@ -282,6 +292,15 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
         };
 
         app.sync_selected_presence();
+        if app.rail_on_logout
+            || !matches!(
+                app.selected_section,
+                crate::app::actions::Section::Chats | crate::app::actions::Section::Communities
+            )
+        {
+            app.close_contact_info();
+        }
+        app.schedule_contact_info(&mut media_jobs);
 
         let sticker_changed = app.advance_visible_stickers(std::time::Instant::now());
         if should_draw || sticker_changed {
@@ -326,6 +345,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
     }
 
     app.shutdown_avatar_runtime();
+    app.close_contact_info();
     media_jobs.shutdown();
     download_worker.shutdown();
     app.shutdown_read_receipt_worker();

@@ -218,6 +218,18 @@ After quitting, a bounded, redacted trace is printed in the normal terminal.
 Keybindings are contextual. Press `Esc` to close the active menu, picker, search, viewer, reply,
 or editor state.
 
+The contact information pane keeps the conversation visible and shows a large profile photo,
+phone number (when known), and shared groups from the local known-group catalog. Membership
+is queried in the background; loading, unavailable, and empty results are shown separately.
+This is not an account-wide group census. Unknown LID identities are never treated as phone
+numbers. Contacts without a profile photo use the illustrated default portrait; real photos
+still take precedence. Group and community artwork is unchanged.
+
+At 180 columns the contact pane occupies 46 columns. Narrow terminals temporarily hide the
+section rail and chat list before reducing conversation space; very small terminals show
+contact details alone. `Esc` restores the normal layout without changing the draft. Composer
+and picker input retain priority; `i` returns to composing, and `Space a i` focuses details again.
+
 ### Global and navigation
 
 | Action | Key |
@@ -225,6 +237,8 @@ or editor state.
 | Quit | `Ctrl+Q` |
 | Toggle section rail | `Space`, then `1` |
 | Toggle chat list | `Space`, then `2` |
+| Contact information (selected contact or open direct conversation) | `Space`, then `a`, then `i` |
+| Scroll contact details / close contact pane | `j` / `k`, then `Esc` to close |
 | Focus previous / next pane | `h` / `l` or `←` / `→` |
 | Select previous / next item | `k` / `j` or `↑` / `↓` |
 | Jump to first / last item | `g g` / `G` |

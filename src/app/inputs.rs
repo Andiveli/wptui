@@ -201,6 +201,7 @@ impl App<'_> {
             } else if self.handle_chat_search_input(key.clone()) {
             } else if self.handle_conversation_search_input(key.clone()) {
             } else if self.handle_chat_filter_input(key.clone()) {
+            } else if self.handle_contact_info_input(&key) {
             } else if self.focus_pane == FocusPane::ChatList
                 && self.community_detail.is_some()
                 && key == Key::k(KeyCode::Esc)
@@ -325,7 +326,30 @@ impl App<'_> {
         {
             self.focus_pane = FocusPane::Conversation;
         } else {
-            self.focus_pane = focus_after(self.focus_pane, &action, self.pane_visibility);
+            let visibility = if self.contact_info.is_some() {
+                crate::app::actions::PaneVisibility {
+                    section_rail: self.pane_visibility.section_rail
+                        && !self.mouse_hit_map.section_rows.is_empty(),
+                    chat_list: self.pane_visibility.chat_list
+                        && self.mouse_hit_map.chat_list.is_some(),
+                }
+            } else {
+                self.pane_visibility
+            };
+            if self.contact_info.is_some() {
+                self.focus_pane = crate::app::actions::focus_after_visibility_change(
+                    self.focus_pane,
+                    visibility,
+                );
+                if (matches!(action, AppAction::FocusPane(FocusPane::SectionRail))
+                    && !visibility.section_rail)
+                    || (matches!(action, AppAction::FocusPane(FocusPane::ChatList))
+                        && !visibility.chat_list)
+                {
+                    return;
+                }
+            }
+            self.focus_pane = focus_after(self.focus_pane, &action, visibility);
         }
 
         // The status view is read-only: chat actions (react, reply, edit,
@@ -360,6 +384,7 @@ impl App<'_> {
         }
 
         match action {
+            AppAction::OpenContactInfo => self.open_contact_info(),
             action @ (AppAction::DownloadMessage
             | AppAction::ViewMessage
             | AppAction::ViewerNext

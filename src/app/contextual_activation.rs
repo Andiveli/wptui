@@ -27,7 +27,16 @@ impl App<'_> {
     }
 
     pub fn open_contextual_actions(&mut self) {
-        self.contextual_menu = Some((contextual_menu_rows(self.contextual_context()), 0));
+        let mut rows = contextual_menu_rows(self.contextual_context());
+        if self.contact_info_target().is_none() {
+            for row in &mut rows {
+                if row.action_token == ContextualAction::ContactInfo {
+                    row.row_style = super::contextual_actions::RowStyle::Disabled;
+                    row.reason = Some("select a contact conversation");
+                }
+            }
+        }
+        self.contextual_menu = Some((rows, 0));
     }
 
     pub fn move_contextual_menu(&mut self, delta: isize) {
@@ -45,6 +54,9 @@ impl App<'_> {
         let Some(row) = rows.get(*selected).copied() else {
             return;
         };
+        if row.action_token == ContextualAction::ContactInfo && self.contact_info_target().is_none() {
+            return;
+        }
         let context = self.contextual_context();
         let available = evaluate_availability(
             crate::app::contextual_actions::CONTEXTUAL_ACTION_METADATA
@@ -69,6 +81,7 @@ impl App<'_> {
 
 fn contextual_action_to_app_action(action: ContextualAction) -> AppAction {
     match action {
+        ContextualAction::ContactInfo => AppAction::OpenContactInfo,
         ContextualAction::Copy => AppAction::CopyMessage,
         ContextualAction::React => AppAction::ReactMessage,
         ContextualAction::Reply => AppAction::ReplyMessage,

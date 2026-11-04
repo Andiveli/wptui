@@ -337,6 +337,7 @@ pub enum AppEvent {
     SetViewerPreview(ViewerPreviewKey, Option<StatefulProtocol>),
     SetFileState(wr::MessageId, FileMeta),
     SetAudioDuration(wr::MessageId, Arc<str>, Option<u64>),
+    ContactInfoLoaded(super::contact_info::ContactInfoResult),
     ContactAvatar(AvatarResult),
     ContactAvatarRefreshed {
         generation: u64,
@@ -350,6 +351,7 @@ pub enum AppEventFamily {
     Send,
     ReadReceipt,
     MediaViewer,
+    /// Contact presentation results: avatar protocols and contact details.
     Avatar,
 }
 
@@ -376,7 +378,9 @@ impl AppEvent {
             | Self::SetViewerPreview(_, _)
             | Self::SetFileState(_, _)
             | Self::SetAudioDuration(_, _, _) => AppEventFamily::MediaViewer,
-            Self::ContactAvatar(_) | Self::ContactAvatarRefreshed { .. } => AppEventFamily::Avatar,
+            Self::ContactInfoLoaded(_)
+            | Self::ContactAvatar(_)
+            | Self::ContactAvatarRefreshed { .. } => AppEventFamily::Avatar,
         }
     }
 }
@@ -490,6 +494,9 @@ impl fmt::Debug for AppEvent {
                 .field("path", path)
                 .field("duration_secs", duration)
                 .finish(),
+            AppEvent::ContactInfoLoaded(result) => {
+                f.debug_tuple("ContactInfoLoaded").field(result).finish()
+            }
             AppEvent::ContactAvatar(result) => f
                 .debug_tuple("ContactAvatar")
                 .field(&result.generation())

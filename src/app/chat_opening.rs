@@ -15,6 +15,7 @@ impl App<'_> {
     pub fn open_selected_chat(&mut self) {
         crate::crash_diagnostics::breadcrumb("chat-open", "start");
         if let Some(chat) = self.get_selected_chat() {
+            self.close_contact_info();
             self.open_chat = Some(chat.clone());
             self.refresh_group_permission(&chat);
             self.sort_chat_messages(chat);
@@ -61,6 +62,7 @@ impl App<'_> {
     /// recipient shows up as a row; the database row is created on the first
     /// real message, so an empty conversation is never persisted.
     pub fn open_chat_by_jid(&mut self, jid: wr::JID) {
+        self.close_contact_info();
         let missing = !self.chats.contains_key(&jid);
         self.chats.entry(jid.clone()).or_insert_with(|| Chat {
             jid: jid.clone(),
