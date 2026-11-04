@@ -164,6 +164,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
             let _ = app
                 .message_action_diagnostics
                 .write_report(std::io::stderr());
+            app.join_news_workers();
             execute_terminal_initialization_failure(app, &mut download_worker);
             return;
         }
@@ -173,6 +174,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
     terminal_session.start_input_reader(&mut app.input_reader, app.tx.clone());
 
     app.sync_selected_presence();
+    app.schedule_composer_previews(&mut media_jobs);
     refresh_composer_viewport_width(app, &mut terminal_session);
     let initial_draw_started = app.runtime_diagnostics.draw_started();
     let mut media_render_plan = MediaRenderPlan::default();
@@ -182,6 +184,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
         .draw(|frame| ui::draw_with_plan(frame, app, &mut media_render_plan, &mut visibility_plan));
     if let Err(error) = &draw_result {
         error!("Failed to draw terminal UI: {error}");
+        app.join_news_workers();
         app.shutdown_avatar_runtime();
         media_jobs.shutdown();
         download_worker.shutdown();
@@ -282,6 +285,9 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
         };
 
         app.sync_selected_presence();
+        if !app.should_quit && !app.logout_in_progress {
+            app.schedule_composer_previews(&mut media_jobs);
+        }
 
         let sticker_changed = app.advance_visible_stickers(std::time::Instant::now());
         if should_draw || sticker_changed {
@@ -325,6 +331,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
         }
     }
 
+    app.join_news_workers();
     app.shutdown_avatar_runtime();
     media_jobs.shutdown();
     download_worker.shutdown();

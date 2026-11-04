@@ -224,7 +224,7 @@ impl App<'_> {
                 self.metadata.remove(target);
             }
             if projection.invalidate_image_cache {
-                self.image_cache.remove(target);
+                self.invalidate_message_preview(target);
             }
             self.messages.insert(target.clone(), message);
         }
@@ -372,7 +372,7 @@ impl App<'_> {
             self.metadata.remove(id);
         }
         if invalidate_image_cache {
-            self.image_cache.remove(id);
+            self.invalidate_message_preview(id);
         }
         self.messages.insert(id.clone(), message.clone());
         self.message_height_cache.invalidate(id);

@@ -21,6 +21,7 @@ impl App<'_> {
             crate::crash_diagnostics::breadcrumb("chat-open", "messages-sorted");
             self.message_list_state.reset();
             self.restore_read_cursor_anchor();
+            self.clear_manual_unread_on_open();
             crate::crash_diagnostics::breadcrumb("chat-open", "ready");
         }
     }
@@ -75,6 +76,7 @@ impl App<'_> {
         self.sort_chat_messages(jid);
         self.message_list_state.reset();
         self.restore_read_cursor_anchor();
+        self.clear_manual_unread_on_open();
     }
 
     fn restore_read_cursor_anchor(&mut self) {

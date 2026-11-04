@@ -17,11 +17,16 @@ use crate::ui::layout::{
 pub struct PendingAttachment {
     pub path: Arc<str>,
     pub kind: wr::FileKind,
+    pub(crate) preview_identity: Arc<()>,
 }
 
 impl PendingAttachment {
     pub fn new(path: Arc<str>, kind: wr::FileKind) -> Self {
-        Self { path, kind }
+        Self {
+            path,
+            kind,
+            preview_identity: Arc::new(()),
+        }
     }
 
     pub fn display_name(&self) -> &str {

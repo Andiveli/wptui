@@ -318,22 +318,25 @@ pub enum Section {
     Chats,
     Status,
     Communities,
+    News,
 }
 
 impl Section {
-    pub const ALL: [Self; 3] = [Self::Chats, Self::Status, Self::Communities];
+    pub const ALL: [Self; 4] = [Self::Chats, Self::Status, Self::Communities, Self::News];
 
     pub fn next(self) -> Self {
         match self {
             Self::Chats => Self::Status,
             Self::Status => Self::Communities,
-            Self::Communities => Self::Chats,
+            Self::Communities => Self::News,
+            Self::News => Self::Chats,
         }
     }
 
     pub fn previous(self) -> Self {
         match self {
-            Self::Chats => Self::Communities,
+            Self::Chats => Self::News,
+            Self::News => Self::Communities,
             Self::Status => Self::Chats,
             Self::Communities => Self::Status,
         }
@@ -344,17 +347,14 @@ impl Section {
             Self::Chats => "Chats",
             Self::Status => "Status",
             Self::Communities => "Communities",
+            Self::News => "News wptui",
         }
     }
 }
 
-/// The Logout entry pinned at the BOTTOM of the section rail, below the three
-/// content sections. It is deliberately NOT a `Section` variant: content
-/// selection (`selected_section`) drives ChatList/Conversation rendering and
-/// the "… is not available yet" placeholder, and a 4th section variant would
-/// ripple into all of that. Instead the rail cursor is modeled as
-/// `App.selected_section` (indices 0..3 content sections) plus a
-/// `App.rail_on_logout` flag meaning "the rail is on the Logout slot" (index 3).
+/// The Logout entry pinned below the four content sections. It is not a
+/// content section: `rail_on_logout` selects its dedicated placeholder and
+/// confirmation flow, independently of the retained `selected_section`.
 /// While the flag is set the content pane shows a dedicated logout placeholder
 /// and Enter triggers the existing `begin_logout_confirmation()`.
 pub const LOGOUT_RAIL_TITLE: &str = "Logout";

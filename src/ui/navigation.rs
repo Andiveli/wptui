@@ -11,7 +11,16 @@ pub(super) fn render_section_rail(frame: &mut Frame, app: &mut App, area: Rect) 
     let mut items = Section::ALL
         .iter()
         .map(|section| {
-            ListItem::new(Section::title(*section)).style(Style::default().fg(Color::White))
+            let title = if *section == Section::News {
+                super::news::rail_title(area.width.saturating_sub(2))
+            } else {
+                section.title()
+            };
+            ListItem::new(title).style(Style::default().fg(if *section == Section::News {
+                super::news::NEWS_COLOR
+            } else {
+                Color::White
+            }))
         })
         .collect::<Vec<_>>();
     items.push(
@@ -43,6 +52,10 @@ pub(super) fn render_section_rail(frame: &mut Frame, app: &mut App, area: Rect) 
         .highlight_symbol("> ")
         .highlight_style(if app.rail_on_logout {
             Style::default().red()
+        } else if app.selected_section == Section::News {
+            Style::default()
+                .fg(Color::Black)
+                .bg(super::news::NEWS_COLOR)
         } else {
             Style::default().green()
         });

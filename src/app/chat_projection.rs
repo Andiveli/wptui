@@ -236,7 +236,7 @@ impl App<'_> {
         }
         let mut counts = [0; 4];
         for jid in self.chats.keys() {
-            if self.pending_chat_activity(jid).0 == 0 {
+            if !self.chat_is_unread(jid) {
                 continue;
             }
             if self.is_archived_chat(jid) {
@@ -548,13 +548,18 @@ impl App<'_> {
                                 (count + member_count, attention || member_attention)
                             },
                         );
-                    crate::ui::contact_list::ContactListItem::from_summary(
+                    let mut item = crate::ui::contact_list::ContactListItem::from_summary(
                         row,
                         latest_message,
                         fallback,
                         unread,
                         attention,
-                    )
+                    );
+                    item.unread |= row
+                        .members
+                        .iter()
+                        .any(|jid| self.chat_is_manually_unread(jid));
+                    item
                 })
                 .collect::<Vec<_>>();
             self.chat_list_view = Some(ChatListViewModel {

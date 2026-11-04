@@ -257,6 +257,9 @@ pub(crate) fn height(
     id: &wr::MessageId,
     input: &LayoutInput<'_>,
 ) -> usize {
+    if input.author_group.stack_count == 0 {
+        return 0;
+    }
     if let Some(height) = cache.get(id, &input) {
         return height;
     }
@@ -304,7 +307,8 @@ pub(crate) fn height(
         }
     };
 
-    let height = usize::from(input.author_group.starts_group() || input.is_selected)
+    let height = input.author_group.stack_height()
+        + usize::from(input.author_group.starts_group() || input.is_selected)
         + usize::from(input.has_quote)
         + content_height
         + usize::from(input.has_reactions)

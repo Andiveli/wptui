@@ -109,7 +109,11 @@ impl ContactListItem {
                 if unread > 0 {
                     item.preview = format!("{unread} unread");
                 }
-                item.unread = unread > 0;
+                item.unread = unread > 0
+                    || row
+                        .members
+                        .iter()
+                        .any(|jid| app.chat_is_manually_unread(jid));
                 item.attention = attention;
                 item
             }
@@ -129,7 +133,11 @@ impl ContactListItem {
                 if unread > 0 {
                     item.preview = format!("{unread} unread");
                 }
-                item.unread = unread > 0;
+                item.unread = unread > 0
+                    || row
+                        .members
+                        .iter()
+                        .any(|jid| app.chat_is_manually_unread(jid));
                 item.attention = attention;
                 item
             }

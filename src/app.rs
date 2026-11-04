@@ -26,6 +26,7 @@ pub mod composer;
 pub mod composer_input_mapping;
 pub mod composer_input_paste;
 pub mod composer_integration;
+pub(crate) mod composer_preview;
 pub mod contact_avatars;
 pub mod contact_source_port;
 pub mod contextual_actions;
@@ -62,6 +63,8 @@ pub mod message_push_name_port;
 pub mod message_reactions;
 pub(crate) mod mouse_input;
 pub mod navigation_conversation_dispatch;
+pub mod news;
+pub mod news_update;
 pub mod notifications;
 pub mod optimistic_text_send;
 pub mod preferences;
@@ -271,6 +274,7 @@ pub struct App<'a> {
     presence_diagnostics: PresenceDiagnostics,
 
     pub composer: Composer<'a>,
+    pub(crate) composer_previews: composer_preview::ComposerPreviews,
     pub(crate) composer_direction: ComposerDirection,
     pub(crate) mouse_capture_enabled: bool,
     pub(crate) composer_viewport_width: u16,
@@ -281,6 +285,7 @@ pub struct App<'a> {
     pub timeline: unread_messages::Timeline,
     pub metadata: HashMap<wr::MessageId, Metadata>,
     pub image_cache: HashMap<Arc<str>, StatefulProtocol>,
+    pub(crate) stack_previews: crate::ui::message_list::StackPreviewCache,
     pub image_cache_order: VecDeque<Arc<str>>,
     pub(crate) sticker_playback: HashMap<Arc<str>, sticker_animation::StickerPlayback>,
     pub(crate) deferred_sticker_previews: HashSet<Arc<str>>,
@@ -310,6 +315,8 @@ pub struct App<'a> {
     pub message_revoker: Box<dyn MessageRevoker>,
     pub action_notice: Option<ActionNotice>,
     pub update_notice: Option<String>,
+    pub news: news::NewsState,
+    pub news_update: news_update::NewsUpdateState,
     pub message_menu: Option<(Vec<MessageMenuAction>, usize)>,
     pub contextual_menu: Option<(
         Vec<crate::app::contextual_actions::ContextualMenuRow>,
@@ -362,7 +369,7 @@ pub struct App<'a> {
     pub logout_in_progress: bool,
 
     /// Whether the section rail cursor sits on the Logout slot (below the
-    /// three content sections). When true the content pane shows a logout
+    /// four content sections). When true the content pane shows a logout
     /// placeholder instead of a chat/status/community view, and Enter on the
     /// rail calls `begin_logout_confirmation()`. Independent of
     /// `selected_section`, which keeps driving content selection.
