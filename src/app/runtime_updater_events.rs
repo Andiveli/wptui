@@ -4,6 +4,14 @@ use crate::app::events::AppEvent;
 impl App<'_> {
     pub(crate) fn handle_updater_event(&mut self, event: AppEvent) -> bool {
         match event {
+            AppEvent::NewsStarFinished {
+                generation,
+                operation,
+                result,
+            } => {
+                self.finish_repository_star(generation, operation, result);
+                true
+            }
             AppEvent::NewsUpdateFinished { target, result } => {
                 self.finish_news_update(target, result);
                 true
