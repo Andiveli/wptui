@@ -822,7 +822,7 @@ mod tests {
             let (_, details) =
                 crate::ui::layout::contact_navigation_areas(body, app.pane_visibility, true);
             let portrait = crate::ui::contact_info::portrait_area(details.unwrap());
-            assert_eq!(portrait.size(), Size::new(38, 19));
+            assert_eq!((portrait.width, portrait.height), (38, 19));
             // Both the list avatar and the large portrait use the worker result.
             for area in [list_avatar, portrait] {
                 let (left, right, top, bottom) = (area.x, area.right(), area.y, area.bottom());
