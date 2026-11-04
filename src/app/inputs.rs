@@ -537,7 +537,9 @@ mod tests {
         // The chosen artboard reserves the rightmost 46 columns at 180x50.
         let details = contact_info_portrait_rows(&opened, 134, 180);
         assert!(
-            details.iter().any(|row| row.contains("Contact information")),
+            details
+                .iter()
+                .any(|row| row.contains("Contact information")),
             "Space a i must render the contact pane, not leave the contextual menu open"
         );
         let name_row = details
