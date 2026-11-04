@@ -750,7 +750,8 @@ mod tests {
         use crate::app::actions::{AppAction, FocusPane};
         use crate::app::events::MediaRenderPlan;
         use crate::app::read_receipts::VisibilityPlan;
-        use ratatui::style::Color;
+        use crate::ui::contact_list::{AVATAR_HEIGHT, AVATAR_WIDTH, visible_contact_rows};
+        use ratatui::{layout::Rect, style::Color};
 
         for available in [false, true] {
             let mut app = TestApp::new();
@@ -793,14 +794,38 @@ mod tests {
                 AppInput::App(event) => assert!(app.handle_avatar_event(event)),
                 other => panic!("unexpected avatar input: {other:?}"),
             }
-            terminal
+            let completed = terminal
                 .draw(|frame| {
                     crate::ui::draw_with_plan(frame, &mut app, &mut media, &mut visibility);
                 })
                 .unwrap();
-            let buffer = terminal.backend().buffer();
+            // Compare like-for-like raw render buffers. Terminal diffing skips
+            // trailing cells of wide Chafa glyphs, so TestBackend can retain old
+            // invisible colors there even when the rendered image is correct.
+            let buffer = completed.buffer;
+            let contacts_area = app.mouse_hit_map.chat_list.expect("visible contacts body");
+            let (rows, items) = app.cached_contact_view();
+            let offset = app.chat_list_state.offset();
+            let visible = visible_contact_rows(&items, offset, contacts_area.height);
+            let (_, relative_y) = visible
+                .into_iter()
+                .find(|(index, _)| rows[*index].avatar_target() == Some(&contact))
+                .expect("visible contact avatar row");
+            let list_avatar = Rect::new(
+                contacts_area.x,
+                contacts_area.y + relative_y,
+                AVATAR_WIDTH,
+                AVATAR_HEIGHT,
+            );
+            let show_filters = crate::ui::show_chat_filter_header(&app);
+            let (_, body) = crate::ui::chat_filter_areas(buffer.area, show_filters);
+            let (_, details) =
+                crate::ui::layout::contact_navigation_areas(body, app.pane_visibility, true);
+            let portrait = crate::ui::contact_info::portrait_area(details.unwrap());
+            assert_eq!(portrait.size(), Size::new(38, 19));
             // Both the list avatar and the large portrait use the worker result.
-            for (left, right, top, bottom) in [(15, 19, 2, 4), (138, 176, 3, 22)] {
+            for area in [list_avatar, portrait] {
+                let (left, right, top, bottom) = (area.x, area.right(), area.y, area.bottom());
                 if available {
                     assert!(
                         (top..bottom).any(|y| (left..right).any(|x| {
@@ -813,7 +838,6 @@ mod tests {
                     let bytes = include_bytes!("../../assets/contact-avatar-default.png");
                     let portrait = image::load_from_memory(bytes).unwrap();
                     let mut reference = Picker::halfblocks().new_resize_protocol(portrait);
-                    let area = ratatui::layout::Rect::new(left, top, right - left, bottom - top);
                     let mut expected = ratatui::buffer::Buffer::empty(area);
                     ratatui::widgets::StatefulWidget::render(
                         ratatui_image::StatefulImage::default(),

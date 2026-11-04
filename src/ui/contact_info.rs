@@ -10,6 +10,20 @@ use ratatui_image::StatefulImage;
 use super::truncate_with_ellipsis;
 use crate::app::{App, contact_avatars::AvatarTarget, contact_info::SharedGroups};
 
+pub(crate) fn portrait_area(area: Rect) -> Rect {
+    let inner = Block::default().borders(Borders::LEFT).inner(area);
+    // A square portrait occupies 38 columns by 19 terminal rows on the wide
+    // artboard. On short terminals reduce it before clipping identity/actions.
+    let height = 19.min(inner.height.saturating_sub(11));
+    let width = 38.min(inner.width.saturating_sub(2)).min(height * 2);
+    Rect::new(
+        inner.x + inner.width.saturating_sub(width) / 2,
+        inner.y + 2,
+        width,
+        height,
+    )
+}
+
 pub(crate) fn render(frame: &mut Frame, app: &mut App<'_>, area: Rect) {
     let Some(info) = &app.contact_info else {
         return;
@@ -31,16 +45,7 @@ pub(crate) fn render(frame: &mut Frame, app: &mut App<'_>, area: Rect) {
     if inner.height < 2 {
         return;
     }
-    // A square portrait occupies 38 columns by 19 terminal rows on the wide
-    // artboard. On short terminals reduce it before clipping identity/actions.
-    let photo_height = 19.min(inner.height.saturating_sub(11));
-    let photo_width = 38.min(inner.width.saturating_sub(2)).min(photo_height * 2);
-    let photo = Rect::new(
-        inner.x + inner.width.saturating_sub(photo_width) / 2,
-        inner.y + 2,
-        photo_width,
-        photo_height,
-    );
+    let photo = portrait_area(area);
     let target = AvatarTarget::Contact(contact.clone());
     if !photo.is_empty() {
         if let Some(protocol) = app.contact_avatars.protocol_mut(&target) {
