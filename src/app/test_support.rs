@@ -365,11 +365,22 @@ pub(crate) struct ChatReadSyncCall {
     pub(crate) participant: Option<wr::JID>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ChatReadStateSyncCall {
+    pub(crate) chat: wr::JID,
+    pub(crate) message_id: Option<wr::MessageId>,
+    pub(crate) read: bool,
+    pub(crate) timestamp: i64,
+    pub(crate) from_me: bool,
+    pub(crate) participant: Option<wr::JID>,
+}
+
 pub(crate) type SharedTrace = Arc<Mutex<Vec<&'static str>>>;
 
 #[derive(Clone)]
 pub(crate) struct RecordingChatReadSyncPort {
     pub(crate) calls: Arc<Mutex<Vec<ChatReadSyncCall>>>,
+    pub(crate) state_calls: Arc<Mutex<Vec<ChatReadStateSyncCall>>>,
     pub(crate) schedule_result: Arc<Mutex<bool>>,
     pub(crate) shutdowns: Arc<Mutex<usize>>,
     pub(crate) restarts: Arc<Mutex<usize>>,
@@ -389,6 +400,7 @@ impl Default for RecordingChatReadSyncPort {
     fn default() -> Self {
         Self {
             calls: Default::default(),
+            state_calls: Default::default(),
             schedule_result: Arc::new(Mutex::new(true)),
             shutdowns: Default::default(),
             restarts: Default::default(),
@@ -413,6 +425,32 @@ impl ChatReadSyncPort for RecordingChatReadSyncPort {
             from_me,
             participant: participant.cloned(),
         });
+        *self.schedule_result.lock().unwrap()
+    }
+
+    fn schedule_state(
+        &mut self,
+        chat: &wr::JID,
+        message_id: Option<&wr::MessageId>,
+        read: bool,
+        timestamp: i64,
+        from_me: bool,
+        participant: Option<&wr::JID>,
+    ) -> bool {
+        self.state_calls
+            .lock()
+            .unwrap()
+            .push(ChatReadStateSyncCall {
+                chat: chat.clone(),
+                message_id: message_id.cloned(),
+                read,
+                timestamp,
+                from_me,
+                participant: participant.cloned(),
+            });
+        if read && let Some(id) = message_id {
+            return self.schedule(chat, id, timestamp, from_me, participant);
+        }
         *self.schedule_result.lock().unwrap()
     }
 

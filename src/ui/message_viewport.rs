@@ -68,12 +68,14 @@ pub(super) fn render(
         let Some(bottom_i64) = i64::try_from(bottom).ok() else {
             break;
         };
-        if crate::app::read_receipts::intersects(
-            top_i64,
-            bottom_i64,
-            i64::from(list_area.top()),
-            i64::from(list_area.bottom()),
-        ) {
+        if height > 0
+            && crate::app::read_receipts::intersects(
+                top_i64,
+                bottom_i64,
+                i64::from(list_area.top()),
+                i64::from(list_area.bottom()),
+            )
+        {
             counts.visible_rows = counts.visible_rows.saturating_add(1);
             counts.receipt_candidates = counts.receipt_candidates.saturating_add(1);
             viewport_anchor.get_or_insert((i, y));
@@ -122,7 +124,8 @@ pub(super) fn render(
                     {
                         counts.media_rows = counts.media_rows.saturating_add(1);
                         let image_top = u16::from(is_selected || author_group.starts_group())
-                            + u16::from(item.info.quote_id.is_some());
+                            + u16::from(item.info.quote_id.is_some())
+                            + author_group.stack_height() as u16;
                         let image_bottom = image_top + preview_height(&data.kind) as u16;
                         let visible_buf_bottom = visible_buf_top + visible_buf_height;
                         visible_buf_top < image_bottom && visible_buf_bottom > image_top
@@ -165,7 +168,8 @@ pub(super) fn render(
                             ) =>
                         {
                             let first_row = u16::from(is_selected || author_group.starts_group())
-                                + u16::from(item.info.quote_id.is_some());
+                                + u16::from(item.info.quote_id.is_some())
+                                + author_group.stack_height() as u16;
                             let inject = mapped_area.y > first_row
                                 && mapped_area.y < first_row + preview_height(&data.kind) as u16;
                             (inject, first_row, if is_selected { 2 } else { 0 })
@@ -235,6 +239,23 @@ pub(super) fn render(
                     map_clipped_hit(&mut hit.area, list_area, top, visible_top, visible_bottom)
                 });
                 app.mouse_hit_map.media.extend(media_hits);
+            }
+            for (front, mut region) in media_render_plan.take_stack_regions() {
+                let y_offset = if too_low || too_high {
+                    region.x = region.x.saturating_add(list_area.left());
+                    top
+                } else {
+                    0
+                };
+                super::message_stacks::render_region(
+                    app,
+                    &front,
+                    region,
+                    list_area,
+                    y_offset,
+                    frame.buffer_mut(),
+                    media_render_plan,
+                );
             }
         }
 

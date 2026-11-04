@@ -77,7 +77,8 @@ impl App<'_> {
             }
 
             if self.handle_composer_input(key.clone()) {
-            } else if self.file_picker.is_none()
+            } else if self.selected_section != Section::News
+                && self.file_picker.is_none()
                 && self.attachment_viewer.is_none()
                 && self.handle_status_composer_input(key.clone())
             {
@@ -198,8 +199,13 @@ impl App<'_> {
                         SequenceResolution::Cancelled => {}
                     }
                 }
-            } else if self.handle_chat_search_input(key.clone()) {
-            } else if self.handle_conversation_search_input(key.clone()) {
+            } else if self.handle_news_key(&key) {
+            } else if self.selected_section != Section::News
+                && self.handle_chat_search_input(key.clone())
+            {
+            } else if self.selected_section != Section::News
+                && self.handle_conversation_search_input(key.clone())
+            {
             } else if self.handle_chat_filter_input(key.clone()) {
             } else if self.focus_pane == FocusPane::ChatList
                 && self.community_detail.is_some()
@@ -266,12 +272,14 @@ impl App<'_> {
     }
 
     pub fn dispatch_action(&mut self, action: AppAction) {
-        if self.status_composition == StatusCompositionState::Submitting
+        if self.selected_section != Section::News
+            && self.status_composition == StatusCompositionState::Submitting
             && !matches!(action, AppAction::Quit)
         {
             return;
         }
-        if self.status_composition == StatusCompositionState::Navigating
+        if self.selected_section != Section::News
+            && self.status_composition == StatusCompositionState::Navigating
             && !(self.attachment_viewer.is_some()
                 && matches!(
                     action,
@@ -312,7 +320,8 @@ impl App<'_> {
         {
             return;
         }
-        if self.status_composition == StatusCompositionState::Navigating
+        if self.selected_section != Section::News
+            && self.status_composition == StatusCompositionState::Navigating
             && matches!(
                 action,
                 AppAction::SelectNext
@@ -326,6 +335,10 @@ impl App<'_> {
             self.focus_pane = FocusPane::Conversation;
         } else {
             self.focus_pane = focus_after(self.focus_pane, &action, self.pane_visibility);
+        }
+
+        if self.dispatch_news_navigation(&action) {
+            return;
         }
 
         // The status view is read-only: chat actions (react, reply, edit,

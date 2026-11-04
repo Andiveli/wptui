@@ -1,5 +1,7 @@
 mod github;
 mod install;
+pub mod news;
+pub mod news_update;
 
 use std::path::Path;
 

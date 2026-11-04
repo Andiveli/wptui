@@ -280,11 +280,20 @@ pub(crate) enum MediaRenderEffect {
 pub struct MediaRenderPlan {
     effects: Vec<MediaRenderEffect>,
     visible_stickers: Vec<Arc<str>>,
+    stack_regions: Vec<(wr::MessageId, ratatui::layout::Rect)>,
 }
 
 impl MediaRenderPlan {
     pub fn is_empty(&self) -> bool {
-        self.effects.is_empty() && self.visible_stickers.is_empty()
+        self.effects.is_empty() && self.visible_stickers.is_empty() && self.stack_regions.is_empty()
+    }
+
+    pub(crate) fn record_stack_region(&mut self, id: wr::MessageId, area: ratatui::layout::Rect) {
+        self.stack_regions.push((id, area));
+    }
+
+    pub(crate) fn take_stack_regions(&mut self) -> Vec<(wr::MessageId, ratatui::layout::Rect)> {
+        std::mem::take(&mut self.stack_regions)
     }
 
     pub(crate) fn append(&mut self, effect: MediaRenderEffect) {
@@ -306,6 +315,11 @@ impl MediaRenderPlan {
 
 pub enum AppEvent {
     UpdateAvailable(String),
+    NewsLoaded(crate::updater::news::NewsHistory),
+    NewsUpdateFinished {
+        target: crate::updater::news_update::UpdateTarget,
+        result: Result<PathBuf, String>,
+    },
     OutboundSendSucceeded {
         local_send_id: u64,
         message: wr::Message,
@@ -327,7 +341,13 @@ pub enum AppEvent {
     DownloadFile(wr::MessageId, wr::FileId),
     DownloadFileDone(wr::MessageId, FileMeta),
     LoadFilePreview(wr::MessageId),
-    SetFilePreview(wr::MessageId, Arc<str>, StatefulProtocol),
+    SetFilePreview(
+        wr::MessageId,
+        Arc<str>,
+        StatefulProtocol,
+        Option<(Arc<image::DynamicImage>, (u32, u32))>,
+    ),
+    SetStackCrops(crate::ui::message_list::CropResults),
     SetStickerPreview(
         wr::MessageId,
         Arc<str>,
@@ -335,6 +355,7 @@ pub enum AppEvent {
     ),
     LoadViewerPreview(ViewerPreviewKey),
     SetViewerPreview(ViewerPreviewKey, Option<StatefulProtocol>),
+    SetComposerPreviews(Vec<(u64, Option<StatefulProtocol>)>),
     SetFileState(wr::MessageId, FileMeta),
     SetAudioDuration(wr::MessageId, Arc<str>, Option<u64>),
     ContactAvatar(AvatarResult),
@@ -356,7 +377,9 @@ pub enum AppEventFamily {
 impl AppEvent {
     pub const fn family(&self) -> AppEventFamily {
         match self {
-            Self::UpdateAvailable(_) => AppEventFamily::Updater,
+            Self::UpdateAvailable(_) | Self::NewsLoaded(_) | Self::NewsUpdateFinished { .. } => {
+                AppEventFamily::Updater
+            }
             Self::OutboundSendSucceeded { .. }
             | Self::OutboundSendFailed { .. }
             | Self::StatusSendSucceeded
@@ -370,10 +393,12 @@ impl AppEvent {
             Self::DownloadFile(_, _)
             | Self::DownloadFileDone(_, _)
             | Self::LoadFilePreview(_)
-            | Self::SetFilePreview(_, _, _)
+            | Self::SetFilePreview(_, _, _, _)
+            | Self::SetStackCrops(_)
             | Self::SetStickerPreview(_, _, _)
             | Self::LoadViewerPreview(_)
             | Self::SetViewerPreview(_, _)
+            | Self::SetComposerPreviews(_)
             | Self::SetFileState(_, _)
             | Self::SetAudioDuration(_, _, _) => AppEventFamily::MediaViewer,
             Self::ContactAvatar(_) | Self::ContactAvatarRefreshed { .. } => AppEventFamily::Avatar,
@@ -400,6 +425,12 @@ pub enum DrawSource {
 impl fmt::Debug for AppEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            AppEvent::NewsLoaded(history) => f.debug_tuple("NewsLoaded").field(history).finish(),
+            AppEvent::NewsUpdateFinished { target, result } => f
+                .debug_struct("NewsUpdateFinished")
+                .field("target", target)
+                .field("result", result)
+                .finish(),
             AppEvent::UpdateAvailable(version) => {
                 f.debug_tuple("UpdateAvailable").field(version).finish()
             }
@@ -461,7 +492,8 @@ impl fmt::Debug for AppEvent {
             AppEvent::LoadFilePreview(message_id) => {
                 f.debug_tuple("LoadFilePreview").field(message_id).finish()
             }
-            AppEvent::SetFilePreview(message_id, path, _) => f
+            AppEvent::SetStackCrops(_) => f.write_str("SetStackCrops"),
+            AppEvent::SetFilePreview(message_id, path, _, _) => f
                 .debug_tuple("SetFilePreview")
                 .field(message_id)
                 .field(path)
@@ -478,6 +510,10 @@ impl fmt::Debug for AppEvent {
                 .debug_tuple("SetViewerPreview")
                 .field(key)
                 .field(&protocol.is_some())
+                .finish(),
+            AppEvent::SetComposerPreviews(results) => f
+                .debug_tuple("SetComposerPreviews")
+                .field(&results.len())
                 .finish(),
             AppEvent::SetFileState(message_id, state) => f
                 .debug_tuple("SetFileState")
