@@ -155,9 +155,13 @@ impl App<'_> {
                 .last_read_at
                 .zip(timeline.last_read_message.clone())
         });
+        if current.as_ref() == Some(&target_cursor) {
+            self.set_manual_unread(&chat, false);
+            return;
+        }
         if current
             .as_ref()
-            .is_some_and(|cursor| *cursor >= target_cursor)
+            .is_some_and(|cursor| *cursor > target_cursor)
         {
             self.record_receipt_classification(kind, &chat, &target_id, "rejected_stale_cursor");
             return;
@@ -173,6 +177,7 @@ impl App<'_> {
                     && (message.info.timestamp, message.info.id.clone()) > target_cursor
             })
             .count();
+        self.set_manual_unread(&chat, false);
         let timeline = self.timeline.entry(chat.clone()).or_default();
         timeline.last_read_message = Some(target_id.clone());
         timeline.last_read_at = Some(target_timestamp);

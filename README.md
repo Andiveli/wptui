@@ -33,9 +33,9 @@ https://github.com/user-attachments/assets/f08d20f9-6051-45e2-a1d2-b0a512242e9c
 
 The Chats list has **All**, **Unread**, **Groups**, and **Archived** views. All,
 Unread, and Groups exclude archived chats; Archived shows only archived chats.
-Filter badges count chats with unread messages (each chat once), not individual
-messages. All, Unread, and Groups count unarchived chats; Archived counts archived
-chats. Zero counts are hidden.
+Filter badges count unread chats (each chat once), including manually marked chats,
+not individual messages. All, Unread, and Groups count unarchived chats; Archived
+counts archived chats. Zero counts are hidden.
 Archive status comes from the linked device's WhatsApp settings. Search narrows
 the selected view. Switching views does not change messages or read status;
 a community row contains only groups in that view. Archive changes received
@@ -257,6 +257,83 @@ WPTUI_MESSAGE_ACTION_DEBUG=1 cargo run
 
 After quitting, a bounded, redacted trace is printed in the normal terminal.
 
+#### Read/unread synchronization preview
+
+To diagnose a read/unread mismatch, use a **diagnostic-enabled preview**, without
+resetting your account or repairing local state. From the main checkout root:
+
+The parent will provide the diagnostic-enabled binary's source-stamped filename.
+Replace `SOURCE_STAMP` below with that supplied stamp, keeping the old binary.
+The `target` directory must already exist. Each run creates a unique report directory:
+
+```bash
+trace_dir=$(mktemp -d "$PWD/.worktrees/chat-read-unread/target/read-sync-trace.XXXXXX") &&
+  printf 'Read-sync report: %s/trace.txt\n' "$trace_dir" &&
+  WPTUI_READ_SYNC_TRACE="$trace_dir/trace.txt" \
+    .worktrees/chat-read-unread/target/release/wp-tui-SOURCE_STAMP
+```
+
+The report path is printed before the TUI starts. Preserve existing reports,
+archives and binaries; do not delete or overwrite them.
+
+1. Select the affected chat without opening it, then use `Space`, `a`, `m`.
+2. Reopen `Space`, `a` on that same chat and note the label and WhatsApp's state.
+3. Close the TUI normally with `Ctrl+Q` before inspecting the selected report.
+
+The opt-in report is fresh-file-only: if the selected file already exists,
+capture is silently disabled and its bytes remain unchanged. A new report stops
+after 100 records across the app and bridge callbacks. It contains only stage
+enums, booleans, counters, bridge status and a safe error category—no message
+content, identifiers (even hashed),
+absolute message timestamps, keys, credentials, raw errors or server payloads.
+Without `WPTUI_READ_SYNC_TRACE`, this trace emits no output. Report I/O failure
+is nonfatal and can leave a missing or incomplete report; tracing adds no sends
+or retries.
+
+Each completed bridge operation adds `stage=initial_send`, `stage=recovery_fetch`
+or `stage=resend`, followed by `status=<code> category=<safe-category>` using the
+existing closed outcomes. Omitted operations produce no stage record. The final
+`stage=bridge status=<code> category=<safe-category>` record is retained, so an
+initial rejection remains visible even if recovery succeeds or fails differently.
+These records are opt-in diagnostic evidence, not a synchronization fix or proof
+that WhatsApp applied the change.
+
+Queue acceptance is not delivery confirmation. A bridge status of `0` only means
+the existing call returned successfully; `resync_after_send` means its follow-up
+fetch failed and the update may already have applied. `missing_key`, `key_lookup`,
+`cancelled`, `timeout`, `unavailable` and `other` do not establish server acceptance
+or a root cause. Exported typed errors use closed app-state, IQ, missing-element
+and connection/session categories, never raw error text or IQ codes; unknown IQ
+codes remain `iq_other`, and unrecognized errors remain `other`.
+`appstate_with_cause` only identifies an app-state error with a structurally wrapped
+secondary cause; it does not establish a server code, conflict, or specific cause.
+Known secondary sentinels use `appstate_cause_key_missing`,
+`appstate_cause_content_mac`, `appstate_cause_index_mac`,
+`appstate_cause_lt_hash`, `appstate_cause_patch_mac`, or
+`appstate_cause_previous_set_missing`. These identify error classes, not
+key/MAC values or a confirmed fix. Unknown secondary errors remain
+`appstate_with_cause`.
+Concurrent bridge results may appear between UI snapshots; there are deliberately
+no identifying correlation fields. Tracing alone does not repair synchronization.
+
+### Bounded read-state cache recovery
+
+For the pinned client's compound app-state rejection with a secondary LTHash
+mismatch, the read/unread bridge attempts one official full sync of the affected
+collection, then calls `SendAppState` once more with the unchanged patch. This
+rebuilds that collection's version/hash/MAC cache, not messages, read cursors,
+receipts or the session; synchronized chat settings can refresh. Integrity checks
+remain enabled. Failed repair/resend does not loop or replenish the per-client,
+per-collection attempt budget. Publishing a different client starts a fresh budget.
+A post-accepted-send fetch error never triggers this recovery.
+
+Recovery is disabled when full-sync action-event emission is enabled. Lifecycle
+transitions cancel active repairs without waiting for them or changing disconnect
+ordering; a canceled fetch must not be followed by a resend. The existing request
+deadline is inherited, not restarted per step. It is not a wall-clock guarantee
+while waiting on whatsmeow's non-context-cancellable app-state mutex. A successful
+bridge result still needs real WhatsApp validation; tests do not prove service sync.
+
 ## Keybindings
 
 Keybindings are contextual. Press `Esc` to close the active menu, picker, search, viewer, reply,
@@ -275,6 +352,26 @@ or editor state.
 | Move half a page | `Ctrl+U` / `Ctrl+D` |
 | Search chats | `/` |
 | Cycle chat filters (All, Unread, Groups, Archived) | `Tab` in the Chats list |
+| Selected chat: mark read / unread | `Space`, then `a`, then `m` in the contact list |
+
+In the contact list, press `Space`, then `a`, then `m` to mark the selected visible
+chat as read or unread. The menu shows the next action and disables it when no
+chat is selected; this toggle is not available in Status. It queues WhatsApp
+chat app-state, not new message read receipts. Empty chats are supported.
+Marking unread adds an indicator and includes the chat in the Unread view without
+rewinding its read cursor or inventing a new-message count or mention alert.
+Opening the chat clears that manual indicator without moving the existing cursor
+anchor or clearing real unread messages. The manual flag is session-only locally:
+it is not restored from the local database after restart, though a subsequent
+WhatsApp app-state update can set it again. A queue rejection shows an error and
+leaves the manual action unapplied; queue acceptance is not server confirmation.
+
+**Known limitation:** the contact-menu read/unread action has only been verified
+to update local TUI state. Remote WhatsApp app-state sends are still attempted,
+but current manual validation shows no synchronization with the phone. Do not
+rely on WhatsApp's read/unread state reflecting this action; synchronization
+remains unresolved. The diagnostics and bounded recovery described above do not
+establish a service-level fix.
 
 ### Messages
 

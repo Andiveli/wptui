@@ -46,6 +46,7 @@ type clientLifecycleState struct {
 	resetInProgress      bool
 	aliasLookupPaused    bool
 	aliasSync            contactAliasSyncState
+	chatReadRecovery     chatReadRecoveryState
 }
 
 var lifecycleState clientLifecycleState
@@ -62,6 +63,10 @@ func (state *clientLifecycleState) clientSnapshot() *whatsmeow.Client {
 func (state *clientLifecycleState) publishClient(newClient *whatsmeow.Client) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
+	state.stopChatReadRecoveryLocked()
+	if state.chatReadRecovery.owner != newClient {
+		state.chatReadRecovery = chatReadRecoveryState{owner: newClient}
+	}
 	state.aliasSync.stop()
 	state.client = newClient
 	state.aliasLookupPaused = false
@@ -72,6 +77,7 @@ func (state *clientLifecycleState) reset() {
 	state.aliasSync.stop()
 	state.aliasLookupPaused = true
 	state.resetInProgress = true
+	state.stopChatReadRecoveryLocked()
 	state.logoutGeneration++
 	for state.logoutDone != nil {
 		done := state.logoutDone
@@ -106,6 +112,7 @@ func (state *clientLifecycleState) retire(disconnect func(*whatsmeow.Client)) {
 	}
 	state.client = nil
 	state.resetInProgress = true
+	state.stopChatReadRecoveryLocked()
 	state.logoutGeneration++
 	for state.logoutDone != nil {
 		done := state.logoutDone
@@ -140,6 +147,7 @@ func (state *clientLifecycleState) beginLogout() (logoutReservation, bool) {
 	reservation.generation = state.logoutGeneration
 	reservation.done = make(chan struct{})
 	state.logoutDone = reservation.done
+	state.stopChatReadRecoveryLocked()
 	return reservation, true
 }
 

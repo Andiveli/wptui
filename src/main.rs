@@ -55,6 +55,7 @@ fn main() {
     app.enable_message_action_diagnostics(mac_debug_enabled(
         std::env::var("WPTUI_MESSAGE_ACTION_DEBUG").ok().as_deref(),
     ));
+    app.configure_read_sync_trace_from_env();
     app.enable_presence_diagnostics(presence_debug_enabled(
         std::env::var("WPTUI_PRESENCE_DEBUG").ok().as_deref(),
     ));
