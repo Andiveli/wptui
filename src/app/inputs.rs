@@ -207,6 +207,7 @@ impl App<'_> {
                 && self.handle_conversation_search_input(key.clone())
             {
             } else if self.handle_chat_filter_input(key.clone()) {
+            } else if self.handle_contact_info_input(&key) {
             } else if self.focus_pane == FocusPane::ChatList
                 && self.community_detail.is_some()
                 && key == Key::k(KeyCode::Esc)
@@ -334,7 +335,28 @@ impl App<'_> {
         {
             self.focus_pane = FocusPane::Conversation;
         } else {
-            self.focus_pane = focus_after(self.focus_pane, &action, self.pane_visibility);
+            let visibility = if self.contact_info.is_some() {
+                crate::app::actions::PaneVisibility {
+                    section_rail: self.pane_visibility.section_rail
+                        && !self.mouse_hit_map.section_rows.is_empty(),
+                    chat_list: self.pane_visibility.chat_list
+                        && self.mouse_hit_map.chat_list.is_some(),
+                }
+            } else {
+                self.pane_visibility
+            };
+            if self.contact_info.is_some() {
+                self.focus_pane =
+                    crate::app::actions::focus_after_visibility_change(self.focus_pane, visibility);
+                if (matches!(action, AppAction::FocusPane(FocusPane::SectionRail))
+                    && !visibility.section_rail)
+                    || (matches!(action, AppAction::FocusPane(FocusPane::ChatList))
+                        && !visibility.chat_list)
+                {
+                    return;
+                }
+            }
+            self.focus_pane = focus_after(self.focus_pane, &action, visibility);
         }
 
         if self.dispatch_news_navigation(&action) {
@@ -373,6 +395,7 @@ impl App<'_> {
         }
 
         match action {
+            AppAction::OpenContactInfo => self.open_contact_info(),
             action @ (AppAction::DownloadMessage
             | AppAction::ViewMessage
             | AppAction::ViewerNext
@@ -492,6 +515,144 @@ mod tests {
     use crate::app::contextual_actions::ContextualAction;
     use crate::app::test_support::TestApp;
     use ratatui::crossterm::event::{Event, KeyCode as TerminalKeyCode, KeyEvent, KeyModifiers};
+
+    fn contact_info_portrait_key(app: &mut TestApp, code: TerminalKeyCode) {
+        app.on_terminal_event(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)));
+    }
+
+    fn contact_info_portrait_frame(app: &mut TestApp) -> ratatui::buffer::Buffer {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(180, 50)).unwrap();
+        let mut media = crate::app::events::MediaRenderPlan::default();
+        let mut visibility = crate::app::read_receipts::VisibilityPlan::default();
+        terminal
+            .draw(|frame| crate::ui::draw_with_plan(frame, app, &mut media, &mut visibility))
+            .unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    fn contact_info_portrait_rows(
+        buffer: &ratatui::buffer::Buffer,
+        left: u16,
+        right: u16,
+    ) -> Vec<String> {
+        (0..50)
+            .map(|y| {
+                (left..right)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn contact_info_portrait_space_a_i_renders_fourth_pane_and_escape_closes_it() {
+        let mut app = TestApp::new();
+        let contact = whatsrust::JID::from("15551234567@s.whatsapp.net".to_owned());
+        app.apply_contact_refresh(vec![(contact.clone(), "Portrait test contact".into())]);
+        app.add_message(crate::app::test_support::message(
+            &contact,
+            "Conversation stays visible",
+            1,
+        ));
+        app.open_chat_by_jid(contact.clone());
+        app.focus_pane = FocusPane::Conversation;
+        app.composer.insert_text("Unsent draft");
+        let before = contact_info_portrait_frame(&mut app);
+        assert!(
+            !contact_info_portrait_rows(&before, 0, 180)
+                .join("\n")
+                .contains("Contact information")
+        );
+
+        for character in [' ', 'a', 'i'] {
+            contact_info_portrait_key(&mut app, TerminalKeyCode::Char(character));
+        }
+
+        let opened = contact_info_portrait_frame(&mut app);
+        // The chosen artboard reserves the rightmost 46 columns at 180x50.
+        let details = contact_info_portrait_rows(&opened, 134, 180);
+        assert!(
+            details
+                .iter()
+                .any(|row| row.contains("Contact information")),
+            "Space a i must render the contact pane, not leave the contextual menu open"
+        );
+        let name_row = details
+            .iter()
+            .position(|row| row.contains("Portrait test contact"))
+            .expect("the contact's resolved name below the portrait");
+        let phone_row = details
+            .iter()
+            .position(|row| row.contains("Phone"))
+            .expect("phone label below the portrait");
+        let number_row = details
+            .iter()
+            .position(|row| row.contains("15551234567"))
+            .expect("the actual contact phone number");
+        let groups_row = details
+            .iter()
+            .position(|row| row.contains("Shared groups"))
+            .expect("shared groups below the identity");
+        assert!(
+            name_row >= 20,
+            "reserve a large portrait above the identity"
+        );
+        assert!(name_row < phone_row && phone_row < number_row && number_row < groups_row);
+        assert!(
+            contact_info_portrait_rows(&opened, 44, 134)
+                .join("\n")
+                .contains("Conversation stays visible")
+        );
+        assert!(app.leader_menu.is_none() && app.contextual_menu.is_none());
+        assert_eq!(app.open_chat(), Some(contact.clone()));
+        assert_eq!(app.composer.text(), "Unsent draft");
+
+        contact_info_portrait_key(&mut app, TerminalKeyCode::Esc);
+
+        let closed = contact_info_portrait_frame(&mut app);
+        assert!(
+            !contact_info_portrait_rows(&closed, 0, 180)
+                .join("\n")
+                .contains("Contact information")
+        );
+        assert_eq!(app.open_chat(), Some(contact));
+        assert_eq!(app.composer.text(), "Unsent draft");
+        assert_eq!(app.focus_pane, FocusPane::Conversation);
+    }
+
+    #[test]
+    fn contact_info_portrait_preserves_space_a_q_contextual_shortcut() {
+        for focus in [FocusPane::ChatList, FocusPane::Conversation] {
+            let mut app = TestApp::new();
+            app.focus_pane = focus;
+            for character in [' ', 'a', 'q'] {
+                contact_info_portrait_key(&mut app, TerminalKeyCode::Char(character));
+            }
+            assert!(app.should_quit, "contextual quit from {focus:?}");
+            assert!(app.leader_menu.is_none() && app.contextual_menu.is_none());
+        }
+    }
+
+    #[test]
+    fn contact_info_portrait_preserves_prefix_escape_then_composer_input() {
+        for contextual in [false, true] {
+            let mut app = TestApp::new();
+            app.open_chat_by_jid("15551234567@s.whatsapp.net".to_owned().into());
+            app.focus_pane = FocusPane::Conversation;
+            contact_info_portrait_key(&mut app, TerminalKeyCode::Char(' '));
+            if contextual {
+                contact_info_portrait_key(&mut app, TerminalKeyCode::Char('a'));
+            }
+            contact_info_portrait_key(&mut app, TerminalKeyCode::Esc);
+            for character in ['i', 'x'] {
+                contact_info_portrait_key(&mut app, TerminalKeyCode::Char(character));
+            }
+            assert!(app.leader_menu.is_none() && app.contextual_menu.is_none());
+            assert_eq!(app.composer.text(), "x");
+            assert!(!app.should_quit);
+        }
+    }
 
     #[test]
     fn save_as_prompt_takes_precedence_over_status_navigation() {

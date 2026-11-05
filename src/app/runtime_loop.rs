@@ -106,7 +106,13 @@ fn refresh_composer_viewport_width(app: &mut App<'_>, terminal_session: &mut Ter
     let Ok(area) = terminal_session.terminal_mut().size() else {
         return;
     };
-    let width = crate::ui::composer_viewport_width(area.width, area.height, app.pane_visibility);
+    let width = if app.contact_info.is_some() {
+        let (areas, _) =
+            crate::ui::layout::contact_navigation_areas(area.into(), app.pane_visibility, true);
+        areas.conversation.width.saturating_sub(4)
+    } else {
+        crate::ui::composer_viewport_width(area.width, area.height, app.pane_visibility)
+    };
     app.set_composer_viewport_width(width);
 }
 
@@ -260,6 +266,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
                 ) {
                     // This is terminal shutdown, not ordinary event handling: no job
                     // may access or publish into the media directory while logout clears it.
+                    app.close_contact_info();
                     media_jobs.shutdown();
                     download_worker.shutdown();
                     app.shutdown_read_sync_worker();
@@ -291,6 +298,15 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
         if !app.should_quit && !app.logout_in_progress {
             app.schedule_composer_previews(&mut media_jobs);
         }
+        if app.rail_on_logout
+            || !matches!(
+                app.selected_section,
+                crate::app::actions::Section::Chats | crate::app::actions::Section::Communities
+            )
+        {
+            app.close_contact_info();
+        }
+        app.schedule_contact_info(&mut media_jobs);
 
         let sticker_changed = app.advance_visible_stickers(std::time::Instant::now());
         if should_draw || sticker_changed {
@@ -337,6 +353,7 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
     app.news.star.shutdown();
     app.join_news_workers();
     app.shutdown_avatar_runtime();
+    app.close_contact_info();
     media_jobs.shutdown();
     download_worker.shutdown();
     app.shutdown_read_receipt_worker();
@@ -434,6 +451,103 @@ mod tests {
             &download_tx,
             &mut media_jobs,
         ));
+    }
+
+    #[test]
+    fn contact_info_completion_routes_through_runtime_family_dispatch_and_redraws_groups() {
+        use crate::app::actions::FocusPane;
+        use crate::app::contact_info::WhatsRustContactInfoQuery;
+        use crate::app::read_receipts::VisibilityPlan;
+        use crate::app::test_support::{FakeGroupInfoQuery, FakeGroupParticipantsQuery};
+        use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+        use ratatui::{Terminal, backend::TestBackend};
+        use std::time::Duration;
+
+        let mut app = TestApp::new();
+        let contact = wr::JID::from("15551234567@s.whatsapp.net".to_owned());
+        let group = wr::JID::from("team@g.us".to_owned());
+        app.apply_contact_refresh(vec![
+            (contact.clone(), "Saved contact".into()),
+            (group.clone(), "Runtime shared team".into()),
+        ]);
+        app.open_chat_by_jid(contact.clone());
+        app.focus_pane = FocusPane::Conversation;
+        let info = Arc::new(FakeGroupInfoQuery::default());
+        let participants = Arc::new(FakeGroupParticipantsQuery::default());
+        info.results.lock().unwrap().push_back(Ok(wr::GroupInfo {
+            jid: group.clone(),
+            name: "Runtime shared team".into(),
+            is_announce: false,
+            is_admin: false,
+        }));
+        participants
+            .results
+            .lock()
+            .unwrap()
+            .push_back(vec![wr::GroupParticipant {
+                jid: contact.clone(),
+                phone_number: contact,
+                name: "Saved contact".into(),
+            }]);
+        app.contact_info_query = Arc::new(WhatsRustContactInfoQuery::new(
+            info.clone(),
+            participants.clone(),
+        ));
+        for character in [' ', 'a', 'i'] {
+            app.on_terminal_event(Event::Key(KeyEvent::new(
+                KeyCode::Char(character),
+                KeyModifiers::NONE,
+            )));
+        }
+        let mut terminal = Terminal::new(TestBackend::new(180, 50)).unwrap();
+        let mut media = MediaRenderPlan::default();
+        let mut visibility = VisibilityPlan::default();
+        let mut draw_details = |app: &mut TestApp| {
+            let completed = terminal
+                .draw(|frame| {
+                    ui::draw_with_plan(frame, app, &mut media, &mut visibility);
+                })
+                .unwrap();
+            let show_filters = ui::show_chat_filter_header(app);
+            let (_, body) = ui::chat_filter_areas(completed.buffer.area, show_filters);
+            let (_, details) =
+                ui::layout::contact_navigation_areas(body, app.pane_visibility, true);
+            let details = details.unwrap();
+            (details.top()..details.bottom())
+                .map(|y| {
+                    (details.left()..details.right())
+                        .map(|x| completed.buffer[(x, y)].symbol())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        assert!(draw_details(&mut app).contains("Loading shared groups"));
+        let (download_tx, _download_rx) = mpsc::channel();
+        let mut media_jobs = MediaJobOwner::new();
+        app.schedule_contact_info(&mut media_jobs);
+        let input = app.rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        // Join before any assertion can unwind; this is the same owner used by
+        // the runtime, and no avatar jobs or live bridge calls are scheduled.
+        media_jobs.shutdown();
+        let AppInput::App(event) = input else {
+            panic!("expected runtime application completion: {input:?}");
+        };
+        assert!(matches!(&event, AppEvent::ContactInfoLoaded(_)));
+        assert!(dispatch_app_event(
+            &mut app,
+            event,
+            &download_tx,
+            &mut media_jobs,
+        ));
+        let details = draw_details(&mut app);
+        assert!(details.contains("Shared groups · 1"));
+        assert!(details.contains("Runtime shared team"));
+        assert!(!details.contains("Loading shared groups"));
+        assert!(!details.contains("Shared groups unavailable"));
+        assert!(!details.contains("No known shared groups"));
+        assert_eq!(info.calls.lock().unwrap().as_slice(), &[group.clone()]);
+        assert_eq!(participants.calls.lock().unwrap().as_slice(), &[group]);
     }
 
     #[test]

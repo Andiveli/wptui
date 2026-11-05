@@ -42,18 +42,42 @@ pub struct AvatarRequest {
     pub refresh: bool,
 }
 
+pub struct AvatarProtocols {
+    thumbnail: StatefulProtocol,
+    portrait: StatefulProtocol,
+}
+
+impl AvatarProtocols {
+    fn new(picker: &Picker, image: image::DynamicImage) -> Self {
+        // Build from the same decoded source, not a cloned protocol: Kitty
+        // uploads for different viewports must have distinct image IDs.
+        let portrait = picker.new_resize_protocol(image.clone());
+        let mut thumbnail = picker.new_resize_protocol(image);
+        thumbnail.resize_encode(&Resize::Scale(None), Size::new(4, 2));
+        Self {
+            thumbnail,
+            portrait,
+        }
+    }
+}
+
 pub enum AvatarResult {
     Cached {
         generation: u64,
         target: AvatarTarget,
         picture_id: Arc<str>,
-        protocol: StatefulProtocol,
+        protocol: AvatarProtocols,
     },
     Available {
         generation: u64,
         target: AvatarTarget,
         picture_id: Arc<str>,
-        protocol: StatefulProtocol,
+        protocol: AvatarProtocols,
+    },
+    Fallback {
+        generation: u64,
+        target: AvatarTarget,
+        protocol: AvatarProtocols,
     },
     Unavailable {
         generation: u64,
@@ -70,6 +94,7 @@ impl AvatarResult {
         match self {
             Self::Cached { generation, .. }
             | Self::Available { generation, .. }
+            | Self::Fallback { generation, .. }
             | Self::Unavailable { generation, .. }
             | Self::Failed { generation, .. } => *generation,
         }
@@ -79,6 +104,7 @@ impl AvatarResult {
         match self {
             Self::Cached { target, .. }
             | Self::Available { target, .. }
+            | Self::Fallback { target, .. }
             | Self::Unavailable { target, .. }
             | Self::Failed { target, .. } => target,
         }
@@ -152,7 +178,7 @@ pub struct ContactAvatars {
     unavailable: HashSet<AvatarTarget>,
     refreshed: HashSet<AvatarTarget>,
     failures: HashMap<AvatarTarget, (u64, Instant)>,
-    protocols: HashMap<AvatarTarget, (Arc<str>, StatefulProtocol)>,
+    protocols: HashMap<AvatarTarget, (Arc<str>, AvatarProtocols)>,
     order: VecDeque<AvatarTarget>,
     #[cfg(test)]
     enqueued: usize,
@@ -244,7 +270,8 @@ impl ContactAvatars {
                     });
             if (!self.protocols.contains_key(target) || !self.refreshed.contains(target))
                 && !self.in_flight.contains(target)
-                && !self.unavailable.contains(target)
+                && (!self.unavailable.contains(target)
+                    || (is_user_avatar(target) && !self.protocols.contains_key(target)))
                 && retryable
             {
                 let has_protocol = self.protocols.contains_key(target);
@@ -252,7 +279,8 @@ impl ContactAvatars {
                 let _ = runtime.sender.send(AvatarRequest {
                     generation: self.generation,
                     target: target.clone(),
-                    refresh: !has_protocol || !self.refreshed.contains(target),
+                    refresh: !self.unavailable.contains(target)
+                        && (!has_protocol || !self.refreshed.contains(target)),
                 });
                 #[cfg(test)]
                 {
@@ -287,10 +315,10 @@ impl ContactAvatars {
 
     pub fn apply(&mut self, result: AvatarResult) -> bool {
         let target = result.target().clone();
-        self.in_flight.remove(&target);
         if result.generation() != self.generation || !self.requested.contains(&target) {
             return false;
         }
+        self.in_flight.remove(&target);
         match result {
             AvatarResult::Cached {
                 picture_id,
@@ -304,6 +332,7 @@ impl ContactAvatars {
                 protocol,
                 ..
             } => {
+                self.unavailable.remove(&target);
                 let changed = self
                     .protocols
                     .get(&target)
@@ -311,6 +340,11 @@ impl ContactAvatars {
                 if changed {
                     self.insert(target.clone(), picture_id, protocol);
                 }
+                self.refreshed.insert(target);
+            }
+            AvatarResult::Fallback { protocol, .. } => {
+                self.insert(target.clone(), "default-portrait".into(), protocol);
+                self.unavailable.insert(target.clone());
                 self.refreshed.insert(target);
             }
             AvatarResult::Unavailable { .. } => {
@@ -328,12 +362,20 @@ impl ContactAvatars {
     }
 
     pub fn mark_refreshed(&mut self, generation: u64, target: AvatarTarget) -> bool {
-        self.in_flight.remove(&target);
         if generation != self.generation || !self.requested.contains(&target) {
             return false;
         }
+        self.in_flight.remove(&target);
         self.refreshed.insert(target);
         true
+    }
+
+    pub fn status_label(&self, target: &AvatarTarget) -> &'static str {
+        if self.failures.contains_key(target) || self.unavailable.contains(target) {
+            "Photo unavailable"
+        } else {
+            "Loading photo…"
+        }
     }
 
     pub fn protocol_mut(&mut self, target: &AvatarTarget) -> Option<&mut StatefulProtocol> {
@@ -341,10 +383,24 @@ impl ContactAvatars {
             self.order.retain(|cached| cached != target);
             self.order.push_back(target.clone());
         }
-        self.protocols.get_mut(target).map(|(_, protocol)| protocol)
+        self.protocols
+            .get_mut(target)
+            .map(|(_, protocols)| &mut protocols.thumbnail)
     }
 
-    fn insert(&mut self, target: AvatarTarget, picture_id: Arc<str>, protocol: StatefulProtocol) {
+    pub fn portrait_protocol_mut(
+        &mut self,
+        target: &AvatarTarget,
+    ) -> Option<&mut StatefulProtocol> {
+        // Keep the same LRU touch semantics as thumbnail access. Both viewport
+        // protocols are replaced and evicted together with their source entry.
+        self.protocol_mut(target)?;
+        self.protocols
+            .get_mut(target)
+            .map(|(_, protocols)| &mut protocols.portrait)
+    }
+
+    fn insert(&mut self, target: AvatarTarget, picture_id: Arc<str>, protocol: AvatarProtocols) {
         if !self.protocols.contains_key(&target)
             && self.protocols.len() >= AVATAR_CACHE_CAPACITY
             && let Some(oldest) = self.order.pop_front()
@@ -383,6 +439,12 @@ fn start_runtime(
                 let current = wanted.0 == request.generation && wanted.1.contains(&request.target);
                 drop(wanted);
                 if !current {
+                    continue;
+                }
+                if !request.refresh && is_user_avatar(&request.target) {
+                    let result =
+                        default_portrait_result(&picker, request.generation, request.target);
+                    let _ = app_tx.send(AppInput::App(AppEvent::ContactAvatar(result)));
                     continue;
                 }
                 let cache = cache_for_target(&disk_root, &request.target);
@@ -445,10 +507,18 @@ fn start_runtime(
                         }
                     }
                     Ok(wr::ProfilePictureAvailability::Unavailable) => {
-                        Some(AvatarResult::Unavailable {
-                            generation: request.generation,
-                            target: request.target.clone(),
-                        })
+                        if is_user_avatar(&request.target) {
+                            Some(default_portrait_result(
+                                &picker,
+                                request.generation,
+                                request.target.clone(),
+                            ))
+                        } else {
+                            Some(AvatarResult::Unavailable {
+                                generation: request.generation,
+                                target: request.target.clone(),
+                            })
+                        }
                     }
                     Err(_) => Some(AvatarResult::Failed {
                         generation: request.generation,
@@ -473,11 +543,33 @@ fn start_runtime(
     }
 }
 
-fn decode_protocol(picker: &Arc<Mutex<Picker>>, bytes: &[u8]) -> Option<StatefulProtocol> {
+fn is_user_avatar(target: &AvatarTarget) -> bool {
+    matches!(target, AvatarTarget::Contact(jid)
+        if jid.0.ends_with("@s.whatsapp.net") || jid.0.ends_with("@lid"))
+}
+
+fn default_portrait_result(
+    picker: &Arc<Mutex<Picker>>,
+    generation: u64,
+    target: AvatarTarget,
+) -> AvatarResult {
+    match decode_protocol(
+        picker,
+        include_bytes!("../../assets/contact-avatar-default.png"),
+    ) {
+        Some(protocol) => AvatarResult::Fallback {
+            generation,
+            target,
+            protocol,
+        },
+        None => AvatarResult::Failed { generation, target },
+    }
+}
+
+fn decode_protocol(picker: &Arc<Mutex<Picker>>, bytes: &[u8]) -> Option<AvatarProtocols> {
     let image = image::load_from_memory(bytes).ok()?;
-    let mut protocol = picker.lock().ok()?.new_resize_protocol(image);
-    protocol.resize_encode(&Resize::Scale(None), Size::new(4, 2));
-    Some(protocol)
+    let picker = picker.lock().ok()?;
+    Some(AvatarProtocols::new(&picker, image))
 }
 
 #[cfg(test)]
@@ -500,9 +592,8 @@ mod tests {
         AvatarTarget::Contact(jid(index))
     }
 
-    fn protocol() -> StatefulProtocol {
-        let picker = Picker::halfblocks();
-        picker.new_resize_protocol(image::DynamicImage::new_rgb8(1, 1))
+    fn protocol() -> AvatarProtocols {
+        AvatarProtocols::new(&Picker::halfblocks(), image::DynamicImage::new_rgb8(1, 1))
     }
 
     #[test]
@@ -683,6 +774,458 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn missing_user_photo_renders_exact_portrait_and_real_photo_takes_precedence() {
+        use crate::app::actions::{AppAction, FocusPane};
+        use crate::app::events::MediaRenderPlan;
+        use crate::app::read_receipts::VisibilityPlan;
+        use crate::ui::contact_list::{AVATAR_HEIGHT, AVATAR_WIDTH, visible_contact_rows};
+        use ratatui::{layout::Rect, style::Color};
+
+        for available in [false, true] {
+            let mut app = TestApp::new();
+            let contact = wr::JID::from("15551234567@s.whatsapp.net".to_owned());
+            app.apply_contact_refresh(vec![(contact.clone(), "Photo contact".into())]);
+            app.open_chat_by_jid(contact.clone());
+            app.focus_pane = FocusPane::Conversation;
+            let query = Arc::new(FakeAvatarQuery::default());
+            let picture = if available {
+                let image = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+                    480,
+                    480,
+                    image::Rgb([255, 0, 0]),
+                ));
+                let mut bytes = std::io::Cursor::new(Vec::new());
+                image.write_to(&mut bytes, image::ImageFormat::Png).unwrap();
+                wr::ProfilePictureAvailability::Available(wr::ProfilePicture {
+                    id: "real-photo".into(),
+                    picture_type: "image".into(),
+                    bytes: bytes.into_inner(),
+                })
+            } else {
+                wr::ProfilePictureAvailability::Unavailable
+            };
+            query.contact_results.lock().unwrap().push_back(Ok(picture));
+            app.set_avatar_query(query);
+            app.picker = Arc::new(Mutex::new(Picker::halfblocks()));
+            app.dispatch_action(AppAction::OpenContactInfo);
+            let mut terminal = Terminal::new(TestBackend::new(180, 50)).unwrap();
+            let mut media = MediaRenderPlan::default();
+            let mut visibility = VisibilityPlan::default();
+            terminal
+                .draw(|frame| {
+                    crate::ui::draw_with_plan(frame, &mut app, &mut media, &mut visibility);
+                })
+                .unwrap();
+            app.schedule_avatar_viewport(ratatui::layout::Rect::new(0, 0, 180, 50));
+            let input = app.rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            match input {
+                AppInput::App(event) => assert!(app.handle_avatar_event(event)),
+                other => panic!("unexpected avatar input: {other:?}"),
+            }
+            let completed = terminal
+                .draw(|frame| {
+                    crate::ui::draw_with_plan(frame, &mut app, &mut media, &mut visibility);
+                })
+                .unwrap();
+            // Compare like-for-like raw render buffers. Terminal diffing skips
+            // trailing cells of wide Chafa glyphs, so TestBackend can retain old
+            // invisible colors there even when the rendered image is correct.
+            let buffer = completed.buffer;
+            let contacts_area = app.mouse_hit_map.chat_list.expect("visible contacts body");
+            let (rows, items) = app.cached_contact_view();
+            let offset = app.chat_list_state.offset();
+            let visible = visible_contact_rows(&items, offset, contacts_area.height);
+            let (_, relative_y) = visible
+                .into_iter()
+                .find(|(index, _)| rows[*index].avatar_target() == Some(&contact))
+                .expect("visible contact avatar row");
+            let list_avatar = Rect::new(
+                contacts_area.x,
+                contacts_area.y + relative_y,
+                AVATAR_WIDTH,
+                AVATAR_HEIGHT,
+            );
+            let show_filters = crate::ui::show_chat_filter_header(&app);
+            let (_, body) = crate::ui::chat_filter_areas(buffer.area, show_filters);
+            let (_, details) =
+                crate::ui::layout::contact_navigation_areas(body, app.pane_visibility, true);
+            let portrait = crate::ui::contact_info::portrait_area(details.unwrap());
+            assert_eq!((portrait.width, portrait.height), (38, 19));
+            // Both the list avatar and the large portrait use the worker result.
+            for area in [list_avatar, portrait] {
+                let (left, right, top, bottom) = (area.x, area.right(), area.y, area.bottom());
+                if available {
+                    assert!(
+                        (top..bottom).any(|y| (left..right).any(|x| {
+                            let cell = &buffer[(x, y)];
+                            cell.fg == Color::Rgb(255, 0, 0) || cell.bg == Color::Rgb(255, 0, 0)
+                        })),
+                        "real photo must replace the default at x={left}"
+                    );
+                } else {
+                    let bytes = include_bytes!("../../assets/contact-avatar-default.png");
+                    let portrait = image::load_from_memory(bytes).unwrap();
+                    let mut reference = Picker::halfblocks().new_resize_protocol(portrait);
+                    let mut expected = ratatui::buffer::Buffer::empty(area);
+                    ratatui::widgets::StatefulWidget::render(
+                        ratatui_image::StatefulImage::default(),
+                        area,
+                        &mut expected,
+                        &mut reference,
+                    );
+                    for y in top..bottom {
+                        for x in left..right {
+                            assert_eq!(buffer[(x, y)].symbol(), expected[(x, y)].symbol());
+                            assert_eq!(buffer[(x, y)].fg, expected[(x, y)].fg);
+                            assert_eq!(buffer[(x, y)].bg, expected[(x, y)].bg);
+                        }
+                    }
+                }
+            }
+            // A hidden contact list must not drop the open portrait request.
+            app.pane_visibility.chat_list = false;
+            app.schedule_avatar_viewport(ratatui::layout::Rect::new(0, 0, 80, 24));
+            assert!(
+                app.contact_avatars
+                    .requested_targets()
+                    .contains(&AvatarTarget::Contact(contact))
+            );
+        }
+    }
+
+    #[test]
+    fn rendering_portrait_preserves_thumbnail_encoding_and_identity() {
+        use ratatui::{buffer::Buffer, layout::Rect, widgets::StatefulWidget};
+        use ratatui_image::{StatefulImage, picker::ProtocolType};
+
+        let root = tempdir().unwrap();
+        let mut avatars = ContactAvatars::new(root.path().into());
+        let mut picker = Picker::halfblocks();
+        picker.set_protocol_type(ProtocolType::Kitty);
+        let source =
+            image::load_from_memory(include_bytes!("../../assets/contact-avatar-default.png"))
+                .unwrap();
+        avatars.insert(
+            target(1),
+            "photo".into(),
+            AvatarProtocols::new(&picker, source),
+        );
+        let thumbnail_area = Rect::new(0, 0, 4, 2);
+        let mut first = Buffer::empty(thumbnail_area);
+        StatefulImage::default().render(
+            thumbnail_area,
+            &mut first,
+            avatars.protocol_mut(&target(1)).unwrap(),
+        );
+        assert!(kitty_upload(first[(0, 0)].symbol()).is_some());
+
+        let portrait_area = Rect::new(0, 0, 38, 19);
+        let mut portrait = Buffer::empty(portrait_area);
+        StatefulImage::default().render(
+            portrait_area,
+            &mut portrait,
+            avatars.portrait_protocol_mut(&target(1)).unwrap(),
+        );
+        assert!(kitty_upload(portrait[(0, 0)].symbol()).is_some());
+        assert_ne!(
+            kitty_placement_id(first[(0, 0)].symbol()),
+            kitty_placement_id(portrait[(0, 0)].symbol())
+        );
+        let thumbnail = avatars.protocol_mut(&target(1)).unwrap();
+        assert_eq!(
+            thumbnail.needs_resize(&Resize::Scale(None), Size::new(4, 2)),
+            None
+        );
+        let mut after = Buffer::empty(thumbnail_area);
+        StatefulImage::default().render(thumbnail_area, &mut after, thumbnail);
+        // An unchanged thumbnail needs no new upload after the portrait render.
+        assert!(kitty_upload(after[(0, 0)].symbol()).is_none());
+        for y in 0..thumbnail_area.height {
+            assert_eq!(
+                kitty_placement_id(first[(0, y)].symbol()),
+                kitty_placement_id(after[(0, y)].symbol())
+            );
+            assert_eq!(
+                first[(0, y)].symbol().matches('\u{10eeee}').count(),
+                after[(0, y)].symbol().matches('\u{10eeee}').count()
+            );
+        }
+    }
+
+    // Replay only Kitty uploads emitted by Ratatui's real cell diff. Comparing
+    // raw frames alone misses a thumbnail upload changing the image referenced
+    // by an unchanged (and therefore not emitted) large portrait placement.
+    fn kitty_upload(symbol: &str) -> Option<(u32, String)> {
+        let mut id = None;
+        let mut raster = String::new();
+        for chunk in symbol.split("\x1b_Gq=2,").skip(1) {
+            let (header, data) = chunk.split_once(';').expect("Kitty upload header");
+            for field in header.split(',') {
+                if let Some(value) = field.strip_prefix("i=") {
+                    id = Some(value.parse::<u32>().unwrap());
+                } else {
+                    raster.push_str(field);
+                    raster.push(',');
+                }
+            }
+            raster.push(';');
+            raster.push_str(data.split('\x1b').next().unwrap());
+        }
+        id.map(|id| (id & 0x00ff_ffff, raster))
+    }
+
+    fn kitty_placement_id(symbol: &str) -> u32 {
+        let color = symbol
+            .split("\x1b[38;2;")
+            .nth(1)
+            .expect("Kitty portrait placement")
+            .split('m')
+            .next()
+            .unwrap();
+        color
+            .split(';')
+            .map(|value| value.parse::<u32>().unwrap())
+            .fold(0, |id, component| (id << 8) | component)
+    }
+
+    fn assert_portrait_survives_repeated_frames(
+        available: bool,
+        real_size: u32,
+        mode: ratatui_image::picker::ProtocolType,
+    ) {
+        use crate::app::actions::FocusPane;
+        use crate::app::events::MediaRenderPlan;
+        use crate::app::read_receipts::VisibilityPlan;
+        use ratatui::buffer::Buffer;
+        use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+        use ratatui::layout::Rect;
+        use ratatui::widgets::Widget;
+        use ratatui_image::picker::ProtocolType;
+
+        let mut app = TestApp::new();
+        let contact = wr::JID::from("15551234567@s.whatsapp.net".to_owned());
+        app.apply_contact_refresh(vec![(contact.clone(), "Photo contact".into())]);
+        app.open_chat_by_jid(contact);
+        app.focus_pane = FocusPane::Conversation;
+        let source = if available {
+            image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(
+                real_size,
+                real_size,
+                |x, y| image::Rgb([(x / 2) as u8, (y / 2) as u8, if x < y { 255 } else { 0 }]),
+            ))
+        } else {
+            image::load_from_memory(include_bytes!("../../assets/contact-avatar-default.png"))
+                .unwrap()
+        };
+        let query = Arc::new(FakeAvatarQuery::default());
+        let picture = if available {
+            let mut bytes = std::io::Cursor::new(Vec::new());
+            source
+                .write_to(&mut bytes, image::ImageFormat::Png)
+                .unwrap();
+            wr::ProfilePictureAvailability::Available(wr::ProfilePicture {
+                id: "repeated-real-photo".into(),
+                picture_type: "image".into(),
+                bytes: bytes.into_inner(),
+            })
+        } else {
+            wr::ProfilePictureAvailability::Unavailable
+        };
+        query.contact_results.lock().unwrap().push_back(Ok(picture));
+        app.set_avatar_query(query);
+        // No terminal capability queries: exercise the fallback and a real
+        // pixel protocol deterministically with the picker's 10x20 cell size.
+        let mut picker = Picker::halfblocks();
+        picker.set_protocol_type(mode);
+        app.picker = Arc::new(Mutex::new(picker.clone()));
+        let press = |app: &mut TestApp, character| {
+            app.on_terminal_event(Event::Key(KeyEvent::new(
+                KeyCode::Char(character),
+                KeyModifiers::NONE,
+            )));
+        };
+        for character in [' ', 'a', 'i'] {
+            press(&mut app, character);
+        }
+        let mut terminal = Terminal::new(TestBackend::new(180, 50)).unwrap();
+        let mut media = MediaRenderPlan::default();
+        let mut visibility = VisibilityPlan::default();
+        let mut previous = terminal
+            .draw(|frame| {
+                crate::ui::draw_with_plan(frame, &mut app, &mut media, &mut visibility);
+            })
+            .unwrap()
+            .buffer
+            .clone();
+        app.schedule_avatar_viewport(Rect::new(0, 0, 180, 50));
+        match app.rx.recv_timeout(Duration::from_secs(2)).unwrap() {
+            AppInput::App(event) => assert!(app.handle_avatar_event(event)),
+            other => panic!("unexpected avatar input: {other:?}"),
+        }
+        let reference_area = Rect::new(0, 0, 38, 19);
+        // Encode independently at full size, never through the application's
+        // thumbnail-initialized mutable protocol or its cache.
+        let reference = picker
+            .new_protocol(source, Size::new(38, 19), Resize::Scale(None))
+            .unwrap();
+        let mut expected = Buffer::empty(reference_area);
+        ratatui_image::Image::new(&reference).render(reference_area, &mut expected);
+        let mut terminal_images = HashMap::new();
+        for frame_index in 0..32 {
+            // Relocating the thumbnail while the portrait stays put exercises
+            // terminal diff suppression, not just mutable resize state.
+            if [6, 28].contains(&frame_index) {
+                for character in [' ', '1'] {
+                    press(&mut app, character);
+                }
+            }
+            // Also hide/show the list repeatedly and continue drawing afterward.
+            if [8, 12, 16, 20].contains(&frame_index) {
+                for character in [' ', '2'] {
+                    press(&mut app, character);
+                }
+            }
+            let buffer = terminal
+                .draw(|frame| {
+                    crate::ui::draw_with_plan(frame, &mut app, &mut media, &mut visibility);
+                })
+                .unwrap()
+                .buffer;
+            assert_eq!(
+                app.mouse_hit_map.chat_list.is_some(),
+                !(8..12).contains(&frame_index) && !(16..20).contains(&frame_index)
+            );
+            // Hiding the list also hides the filter header, so derive the
+            // current portrait origin rather than comparing stale coordinates.
+            let show_filters = crate::ui::show_chat_filter_header(&app);
+            let (_, body) = crate::ui::chat_filter_areas(buffer.area, show_filters);
+            let (_, details) =
+                crate::ui::layout::contact_navigation_areas(body, app.pane_visibility, true);
+            let portrait = crate::ui::contact_info::portrait_area(details.unwrap());
+            assert_eq!((portrait.width, portrait.height), (38, 19));
+            if mode == ProtocolType::Kitty {
+                // Kitty IDs are random. Compare exact upload content (including
+                // pixel dimensions and every base64 chunk), ignoring only ID.
+                // This one-contact fixture has only one avatar's placements.
+                for (_, _, cell) in previous.diff(buffer) {
+                    if let Some((id, raster)) = kitty_upload(cell.symbol()) {
+                        terminal_images.insert(id, raster);
+                    }
+                }
+                let (_, expected_raster) = kitty_upload(expected[(0, 0)].symbol()).unwrap();
+                for y in portrait.top()..portrait.bottom() {
+                    let actual = buffer[(portrait.x, y)].symbol();
+                    assert_eq!(
+                        actual.matches('\u{10eeee}').count(),
+                        expected[(0, y - portrait.y)]
+                            .symbol()
+                            .matches('\u{10eeee}')
+                            .count(),
+                        "portrait row extent: frame={frame_index}, row={y}"
+                    );
+                    let id = kitty_placement_id(actual);
+                    assert!(
+                        terminal_images.get(&id) == Some(&expected_raster),
+                        "visible Kitty portrait raster must match full-size reference: \
+                         frame={frame_index}, row={y}, emitted raster length={:?}, expected={}",
+                        terminal_images.get(&id).map(String::len),
+                        expected_raster.len()
+                    );
+                }
+            } else {
+                // Raw completed buffers avoid invisible stale Chafa trailing
+                // colors in TestBackend; every visible image cell is checked.
+                for y in portrait.top()..portrait.bottom() {
+                    for x in portrait.left()..portrait.right() {
+                        let actual = &buffer[(x, y)];
+                        let expected = &expected[(x - portrait.x, y - portrait.y)];
+                        assert_eq!(
+                            (actual.symbol(), actual.fg, actual.bg),
+                            (expected.symbol(), expected.fg, expected.bg),
+                            "portrait content: frame={frame_index}, cell=({x},{y})"
+                        );
+                    }
+                }
+            }
+            previous = buffer.clone();
+        }
+    }
+
+    #[test]
+    fn real_portrait_keeps_full_size_across_frames_halfblocks() {
+        assert_portrait_survives_repeated_frames(
+            true,
+            480,
+            ratatui_image::picker::ProtocolType::Halfblocks,
+        );
+    }
+
+    #[test]
+    fn default_portrait_keeps_full_size_across_frames_halfblocks() {
+        assert_portrait_survives_repeated_frames(
+            false,
+            480,
+            ratatui_image::picker::ProtocolType::Halfblocks,
+        );
+    }
+
+    #[test]
+    fn real_portrait_keeps_full_size_across_frames_kitty() {
+        assert_portrait_survives_repeated_frames(
+            true,
+            480,
+            ratatui_image::picker::ProtocolType::Kitty,
+        );
+    }
+
+    #[test]
+    fn default_portrait_keeps_full_size_across_frames_kitty() {
+        assert_portrait_survives_repeated_frames(
+            false,
+            480,
+            ratatui_image::picker::ProtocolType::Kitty,
+        );
+    }
+
+    #[test]
+    fn small_real_portrait_fills_full_area_halfblocks() {
+        assert_portrait_survives_repeated_frames(
+            true,
+            100,
+            ratatui_image::picker::ProtocolType::Halfblocks,
+        );
+    }
+
+    #[test]
+    fn small_real_portrait_fills_full_area_kitty() {
+        assert_portrait_survives_repeated_frames(
+            true,
+            100,
+            ratatui_image::picker::ProtocolType::Kitty,
+        );
+    }
+
+    #[test]
+    fn stale_portrait_fallback_cannot_replace_a_new_generation_photo() {
+        let root = tempdir().unwrap();
+        let mut avatars = ContactAvatars::new(root.path().into());
+        avatars.generation = 2;
+        avatars.requested = vec![target(1)];
+        assert!(avatars.apply(AvatarResult::Available {
+            generation: 2,
+            target: target(1),
+            picture_id: "real".into(),
+            protocol: protocol(),
+        }));
+        assert!(!avatars.apply(AvatarResult::Fallback {
+            generation: 1,
+            target: target(1),
+            protocol: protocol(),
+        }));
+        assert_eq!(avatars.protocols[&target(1)].0.as_ref(), "real");
     }
 
     #[test]
