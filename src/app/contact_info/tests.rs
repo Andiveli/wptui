@@ -180,10 +180,13 @@ fn composed_contact_query_forwards_ports_and_preserves_unavailable_results() {
         } else if empty_roster {
             Err("Participant lookup unavailable".into())
         } else {
-            Ok(vec![SharedGroup {
-                jid: group.clone(),
-                name: "Team".into(),
-            }])
+            Ok(SharedGroupScan {
+                groups: vec![SharedGroup {
+                    jid: group.clone(),
+                    name: "Team".into(),
+                }],
+                failed_queries: 0,
+            })
         };
         assert_eq!(loaded.groups, expected);
         assert_eq!(info.calls.lock().unwrap().as_slice(), &[group.clone()]);
@@ -316,7 +319,67 @@ fn composed_contact_query_keeps_shared_matches_when_one_candidate_is_unavailable
             "{case}"
         );
         assert_eq!(*trace.lock().unwrap(), expected_trace, "{case}");
+        let shared_names = groups
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index != failed_index)
+            .map(|(_, (_, name))| *name)
+            .collect::<Vec<_>>();
+        let details = |app: &mut TestApp| {
+            screen(app, 180, 50)
+                .lines()
+                .map(|line| line.chars().skip(134).collect::<String>())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        press(&mut app, KeyCode::Char('j'));
+        let scrolled = details(&mut app);
+        assert!(!scrolled.contains(shared_names[0]), "{case}");
+        assert!(scrolled.contains(shared_names[1]), "{case}");
+        assert!(scrolled.contains("Some groups unavailable"), "{case}");
+        press(&mut app, KeyCode::Char('k'));
+        let restored = details(&mut app);
+        assert!(restored.contains(shared_names[0]), "{case}");
+        assert!(restored.contains(shared_names[1]), "{case}");
+        assert!(restored.contains("Some groups unavailable"), "{case}");
+        assert_eq!(app.open_chat(), Some(contact), "{case}");
     }
+}
+
+#[test]
+fn incomplete_scan_without_matches_does_not_claim_empty_membership() {
+    let mut app = app();
+    let failed = wr::JID::from("a@g.us".to_owned());
+    let unshared = wr::JID::from("b@g.us".to_owned());
+    app.apply_contact_refresh(vec![
+        (failed.clone(), "Unavailable group".into()),
+        (unshared.clone(), "Unshared group".into()),
+    ]);
+    app.contact_info_query = Arc::new(Query(HashMap::from([
+        (failed, Err("offline".into())),
+        (
+            unshared,
+            Ok(vec![wr::GroupParticipant {
+                jid: "987654321@lid".to_owned().into(),
+                phone_number: "12223334444@s.whatsapp.net".to_owned().into(),
+                name: "Saved contact".into(),
+            }]),
+        ),
+    ])));
+    open(&mut app);
+    let loaded = result(&mut app);
+    assert!(app.handle_avatar_event(AppEvent::ContactInfoLoaded(loaded)));
+    let details = screen(&mut app, 180, 50)
+        .lines()
+        .map(|line| line.chars().skip(134).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(details.contains("Shared groups · 0"));
+    assert!(details.contains("Some groups unavailable"));
+    assert!(!details.contains("No known shared groups"));
+    assert!(!details.contains("Shared groups unavailable"));
+    assert!(!details.contains("Unavailable group"));
+    assert!(!details.contains("Unshared group"));
 }
 
 #[test]

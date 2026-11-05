@@ -26,6 +26,10 @@ pub struct SharedGroup {
 pub enum SharedGroups {
     Loading,
     Ready(Vec<SharedGroup>),
+    Partial {
+        groups: Vec<SharedGroup>,
+        failed_queries: usize,
+    },
     Unavailable,
 }
 
@@ -82,11 +86,17 @@ impl ContactInfoQuery for WhatsRustContactInfoQuery {
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub struct SharedGroupScan {
+    pub groups: Vec<SharedGroup>,
+    pub failed_queries: usize,
+}
+
 #[derive(Debug)]
 pub struct ContactInfoResult {
     pub generation: u64,
     pub contact: wr::JID,
-    pub groups: Result<Vec<SharedGroup>, String>,
+    pub groups: Result<SharedGroupScan, String>,
 }
 
 fn phone_digits(jid: &wr::JID) -> Option<&str> {
@@ -161,7 +171,9 @@ impl App<'_> {
         match key.code {
             KeyCode::Char('j') | KeyCode::Down if *key == Key::k(key.code) => {
                 let count = match &info.groups {
-                    SharedGroups::Ready(groups) => groups.len(),
+                    SharedGroups::Ready(groups) | SharedGroups::Partial { groups, .. } => {
+                        groups.len()
+                    }
                     _ => 0,
                 };
                 info.scroll = info.scroll.saturating_add(1).min(count.saturating_sub(1));
@@ -242,7 +254,11 @@ impl App<'_> {
             return false;
         };
         info.groups = match result.groups {
-            Ok(groups) => SharedGroups::Ready(groups),
+            Ok(scan) if scan.failed_queries > 0 => SharedGroups::Partial {
+                groups: scan.groups,
+                failed_queries: scan.failed_queries,
+            },
+            Ok(scan) => SharedGroups::Ready(scan.groups),
             Err(_) => SharedGroups::Unavailable,
         };
         true
@@ -255,13 +271,23 @@ fn query_shared_groups(
     phone: Option<&wr::JID>,
     candidates: Vec<SharedGroup>,
     cancelled: &AtomicBool,
-) -> Result<Vec<SharedGroup>, String> {
+) -> Result<SharedGroupScan, String> {
     let mut groups = Vec::new();
+    let candidate_count = candidates.len();
+    let mut failed_queries = 0;
+    let mut first_error = None;
     for group in candidates {
         if cancelled.load(Ordering::Acquire) {
             return Err("Contact query cancelled".into());
         }
-        let participants = query.participants(&group.jid)?;
+        let participants = match query.participants(&group.jid) {
+            Ok(participants) => participants,
+            Err(error) => {
+                failed_queries += 1;
+                first_error.get_or_insert(error);
+                continue;
+            }
+        };
         if participants.iter().any(|participant| {
             [&participant.jid, &participant.phone_number]
                 .into_iter()
@@ -275,5 +301,13 @@ fn query_shared_groups(
             .cmp(&right.name)
             .then_with(|| left.jid.0.cmp(&right.jid.0))
     });
-    Ok(groups)
+    if let Some(error) = first_error {
+        if failed_queries == candidate_count {
+            return Err(error);
+        }
+    }
+    Ok(SharedGroupScan {
+        groups,
+        failed_queries,
+    })
 }

@@ -221,6 +221,9 @@ or editor state.
 The contact information pane keeps the conversation visible and shows a large profile photo,
 phone number (when known), and shared groups from the local known-group catalog. Membership
 is queried in the background; loading, unavailable, and empty results are shown separately.
+If some group queries fail, available matches remain visible with “Some groups unavailable”,
+including when no matches are found in the successful queries. An incomplete scan is never
+shown as “No known shared groups”; if every query fails, the pane shows “Shared groups unavailable”.
 This is not an account-wide group census. Unknown LID identities are never treated as phone
 numbers. Contacts without a profile photo use the illustrated default portrait; real photos
 still take precedence. Group and community artwork is unchanged.

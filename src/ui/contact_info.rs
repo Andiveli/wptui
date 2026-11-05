@@ -84,9 +84,13 @@ pub(crate) fn render(frame: &mut Frame, app: &mut App<'_>, area: Rect) {
             lines.push(Line::from("Shared groups").fg(Color::DarkGray));
             lines.push(Line::from("Shared groups unavailable"));
         }
-        SharedGroups::Ready(groups) => {
+        SharedGroups::Ready(groups) | SharedGroups::Partial { groups, .. } => {
             lines.push(Line::from(format!("Shared groups · {}", groups.len())).fg(Color::DarkGray));
-            if groups.is_empty() {
+            let incomplete = matches!(&info.groups, SharedGroups::Partial { .. });
+            if incomplete {
+                lines.push(Line::from("Some groups unavailable"));
+            }
+            if groups.is_empty() && !incomplete {
                 lines.push(Line::from("No known shared groups"));
             } else {
                 for group in groups.iter().skip(scroll) {
