@@ -930,7 +930,9 @@ mod tests {
         let query = Arc::new(FakeAvatarQuery::default());
         let picture = if available {
             let mut bytes = std::io::Cursor::new(Vec::new());
-            source.write_to(&mut bytes, image::ImageFormat::Png).unwrap();
+            source
+                .write_to(&mut bytes, image::ImageFormat::Png)
+                .unwrap();
             wr::ProfilePictureAvailability::Available(wr::ProfilePicture {
                 id: "repeated-real-photo".into(),
                 picture_type: "image".into(),
