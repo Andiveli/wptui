@@ -64,6 +64,7 @@ pub mod message_reactions;
 pub(crate) mod mouse_input;
 pub mod navigation_conversation_dispatch;
 pub mod news;
+pub(crate) mod news_star;
 pub mod news_update;
 pub mod notifications;
 pub mod optimistic_text_send;

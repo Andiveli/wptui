@@ -316,6 +316,11 @@ impl MediaRenderPlan {
 pub enum AppEvent {
     UpdateAvailable(String),
     NewsLoaded(crate::updater::news::NewsHistory),
+    NewsStarFinished {
+        generation: u64,
+        operation: crate::app::news_star::Operation,
+        result: Option<bool>,
+    },
     NewsUpdateFinished {
         target: crate::updater::news_update::UpdateTarget,
         result: Result<PathBuf, String>,
@@ -377,9 +382,10 @@ pub enum AppEventFamily {
 impl AppEvent {
     pub const fn family(&self) -> AppEventFamily {
         match self {
-            Self::UpdateAvailable(_) | Self::NewsLoaded(_) | Self::NewsUpdateFinished { .. } => {
-                AppEventFamily::Updater
-            }
+            Self::UpdateAvailable(_)
+            | Self::NewsLoaded(_)
+            | Self::NewsStarFinished { .. }
+            | Self::NewsUpdateFinished { .. } => AppEventFamily::Updater,
             Self::OutboundSendSucceeded { .. }
             | Self::OutboundSendFailed { .. }
             | Self::StatusSendSucceeded
@@ -425,6 +431,16 @@ pub enum DrawSource {
 impl fmt::Debug for AppEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            AppEvent::NewsStarFinished {
+                generation,
+                operation,
+                result,
+            } => f
+                .debug_struct("NewsStarFinished")
+                .field("generation", generation)
+                .field("operation", operation)
+                .field("result", result)
+                .finish(),
             AppEvent::NewsLoaded(history) => f.debug_tuple("NewsLoaded").field(history).finish(),
             AppEvent::NewsUpdateFinished { target, result } => f
                 .debug_struct("NewsUpdateFinished")
