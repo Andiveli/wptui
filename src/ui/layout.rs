@@ -145,6 +145,7 @@ pub fn composer_visual_cursor(
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ComposerCell {
     text: String,
+    display: String,
     source_range: std::ops::Range<usize>,
     logical_column: usize,
     width: usize,
@@ -203,7 +204,7 @@ impl ComposerVisualLayout {
                 row.cells
                     .iter()
                     .filter(|cell| cell.visible)
-                    .map(|cell| cell.text.as_str())
+                    .map(|cell| cell.display.as_str())
                     .collect::<String>()
             })
             .collect::<Vec<_>>()
@@ -214,12 +215,24 @@ impl ComposerVisualLayout {
         self.rows
             .iter()
             .map(|row| {
-                let spans = row
-                    .cells
-                    .iter()
-                    .filter(|cell| cell.visible)
-                    .map(|cell| ratatui::text::Span::styled(cell.text.clone(), cell.style))
-                    .collect::<Vec<_>>();
+                let mut display = String::new();
+                let mut styles = Vec::new();
+                for cell in row.cells.iter().filter(|cell| cell.visible) {
+                    let start = display.len();
+                    display.push_str(&cell.display);
+                    styles.push((start..display.len(), cell.style));
+                }
+                // Hiding a delimiter can reunite a combining mark with the
+                // preceding character. Segment the projected row, not each
+                // source cell, so Ratatui paints that grapheme atomically.
+                let mut spans: Vec<ratatui::text::Span<'static>> = Vec::new();
+                for (byte, grapheme) in display.grapheme_indices(true) {
+                    let style = styles
+                        .iter()
+                        .find(|(range, _)| range.contains(&byte))
+                        .map_or(ratatui::style::Style::default(), |(_, style)| *style);
+                    spans.push(ratatui::text::Span::styled(grapheme.to_owned(), style));
+                }
                 ratatui::text::Line::from(spans).alignment(row.alignment)
             })
             .collect()
@@ -615,22 +628,28 @@ fn wrap_composer_line(
     let mut current: Vec<ComposerCell> = Vec::new();
     let mut current_width = 0;
     for (start, text) in line.grapheme_indices(true) {
-        let visible = markdown.is_none_or(|md| md.visible(source_offset + start));
+        let mut display = String::new();
+        let mut first_visible = None;
+        for (byte, ch) in text.char_indices() {
+            if markdown.is_none_or(|md| md.visible(source_offset + start + byte)) {
+                first_visible.get_or_insert(source_offset + start + byte);
+                display.push(ch);
+            }
+        }
+        let visible = !display.is_empty();
+        let width = textwrap::core::display_width(&display);
         let cell = ComposerCell {
             text: text.to_owned(),
+            display,
             source_range: start..start + text.len(),
             logical_column: line[..start].chars().count(),
-            width: if visible {
-                textwrap::core::display_width(text)
-            } else {
-                0
-            },
+            width,
             direction: Direction::from_text(text),
             visual_row: 0,
             visual_column: 0,
             visible,
             style: markdown.map_or(ratatui::style::Style::default(), |md| {
-                md.style(source_offset + start)
+                md.style(first_visible.unwrap_or(source_offset + start))
             }),
         };
         if current_width + cell.width > max_width && !current.is_empty() {

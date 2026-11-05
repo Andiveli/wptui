@@ -140,6 +140,12 @@ impl Markdown {
             }
             let tail = &source[at..range.end];
             let ch = tail.chars().next().unwrap();
+            // A URL is source data, not an emphasis fragment. In particular,
+            // underscores in paths must not change the painted mouse target.
+            if tail.starts_with("https://") || tail.starts_with("http://") {
+                at += tail.find(char::is_whitespace).unwrap_or(tail.len());
+                continue;
+            }
             if ch == '\\' {
                 let next = at + 1;
                 if let Some(escaped) = source[next..range.end].chars().next()
@@ -231,6 +237,16 @@ impl Markdown {
                 "~" | "~~" => Modifier::CROSSED_OUT,
                 _ => Modifier::BOLD,
             };
+            let mut fragment_end = end + marker.len();
+            if marker == "```" && source[..end].ends_with('\n') {
+                let suffix = &source[fragment_end..range.end];
+                let length = suffix.find('\n').unwrap_or(suffix.len());
+                if suffix[..length].chars().all(|ch| ch == ' ' || ch == '\t') {
+                    // A closing fence's padding belongs to its hidden syntax,
+                    // not to a separate visible composer row.
+                    fragment_end += length;
+                }
+            }
             let mut content_start = start;
             let mut content_end = end;
             if marker == "```"
@@ -248,13 +264,10 @@ impl Markdown {
                 }
             }
             if code {
-                self.paint(
-                    at..end + marker.len(),
-                    Style::default().add_modifier(modifier),
-                );
+                self.paint(at..fragment_end, Style::default().add_modifier(modifier));
             }
             self.format(
-                at..end + marker.len(),
+                at..fragment_end,
                 content_start..content_end,
                 Style::default().add_modifier(modifier),
                 active,
@@ -262,7 +275,7 @@ impl Markdown {
             if !code {
                 self.parse(source, start..end, active, depth + 1);
             }
-            at = end + marker.len();
+            at = fragment_end;
         }
     }
 }
