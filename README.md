@@ -44,6 +44,20 @@ and yellow **Archived** label signal an unread mention or reply to your message
 in an archived group; ordinary archived chats and other group messages do not
 trigger it. Reading that group clears the alert.
 
+## Message formatting
+
+Messages and attachment captions render WhatsApp formatting locally: `*bold*`,
+`_italic_`, `~strikethrough~`, inline backticks, triple-backtick code, quotes,
+and lists. wptui also recognizes `**bold**`, `__bold__`, `~~strikethrough~~`,
+`# headings`, and `[label](https://example.com)` links. Link destinations stay
+visible; formatting never fetches content or opens a link automatically.
+
+Formatting changes only the local display. Sending, editing, copying, and searching
+still use the original text; other WhatsApp clients display the syntax they support.
+Incomplete markers and unsupported Markdown remain literal. Code is displayed
+without interpreting formatting inside it. Terminal font support determines whether
+italic and strikethrough styles are visible.
+
 ## Data
 
 Your WhatsApp data — database, media, and session — lives in `~/.local/share/wptui/` on your
