@@ -1,4 +1,5 @@
 use crate::input_key::KeyCode;
+use crate::ui::layout::composer_visual_layout_with_direction;
 
 use super::*;
 use crate::input_key::Key;
@@ -297,4 +298,102 @@ fn quote_and_mentions_are_submitted_together() {
     assert!(
         matches!(outcome, ComposerOutcome::Submit { quote: Some(_), mentions, .. } if mentions.len() == 1)
     );
+}
+
+#[test]
+fn markdown_preview_cursor_uses_visible_columns_and_submit_keeps_source() {
+    let mut composer = Composer::default();
+    let source = "*one* tail";
+    composer.insert_text(source);
+    assert_eq!(composer.text(), source);
+    assert_eq!(composer.visual_cursor(40, ComposerDirection::Auto), (0, 8));
+    let outcome = composer.apply(ComposerAction::Submit);
+    assert_eq!(outcome.text_messages(), vec![source]);
+}
+
+#[test]
+fn live_markdown_reveals_only_active_fragment_and_navigation_reaches_source() {
+    use ratatui::style::Modifier;
+    let mut composer = Composer::default();
+    let source = "*one* **two** tail";
+    composer.insert_text(source);
+    let layout = composer.visual_layout(ComposerDirection::Auto, 40);
+    assert_eq!(layout.text(), "one two tail");
+    assert!(
+        layout.lines()[0]
+            .spans
+            .iter()
+            .any(|s| s.content == "o" && s.style.add_modifier.contains(Modifier::BOLD))
+    );
+    composer.set_cursor_offset(2);
+    assert_eq!(
+        composer.visual_layout(ComposerDirection::Auto, 40).text(),
+        "*one* two tail"
+    );
+    assert_eq!(composer.visual_cursor(40, ComposerDirection::Auto), (0, 2));
+    composer.set_cursor_offset(source.chars().count());
+    for _ in 0..source.chars().count() + 4 {
+        composer.apply_with_direction(
+            ComposerAction::Edit(Key::k(KeyCode::Left)),
+            ComposerDirection::Auto,
+            40,
+        );
+    }
+    assert_eq!(composer.cursor_offset(), 0);
+    assert_eq!(composer.text(), source);
+}
+
+#[test]
+fn markdown_preview_keeps_unicode_rtl_wrapping_and_fence_source_rows() {
+    for (source, cursor, expected) in [
+        ("**阿丽 👩‍💻** tail", 0, "**阿丽 👩‍💻** tail"),
+        ("**שלום** tail", 12, "שלום tail"),
+        ("```rs\n*literal*\n```\ntail", 25, "*literal*\ntail"),
+    ] {
+        let mut composer = Composer::default();
+        composer.insert_text(source);
+        composer.set_cursor_offset(cursor.min(source.chars().count()));
+        let layout = composer.visual_layout(ComposerDirection::Auto, 40);
+        // RTL rows are already visually reordered; source storage is not.
+        if !source.contains("שלום") {
+            assert_eq!(layout.text(), expected);
+        }
+        assert_eq!(composer.text(), source);
+        for width in [4, 12, 40] {
+            let layout = composer.visual_layout(ComposerDirection::Auto, width);
+            let caret = composer.visual_cursor(width, ComposerDirection::Auto);
+            assert!(caret.0 <= layout.row_count());
+            assert!(caret.1 < width as usize);
+        }
+        let outcome = composer.apply(ComposerAction::Submit);
+        assert_eq!(outcome.text_messages(), vec![source]);
+    }
+}
+
+#[test]
+fn plain_composer_and_raw_layout_keep_their_existing_geometry() {
+    for source in ["plain text", "אבג abc", "阿丽 👩‍💻\nnext"] {
+        for width in [4, 20] {
+            let mut composer = Composer::default();
+            composer.insert_text(source);
+            let raw = composer_visual_layout_with_direction(
+                composer.input.lines(),
+                width,
+                ComposerDirection::Auto,
+            );
+            assert_eq!(
+                composer
+                    .visual_layout(ComposerDirection::Auto, width)
+                    .lines(),
+                raw.lines()
+            );
+            assert_eq!(
+                composer.visual_cursor(width, ComposerDirection::Auto),
+                raw.cursor(logical_cursor_position(composer.input.cursor()))
+            );
+        }
+    }
+    let raw =
+        composer_visual_layout_with_direction(&["**raw**".into()], 40, ComposerDirection::Auto);
+    assert_eq!(raw.text(), "**raw**");
 }

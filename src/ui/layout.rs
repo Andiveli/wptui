@@ -151,11 +151,14 @@ struct ComposerCell {
     direction: Direction,
     visual_row: usize,
     visual_column: usize,
+    visible: bool,
+    style: ratatui::style::Style,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ComposerRow {
     cells: Vec<ComposerCell>,
+    logical_row: usize,
     direction: Direction,
     alignment: ratatui::layout::Alignment,
 }
@@ -199,6 +202,7 @@ impl ComposerVisualLayout {
             .map(|row| {
                 row.cells
                     .iter()
+                    .filter(|cell| cell.visible)
                     .map(|cell| cell.text.as_str())
                     .collect::<String>()
             })
@@ -210,12 +214,13 @@ impl ComposerVisualLayout {
         self.rows
             .iter()
             .map(|row| {
-                let text = row
+                let spans = row
                     .cells
                     .iter()
-                    .map(|cell| cell.text.as_str())
-                    .collect::<String>();
-                ratatui::text::Line::from(text).alignment(row.alignment)
+                    .filter(|cell| cell.visible)
+                    .map(|cell| ratatui::text::Span::styled(cell.text.clone(), cell.style))
+                    .collect::<Vec<_>>();
+                ratatui::text::Line::from(spans).alignment(row.alignment)
             })
             .collect()
     }
@@ -437,10 +442,7 @@ impl ComposerVisualLayout {
     }
 
     fn logical_row_for_visual(&self, visual_row: usize) -> usize {
-        self.logical_rows
-            .iter()
-            .position(|(first, count)| visual_row >= *first && visual_row < first + count)
-            .unwrap_or(0)
+        self.rows[visual_row].logical_row
     }
 
     fn normalize_logical_column(&self, logical_row: usize, logical_column: usize) -> usize {
@@ -483,16 +485,58 @@ pub(crate) fn composer_visual_layout_with_direction(
     width: u16,
     composer_direction: ComposerDirection,
 ) -> ComposerVisualLayout {
+    build_composer_layout(lines, width, composer_direction, None)
+}
+
+/// The editor keeps raw source cells for caret navigation, while hidden syntax
+/// contributes no terminal width. The same layout drives drawing and movement.
+pub(crate) fn composer_markdown_layout(
+    lines: &[String],
+    width: u16,
+    direction: ComposerDirection,
+    cursor: (usize, usize),
+) -> ComposerVisualLayout {
+    let source = lines.join("\n");
+    let row = cursor.0.min(lines.len().saturating_sub(1));
+    let offset = lines
+        .iter()
+        .take(row)
+        .map(|line| line.len() + 1)
+        .sum::<usize>()
+        + lines.get(row).map_or(0, |line| {
+            line.char_indices()
+                .nth(cursor.1)
+                .map_or(line.len(), |(byte, _)| byte)
+        });
+    let markdown = crate::ui::markdown::Markdown::new(&source, Some(offset));
+    build_composer_layout(lines, width, direction, Some(&markdown))
+}
+
+fn build_composer_layout(
+    lines: &[String],
+    width: u16,
+    composer_direction: ComposerDirection,
+    markdown: Option<&crate::ui::markdown::Markdown>,
+) -> ComposerVisualLayout {
     let mut rows = Vec::new();
     let mut logical_rows = Vec::new();
-    for line in lines {
+    let mut source_offset = 0;
+    for (logical_row, line) in lines.iter().enumerate() {
         let first_row = rows.len();
         let direction = match composer_direction {
             ComposerDirection::Auto => Direction::from_text(line),
             ComposerDirection::Rtl => Direction::Rtl,
         };
         let alignment = direction.alignment();
-        for logical_cells in wrap_composer_line(line, width) {
+        let wrapped = wrap_composer_line(line, width, markdown, source_offset);
+        source_offset += line.len() + 1;
+        // A hidden fence/language line is not an extra blank preview row.
+        // It reappears as soon as its code fragment becomes active.
+        if line.starts_with("```") && !wrapped.iter().flatten().any(|cell| cell.visible) {
+            logical_rows.push((rows.len().saturating_sub(1), 1));
+            continue;
+        }
+        for logical_cells in wrapped {
             let cells = if logical_cells.is_empty() {
                 Vec::new()
             } else {
@@ -534,6 +578,7 @@ pub(crate) fn composer_visual_layout_with_direction(
             }
             rows.push(ComposerRow {
                 cells,
+                logical_row,
                 direction,
                 alignment,
             });
@@ -543,6 +588,7 @@ pub(crate) fn composer_visual_layout_with_direction(
     if rows.is_empty() {
         rows.push(ComposerRow {
             cells: Vec::new(),
+            logical_row: 0,
             direction: Direction::Ltr,
             alignment: ratatui::layout::Alignment::Left,
         });
@@ -555,7 +601,12 @@ pub(crate) fn composer_visual_layout_with_direction(
     }
 }
 
-fn wrap_composer_line(line: &str, width: u16) -> Vec<Vec<ComposerCell>> {
+fn wrap_composer_line(
+    line: &str,
+    width: u16,
+    markdown: Option<&crate::ui::markdown::Markdown>,
+    source_offset: usize,
+) -> Vec<Vec<ComposerCell>> {
     if width == 0 {
         return vec![Vec::new()];
     }
@@ -564,14 +615,23 @@ fn wrap_composer_line(line: &str, width: u16) -> Vec<Vec<ComposerCell>> {
     let mut current: Vec<ComposerCell> = Vec::new();
     let mut current_width = 0;
     for (start, text) in line.grapheme_indices(true) {
+        let visible = markdown.is_none_or(|md| md.visible(source_offset + start));
         let cell = ComposerCell {
             text: text.to_owned(),
             source_range: start..start + text.len(),
             logical_column: line[..start].chars().count(),
-            width: textwrap::core::display_width(text),
+            width: if visible {
+                textwrap::core::display_width(text)
+            } else {
+                0
+            },
             direction: Direction::from_text(text),
             visual_row: 0,
             visual_column: 0,
+            visible,
+            style: markdown.map_or(ratatui::style::Style::default(), |md| {
+                md.style(source_offset + start)
+            }),
         };
         if current_width + cell.width > max_width && !current.is_empty() {
             let break_at = current

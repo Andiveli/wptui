@@ -455,15 +455,12 @@ pub fn render_chats_with_plan(
 
     let composer_width = inner.width.saturating_sub(2);
     let composer_blocked = app.composer_blocked();
-    let composer_layout = composer_visual_layout_with_direction(
-        if composer_blocked {
-            &[]
-        } else {
-            app.composer.input.lines()
-        },
-        composer_width,
-        app.composer_direction,
-    );
+    let composer_layout = if composer_blocked {
+        composer_visual_layout_with_direction(&[], composer_width, app.composer_direction)
+    } else {
+        app.composer
+            .visual_layout(app.composer_direction, composer_width)
+    };
     let composer_cursor = app
         .composer
         .visual_cursor(composer_width, app.composer_direction);
@@ -707,11 +704,9 @@ pub(super) fn render_composer(
         }
 
         let composer_width = area.width.saturating_sub(2);
-        let composer_layout = composer_visual_layout_with_direction(
-            app.composer.input.lines(),
-            composer_width,
-            app.composer_direction,
-        );
+        let composer_layout = app
+            .composer
+            .visual_layout(app.composer_direction, composer_width);
         let composer_cursor = app
             .composer
             .visual_cursor(composer_width, app.composer_direction);
@@ -751,6 +746,40 @@ mod composer_focus_tests {
         actions::{ConversationMode, FocusPane, Section},
         test_support::TestApp,
     };
+
+    #[test]
+    fn composer_paints_live_styles_at_wide_and_narrow_terminal_sizes() {
+        use crate::app::actions::StatusCompositionState;
+        use ratatui::style::Modifier;
+        for (width, height) in [(80, 24), (140, 40), (180, 50)] {
+            let mut app = TestApp::new();
+            app.selected_section = Section::Status;
+            app.status_composition = StatusCompositionState::Authoring;
+            app.focus_pane = FocusPane::Conversation;
+            let source = "*one* **two** tail";
+            app.composer.insert_text(source);
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|frame| {
+                    render_composer(
+                        frame,
+                        &mut app,
+                        Rect::new(0, 0, width, 4),
+                        " Compose ",
+                        None,
+                        None,
+                    );
+                })
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            let row = (1..width - 1)
+                .map(|x| buffer[(x, 1)].symbol())
+                .collect::<String>();
+            assert!(row.starts_with("one two tail"), "{row}");
+            assert!(buffer[(1, 1)].modifier.contains(Modifier::BOLD));
+            assert_eq!(app.composer.text(), source);
+        }
+    }
 
     #[test]
     fn ordinary_chat_composer_preserves_its_focus_colors() {
