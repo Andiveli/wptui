@@ -388,7 +388,10 @@ impl ContactAvatars {
             .map(|(_, protocols)| &mut protocols.thumbnail)
     }
 
-    pub fn portrait_protocol_mut(&mut self, target: &AvatarTarget) -> Option<&mut StatefulProtocol> {
+    pub fn portrait_protocol_mut(
+        &mut self,
+        target: &AvatarTarget,
+    ) -> Option<&mut StatefulProtocol> {
         // Keep the same LRU touch semantics as thumbnail access. Both viewport
         // protocols are replaced and evicted together with their source entry.
         self.protocol_mut(target)?;
@@ -905,7 +908,11 @@ mod tests {
         let source =
             image::load_from_memory(include_bytes!("../../assets/contact-avatar-default.png"))
                 .unwrap();
-        avatars.insert(target(1), "photo".into(), AvatarProtocols::new(&picker, source));
+        avatars.insert(
+            target(1),
+            "photo".into(),
+            AvatarProtocols::new(&picker, source),
+        );
         let thumbnail_area = Rect::new(0, 0, 4, 2);
         let mut first = Buffer::empty(thumbnail_area);
         StatefulImage::default().render(
