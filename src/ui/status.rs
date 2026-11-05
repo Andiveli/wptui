@@ -74,11 +74,7 @@ pub(super) fn render_statuses_with_plan(
         let inner_width = area.width.saturating_sub(2);
         let input_rows = if authoring {
             let width = inner_width.saturating_sub(2);
-            let layout = crate::ui::layout::composer_visual_layout_with_direction(
-                app.composer.input.lines(),
-                width,
-                app.composer_direction,
-            );
+            let layout = app.composer.visual_layout(app.composer_direction, width);
             layout
                 .row_count()
                 .max(app.composer.visual_cursor(width, app.composer_direction).0 + 1)

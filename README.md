@@ -54,6 +54,11 @@ visible; formatting never fetches content or opens a link automatically.
 
 Formatting changes only the local display. Sending, editing, copying, and searching
 still use the original text; other WhatsApp clients display the syntax they support.
+The composer previews the same formatting while you type. Markers reappear in
+the fragment containing the cursor, so you can edit them directly; outside that
+fragment they do not occupy columns. Drawing, wrapping, and arrow-key navigation
+share the source-to-display mapping, including Unicode and right-to-left text.
+
 Incomplete markers and unsupported Markdown remain literal. Code is displayed
 without interpreting formatting inside it. Terminal font support determines whether
 italic and strikethrough styles are visible.
