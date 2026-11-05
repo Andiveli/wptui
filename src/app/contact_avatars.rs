@@ -42,23 +42,42 @@ pub struct AvatarRequest {
     pub refresh: bool,
 }
 
+pub struct AvatarProtocols {
+    thumbnail: StatefulProtocol,
+    portrait: StatefulProtocol,
+}
+
+impl AvatarProtocols {
+    fn new(picker: &Picker, image: image::DynamicImage) -> Self {
+        // Build from the same decoded source, not a cloned protocol: Kitty
+        // uploads for different viewports must have distinct image IDs.
+        let portrait = picker.new_resize_protocol(image.clone());
+        let mut thumbnail = picker.new_resize_protocol(image);
+        thumbnail.resize_encode(&Resize::Scale(None), Size::new(4, 2));
+        Self {
+            thumbnail,
+            portrait,
+        }
+    }
+}
+
 pub enum AvatarResult {
     Cached {
         generation: u64,
         target: AvatarTarget,
         picture_id: Arc<str>,
-        protocol: StatefulProtocol,
+        protocol: AvatarProtocols,
     },
     Available {
         generation: u64,
         target: AvatarTarget,
         picture_id: Arc<str>,
-        protocol: StatefulProtocol,
+        protocol: AvatarProtocols,
     },
     Fallback {
         generation: u64,
         target: AvatarTarget,
-        protocol: StatefulProtocol,
+        protocol: AvatarProtocols,
     },
     Unavailable {
         generation: u64,
@@ -159,7 +178,7 @@ pub struct ContactAvatars {
     unavailable: HashSet<AvatarTarget>,
     refreshed: HashSet<AvatarTarget>,
     failures: HashMap<AvatarTarget, (u64, Instant)>,
-    protocols: HashMap<AvatarTarget, (Arc<str>, StatefulProtocol)>,
+    protocols: HashMap<AvatarTarget, (Arc<str>, AvatarProtocols)>,
     order: VecDeque<AvatarTarget>,
     #[cfg(test)]
     enqueued: usize,
@@ -364,10 +383,21 @@ impl ContactAvatars {
             self.order.retain(|cached| cached != target);
             self.order.push_back(target.clone());
         }
-        self.protocols.get_mut(target).map(|(_, protocol)| protocol)
+        self.protocols
+            .get_mut(target)
+            .map(|(_, protocols)| &mut protocols.thumbnail)
     }
 
-    fn insert(&mut self, target: AvatarTarget, picture_id: Arc<str>, protocol: StatefulProtocol) {
+    pub fn portrait_protocol_mut(&mut self, target: &AvatarTarget) -> Option<&mut StatefulProtocol> {
+        // Keep the same LRU touch semantics as thumbnail access. Both viewport
+        // protocols are replaced and evicted together with their source entry.
+        self.protocol_mut(target)?;
+        self.protocols
+            .get_mut(target)
+            .map(|(_, protocols)| &mut protocols.portrait)
+    }
+
+    fn insert(&mut self, target: AvatarTarget, picture_id: Arc<str>, protocol: AvatarProtocols) {
         if !self.protocols.contains_key(&target)
             && self.protocols.len() >= AVATAR_CACHE_CAPACITY
             && let Some(oldest) = self.order.pop_front()
@@ -533,11 +563,10 @@ fn default_portrait_result(
     }
 }
 
-fn decode_protocol(picker: &Arc<Mutex<Picker>>, bytes: &[u8]) -> Option<StatefulProtocol> {
+fn decode_protocol(picker: &Arc<Mutex<Picker>>, bytes: &[u8]) -> Option<AvatarProtocols> {
     let image = image::load_from_memory(bytes).ok()?;
-    let mut protocol = picker.lock().ok()?.new_resize_protocol(image);
-    protocol.resize_encode(&Resize::Scale(None), Size::new(4, 2));
-    Some(protocol)
+    let picker = picker.lock().ok()?;
+    Some(AvatarProtocols::new(&picker, image))
 }
 
 #[cfg(test)]
@@ -560,9 +589,8 @@ mod tests {
         AvatarTarget::Contact(jid(index))
     }
 
-    fn protocol() -> StatefulProtocol {
-        let picker = Picker::halfblocks();
-        picker.new_resize_protocol(image::DynamicImage::new_rgb8(1, 1))
+    fn protocol() -> AvatarProtocols {
+        AvatarProtocols::new(&Picker::halfblocks(), image::DynamicImage::new_rgb8(1, 1))
     }
 
     #[test]
@@ -861,6 +889,61 @@ mod tests {
                 app.contact_avatars
                     .requested_targets()
                     .contains(&AvatarTarget::Contact(contact))
+            );
+        }
+    }
+
+    #[test]
+    fn rendering_portrait_preserves_thumbnail_encoding_and_identity() {
+        use ratatui::{buffer::Buffer, layout::Rect, widgets::StatefulWidget};
+        use ratatui_image::{StatefulImage, picker::ProtocolType};
+
+        let root = tempdir().unwrap();
+        let mut avatars = ContactAvatars::new(root.path().into());
+        let mut picker = Picker::halfblocks();
+        picker.set_protocol_type(ProtocolType::Kitty);
+        let source =
+            image::load_from_memory(include_bytes!("../../assets/contact-avatar-default.png"))
+                .unwrap();
+        avatars.insert(target(1), "photo".into(), AvatarProtocols::new(&picker, source));
+        let thumbnail_area = Rect::new(0, 0, 4, 2);
+        let mut first = Buffer::empty(thumbnail_area);
+        StatefulImage::default().render(
+            thumbnail_area,
+            &mut first,
+            avatars.protocol_mut(&target(1)).unwrap(),
+        );
+        assert!(kitty_upload(first[(0, 0)].symbol()).is_some());
+
+        let portrait_area = Rect::new(0, 0, 38, 19);
+        let mut portrait = Buffer::empty(portrait_area);
+        StatefulImage::default().render(
+            portrait_area,
+            &mut portrait,
+            avatars.portrait_protocol_mut(&target(1)).unwrap(),
+        );
+        assert!(kitty_upload(portrait[(0, 0)].symbol()).is_some());
+        assert_ne!(
+            kitty_placement_id(first[(0, 0)].symbol()),
+            kitty_placement_id(portrait[(0, 0)].symbol())
+        );
+        let thumbnail = avatars.protocol_mut(&target(1)).unwrap();
+        assert_eq!(
+            thumbnail.needs_resize(&Resize::Scale(None), Size::new(4, 2)),
+            None
+        );
+        let mut after = Buffer::empty(thumbnail_area);
+        StatefulImage::default().render(thumbnail_area, &mut after, thumbnail);
+        // An unchanged thumbnail needs no new upload after the portrait render.
+        assert!(kitty_upload(after[(0, 0)].symbol()).is_none());
+        for y in 0..thumbnail_area.height {
+            assert_eq!(
+                kitty_placement_id(first[(0, y)].symbol()),
+                kitty_placement_id(after[(0, y)].symbol())
+            );
+            assert_eq!(
+                first[(0, y)].symbol().matches('\u{10eeee}').count(),
+                after[(0, y)].symbol().matches('\u{10eeee}').count()
             );
         }
     }
