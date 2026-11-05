@@ -347,6 +347,16 @@ mod tests {
     }
 
     #[test]
+    fn markdown_message_height_measures_visible_text() {
+        let input = LayoutInput {
+            width: 5,
+            ..text("**hello**")
+        };
+        let mut cache = MessageHeightCache::default();
+        assert_eq!(height(&mut cache, &Arc::from("markdown"), &input), 2);
+    }
+
+    #[test]
     fn informational_content_uses_message_card_height() {
         let input = LayoutInput {
             content: HeightContent::Informational {
