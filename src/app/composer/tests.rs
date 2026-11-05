@@ -397,3 +397,43 @@ fn plain_composer_and_raw_layout_keep_their_existing_geometry() {
         composer_visual_layout_with_direction(&["**raw**".into()], 40, ComposerDirection::Auto);
     assert_eq!(raw.text(), "**raw**");
 }
+
+#[test]
+fn inactive_closing_fence_whitespace_does_not_add_preview_rows() {
+    for suffix in ["", " ", "  "] {
+        let source = format!("```rs\nx\n```{suffix}\ntail");
+        let mut composer = Composer::default();
+        composer.insert_text(&source);
+        let layout = composer.visual_layout(ComposerDirection::Auto, 40);
+        assert_eq!(layout.row_count(), 2, "{source:?}");
+        assert_eq!(layout.text().lines().last(), Some("tail"));
+        assert_eq!(
+            composer.visual_cursor(40, ComposerDirection::Auto),
+            (1, 4),
+            "{source:?}"
+        );
+        assert_eq!(composer.text(), source);
+        let outcome = composer.apply(ComposerAction::Submit);
+        assert_eq!(outcome.text_messages(), vec![source.as_str()]);
+    }
+}
+
+#[test]
+fn hiding_a_delimiter_preserves_its_following_combining_mark() {
+    let source = "*a*\u{301} tail";
+    let expected = "a\u{301} tail";
+    let mut composer = Composer::default();
+    composer.insert_text(source);
+    let projection = crate::ui::markdown::Markdown::new(source, None).project(source);
+    assert_eq!(projection.text, expected);
+    let layout = composer.visual_layout(ComposerDirection::Auto, 40);
+    assert_eq!(layout.text(), expected);
+    // Check real terminal cells as well as the source/display string.
+    let mut buffer = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 40, 1));
+    use ratatui::widgets::Widget;
+    ratatui::widgets::Paragraph::new(layout.lines()).render(buffer.area, &mut buffer);
+    assert_eq!(buffer[(0, 0)].symbol(), "a\u{301}");
+    assert_eq!(composer.text(), source);
+    let outcome = composer.apply(ComposerAction::Submit);
+    assert_eq!(outcome.text_messages(), vec![source]);
+}

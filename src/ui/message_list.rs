@@ -576,6 +576,24 @@ mod layout_contract_tests {
     }
 
     #[test]
+    fn formatted_bare_url_keeps_its_original_mouse_destination() {
+        let body = "https://example.com/_docs_";
+        let mut app = crate::app::test_support::TestApp::new();
+        super::record_url_hits(
+            &mut app,
+            &"original-url".into(),
+            body,
+            None,
+            Rect::new(0, 0, 40, 2),
+            ratatui::layout::Alignment::Left,
+        );
+        assert!(!app.mouse_hit_map.urls.is_empty());
+        assert!(app.mouse_hit_map.urls.iter().all(|hit| hit.url == body));
+        let visible = super::markdown_content_lines(body, &[], None, 40, &[]);
+        assert_eq!(visible[0].to_string(), body);
+    }
+
+    #[test]
     fn formatted_urls_keep_exact_painted_hit_cells() {
         use ratatui::{
             buffer::Buffer,
