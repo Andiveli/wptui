@@ -1011,9 +1011,11 @@ mod tests {
         app.open_chat_by_jid(contact);
         app.focus_pane = FocusPane::Conversation;
         let source = if available {
-            image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(real_size, real_size, |x, y| {
-                image::Rgb([(x / 2) as u8, (y / 2) as u8, if x < y { 255 } else { 0 }])
-            }))
+            image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(
+                real_size,
+                real_size,
+                |x, y| image::Rgb([(x / 2) as u8, (y / 2) as u8, if x < y { 255 } else { 0 }]),
+            ))
         } else {
             image::load_from_memory(include_bytes!("../../assets/contact-avatar-default.png"))
                 .unwrap()
@@ -1172,12 +1174,20 @@ mod tests {
 
     #[test]
     fn real_portrait_keeps_full_size_across_frames_kitty() {
-        assert_portrait_survives_repeated_frames(true, 480, ratatui_image::picker::ProtocolType::Kitty);
+        assert_portrait_survives_repeated_frames(
+            true,
+            480,
+            ratatui_image::picker::ProtocolType::Kitty,
+        );
     }
 
     #[test]
     fn default_portrait_keeps_full_size_across_frames_kitty() {
-        assert_portrait_survives_repeated_frames(false, 480, ratatui_image::picker::ProtocolType::Kitty);
+        assert_portrait_survives_repeated_frames(
+            false,
+            480,
+            ratatui_image::picker::ProtocolType::Kitty,
+        );
     }
 
     #[test]
@@ -1191,7 +1201,11 @@ mod tests {
 
     #[test]
     fn small_real_portrait_fills_full_area_kitty() {
-        assert_portrait_survives_repeated_frames(true, 100, ratatui_image::picker::ProtocolType::Kitty);
+        assert_portrait_survives_repeated_frames(
+            true,
+            100,
+            ratatui_image::picker::ProtocolType::Kitty,
+        );
     }
 
     #[test]
