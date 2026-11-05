@@ -210,6 +210,116 @@ fn composed_contact_query_forwards_ports_and_preserves_unavailable_results() {
 }
 
 #[test]
+fn composed_contact_query_keeps_shared_matches_when_one_candidate_is_unavailable() {
+    use std::sync::Mutex;
+
+    for (info_fails, failed_index) in [
+        (true, 0),
+        (true, 1),
+        (true, 2),
+        (false, 0),
+        (false, 1),
+        (false, 2),
+    ] {
+        let case = format!("info_fails={info_fails}, failed_index={failed_index}");
+        let mut app = app();
+        let contact = app.open_chat().unwrap();
+        let groups = [
+            (wr::JID::from("a@g.us".to_owned()), "Group A"),
+            (wr::JID::from("b@g.us".to_owned()), "Group B"),
+            (wr::JID::from("c@g.us".to_owned()), "Group C"),
+        ];
+        app.apply_contact_refresh(
+            groups
+                .iter()
+                .map(|(jid, name)| (jid.clone(), Arc::<str>::from(*name)))
+                .collect(),
+        );
+        let trace = Arc::new(Mutex::new(Vec::new()));
+        let info = Arc::new(FakeGroupInfoQuery {
+            trace: Arc::clone(&trace),
+            ..Default::default()
+        });
+        let participants = Arc::new(FakeGroupParticipantsQuery {
+            trace: Arc::clone(&trace),
+            ..Default::default()
+        });
+        let mut expected_participant_calls = Vec::new();
+        let mut expected_trace = Vec::new();
+        for (index, (jid, name)) in groups.iter().enumerate() {
+            expected_trace.push("info");
+            if index == failed_index && info_fails {
+                info.results
+                    .lock()
+                    .unwrap()
+                    .push_back(Err(wr::GroupInfoError::RequestFailed));
+                continue;
+            }
+            info.results.lock().unwrap().push_back(Ok(wr::GroupInfo {
+                jid: jid.clone(),
+                name: (*name).into(),
+                is_announce: false,
+                is_admin: false,
+            }));
+            expected_trace.push("participants");
+            expected_participant_calls.push(jid.clone());
+            // An empty port roster is ambiguous, not a reproduction of Go filtering.
+            let roster = if index == failed_index {
+                Vec::new()
+            } else {
+                vec![wr::GroupParticipant {
+                    jid: if index % 2 == 0 {
+                        contact.clone()
+                    } else {
+                        wr::JID::from("987654321@lid".to_owned())
+                    },
+                    phone_number: contact.clone(),
+                    name: "Contact".into(),
+                }]
+            };
+            participants.results.lock().unwrap().push_back(roster);
+        }
+        app.contact_info_query = Arc::new(WhatsRustContactInfoQuery::new(
+            info.clone(),
+            participants.clone(),
+        ));
+        open(&mut app);
+        let loaded = result(&mut app);
+        assert!(app.handle_avatar_event(AppEvent::ContactInfoLoaded(loaded)));
+        let details = screen(&mut app, 180, 50)
+            .lines()
+            .map(|line| line.chars().skip(134).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(details.contains("Shared groups · 2"), "{case}: {details}");
+        for (index, (_, name)) in groups.iter().enumerate() {
+            assert_eq!(
+                details.contains(*name),
+                index != failed_index,
+                "{case}: {details}"
+            );
+        }
+        assert!(
+            details.contains("Some groups unavailable"),
+            "{case}: {details}"
+        );
+        assert!(!details.contains("Shared groups unavailable"), "{case}");
+        assert!(!details.contains("No known shared groups"), "{case}");
+        let expected_info_calls = groups
+            .iter()
+            .map(|(jid, _)| jid.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(*info.calls.lock().unwrap(), expected_info_calls, "{case}");
+        assert_eq!(
+            *participants.calls.lock().unwrap(),
+            expected_participant_calls,
+            "{case}"
+        );
+        assert_eq!(*trace.lock().unwrap(), expected_trace, "{case}");
+    }
+}
+
+#[test]
 fn unknown_lid_is_not_displayed_as_a_phone_number() {
     let mut app = app();
     app.open_chat_by_jid("987654321@lid".to_owned().into());
