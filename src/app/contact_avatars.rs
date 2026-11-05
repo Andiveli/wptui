@@ -931,8 +931,8 @@ mod tests {
         );
         assert!(kitty_upload(portrait[(0, 0)].symbol()).is_some());
         assert_ne!(
-            kitty_placement_id(first[(0, 0)].symbol()),
-            kitty_placement_id(portrait[(0, 0)].symbol())
+            kitty_placement_id(&first[(0, 0)]),
+            kitty_placement_id(&portrait[(0, 0)])
         );
         let thumbnail = avatars.protocol_mut(&target(1)).unwrap();
         assert_eq!(
@@ -944,14 +944,15 @@ mod tests {
         // An unchanged thumbnail needs no new upload after the portrait render.
         assert!(kitty_upload(after[(0, 0)].symbol()).is_none());
         for y in 0..thumbnail_area.height {
-            assert_eq!(
-                kitty_placement_id(first[(0, y)].symbol()),
-                kitty_placement_id(after[(0, y)].symbol())
-            );
-            assert_eq!(
-                first[(0, y)].symbol().matches('\u{10eeee}').count(),
-                after[(0, y)].symbol().matches('\u{10eeee}').count()
-            );
+            let extent = kitty_row_extent(&first, thumbnail_area, y);
+            assert_eq!(extent, usize::from(thumbnail_area.width));
+            assert_eq!(extent, kitty_row_extent(&after, thumbnail_area, y));
+            for x in 0..thumbnail_area.width {
+                assert_eq!(
+                    kitty_placement_id(&first[(x, y)]),
+                    kitty_placement_id(&after[(x, y)])
+                );
+            }
         }
     }
 
@@ -977,18 +978,24 @@ mod tests {
         id.map(|id| (id & 0x00ff_ffff, raster))
     }
 
-    fn kitty_placement_id(symbol: &str) -> u32 {
-        let color = symbol
-            .split("\x1b[38;2;")
-            .nth(1)
-            .expect("Kitty portrait placement")
-            .split('m')
-            .next()
-            .unwrap();
-        color
-            .split(';')
-            .map(|value| value.parse::<u32>().unwrap())
-            .fold(0, |id, component| (id << 8) | component)
+    fn kitty_placement_id(cell: &ratatui::buffer::Cell) -> u32 {
+        assert!(cell.symbol().contains('\u{10eeee}'), "Kitty placeholder");
+        // ratatui-image 11.1 stores the low 24 image-ID bits in cell style,
+        // rather than embedding an ANSI foreground escape in the symbol.
+        let ratatui::style::Color::Rgb(red, green, blue) = cell.fg else {
+            panic!("Kitty placement must have an RGB image-ID foreground");
+        };
+        (u32::from(red) << 16) | (u32::from(green) << 8) | u32::from(blue)
+    }
+
+    fn kitty_row_extent(
+        buffer: &ratatui::buffer::Buffer,
+        area: ratatui::layout::Rect,
+        y: u16,
+    ) -> usize {
+        (area.left()..area.right())
+            .map(|x| buffer[(x, y)].symbol().matches('\u{10eeee}').count())
+            .sum()
     }
 
     fn assert_portrait_survives_repeated_frames(
@@ -1117,23 +1124,24 @@ mod tests {
                 }
                 let (_, expected_raster) = kitty_upload(expected[(0, 0)].symbol()).unwrap();
                 for y in portrait.top()..portrait.bottom() {
-                    let actual = buffer[(portrait.x, y)].symbol();
+                    let expected_extent =
+                        kitty_row_extent(&expected, reference_area, y - portrait.y);
+                    assert_eq!(expected_extent, usize::from(reference_area.width));
                     assert_eq!(
-                        actual.matches('\u{10eeee}').count(),
-                        expected[(0, y - portrait.y)]
-                            .symbol()
-                            .matches('\u{10eeee}')
-                            .count(),
+                        kitty_row_extent(buffer, portrait, y),
+                        expected_extent,
                         "portrait row extent: frame={frame_index}, row={y}"
                     );
-                    let id = kitty_placement_id(actual);
-                    assert!(
-                        terminal_images.get(&id) == Some(&expected_raster),
-                        "visible Kitty portrait raster must match full-size reference: \
-                         frame={frame_index}, row={y}, emitted raster length={:?}, expected={}",
-                        terminal_images.get(&id).map(String::len),
-                        expected_raster.len()
-                    );
+                    for x in portrait.left()..portrait.right() {
+                        let id = kitty_placement_id(&buffer[(x, y)]);
+                        assert!(
+                            terminal_images.get(&id) == Some(&expected_raster),
+                            "visible Kitty portrait raster must match full-size reference: \
+                             frame={frame_index}, cell=({x},{y}), emitted raster length={:?}, expected={}",
+                            terminal_images.get(&id).map(String::len),
+                            expected_raster.len()
+                        );
+                    }
                 }
             } else {
                 // Raw completed buffers avoid invisible stale Chafa trailing
