@@ -8,7 +8,7 @@ merging this tracker into the default branch is a separate owner decision.
 
 1. **Messages** (`preview/enriched-markdown-messages`): display-only WhatsApp and
    extended Markdown, source-range remapping, message/caption heights and URL hit cells.
-2. **Composer** (`preview/enriched-markdown-composer`): live formatting, active
+2. **Composer** (`preview/enriched-markdown-editor`): live formatting, active
    delimiter reveal, source-backed cursor movement, Unicode/RTL and wrapping.
 3. **Corrections** (`preview/enriched-markdown-corrections`): preserve original
    URL destinations, closing-fence whitespace geometry and combining marks.
