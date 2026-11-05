@@ -49,9 +49,11 @@ pub(crate) fn render(frame: &mut Frame, app: &mut App<'_>, area: Rect) {
     let target = AvatarTarget::Contact(contact.clone());
     if !photo.is_empty() {
         if let Some(protocol) = app.contact_avatars.portrait_protocol_mut(&target) {
-            StatefulImage::default()
-                .resize(Resize::Scale(None))
-                .render(photo, frame.buffer_mut(), protocol);
+            StatefulImage::default().resize(Resize::Scale(None)).render(
+                photo,
+                frame.buffer_mut(),
+                protocol,
+            );
         } else {
             frame.render_widget(
                 Paragraph::new(app.contact_avatars.status_label(&target))
