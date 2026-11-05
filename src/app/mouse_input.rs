@@ -18,6 +18,8 @@ pub(crate) struct MouseHitMap {
     pub(crate) chat_list: Option<Rect>,
     pub(crate) news_rows: Vec<(Rect, usize)>,
     pub(crate) news_body: Option<Rect>,
+    pub(crate) news_star: Vec<Rect>,
+    pub(crate) news_hide: Vec<Rect>,
     pub(crate) section_rows: Vec<SectionHit>,
     pub(crate) filter_labels: Vec<FilterHit>,
     pub(crate) contact_rows: Vec<ContactHit>,
@@ -142,6 +144,29 @@ impl App<'_> {
             return; // A picker closed since the last draw; do not use stale base hits.
         }
         if self.selected_section == Section::News && !self.rail_on_logout {
+            if event.kind == MouseEventKind::Down(MouseButton::Left)
+                && self.news_update.confirm.is_none()
+                && !self.news_update.restart_prompt
+            {
+                if self
+                    .mouse_hit_map
+                    .news_star
+                    .iter()
+                    .any(|area| area.contains(point))
+                {
+                    self.start_repository_star(super::news_star::Operation::Star);
+                    return;
+                }
+                if self
+                    .mouse_hit_map
+                    .news_hide
+                    .iter()
+                    .any(|area| area.contains(point))
+                {
+                    self.dismiss_repository_star();
+                    return;
+                }
+            }
             let body = self
                 .mouse_hit_map
                 .news_body

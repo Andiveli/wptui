@@ -223,6 +223,19 @@ Select installed or intermediate release notes with `j`/`k` or arrows; use
 `Ctrl+U`/`Ctrl+D` to scroll long notes. `h`/`l` or
 left/right arrows move pane focus; `Tab` advances focus inside News. The mouse
 wheel selects releases over the list and scrolls notes over the body.
+
+News also offers an optional highlighted **Star Andiveli/wptui** invitation when
+GitHub CLI (`gh`) confirms the repository is not starred. Status is checked once
+per session on entering News, in the background with an eight-second timeout.
+Already-starred, checking, unavailable, unauthenticated and unknown states hide
+the invitation; `gh` is optional and release notes work without it. Only pressing
+`s` in News or clicking **Star** sends the explicit GitHub star request. While it
+is pending, both actions are disabled; success shows inline thanks, and failure
+quietly hides the invitation. Press `d` in News or click **Hide** to permanently
+dismiss it (stored separately in the app data directory, not configuration).
+Unreadable or unwritable invitation state suppresses it. These keys do not change
+Messages Share/Delete or Status Delete. No browser or notification is opened.
+
 Press `u` to install the exact displayed newer stable release, including an
 intermediate version. The confirmation names that version; Cancel is selected by
 default. Use Up/Down to choose, Enter to confirm, or Esc to cancel. Installed-version

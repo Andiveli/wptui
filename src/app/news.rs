@@ -13,6 +13,8 @@ type NewsSource = dyn Fn(&Path) -> NewsHistory + Send + Sync;
 
 pub struct NewsState {
     pub installed: ReleaseNote,
+    pub repository_starred: Option<bool>,
+    pub(crate) star: super::news_star::RepositoryStar,
     pub history: Option<NewsHistory>,
     /// Zero selects bundled installed notes; newer releases follow backend order.
     pub selected: usize,
@@ -25,8 +27,15 @@ pub struct NewsState {
 
 impl NewsState {
     pub fn new(cache_path: PathBuf) -> Self {
+        let star_path = cache_path.with_file_name("news-repository-star");
+        Self::with_star_path(cache_path, star_path)
+    }
+
+    pub(crate) fn with_star_path(cache_path: PathBuf, star_path: PathBuf) -> Self {
         Self {
             installed: installed_note(),
+            repository_starred: None,
+            star: super::news_star::RepositoryStar::new(star_path),
             history: None,
             selected: 0,
             scroll: 0,
@@ -150,6 +159,14 @@ impl App<'_> {
             return false;
         }
         if self.handle_news_update_key(key) {
+            return true;
+        }
+        if key == &Key::c('s') {
+            self.start_repository_star(super::news_star::Operation::Star);
+            return true;
+        }
+        if key == &Key::c('d') {
+            self.dismiss_repository_star();
             return true;
         }
         if key == &Key::c('r') {
