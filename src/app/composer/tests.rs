@@ -298,3 +298,14 @@ fn quote_and_mentions_are_submitted_together() {
         matches!(outcome, ComposerOutcome::Submit { quote: Some(_), mentions, .. } if mentions.len() == 1)
     );
 }
+
+#[test]
+fn markdown_preview_cursor_uses_visible_columns_and_submit_keeps_source() {
+    let mut composer = Composer::default();
+    let source = "*one* tail";
+    composer.insert_text(source);
+    assert_eq!(composer.text(), source);
+    assert_eq!(composer.visual_cursor(40, ComposerDirection::Auto), (0, 8));
+    let outcome = composer.apply(ComposerAction::Submit);
+    assert_eq!(outcome.text_messages(), vec![source]);
+}
