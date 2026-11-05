@@ -188,7 +188,10 @@ fn composed_contact_query_forwards_ports_and_preserves_unavailable_results() {
         assert_eq!(loaded.groups, expected);
         assert_eq!(info.calls.lock().unwrap().as_slice(), &[group.clone()]);
         let expected_participant_calls = if info_fails { Vec::new() } else { vec![group] };
-        assert_eq!(*participants.calls.lock().unwrap(), expected_participant_calls);
+        assert_eq!(
+            *participants.calls.lock().unwrap(),
+            expected_participant_calls
+        );
         let expected_trace = if info_fails {
             vec!["info"]
         } else {
