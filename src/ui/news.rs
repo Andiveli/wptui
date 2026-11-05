@@ -3,7 +3,7 @@ use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::Line,
+    text::{Line, Span},
     widgets::{Block, List, ListItem, ListState, Paragraph, Wrap},
 };
 
@@ -31,6 +31,67 @@ fn wrapped_lines(text: &str, width: u16) -> Vec<Line<'static>> {
             cells += size;
         }
         rows.push(Line::from(row));
+    }
+    rows
+}
+
+fn repository_row(app: &mut App, width: u16) -> Vec<Line<'static>> {
+    use crate::app::news_star::Operation;
+    app.mouse_hit_map.news_star.clear();
+    app.mouse_hit_map.news_hide.clear();
+    if width == 0 || app.news.star.dismissed {
+        return vec![];
+    }
+    if app.news.star.success {
+        return wrapped_lines("Thanks for starring Andiveli/wptui.", width);
+    }
+    if app.news.repository_starred != Some(false) || app.news.star.pending == Some(Operation::Check)
+    {
+        return vec![];
+    }
+    let pending = app.news.star.pending == Some(Operation::Star);
+    let title = "Enjoying wptui?";
+    let action = if pending {
+        "[Starring…]"
+    } else {
+        "[s: Star Andiveli/wptui]"
+    };
+    let hide = "[d: Hide]";
+    let base = Style::default().fg(Color::Black).bg(NEWS_COLOR);
+    let primary = base.add_modifier(Modifier::BOLD);
+    let action_style = if pending {
+        base
+    } else {
+        primary.add_modifier(Modifier::UNDERLINED)
+    };
+    let mut parts = vec![
+        (" ".to_string(), base),
+        (title.to_string(), primary),
+        (" ".to_string(), base),
+        (action.to_string(), action_style),
+    ];
+    let used = 1 + title.len() + 1 + action.chars().count();
+    let gap = usize::from(width)
+        .saturating_sub(used + hide.len() + 1)
+        .max(1);
+    parts.push((" ".repeat(gap), base));
+    parts.push((hide.to_string(), base));
+    parts.push((" ".to_string(), base));
+    let mut rows = Vec::new();
+    let mut spans = Vec::new();
+    let mut cells = 0;
+    for (part, style) in parts {
+        for ch in part.chars() {
+            if cells == width {
+                rows.push(Line::from(std::mem::take(&mut spans)).style(base));
+                cells = 0;
+            }
+            spans.push(Span::styled(ch.to_string(), style));
+            cells += 1;
+        }
+    }
+    if !spans.is_empty() {
+        rows.push(Line::from(spans).style(base));
     }
     rows
 }
@@ -150,8 +211,52 @@ pub(super) fn render(frame: &mut Frame, app: &mut App, list_area: Option<Rect>, 
         .len()
         .min(body_area.height.saturating_sub(3) as usize) as u16;
     let status_widget = Paragraph::new(status_lines);
-    let [status_area, note_area] =
-        Layout::vertical([Constraint::Length(status_height), Constraint::Min(0)]).areas(body_area);
+    let repository_lines = repository_row(app, body_area.width);
+    let repository_height = repository_lines.len().min(
+        body_area
+            .height
+            .saturating_sub(status_height)
+            .saturating_sub(3) as usize,
+    ) as u16;
+    let [status_area, repository_area, note_area] = Layout::vertical([
+        Constraint::Length(status_height),
+        Constraint::Length(repository_height),
+        Constraint::Min(0),
+    ])
+    .areas(body_area);
+    let interactive = app.news.repository_starred == Some(false)
+        && !app.news.star.dismissed
+        && app.news.star.pending.is_none()
+        && !app.news.star.success;
+    // Derive hit cells from the exact styled/wrapped rows that are painted.
+    let mut label = String::new();
+    let mut positions = Vec::new();
+    for (row, line) in repository_lines
+        .iter()
+        .take(repository_height as usize)
+        .enumerate()
+    {
+        for (column, span) in line.spans.iter().enumerate() {
+            label.push_str(&span.content);
+            positions.push(Rect::new(
+                repository_area.x + column as u16,
+                repository_area.y + row as u16,
+                1,
+                1,
+            ));
+        }
+    }
+    if interactive {
+        for (text, hits) in [
+            ("[s: Star Andiveli/wptui]", &mut app.mouse_hit_map.news_star),
+            ("[d: Hide]", &mut app.mouse_hit_map.news_hide),
+        ] {
+            if let Some(start) = label.find(text) {
+                hits.extend_from_slice(&positions[start..start + text.len()]);
+            }
+        }
+    }
+    frame.render_widget(Paragraph::new(repository_lines), repository_area);
     frame.render_widget(
         status_widget.style(Style::default().fg(NEWS_COLOR)),
         status_area,
@@ -193,6 +298,97 @@ mod tests {
     use super::*;
     use crate::app::{actions::Section, test_support::TestApp};
     use ratatui::{Terminal, backend::TestBackend};
+
+    // The status fixture does not invoke gh: false is confirmed unstarred,
+    // true is already starred, and None is unknown.
+    #[test]
+    fn known_not_starred_invitation_is_accented_and_wraps_without_hiding_notes() {
+        for width in [96, 32] {
+            let mut app = TestApp::new();
+            app.selected_section = Section::News;
+            app.news.repository_starred = Some(false);
+            app.news.installed.title = "Installed fixture".into();
+            app.news.installed.body = "Retained release body".into();
+            let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
+            terminal
+                .draw(|frame| {
+                    let area = frame.area();
+                    render(frame, &mut app, None, area);
+                })
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            let cells: Vec<_> = buffer
+                .content
+                .iter()
+                .filter(|cell| {
+                    cell.bg == Color::Rgb(139, 160, 180) && !cell.symbol().trim().is_empty()
+                })
+                .collect();
+            let invitation: String = cells.iter().map(|cell| cell.symbol()).collect();
+            for label in ["Enjoying wptui?", "[s: Star Andiveli/wptui]", "[d: Hide]"] {
+                // Ignore row padding and word-wrap whitespace, not label cells.
+                let compact: String = label.chars().filter(|ch| !ch.is_whitespace()).collect();
+                let start = invitation.find(&compact).unwrap_or_else(|| {
+                    panic!("missing accent invitation label {label} at width {width}")
+                });
+                // Labels are ASCII; compact byte offsets match these cell offsets.
+                let label_cells = &cells[start..start + compact.len()];
+                assert!(label_cells.iter().all(|cell| cell.fg == Color::Black));
+                if label.starts_with("[s:") {
+                    assert!(label_cells.iter().all(|cell| {
+                        cell.modifier.contains(Modifier::BOLD)
+                            && cell.modifier.contains(Modifier::UNDERLINED)
+                    }));
+                } else if label.starts_with("[d:") {
+                    assert!(
+                        label_cells
+                            .iter()
+                            .all(|cell| !cell.modifier.contains(Modifier::BOLD))
+                    );
+                }
+            }
+            let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
+            for label in ["Installed fixture", "Retained release body", "r: refresh"] {
+                assert!(text.contains(label), "missing {label} at width {width}");
+            }
+            assert_eq!(app.news.selected, 0);
+            assert_eq!(app.news.scroll, 0);
+        }
+    }
+
+    #[test]
+    fn unknown_and_already_starred_hide_invitation_and_preserve_news_controls() {
+        for starred in [None, Some(true)] {
+            let mut app = TestApp::new();
+            app.selected_section = Section::News;
+            app.news.repository_starred = starred;
+            app.news.installed.title = "Installed fixture".into();
+            app.news.installed.body = "Retained release body".into();
+            let mut terminal = Terminal::new(TestBackend::new(96, 24)).unwrap();
+            terminal
+                .draw(|frame| {
+                    let area = frame.area();
+                    render(frame, &mut app, None, area);
+                })
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
+            for label in ["Enjoying wptui?", "Star Andiveli/wptui", "[d: Hide]"] {
+                assert!(!text.contains(label), "unexpected {label} for {starred:?}");
+            }
+            for label in [
+                "Installed fixture",
+                "Retained release body",
+                "j/k or arrows: releases",
+                "Ctrl+U/D: scroll",
+                "r: refresh",
+            ] {
+                assert!(text.contains(label), "missing {label} for {starred:?}");
+            }
+            assert_eq!(app.news.selected, 0);
+            assert_eq!(app.news.scroll, 0);
+        }
+    }
 
     #[test]
     fn rail_label_reserves_selector_and_selected_news_has_distinct_legible_style() {
