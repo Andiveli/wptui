@@ -993,6 +993,7 @@ mod tests {
 
     fn assert_portrait_survives_repeated_frames(
         available: bool,
+        real_size: u32,
         mode: ratatui_image::picker::ProtocolType,
     ) {
         use crate::app::actions::FocusPane;
@@ -1010,7 +1011,7 @@ mod tests {
         app.open_chat_by_jid(contact);
         app.focus_pane = FocusPane::Conversation;
         let source = if available {
-            image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(480, 480, |x, y| {
+            image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(real_size, real_size, |x, y| {
                 image::Rgb([(x / 2) as u8, (y / 2) as u8, if x < y { 255 } else { 0 }])
             }))
         } else {
@@ -1155,6 +1156,7 @@ mod tests {
     fn real_portrait_keeps_full_size_across_frames_halfblocks() {
         assert_portrait_survives_repeated_frames(
             true,
+            480,
             ratatui_image::picker::ProtocolType::Halfblocks,
         );
     }
@@ -1163,18 +1165,33 @@ mod tests {
     fn default_portrait_keeps_full_size_across_frames_halfblocks() {
         assert_portrait_survives_repeated_frames(
             false,
+            480,
             ratatui_image::picker::ProtocolType::Halfblocks,
         );
     }
 
     #[test]
     fn real_portrait_keeps_full_size_across_frames_kitty() {
-        assert_portrait_survives_repeated_frames(true, ratatui_image::picker::ProtocolType::Kitty);
+        assert_portrait_survives_repeated_frames(true, 480, ratatui_image::picker::ProtocolType::Kitty);
     }
 
     #[test]
     fn default_portrait_keeps_full_size_across_frames_kitty() {
-        assert_portrait_survives_repeated_frames(false, ratatui_image::picker::ProtocolType::Kitty);
+        assert_portrait_survives_repeated_frames(false, 480, ratatui_image::picker::ProtocolType::Kitty);
+    }
+
+    #[test]
+    fn small_real_portrait_fills_full_area_halfblocks() {
+        assert_portrait_survives_repeated_frames(
+            true,
+            100,
+            ratatui_image::picker::ProtocolType::Halfblocks,
+        );
+    }
+
+    #[test]
+    fn small_real_portrait_fills_full_area_kitty() {
+        assert_portrait_survives_repeated_frames(true, 100, ratatui_image::picker::ProtocolType::Kitty);
     }
 
     #[test]
