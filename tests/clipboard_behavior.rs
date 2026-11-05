@@ -5,7 +5,7 @@ use ratatui::crossterm::event::{
 };
 use tempfile::tempdir;
 use wp_tui::app::actions::{ActionNotice, ConversationMode};
-use wp_tui::app::composer::Composer;
+use wp_tui::app::composer::{Composer, ComposerOutcome};
 use wp_tui::app::{
     actions::ComposerAction,
     inputs::{apply_clipboard_paste, composer_action_for_editing_key},
@@ -45,6 +45,18 @@ fn terminal_event(key: Key) -> Event {
 impl wp_tui::app::actions::ClipboardReader for FailingClipboardReader {
     fn read_paste(&mut self) -> Result<ClipboardPaste, ClipboardError> {
         Err(ClipboardError::ClipboardUnavailable)
+    }
+}
+
+struct TextClipboardReader(&'static str);
+
+impl wp_tui::app::actions::ClipboardReader for TextClipboardReader {
+    fn read_paste(&mut self) -> Result<ClipboardPaste, ClipboardError> {
+        classify_text(self.0)
+    }
+
+    fn read_text(&mut self) -> Result<Option<String>, ClipboardError> {
+        panic!("Ctrl+V must use the classified clipboard paste")
     }
 }
 
@@ -143,6 +155,47 @@ fn control_v_dispatches_the_semantic_paste_action_while_editing() {
     });
 
     assert_eq!(action, ComposerAction::Paste);
+}
+
+#[test]
+fn control_v_preserves_complete_text_through_composer_submission() {
+    for (name, pasted) in [
+        ("single line", "message"),
+        ("multiple lines", "uno\ndos\ntres"),
+        (
+            "markdown with blank lines and a combining mark",
+            "# Heading\n\n*uno*\n_dos_\n~tres~\n\n```rust\nlet n = 1;\n```\n*a*\u{301} tail",
+        ),
+    ] {
+        let mut app = TestApp::new();
+        app.focus_pane = wp_tui::app::actions::FocusPane::Conversation;
+        app.conversation_mode = ConversationMode::ComposerEditing;
+        app.composer.insert_text("draft ");
+        app.clipboard_reader = Box::new(TextClipboardReader(pasted));
+        let expected = format!("draft {pasted}");
+
+        app.on_terminal_event(terminal_event(Key::ctrl('v')));
+
+        assert_eq!(app.composer.text(), expected, "{name}: pasted source");
+        assert_eq!(
+            app.conversation_mode,
+            ConversationMode::ComposerEditing,
+            "{name}: paste must not submit the draft"
+        );
+        assert_eq!(app.action_notice, None, "{name}: no clipboard error");
+        assert!(app.composer.pending.is_empty(), "{name}: no attachments");
+
+        // Inspect the public submit result without dispatching a real send.
+        let outcome = app.composer.apply(ComposerAction::Submit);
+
+        assert_eq!(outcome.text_messages(), [expected.as_str()], "{name}");
+        assert!(outcome.file_messages().is_empty(), "{name}: text only");
+        let ComposerOutcome::Submit { display_text, .. } = outcome else {
+            panic!("{name}: expected a submitted text payload");
+        };
+        assert_eq!(display_text.as_ref(), expected, "{name}: display source");
+        assert!(app.composer.text().is_empty(), "{name}: submitted draft");
+    }
 }
 
 #[test]
