@@ -9,7 +9,9 @@ use super::*;
 use crate::app::actions::ConversationMode;
 use crate::app::events::MediaRenderPlan;
 use crate::app::read_receipts::VisibilityPlan;
-use crate::app::test_support::{FakeDmResolver, TestApp};
+use crate::app::test_support::{
+    FakeDmResolver, FakeGroupInfoQuery, FakeGroupParticipantsQuery, TestApp,
+};
 
 fn press(app: &mut TestApp, code: KeyCode) {
     app.on_terminal_event(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)));
@@ -74,10 +76,11 @@ fn result(app: &mut TestApp) -> ContactInfoResult {
 
 #[test]
 fn known_shared_groups_match_verified_phone_and_lid_not_names() {
-    let mut app = app();
     let lid = wr::JID::from("987654321@lid".to_owned());
     let phone = wr::JID::from("15551234567@s.whatsapp.net".to_owned());
-    app.set_dm_resolver(Box::new(FakeDmResolver::with_result(Some(phone.clone()))));
+    let resolver = FakeDmResolver::with_result(Some(phone.clone()));
+    let mut app = TestApp::with_dm_resolver(Box::new(resolver));
+    app.focus_pane = FocusPane::Conversation;
     let a = wr::JID::from("a@g.us".to_owned());
     let b = wr::JID::from("b@g.us".to_owned());
     let c = wr::JID::from("c@g.us".to_owned());
@@ -124,6 +127,83 @@ fn known_shared_groups_match_verified_phone_and_lid_not_names() {
         .collect::<Vec<_>>()
         .join("\n");
     assert!(!details.contains("Not shared"));
+}
+
+#[test]
+fn composed_contact_query_forwards_ports_and_preserves_unavailable_results() {
+    use std::sync::Mutex;
+
+    for (info_fails, empty_roster) in [(false, false), (true, false), (false, true)] {
+        let mut app = app();
+        let group = wr::JID::from("team@g.us".to_owned());
+        let contact = app.open_chat().unwrap();
+        app.apply_contact_refresh(vec![(group.clone(), "Team".into())]);
+        let trace = Arc::new(Mutex::new(Vec::new()));
+        let info = Arc::new(FakeGroupInfoQuery {
+            trace: Arc::clone(&trace),
+            ..Default::default()
+        });
+        let participants = Arc::new(FakeGroupParticipantsQuery {
+            trace: Arc::clone(&trace),
+            ..Default::default()
+        });
+        info.results.lock().unwrap().push_back(if info_fails {
+            Err(wr::GroupInfoError::RequestFailed)
+        } else {
+            Ok(wr::GroupInfo {
+                jid: group.clone(),
+                name: "Team".into(),
+                is_announce: false,
+                is_admin: false,
+            })
+        });
+        if !info_fails {
+            let roster = if empty_roster {
+                Vec::new()
+            } else {
+                vec![wr::GroupParticipant {
+                    jid: contact.clone(),
+                    phone_number: contact,
+                    name: "Contact".into(),
+                }]
+            };
+            participants.results.lock().unwrap().push_back(roster);
+        }
+        app.contact_info_query = Arc::new(WhatsRustContactInfoQuery::new(
+            info.clone(),
+            participants.clone(),
+        ));
+        open(&mut app);
+        let loaded = result(&mut app);
+        let expected = if info_fails {
+            Err("RequestFailed".into())
+        } else if empty_roster {
+            Err("Participant lookup unavailable".into())
+        } else {
+            Ok(vec![SharedGroup {
+                jid: group.clone(),
+                name: "Team".into(),
+            }])
+        };
+        assert_eq!(loaded.groups, expected);
+        assert_eq!(info.calls.lock().unwrap().as_slice(), &[group.clone()]);
+        let expected_participant_calls = if info_fails { Vec::new() } else { vec![group] };
+        assert_eq!(*participants.calls.lock().unwrap(), expected_participant_calls);
+        let expected_trace = if info_fails {
+            vec!["info"]
+        } else {
+            vec!["info", "participants"]
+        };
+        assert_eq!(*trace.lock().unwrap(), expected_trace);
+        assert!(app.handle_avatar_event(AppEvent::ContactInfoLoaded(loaded)));
+        let rendered = screen(&mut app, 180, 50);
+        if info_fails || empty_roster {
+            assert!(rendered.contains("Shared groups unavailable"));
+            assert!(!rendered.contains("No known shared groups"));
+        } else {
+            assert!(rendered.contains("Shared groups · 1"));
+        }
+    }
 }
 
 #[test]

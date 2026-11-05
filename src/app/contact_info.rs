@@ -5,10 +5,12 @@ use std::sync::{
 
 use whatsrust as wr;
 
-use super::App;
-use super::actions::{FocusPane, Section};
-use super::events::{AppEvent, AppInput};
-use super::media_jobs::MediaJobOwner;
+use super::{
+    App, GroupInfoQueryPort, GroupParticipantsQueryPort,
+    actions::{FocusPane, Section},
+    events::{AppEvent, AppInput},
+    media_jobs::MediaJobOwner,
+};
 use crate::input_key::{Key, KeyCode};
 
 #[cfg(test)]
@@ -49,12 +51,29 @@ pub trait ContactInfoQuery: Send + Sync {
     fn participants(&self, group: &wr::JID) -> Result<Vec<wr::GroupParticipant>, String>;
 }
 
-pub struct WhatsRustContactInfoQuery;
+pub struct WhatsRustContactInfoQuery {
+    group_info: Arc<dyn GroupInfoQueryPort + Send + Sync>,
+    group_participants: Arc<dyn GroupParticipantsQueryPort + Send + Sync>,
+}
+
+impl WhatsRustContactInfoQuery {
+    pub fn new(
+        group_info: Arc<dyn GroupInfoQueryPort + Send + Sync>,
+        group_participants: Arc<dyn GroupParticipantsQueryPort + Send + Sync>,
+    ) -> Self {
+        Self {
+            group_info,
+            group_participants,
+        }
+    }
+}
 
 impl ContactInfoQuery for WhatsRustContactInfoQuery {
     fn participants(&self, group: &wr::JID) -> Result<Vec<wr::GroupParticipant>, String> {
-        wr::get_group_info(group).map_err(|error| format!("{error:?}"))?;
-        let participants = wr::get_group_participants(group);
+        self.group_info
+            .get_group_info(group)
+            .map_err(|error| format!("{error:?}"))?;
+        let participants = self.group_participants.get_group_participants(group);
         if participants.is_empty() {
             Err("Participant lookup unavailable".into())
         } else {
