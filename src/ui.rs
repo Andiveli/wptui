@@ -3,6 +3,7 @@ pub mod communities;
 pub mod contact_list;
 mod contacts;
 pub(crate) mod layout;
+pub(crate) mod markdown;
 pub mod message_list;
 mod navigation;
 mod news;

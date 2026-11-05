@@ -5,7 +5,7 @@ use whatsrust::{self as wr, FileKind};
 
 use super::message_helpers::{
     AuthorGroupContext, ForwardingLabel, StatusLabel, forwarding_indicator_lines,
-    inline_content_lines,
+    inline_content_lines, markdown_content_lines,
 };
 
 pub const IMAGE_HEIGHT: usize = 12;
@@ -281,7 +281,7 @@ pub(crate) fn height(
             status,
             forwarding,
         } => {
-            inline_content_lines(body, &[], *status, content_width).len()
+            markdown_content_lines(body, &[], *status, content_width, &[]).len()
                 + forwarding_indicator_lines(*forwarding, content_width)
         }
         HeightContent::File {
@@ -293,7 +293,7 @@ pub(crate) fn height(
         } => {
             let caption_height = caption.as_ref().map_or_else(
                 || inline_content_lines("", &[], *status, content_width).len(),
-                |caption| inline_content_lines(caption, &[], *status, content_width).len(),
+                |caption| markdown_content_lines(caption, &[], *status, content_width, &[]).len(),
             );
             let file_height = match kind {
                 // Reserve media geometry independently of the asynchronous
@@ -344,6 +344,16 @@ mod tests {
                 status: None,
             },
         }
+    }
+
+    #[test]
+    fn markdown_message_height_measures_visible_text() {
+        let input = LayoutInput {
+            width: 5,
+            ..text("**hello**")
+        };
+        let mut cache = MessageHeightCache::default();
+        assert_eq!(height(&mut cache, &Arc::from("markdown"), &input), 2);
     }
 
     #[test]

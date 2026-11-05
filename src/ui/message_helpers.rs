@@ -266,6 +266,38 @@ pub(crate) fn inline_content_lines_with_highlights(
     width: usize,
     highlight_ranges: &[Range<usize>],
 ) -> Vec<Line<'static>> {
+    content_lines(body, mention_ranges, status, width, highlight_ranges, &[])
+}
+
+pub(crate) fn markdown_content_lines(
+    body: &str,
+    mention_ranges: &[Range<usize>],
+    status: Option<StatusLabel>,
+    width: usize,
+    highlight_ranges: &[Range<usize>],
+) -> Vec<Line<'static>> {
+    if matches!(status, Some(StatusLabel::Deleted)) {
+        return inline_content_lines(body, mention_ranges, status, width);
+    }
+    let projection = crate::ui::markdown::Markdown::new(body, None).project(body);
+    content_lines(
+        &projection.text,
+        &projection.ranges(mention_ranges),
+        status,
+        width,
+        &projection.ranges(highlight_ranges),
+        &projection.styles,
+    )
+}
+
+fn content_lines(
+    body: &str,
+    mention_ranges: &[Range<usize>],
+    status: Option<StatusLabel>,
+    width: usize,
+    highlight_ranges: &[Range<usize>],
+    format_styles: &[(Range<usize>, Style)],
+) -> Vec<Line<'static>> {
     let (content, status_range) = if matches!(status, Some(StatusLabel::Deleted)) {
         (
             crate::app::DELETED_MESSAGE_TEXT.to_owned(),
@@ -319,6 +351,12 @@ pub(crate) fn inline_content_lines_with_highlights(
                         status_for_line.as_ref().is_some_and(&overlaps),
                         mentions_for_line.iter().any(&overlaps),
                         highlights_for_line.iter().any(&overlaps),
+                        format_styles
+                            .iter()
+                            .find(|(range, _)| {
+                                range.contains(&(paragraph_start + grapheme.source_range.start))
+                            })
+                            .map_or(Style::default(), |(_, style)| *style),
                     )
                 })
                 .collect::<Vec<_>>();
@@ -326,7 +364,7 @@ pub(crate) fn inline_content_lines_with_highlights(
                 paragraph
                     [absolute_range.start - paragraph_start..absolute_range.end - paragraph_start]
                     .graphemes(true)
-                    .map(|grapheme| (grapheme.to_owned(), false, false, false))
+                    .map(|grapheme| (grapheme.to_owned(), false, false, false, Style::default()))
                     .collect()
             } else {
                 visual
@@ -338,9 +376,12 @@ pub(crate) fn inline_content_lines_with_highlights(
     lines
 }
 
-fn inline_line(graphemes: &[(String, bool, bool, bool)], direction: Direction) -> Line<'static> {
+fn inline_line(
+    graphemes: &[(String, bool, bool, bool, Style)],
+    direction: Direction,
+) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
-    for (grapheme, is_status, is_mention, is_highlighted) in graphemes {
+    for (grapheme, is_status, is_mention, is_highlighted, format_style) in graphemes {
         let style = if *is_status {
             Style::default().dark_gray()
         } else if *is_mention {
@@ -353,7 +394,7 @@ fn inline_line(graphemes: &[(String, bool, bool, bool)], direction: Direction) -
         } else {
             style
         };
-        append_styled_grapheme(&mut spans, grapheme, style);
+        append_styled_grapheme(&mut spans, grapheme, format_style.patch(style));
     }
     Line::from(spans).alignment(match direction {
         Direction::Ltr => Alignment::Left,
@@ -452,6 +493,82 @@ mod tests {
     use unicode_segmentation::UnicodeSegmentation;
 
     use super::{StatusLabel, inline_content_lines, inline_content_lines_with_highlights};
+
+    #[test]
+    fn markdown_preserves_mentions_search_status_and_plain_rendering() {
+        let body = "**@阿丽** _hello_";
+        let mention = 2..2 + "@阿丽".len();
+        let lines = super::markdown_content_lines(
+            body,
+            &[mention.clone()],
+            Some(StatusLabel::Edited),
+            40,
+            &[mention],
+        );
+        let mut painted = Buffer::empty(Rect::new(0, 0, 40, 1));
+        Paragraph::new(lines).render(painted.area, &mut painted);
+        let cells = painted.content();
+        assert_eq!(cells[0].symbol(), "@");
+        assert_eq!(cells[0].fg, Color::Blue);
+        assert_eq!(cells[0].bg, Color::Yellow);
+        assert!(cells[0].modifier.contains(Modifier::BOLD));
+        assert!(
+            cells
+                .iter()
+                .any(|c| c.symbol() == "h" && c.modifier.contains(Modifier::ITALIC))
+        );
+        assert!(
+            cells
+                .iter()
+                .any(|c| c.symbol() == "(" && c.fg == Color::DarkGray && c.bg != Color::Yellow)
+        );
+        for source in ["plain hello", "abc אבג 👩‍💻", "  a   b  ", "a_b_c"] {
+            for width in [1, 5, 40] {
+                assert_eq!(
+                    super::markdown_content_lines(source, &[], None, width, &[]),
+                    inline_content_lines(source, &[], None, width),
+                );
+            }
+        }
+        assert_eq!(
+            super::markdown_content_lines("*deleted*", &[], Some(StatusLabel::Deleted), 40, &[]),
+            inline_content_lines("*deleted*", &[], Some(StatusLabel::Deleted), 40),
+        );
+        // System text remains literal even when it happens to contain syntax.
+        assert_eq!(
+            inline_content_lines("**system**", &[], None, 40)[0].to_string(),
+            "**system**"
+        );
+    }
+
+    #[test]
+    fn markdown_wrapping_uses_visible_graphemes_and_keeps_rtl_styles() {
+        for source in [
+            "**hello**",
+            "_שלום_ world",
+            "```rs\n*literal*\n```",
+            "**👩‍💻 阿丽**",
+        ] {
+            for width in [1, 4, 10] {
+                let projection = crate::ui::markdown::Markdown::new(source, None).project(source);
+                let rich = super::markdown_content_lines(source, &[], None, width, &[]);
+                let plain = inline_content_lines(&projection.text, &[], None, width);
+                assert_eq!(rich.len(), plain.len());
+                assert_eq!(
+                    rich.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                    plain.iter().map(ToString::to_string).collect::<Vec<_>>()
+                );
+            }
+        }
+        let lines = super::markdown_content_lines("**שלום**", &[], None, 20, &[]);
+        assert_eq!(lines[0].alignment, Some(Alignment::Right));
+        assert!(
+            lines[0]
+                .spans
+                .iter()
+                .all(|s| s.style.add_modifier.contains(Modifier::BOLD))
+        );
+    }
 
     #[test]
     fn search_marking_preserves_rtl_mention_and_status_styles() {

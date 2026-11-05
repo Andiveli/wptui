@@ -52,8 +52,7 @@ pub use message_helpers::{
 };
 use message_helpers::{
     StatusLabel, directionally_ordered_spans, fit_text_to_width, forwarding_indicator_lines,
-    forwarding_label, inline_content_lines, inline_content_lines_with_highlights,
-    reply_summary_for_width,
+    forwarding_label, inline_content_lines, markdown_content_lines, reply_summary_for_width,
 };
 pub use message_layout::{
     IMAGE_HEIGHT, IMAGE_WIDTH, MESSAGE_HEIGHT_CACHE_CAPACITY, MessageHeightCache, VIDEO_HEIGHT,
@@ -577,6 +576,42 @@ mod layout_contract_tests {
     }
 
     #[test]
+    fn formatted_urls_keep_exact_painted_hit_cells() {
+        use ratatui::{
+            buffer::Buffer,
+            layout::Alignment,
+            widgets::{Paragraph, Widget},
+        };
+        let mut app = crate::app::test_support::TestApp::new();
+        for body in [
+            "**https://example.com**",
+            "[site](https://example.com)",
+            "`https://example.com`",
+        ] {
+            app.mouse_hit_map.urls.clear();
+            super::record_url_hits(
+                &mut app,
+                &"markdown-url".into(),
+                body,
+                None,
+                Rect::new(3, 4, 40, 2),
+                Alignment::Left,
+            );
+            let hits = &app.mouse_hit_map.urls;
+            assert!(!hits.is_empty(), "{body}");
+            assert!(hits.iter().all(|hit| hit.url == "https://example.com"));
+            let lines = super::markdown_content_lines(body, &[], None, 40, &[]);
+            let mut buffer = Buffer::empty(Rect::new(0, 0, 40, 2));
+            Paragraph::new(lines).render(buffer.area, &mut buffer);
+            let painted = hits
+                .iter()
+                .map(|hit| buffer[(hit.area.x - 3, hit.area.y - 4)].symbol())
+                .collect::<String>();
+            assert_eq!(painted, "https://example.com");
+        }
+    }
+
+    #[test]
     fn visual_wrapping_and_cached_height_agree_at_narrow_width() {
         use std::sync::Arc;
 
@@ -632,6 +667,8 @@ pub(super) fn record_url_hits(
     if area.is_empty() || matches!(status, Some(StatusLabel::Deleted)) {
         return;
     }
+    let projection = crate::ui::markdown::Markdown::new(body, None).project(body);
+    let body = projection.text.as_str();
     let mut search_from = 0;
     for url in crate::url::extract_openable_urls(body) {
         let Some(offset) = body[search_from..].find(&url) else {
@@ -847,7 +884,7 @@ fn render_message(
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
-            let lines = inline_content_lines_with_highlights(
+            let lines = markdown_content_lines(
                 text,
                 &mention_ranges,
                 status,
