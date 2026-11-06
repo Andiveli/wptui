@@ -60,6 +60,14 @@ impl wp_tui::app::actions::ClipboardReader for TextClipboardReader {
     }
 }
 
+struct NoClipboardAccess;
+
+impl wp_tui::app::actions::ClipboardReader for NoClipboardAccess {
+    fn read_paste(&mut self) -> Result<ClipboardPaste, ClipboardError> {
+        panic!("Terminal paste must use its event payload, not the system clipboard")
+    }
+}
+
 struct AttachmentClipboardReader;
 
 impl wp_tui::app::actions::ClipboardReader for AttachmentClipboardReader {
@@ -196,6 +204,36 @@ fn control_v_preserves_complete_text_through_composer_submission() {
         assert_eq!(display_text.as_ref(), expected, "{name}: display source");
         assert!(app.composer.text().is_empty(), "{name}: submitted draft");
     }
+}
+
+#[test]
+fn terminal_paste_preserves_all_lines_until_explicit_submission() {
+    let mut app = TestApp::new();
+    app.focus_pane = wp_tui::app::actions::FocusPane::Conversation;
+    app.conversation_mode = ConversationMode::ComposerEditing;
+    app.clipboard_reader = Box::new(NoClipboardAccess);
+    let pasted = "uno\ndos\ntres";
+
+    app.on_terminal_event(Event::Paste(pasted.into()));
+
+    assert_eq!(
+        app.composer.text(),
+        pasted,
+        "complete terminal paste source"
+    );
+    assert_eq!(app.conversation_mode, ConversationMode::ComposerEditing);
+    assert!(app.composer.pending.is_empty());
+    assert_eq!(app.action_notice, None);
+
+    let outcome = app.composer.apply(ComposerAction::Submit);
+
+    assert_eq!(outcome.text_messages(), [pasted]);
+    assert!(outcome.file_messages().is_empty());
+    let ComposerOutcome::Submit { display_text, .. } = outcome else {
+        panic!("Expected one explicitly submitted multiline message");
+    };
+    assert_eq!(display_text.as_ref(), pasted);
+    assert!(app.composer.text().is_empty());
 }
 
 #[test]
