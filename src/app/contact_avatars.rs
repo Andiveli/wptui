@@ -1217,6 +1217,166 @@ mod tests {
     }
 
     #[test]
+    fn full_image_refresh_replaces_same_id_legacy_source_and_survives_offline() {
+        use ratatui::{
+            buffer::Buffer,
+            layout::{Rect, Size},
+            widgets::{StatefulWidget, Widget},
+        };
+        use ratatui_image::StatefulImage;
+
+        let root = tempdir().unwrap();
+        let contact = jid(1);
+        let target = AvatarTarget::Contact(contact.clone());
+        let encode = |source: &image::DynamicImage| {
+            let mut bytes = io::Cursor::new(Vec::new());
+            source.write_to(&mut bytes, image::ImageFormat::Png).unwrap();
+            bytes.into_inner()
+        };
+        let legacy = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            100,
+            100,
+            image::Rgb([255, 0, 0]),
+        ));
+        let full = image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(
+            640,
+            640,
+            |x, y| {
+                image::Rgb([
+                    ((x / 8) % 2 * 192) as u8,
+                    ((y / 8) % 2 * 160) as u8,
+                    ((x + y) % 256) as u8,
+                ])
+            },
+        ));
+        let legacy_bytes = encode(&legacy);
+        let full_bytes = encode(&full);
+        assert!(full_bytes.len() <= 512 * 1024);
+        let legacy_cache = AvatarDiskCache::new(root.path().to_path_buf()).unwrap();
+        legacy_cache
+            .store(&contact, "same-photo-id", &legacy_bytes)
+            .unwrap();
+
+        for online in [true, false] {
+            let query = Arc::new(FakeAvatarQuery::default());
+            query.contact_results.lock().unwrap().push_back(if online {
+                Ok(wr::ProfilePictureAvailability::Available(wr::ProfilePicture {
+                    id: "same-photo-id".into(),
+                    picture_type: "image".into(),
+                    bytes: full_bytes.clone(),
+                }))
+            } else {
+                Err(wr::ProfilePictureError::Download)
+            });
+            let picker = Arc::new(Mutex::new(Picker::halfblocks()));
+            let (app_tx, app_rx) = mpsc::channel();
+            let avatar_query: SharedAvatarQueryPort = query.clone();
+            let runtime = start_runtime(root.path().into(), app_tx, picker.clone(), avatar_query);
+            *runtime.desired.lock().unwrap() = (1, [target.clone()].into());
+            let mut avatars = ContactAvatars::new(root.path().into());
+            avatars.generation = 1;
+            avatars.requested = vec![target.clone()];
+            runtime
+                .sender
+                .send(AvatarRequest {
+                    generation: 1,
+                    target: target.clone(),
+                    refresh: true,
+                })
+                .unwrap();
+            let mut events = Vec::new();
+            for _ in 0..2 {
+                match app_rx.recv_timeout(Duration::from_secs(2)).unwrap() {
+                    AppInput::App(AppEvent::ContactAvatar(result)) => {
+                        events.push(match &result {
+                            AvatarResult::Cached { .. } => "cached",
+                            AvatarResult::Available { .. } => "available",
+                            AvatarResult::Failed { .. } => "failed",
+                            _ => panic!("unexpected quality result kind"),
+                        });
+                        assert!(avatars.apply(result));
+                    }
+                    AppInput::App(AppEvent::ContactAvatarRefreshed { generation, target }) => {
+                        events.push("refreshed");
+                        assert!(avatars.mark_refreshed(generation, target));
+                    }
+                    other => panic!("unexpected quality input: {other:?}"),
+                }
+            }
+            runtime.shutdown();
+            assert_eq!(
+                events,
+                if online {
+                    vec!["cached", "available"]
+                } else {
+                    vec!["cached", "failed"]
+                },
+                "same-ID full image must replace a legacy preview; online={online}"
+            );
+            assert!(matches!(
+                app_rx.try_recv(),
+                Err(mpsc::TryRecvError::Disconnected)
+            ));
+            assert_eq!(
+                *query.calls.lock().unwrap(),
+                vec![AvatarQueryCall::Contact(contact.clone())]
+            );
+
+            for portrait in [false, true] {
+                let area = if portrait {
+                    Rect::new(0, 0, 38, 19)
+                } else {
+                    Rect::new(0, 0, 4, 2)
+                };
+                let protocol = if portrait {
+                    avatars.portrait_protocol_mut(&target).unwrap()
+                } else {
+                    avatars.protocol_mut(&target).unwrap()
+                };
+                let mut actual = Buffer::empty(area);
+                StatefulImage::default()
+                    .resize(Resize::Scale(None))
+                    .render(area, &mut actual, protocol);
+                let reference = picker
+                    .lock()
+                    .unwrap()
+                    .new_protocol(
+                        full.clone(),
+                        Size::new(area.width, area.height),
+                        Resize::Scale(None),
+                    )
+                    .unwrap();
+                let mut expected = Buffer::empty(area);
+                ratatui_image::Image::new(&reference).render(area, &mut expected);
+                for y in area.top()..area.bottom() {
+                    for x in area.left()..area.right() {
+                        let actual = &actual[(x, y)];
+                        let expected = &expected[(x, y)];
+                        assert_eq!(
+                            (actual.symbol(), actual.fg, actual.bg),
+                            (expected.symbol(), expected.fg, expected.bg),
+                            "full-source pixels: online={online}, portrait={portrait}, cell=({x},{y})"
+                        );
+                    }
+                }
+            }
+            let (id, bytes) = cache_for_target(root.path(), &target)
+                .unwrap()
+                .load_current(&contact)
+                .unwrap()
+                .unwrap();
+            assert_eq!(id.as_ref(), "same-photo-id");
+            assert!(
+                bytes == full_bytes,
+                "persisted source must retain all 640px fixture bytes"
+            );
+            let (id, bytes) = legacy_cache.load_current(&contact).unwrap().unwrap();
+            assert_eq!(id.as_ref(), "same-photo-id");
+            assert!(bytes == legacy_bytes, "legacy cache must remain unchanged");
+        }
+    }
+
+    #[test]
     fn stale_portrait_fallback_cannot_replace_a_new_generation_photo() {
         let root = tempdir().unwrap();
         let mut avatars = ContactAvatars::new(root.path().into());
