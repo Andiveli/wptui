@@ -274,6 +274,17 @@ pub(super) fn persist_in_transaction(tx: &rusqlite::Transaction<'_>, messages: V
                 ])
                 .unwrap(),
         };
+        // Legacy callers need no new argument. Retain an unchanged binding,
+        // but remove stale metadata in the same transaction as any overwrite.
+        tx.execute(
+            "DELETE FROM native_link_previews WHERE message_id = ?1 AND (?2 OR NOT EXISTS (
+                SELECT 1 FROM text_messages t WHERE t.id = native_link_previews.message_id
+                AND t.chat_jid = native_link_previews.chat_jid AND t.message = native_link_previews.source
+                AND t.is_from_me = 0 AND t.chat_jid != 'status@broadcast'
+                AND NOT EXISTS (SELECT 1 FROM message_actions a WHERE a.target_message_id = t.id)
+            ))",
+            rusqlite::params![msg.info.id, !matches!(&msg.message, wr::MessageContent::Text(_))],
+        ).unwrap();
         if pending_edit.is_some() {
             tx.execute(
                 "UPDATE message_actions SET replacement = NULL WHERE target_message_id = ?1 AND kind = 0",
@@ -293,4 +304,80 @@ pub(super) fn persist_in_transaction(tx: &rusqlite::Transaction<'_>, messages: V
         }
     }
     drop((text_stmt, file_stmt, view_once_stmt, source_stmt));
+}
+
+pub(super) fn persist_native_link_preview(
+    tx: &rusqlite::Transaction<'_>,
+    message: &wr::Message,
+    preview: wr::NativeLinkPreview,
+) {
+    let Some((_, preview)) = crate::app::native_link_previews::validated_preview(message, preview)
+    else {
+        return;
+    };
+    let wr::MessageContent::Text(source) = &message.message else {
+        return;
+    };
+    if source.len() > 64 * 1_024 {
+        return;
+    }
+    // The message writer may have projected a pending action or retained local
+    // ownership. Check the materialized row, not just the callback candidate.
+    tx.execute(
+        "INSERT OR REPLACE INTO native_link_previews
+            (chat_jid, message_id, source, matched_text, title, description, jpeg_thumbnail)
+         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7
+         WHERE EXISTS (SELECT 1 FROM text_messages WHERE id = ?2 AND chat_jid = ?1
+            AND message = ?3 AND is_from_me = 0)
+         AND NOT EXISTS (SELECT 1 FROM message_actions WHERE target_message_id = ?2)",
+        rusqlite::params![
+            message.info.chat.0,
+            message.info.id,
+            source,
+            preview.matched_text,
+            preview.title,
+            preview.description,
+            preview.jpeg_thumbnail
+        ],
+    )
+    .unwrap();
+}
+
+pub(super) fn get_native_link_previews(
+    db: &Connection,
+) -> Vec<crate::app::native_link_previews::NativeLinkPreviewRecord> {
+    // Bound before allocating untrusted stored text/blobs. A large stored image
+    // alone becomes text-only, just like a large callback image.
+    let mut query = db
+        .prepare(
+            "SELECT p.chat_jid, p.message_id, p.source, p.matched_text, p.title, p.description,
+            CASE WHEN length(p.jpeg_thumbnail) <= 262144 THEN p.jpeg_thumbnail ELSE X'' END
+         FROM native_link_previews p JOIN text_messages t
+            ON t.id = p.message_id AND t.chat_jid = p.chat_jid AND t.message = p.source
+         WHERE t.is_from_me = 0 AND t.chat_jid != 'status@broadcast'
+            AND length(CAST(p.source AS BLOB)) <= 65536
+            AND length(CAST(p.matched_text AS BLOB)) <= 8192
+            AND length(CAST(p.title AS BLOB)) <= 2048
+            AND length(CAST(p.description AS BLOB)) <= 8192
+            AND NOT EXISTS (SELECT 1 FROM message_actions a WHERE a.target_message_id = t.id)
+         ORDER BY t.timestamp DESC, p.chat_jid, p.message_id LIMIT 256",
+        )
+        .unwrap();
+    query
+        .query_map([], |row| {
+            Ok(crate::app::native_link_previews::NativeLinkPreviewRecord {
+                chat: row.get::<_, String>(0)?.into(),
+                message_id: row.get::<_, String>(1)?.into(),
+                source: row.get::<_, String>(2)?.into(),
+                preview: wr::NativeLinkPreview {
+                    matched_text: row.get::<_, String>(3)?.into(),
+                    title: row.get::<_, String>(4)?.into(),
+                    description: row.get::<_, String>(5)?.into(),
+                    jpeg_thumbnail: row.get(6)?,
+                },
+            })
+        })
+        .unwrap()
+        .filter_map(Result::ok)
+        .collect()
 }

@@ -15,6 +15,13 @@ impl SqliteChatStoreHydration {
 }
 
 impl ChatStoreHydrationPort for SqliteChatStoreHydration {
+    fn load_native_link_previews(
+        &self,
+    ) -> Vec<crate::app::native_link_previews::NativeLinkPreviewRecord> {
+        let db = super::open_database(&self.db_path);
+        super::message_store::get_native_link_previews(&db)
+    }
+
     fn load(&self) -> ChatStoreHydration {
         let db = super::open_database(&self.db_path);
         ChatStoreHydration {

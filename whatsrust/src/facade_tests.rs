@@ -165,6 +165,117 @@ mod message_action_tests {
 }
 
 #[cfg(test)]
+mod native_link_preview_boundary_tests {
+    use crate::{
+        CallbackTranslator, Message, MessageContent,
+        abi::{CIncomingTextMessage, CMessage, CMessageInfo, CNativeLinkPreview},
+    };
+    use std::{ffi::CString, ptr};
+
+    #[test]
+    fn incoming_translator_owns_preview_after_all_callback_buffers_are_released() {
+        let message = {
+            let text = CString::new("原文 https://example.test/native").unwrap();
+            let matched = CString::new("https://example.test/native").unwrap();
+            let title = CString::new("标题 🙂 שלום").unwrap();
+            let description = CString::new("Native description").unwrap();
+            let thumbnail = vec![0xff, 0xd8, 0xff, 0xd9];
+            let native = CNativeLinkPreview {
+                matched_text: matched.as_ptr(),
+                matched_text_len: matched.as_bytes().len(),
+                title: title.as_ptr(),
+                title_len: title.as_bytes().len(),
+                description: description.as_ptr(),
+                description_len: description.as_bytes().len(),
+                jpeg_thumbnail: thumbnail.as_ptr(),
+                jpeg_thumbnail_len: thumbnail.len(),
+            };
+            let content = CIncomingTextMessage {
+                text: text.as_ptr(),
+                mention_ranges: ptr::null(),
+                mention_range_count: 0,
+                native_preview: &native,
+            };
+            let id = CString::new("native-ffi-owned").unwrap();
+            let chat = CString::new("native-ffi@example.test").unwrap();
+            let quote = CString::new("quoted").unwrap();
+            let input = CMessage {
+                info: CMessageInfo {
+                    id: id.as_ptr(),
+                    chat: chat.as_ptr(),
+                    sender: chat.as_ptr(),
+                    push_name: ptr::null(),
+                    mentions_self: false,
+                    timestamp: 42,
+                    is_from_me: false,
+                    quote_id: quote.as_ptr(),
+                    read_by: 0,
+                    is_forwarded: false,
+                    forwarding_score: 0,
+                },
+                message_type: 0,
+                message: (&content as *const CIncomingTextMessage).cast(),
+                forward_source: ptr::null(),
+                forward_source_len: 0,
+            };
+            unsafe { Message::to_rust(&input) }
+        };
+        assert_eq!(message.info.quote_id.as_deref(), Some("quoted"));
+        assert_eq!(message.info.timestamp, 42);
+        assert!(!message.info.is_from_me);
+        let MessageContent::Text(text) = &message.message else {
+            panic!("text contract changed");
+        };
+        assert_eq!(text.as_ref(), "原文 https://example.test/native");
+        let native = crate::take_native_link_preview(&message.info, text).unwrap();
+        assert_eq!(native.matched_text.as_ref(), "https://example.test/native");
+        assert_eq!(native.title.as_ref(), "标题 🙂 שלום");
+        assert_eq!(native.description.as_ref(), "Native description");
+        assert_eq!(native.jpeg_thumbnail, [0xff, 0xd8, 0xff, 0xd9]);
+        assert!(crate::take_native_link_preview(&message.info, text).is_none());
+    }
+
+    #[test]
+    fn ffi_lengths_and_nulls_are_checked_before_slicing() {
+        use crate::native_link_preview::copy_from_ffi;
+        let matched = CString::new("https://example.test").unwrap();
+        let mut native = CNativeLinkPreview {
+            matched_text: matched.as_ptr(),
+            matched_text_len: matched.as_bytes().len(),
+            title: ptr::null(),
+            title_len: 0,
+            description: ptr::null(),
+            description_len: 0,
+            jpeg_thumbnail: ptr::null(),
+            jpeg_thumbnail_len: 0,
+        };
+        assert!(unsafe { copy_from_ffi(ptr::null()) }.is_none());
+        assert!(
+            unsafe { copy_from_ffi(&native) }
+                .unwrap()
+                .jpeg_thumbnail
+                .is_empty()
+        );
+        native.title_len = crate::NATIVE_TITLE_LIMIT + 1;
+        assert!(unsafe { copy_from_ffi(&native) }.is_none());
+        native.title_len = 1;
+        assert!(unsafe { copy_from_ffi(&native) }.is_none());
+        native.title_len = 0;
+        native.jpeg_thumbnail_len = 1;
+        assert!(unsafe { copy_from_ffi(&native) }.is_none());
+        native.jpeg_thumbnail_len = crate::NATIVE_THUMBNAIL_LIMIT + 1;
+        assert!(
+            unsafe { copy_from_ffi(&native) }
+                .unwrap()
+                .jpeg_thumbnail
+                .is_empty()
+        );
+        native.matched_text_len = crate::NATIVE_MATCHED_TEXT_LIMIT + 1;
+        assert!(unsafe { copy_from_ffi(&native) }.is_none());
+    }
+}
+
+#[cfg(test)]
 mod presence_event_tests {
     use std::{
         ffi::CString,

@@ -13,4 +13,9 @@ pub struct ChatStoreHydration {
 
 pub trait ChatStoreHydrationPort {
     fn load(&self) -> ChatStoreHydration;
+    fn load_native_link_previews(
+        &self,
+    ) -> Vec<crate::app::native_link_previews::NativeLinkPreviewRecord> {
+        Vec::new()
+    }
 }

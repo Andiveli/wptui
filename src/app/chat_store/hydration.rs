@@ -63,6 +63,9 @@ impl App<'_> {
         for message in messages {
             self.add_message_without_sort(message);
         }
+        for record in self.chat_store_hydration.load_native_link_previews() {
+            self.restore_native_link_preview(record);
+        }
         let chat_ids = self.chat_messages.keys().cloned().collect::<Vec<_>>();
         for chat_id in chat_ids {
             self.sort_chat_messages(chat_id);

@@ -274,6 +274,62 @@ fn metadata_bounds_and_missing_or_oversized_image_degrade_to_text_only() {
 }
 
 #[test]
+fn unicode_metadata_survives_legacy_unchanged_writes_but_not_source_overwrites() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("legacy-update.db");
+    let mut native = preview();
+    native.title = "标题 🙂 שלום".into();
+    native.description = "وصف طبيعي 日本語".into();
+    {
+        let mut app = TestApp::with_database(&path);
+        let original = message("legacy-update", URL);
+        ingest(&mut app, original.clone(), Some(native.clone()));
+        app.db_handler.add_message(&original);
+        assert_preview(&app, "legacy-update", 0..URL.len(), &native);
+    }
+    {
+        let mut app = TestApp::with_database(&path);
+        app.load_data_from_db();
+        assert_preview(&app, "legacy-update", 0..URL.len(), &native);
+        app.db_handler.add_message(&message(
+            "legacy-update",
+            "changed https://other.example.test",
+        ));
+    }
+    let mut app = TestApp::with_database(&path);
+    app.load_data_from_db();
+    assert_source(
+        &app,
+        "legacy-update",
+        "changed https://other.example.test",
+        &["https://other.example.test"],
+    );
+    assert!(app.native_link_preview(&"legacy-update".into()).is_none());
+}
+
+#[test]
+fn ineligible_status_and_nontext_consume_adjunct_without_retaining_preview() {
+    let mut app = TestApp::new();
+    let mut status = message("native-status", URL);
+    status.info.chat = wr::JID::from("status@broadcast".to_owned());
+    ingest(&mut app, status, Some(preview()));
+    assert!(app.native_link_preview(&"native-status".into()).is_none());
+    assert_source(&app, "native-status", URL, &[URL]);
+
+    let original = message("native-nontext", URL);
+    wr::store_native_link_preview(&original.info, URL, preview());
+    let mut nontext = original.clone();
+    nontext.message = wr::MessageContent::ViewOnceUnavailable;
+    assert!(!app.process_message(nontext, true));
+    assert!(wr::take_native_link_preview(&original.info, URL).is_none());
+    assert!(app.native_link_preview(&original.info.id).is_none());
+    assert!(matches!(
+        app.messages["native-nontext"].message,
+        wr::MessageContent::ViewOnceUnavailable
+    ));
+}
+
+#[test]
 fn edit_and_delete_remove_stale_native_metadata_in_memory_and_after_restart() {
     for (id, kind, expected) in [
         (

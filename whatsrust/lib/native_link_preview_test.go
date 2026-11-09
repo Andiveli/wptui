@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -85,6 +86,47 @@ func TestNativePreviewDoesNotLeakIntoOrdinaryOutgoingOrMissingMetadata(t *testin
 			}
 			if got.text != body || got.nativePreview != nil || got.localSendID != wantSendID || got.quoteID != "" || len(got.ranges) != 0 {
 				t.Fatalf("legacy callback behavior changed: %#v", got)
+			}
+		})
+	}
+}
+
+func TestNativePreviewBoundsBeforeCallbackAllocation(t *testing.T) {
+	previous := observeTextCallback
+	t.Cleanup(func() { observeTextCallback = previous })
+	body := "https://example.test/bounds"
+	for _, test := range []struct {
+		name          string
+		title         string
+		description   string
+		thumbnailSize int
+		accepted      bool
+		imageSize     int
+	}{
+		{"unicode", "标题 🙂 שלום", "وصف", 0, true, 0},
+		{"exact limits", strings.Repeat("t", nativeTitleLimit), strings.Repeat("d", nativeDescriptionLimit), nativeThumbnailLimit, true, nativeThumbnailLimit},
+		{"oversized title", strings.Repeat("t", nativeTitleLimit+1), "", 0, false, 0},
+		{"UTF8 byte limit", strings.Repeat("界", nativeTitleLimit/3+1), "", 0, false, 0},
+		{"oversized description", "", strings.Repeat("d", nativeDescriptionLimit+1), 0, false, 0},
+		{"oversized image", "title", "description", nativeThumbnailLimit + 1, true, 0},
+		{"control", "bad\x1btitle", "", 0, false, 0},
+		{"bidi injection", "title", "bad\u202edescription", 0, false, 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var got textCallbackOutput
+			observeTextCallback = func(output textCallbackOutput) { got = output }
+			HandleMessage(types.MessageInfo{ID: types.MessageID(test.name)}, &waE2E.Message{
+				ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+					Text: proto.String(body), MatchedText: proto.String(body),
+					Title: proto.String(test.title), Description: proto.String(test.description),
+					JPEGThumbnail: make([]byte, test.thumbnailSize),
+				},
+			}, false)
+			if got.text != body || (got.nativePreview != nil) != test.accepted {
+				t.Fatalf("source/acceptance changed: %#v", got)
+			}
+			if test.accepted && (got.nativePreview.title != test.title || got.nativePreview.description != test.description || len(got.nativePreview.jpegThumbnail) != test.imageSize) {
+				t.Fatalf("bounded native metadata changed: %#v", got.nativePreview)
 			}
 		})
 	}

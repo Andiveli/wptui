@@ -62,6 +62,7 @@ pub mod message_opening;
 pub mod message_push_name_port;
 pub mod message_reactions;
 pub(crate) mod mouse_input;
+pub mod native_link_previews;
 pub mod navigation_conversation_dispatch;
 pub mod news;
 pub(crate) mod news_star;
@@ -222,6 +223,8 @@ pub struct App<'a> {
     pub notifier: Box<dyn Notifier>,
 
     pub messages: HashMap<wr::MessageId, wr::Message>,
+    pub(crate) native_link_previews:
+        HashMap<wr::MessageId, native_link_previews::NativeLinkPreviewRecord>,
     pub message_actions: HashMap<wr::MessageId, Vec<MessageAction>>,
     local_action_sequence: u64,
     message_action_diagnostics: MessageActionDiagnostics,

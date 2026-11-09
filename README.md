@@ -83,6 +83,17 @@ Your WhatsApp data — database, media, and session — lives in `~/.local/share
 machine. It is not uploaded anywhere; the client only exchanges data with the WhatsApp servers
 when it links or syncs, like any official client.
 
+Incoming chat text can retain WhatsApp-supplied link-preview metadata in a separate
+local database table; old messages without metadata load normally. This transport
+and storage stage does not yet display preview cards. Native metadata is optional:
+no website, external image URL, or thumbnail direct path is fetched. Titles are
+limited to 2,048 UTF-8 bytes, descriptions to 8,192 bytes, and embedded thumbnails
+to 256 KiB; an oversized image is omitted without discarding valid text metadata.
+Unsafe or mismatched text metadata is ignored without changing the message or its
+click destination. Editing or deleting a message clears its preview metadata.
+Receive adjuncts and app-owned preview state are bounded (64 and 256 entries,
+respectively); valid persisted metadata remains associated with its message.
+
 Preferences live in your OS configuration directory (`~/.config/wptui/settings.conf` on Linux).
 An existing `settings.conf` in the data directory is copied there on first use if no config
 file exists; the legacy file is left untouched. Set `composer_direction=rtl` or

@@ -46,6 +46,7 @@ func HandleMessage(info types.MessageInfo, msg *waE2E.Message, isSync bool) {
 		}
 
 		text := replaceMessageMentionNames(info.Chat, ext_msg.GetText(), context_info)
+		emitTextMessage := nativeTextEmitter(incomingNativeLinkPreview(ext_msg, info.IsFromMe))
 		emitTextMessage(cinfo, text, isSync)
 	}
 	if msg.ImageMessage != nil {

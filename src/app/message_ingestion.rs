@@ -32,7 +32,7 @@ impl App<'_> {
         self.message_height_cache.invalidate(target);
     }
 
-    pub(crate) fn process_message(&mut self, message: wr::Message, is_sync: bool) -> bool {
+    pub fn process_message(&mut self, message: wr::Message, is_sync: bool) -> bool {
         let mut chat_settings = (!is_sync && self.should_notify(&message)).then(|| {
             self.chat_settings_query
                 .get_chat_settings(&message.info.chat)
@@ -50,6 +50,21 @@ impl App<'_> {
         is_sync: bool,
         lookup: impl FnMut(&wr::JID) -> wr::ChatSettings,
     ) -> bool {
+        // Always consume, including non-text, outgoing, status and stale source.
+        let source = match &message.message {
+            wr::MessageContent::Text(text) => text.as_ref(),
+            _ => "",
+        };
+        let native = wr::take_native_link_preview(&message.info, source)
+            .and_then(|preview| super::native_link_previews::validated_preview(&message, preview))
+            .map(
+                |(_, preview)| super::native_link_previews::NativeLinkPreviewRecord {
+                    chat: message.info.chat.clone(),
+                    message_id: message.info.id.clone(),
+                    source: source.into(),
+                    preview,
+                },
+            );
         self.record_phase(Phase::MessageIngestionDb, |app| {
             if !is_sync {
                 app.handle_notification_with_lookup(&message, lookup);
@@ -73,11 +88,21 @@ impl App<'_> {
                 .get(&message_for_persistence.info.chat)
                 .expect("message ingestion creates its chat")
                 .clone();
-            app.chat_store_write
-                .persist(crate::app::chat_store::write_port::PersistChatMessage {
+            let id = &message_for_persistence.info.id;
+            app.prune_native_link_preview(id);
+            if let Some(native) = native {
+                app.restore_native_link_preview(native);
+            }
+            let preview = app
+                .native_link_preview(id)
+                .map(|(_, preview)| preview.clone());
+            app.chat_store_write.persist_with_native_preview(
+                crate::app::chat_store::write_port::PersistChatMessage {
                     chat,
                     message: message_for_persistence,
-                });
+                },
+                preview,
+            );
 
             app.sort_chats();
             !is_sync

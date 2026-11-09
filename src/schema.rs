@@ -54,6 +54,16 @@ pub(crate) fn prepare(db: &Connection) {
     )
     .unwrap();
     db.execute(
+        "CREATE TABLE IF NOT EXISTS native_link_previews (
+            chat_jid TEXT NOT NULL, message_id TEXT NOT NULL, source TEXT NOT NULL,
+            matched_text TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL,
+            jpeg_thumbnail BLOB NOT NULL,
+            PRIMARY KEY (chat_jid, message_id)
+        )",
+        [],
+    )
+    .unwrap();
+    db.execute(
         "CREATE TABLE IF NOT EXISTS forward_sources (id TEXT NOT NULL, chat_jid TEXT NOT NULL, sender_jid TEXT NOT NULL, source BLOB NOT NULL, PRIMARY KEY (id, chat_jid, sender_jid))",
         [],
     )

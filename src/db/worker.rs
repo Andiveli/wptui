@@ -21,7 +21,7 @@ struct QueueState {
 enum Command {
     Message(wr::Message),
     Chat(Chat),
-    ChatMessage(Chat, wr::Message),
+    ChatMessage(Chat, wr::Message, Option<wr::NativeLinkPreview>),
 }
 
 impl QueueHandle {
@@ -41,7 +41,16 @@ impl QueueHandle {
     }
 
     pub(super) fn queue_chat_message(&self, chat: Chat, message: wr::Message) {
-        self.enqueue(Command::ChatMessage(chat, message));
+        self.queue_chat_message_with_preview(chat, message, None);
+    }
+
+    pub(super) fn queue_chat_message_with_preview(
+        &self,
+        chat: Chat,
+        message: wr::Message,
+        preview: Option<wr::NativeLinkPreview>,
+    ) {
+        self.enqueue(Command::ChatMessage(chat, message, preview));
     }
 }
 
@@ -76,8 +85,8 @@ impl Worker {
                     match command {
                         Command::Chat(chat) => chats.push(chat),
                         Command::Message(message) => messages.push(message),
-                        Command::ChatMessage(chat, message) => {
-                            chat_messages.push((chat, message));
+                        Command::ChatMessage(chat, message, preview) => {
+                            chat_messages.push((chat, message, preview));
                         }
                     }
                 }
@@ -91,10 +100,10 @@ impl Worker {
                     let _write_lock = DATABASE_WRITE_LOCK.lock().unwrap();
                     message_store::persist(&mut db, messages);
                 }
-                for (chat, message) in chat_messages {
+                for (chat, message, preview) in chat_messages {
                     debug!("Saving a new chat and message to the database");
                     let _write_lock = DATABASE_WRITE_LOCK.lock().unwrap();
-                    persist_chat_message(&mut db, chat, message);
+                    persist_chat_message_with_preview(&mut db, chat, message, preview);
                 }
                 let should_stop = {
                     let state = thread_queue.state.lock().unwrap();
@@ -137,12 +146,25 @@ impl Worker {
     }
 }
 
+#[cfg(test)]
 fn persist_chat_message(db: &mut rusqlite::Connection, chat: Chat, message: wr::Message) {
+    persist_chat_message_with_preview(db, chat, message, None);
+}
+
+fn persist_chat_message_with_preview(
+    db: &mut rusqlite::Connection,
+    chat: Chat,
+    message: wr::Message,
+    preview: Option<wr::NativeLinkPreview>,
+) {
     let tx = db
         .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .unwrap();
     chat_store::persist_in_transaction(&tx, vec![chat]);
-    message_store::persist_in_transaction(&tx, vec![message]);
+    message_store::persist_in_transaction(&tx, vec![message.clone()]);
+    if let Some(preview) = preview {
+        message_store::persist_native_link_preview(&tx, &message, preview);
+    }
     tx.commit().unwrap();
 }
 

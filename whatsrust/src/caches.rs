@@ -14,6 +14,49 @@ static MESSAGE_PUSH_NAMES: LazyLock<Mutex<HashMap<Arc<str>, Arc<str>>>> =
 static MESSAGE_MENTION_RANGES: LazyLock<Mutex<HashMap<MessageId, (Arc<str>, Vec<Range<usize>>)>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+// Short-lived receive adjuncts, not message history. At most 64 bounded
+// previews and 64 KiB of original source per entry survive until ingestion.
+static NATIVE_LINK_PREVIEWS: LazyLock<
+    Mutex<HashMap<(JID, MessageId), (Arc<str>, crate::NativeLinkPreview)>>,
+> = LazyLock::new(|| Mutex::new(HashMap::new()));
+const NATIVE_ADJUNCT_CAPACITY: usize = 64;
+const NATIVE_SOURCE_LIMIT: usize = 64 * 1_024;
+
+pub fn store_native_link_preview(
+    info: &MessageInfo,
+    text: &str,
+    preview: crate::NativeLinkPreview,
+) {
+    let mut stored = NATIVE_LINK_PREVIEWS.lock().unwrap();
+    let key = (info.chat.clone(), info.id.clone());
+    stored.remove(&key);
+    if text.len() > NATIVE_SOURCE_LIMIT {
+        return;
+    }
+    let Some(preview) = preview.bounded() else {
+        return;
+    };
+    if stored.len() >= NATIVE_ADJUNCT_CAPACITY {
+        if let Some(oldest) = stored.keys().next().cloned() {
+            stored.remove(&oldest);
+        }
+    }
+    stored.insert(key, (text.into(), preview));
+}
+
+pub fn take_native_link_preview(
+    info: &MessageInfo,
+    text: &str,
+) -> Option<crate::NativeLinkPreview> {
+    // Remove before checking source: changed/ineligible messages cannot leave
+    // an adjunct behind for a later message with the same identity.
+    let (source, preview) = NATIVE_LINK_PREVIEWS
+        .lock()
+        .unwrap()
+        .remove(&(info.chat.clone(), info.id.clone()))?;
+    (source.as_ref() == text).then_some(preview)
+}
+
 pub(crate) fn validated_mention_ranges(text: &str, ranges: &[CMentionRange]) -> Vec<Range<usize>> {
     let mut result = ranges
         .iter()

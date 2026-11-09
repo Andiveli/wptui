@@ -19,6 +19,7 @@ typedef struct {
 	char* text;
 	MentionRange* mentionRanges;
 	uintptr_t mentionRangeCount;
+	NativeLinkPreviewPayload* nativePreview;
 } MentionedTextMessage;
 
 extern void callMessageHandler(MessageHandler hdl, bool isSync, const Message* data);
@@ -29,30 +30,39 @@ import "C"
 import "unsafe"
 
 type textCallbackOutput struct {
-	localSendID  uint64
-	text         string
-	ranges       []mentionRange
-	mentionsSelf bool
-	quoteID      string
+	localSendID   uint64
+	text          string
+	ranges        []mentionRange
+	mentionsSelf  bool
+	quoteID       string
+	nativePreview *nativeLinkPreview
 }
 
 var observeTextCallback = func(textCallbackOutput) {}
 
-func notifyTextCallback(cinfo C.MessageInfo, text string, ranges []mentionRange, localSendID uint64) {
+func notifyTextCallback(cinfo C.MessageInfo, text string, ranges []mentionRange, localSendID uint64, preview *nativeLinkPreview) {
 	quoteID := ""
 	if cinfo.quoteID != nil {
 		quoteID = C.GoString(cinfo.quoteID)
 	}
 	observeTextCallback(textCallbackOutput{
-		localSendID:  localSendID,
-		text:         text,
-		ranges:       append([]mentionRange(nil), ranges...),
-		mentionsSelf: bool(cinfo.mentionsSelf),
-		quoteID:      quoteID,
+		localSendID:   localSendID,
+		text:          text,
+		ranges:        append([]mentionRange(nil), ranges...),
+		mentionsSelf:  bool(cinfo.mentionsSelf),
+		quoteID:       quoteID,
+		nativePreview: preview,
 	})
 }
 
-func emitTextMessage(cinfo C.MessageInfo, text string, isSync bool) {
+// Bind optional metadata to this emission only, without a pending global cache.
+func nativeTextEmitter(preview *nativeLinkPreview) func(C.MessageInfo, string, bool) {
+	return func(info C.MessageInfo, text string, isSync bool) {
+		emitTextMessage(info, text, isSync, preview)
+	}
+}
+
+func emitTextMessage(cinfo C.MessageInfo, text string, isSync bool, previews ...*nativeLinkPreview) {
 	ctext := C.CString(text)
 	defer C.free(unsafe.Pointer(ctext))
 
@@ -75,8 +85,37 @@ func emitTextMessage(cinfo C.MessageInfo, text string, isSync bool) {
 	content.text = ctext
 	content.mentionRanges = cranges
 	content.mentionRangeCount = C.uintptr_t(len(ranges))
+	content.nativePreview = nil
+	var preview *nativeLinkPreview
+	if len(previews) != 0 {
+		preview = previews[0]
+	}
+	if preview != nil {
+		// All sizes were checked before allocating C memory. Every buffer stays
+		// live through callMessageHandler and is freed only after it returns.
+		matched := C.CString(preview.matchedText)
+		title := C.CString(preview.title)
+		description := C.CString(preview.description)
+		defer C.free(unsafe.Pointer(matched))
+		defer C.free(unsafe.Pointer(title))
+		defer C.free(unsafe.Pointer(description))
+		var thumbnail unsafe.Pointer
+		if len(preview.jpegThumbnail) != 0 {
+			thumbnail = C.CBytes(preview.jpegThumbnail)
+			defer C.free(thumbnail)
+		}
+		native := (*C.NativeLinkPreviewPayload)(C.malloc(C.sizeof_NativeLinkPreviewPayload))
+		*native = C.NativeLinkPreviewPayload{
+			matchedText: matched, matchedTextLen: C.size_t(len(preview.matchedText)),
+			title: title, titleLen: C.size_t(len(preview.title)),
+			description: description, descriptionLen: C.size_t(len(preview.description)),
+			jpegThumbnail: (*C.uint8_t)(thumbnail), jpegThumbnailLen: C.size_t(len(preview.jpegThumbnail)),
+		}
+		content.nativePreview = native
+		defer C.free(unsafe.Pointer(native))
+	}
 	defer C.free(unsafe.Pointer(content))
-	notifyTextCallback(cinfo, text, ranges, 0)
+	notifyTextCallback(cinfo, text, ranges, 0, preview)
 
 	message := C.Message{
 		info:        cinfo,
@@ -107,8 +146,9 @@ func emitOptimisticTextMessage(cinfo C.MessageInfo, text string, localSendID uin
 	content.text = ctext
 	content.mentionRanges = cranges
 	content.mentionRangeCount = C.uintptr_t(len(ranges))
+	content.nativePreview = nil
 	defer C.free(unsafe.Pointer(content))
-	notifyTextCallback(cinfo, text, ranges, localSendID)
+	notifyTextCallback(cinfo, text, ranges, localSendID, nil)
 	message := C.Message{info: cinfo, messageType: C.uint8_t(MessageTypeText), message: unsafe.Pointer(content)}
 	if optimisticTextSentHandler.callback != nil {
 		C.callOptimisticTextSentHandler(optimisticTextSentHandler, C.uint64_t(localSendID), &message)

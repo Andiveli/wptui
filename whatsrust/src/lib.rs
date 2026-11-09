@@ -15,6 +15,7 @@ mod lifecycle;
 mod media;
 mod message_send;
 mod models;
+mod native_link_preview;
 mod presence;
 mod queries;
 mod read_sync;
@@ -174,4 +175,9 @@ pub use caches::{forward_source, message_mention_ranges, message_push_name};
 pub use caches::{
     remove_forward_source, store_forward_source, store_message_mention_ranges,
     store_message_push_name,
+};
+pub use caches::{store_native_link_preview, take_native_link_preview};
+pub use native_link_preview::{
+    NATIVE_DESCRIPTION_LIMIT, NATIVE_MATCHED_TEXT_LIMIT, NATIVE_THUMBNAIL_LIMIT,
+    NATIVE_TITLE_LIMIT, NativeLinkPreview,
 };

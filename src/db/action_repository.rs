@@ -43,6 +43,12 @@ pub(super) fn record(db: &mut Connection, action: &MessageAction) -> MessageActi
         transaction.commit().unwrap();
         return MessageActionPersistence::DuplicateActionID;
     }
+    transaction
+        .execute(
+            "DELETE FROM native_link_previews WHERE message_id = ?1 AND chat_jid = ?2",
+            rusqlite::params![action.target_message_id, action.chat.0],
+        )
+        .unwrap();
     match &action.kind {
         MessageActionKind::Delete => {
             if transaction
@@ -182,6 +188,12 @@ pub(super) fn reconcile(
                 server_action.occurred_at,
                 server_action.arrival_order as i64,
             ],
+        )
+        .unwrap();
+    transaction
+        .execute(
+            "DELETE FROM native_link_previews WHERE message_id = ?1 AND chat_jid = ?2",
+            rusqlite::params![server_action.target_message_id, server_action.chat.0],
         )
         .unwrap();
     transaction.commit().unwrap();

@@ -139,6 +139,19 @@ pub(super) struct CIncomingTextMessage {
     pub(super) text: *const c_char,
     pub(super) mention_ranges: *const CMentionRange,
     pub(super) mention_range_count: usize,
+    pub(super) native_preview: *const CNativeLinkPreview,
+}
+
+#[repr(C)]
+pub(crate) struct CNativeLinkPreview {
+    pub(crate) matched_text: *const c_char,
+    pub(crate) matched_text_len: usize,
+    pub(crate) title: *const c_char,
+    pub(crate) title_len: usize,
+    pub(crate) description: *const c_char,
+    pub(crate) description_len: usize,
+    pub(crate) jpeg_thumbnail: *const u8,
+    pub(crate) jpeg_thumbnail_len: usize,
 }
 
 #[repr(C)]
