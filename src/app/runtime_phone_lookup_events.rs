@@ -70,6 +70,12 @@ impl App<'_> {
                     PhoneLookupError::QueryMismatch => {
                         "WhatsApp returned a mismatched query result"
                     }
+                    PhoneLookupError::LidOnly => {
+                        "WhatsApp returned only a LID without a phone number"
+                    }
+                    PhoneLookupError::DifferentPhoneNumber => {
+                        "WhatsApp returned a different phone number"
+                    }
                 });
                 true
             }
@@ -143,6 +149,14 @@ mod tests {
             (
                 Err(PhoneLookupError::QueryMismatch),
                 "WhatsApp returned a mismatched query result",
+            ),
+            (
+                Err(PhoneLookupError::LidOnly),
+                "WhatsApp returned only a LID without a phone number",
+            ),
+            (
+                Err(PhoneLookupError::DifferentPhoneNumber),
+                "WhatsApp returned a different phone number",
             ),
             (
                 Ok(Some(JID::from("15559876543@s.whatsapp.net".to_owned()))),

@@ -675,6 +675,8 @@ mod action_notice_tests {
             "WhatsApp returned no number result",
             "WhatsApp returned a mismatched number result",
             "WhatsApp returned a mismatched query result",
+            "WhatsApp returned only a LID without a phone number",
+            "WhatsApp returned a different phone number",
             "Could not verify number",
             "WhatsApp is not connected",
             "Number is not on WhatsApp",

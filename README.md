@@ -202,7 +202,9 @@ local input validation and unrelated notices retain their existing formatting:
 | `Number is not on WhatsApp` | WhatsApp reported that the requested number is not registered. |
 | `Number check timed out` | The check exceeded its deadline; retry the search. |
 | `WhatsApp returned no number result` | No result was returned; retry the search. |
-| `WhatsApp returned a mismatched number result` | A reply matched the query but did not confirm the requested recipient number; no recipient is opened. Retry the search. |
+| `WhatsApp returned a mismatched number result` | A registered reply matched the query but had empty or unexpected identities that did not confirm the requested number; no recipient is opened. Retry the search. |
+| `WhatsApp returned only a LID without a phone number` | A registered reply matched the query with a LID and no associated phone number, without confirming the requested number; no recipient is opened. |
+| `WhatsApp returned a different phone number` | A registered reply matched the query and contained a phone-number identity, but neither identity confirmed the exact requested number; no recipient is opened. |
 | `WhatsApp returned a mismatched query result` | Nonempty replies contained no matching query; no recipient is opened. Retry the search. |
 | `Could not check number` | The request failed; retry the search. |
 | `Could not verify number` | The result could not be safely verified; no recipient is opened. |
@@ -212,6 +214,9 @@ local input validation and unrelated notices retain their existing formatting:
 A failed, timed-out, empty, or mismatched check does **not** mean the number is
 unregistered. These notices use fixed categories, without including the entered
 number, recipient identity, or raw error details; number lookup adds no diagnostic logging.
+The LID-only and different-phone-number categories describe response shape only:
+they do not prove legitimate number normalization or permit opening another recipient.
+Only confirmation of the exact requested phone number permits opening a conversation.
 
 ### Diagnostics
 

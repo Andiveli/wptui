@@ -13,6 +13,8 @@ pub enum PhoneLookupError {
     EmptyResponse,
     ResponseMismatch,
     QueryMismatch,
+    LidOnly,
+    DifferentPhoneNumber,
 }
 
 pub fn lookup_phone(phone: &str) -> Result<Option<JID>, PhoneLookupError> {
@@ -55,6 +57,8 @@ fn lookup_result(
         6 if jid.is_none() => Err(PhoneLookupError::EmptyResponse),
         7 if jid.is_none() => Err(PhoneLookupError::ResponseMismatch),
         8 if jid.is_none() => Err(PhoneLookupError::QueryMismatch),
+        9 if jid.is_none() => Err(PhoneLookupError::LidOnly),
+        10 if jid.is_none() => Err(PhoneLookupError::DifferentPhoneNumber),
         _ => Err(PhoneLookupError::InvalidBridgeResult),
     }
 }
@@ -119,11 +123,13 @@ mod tests {
 
     #[test]
     fn distinguishes_recipient_response_shapes_without_bridge_payloads() {
-        // Debug names keep this tests-only stage compilable before enum additions.
-        for (status, expected) in [(9, "Err(LidOnly)"), (10, "Err(DifferentPhoneNumber)")] {
+        for (status, expected) in [
+            (9, PhoneLookupError::LidOnly),
+            (10, PhoneLookupError::DifferentPhoneNumber),
+        ] {
             assert_eq!(
-                format!("{:?}", lookup_result(status, "+15551234567", None)),
-                expected,
+                lookup_result(status, "+15551234567", None),
+                Err(expected),
                 "status {status}"
             );
         }
