@@ -13,6 +13,7 @@ pub enum AppAction {
     ToggleChatList,
     FocusPane(FocusPane),
     OpenContextualActions,
+    OpenContactInfo,
     StartStatusComposition,
     CancelStatusComposition,
     ToggleShortcutPopup,

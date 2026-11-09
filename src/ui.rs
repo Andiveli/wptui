@@ -1,5 +1,6 @@
 pub(crate) mod bidi;
 pub mod communities;
+pub(crate) mod contact_info;
 pub mod contact_list;
 mod contacts;
 pub(crate) mod layout;
@@ -83,7 +84,11 @@ pub fn draw_with_plan(
     if let Some(area) = filter_area {
         render_chat_filters(frame, app, area);
     }
-    let areas = navigation_areas(body_area, app.pane_visibility);
+    let show_contact = app.contact_info.is_some()
+        && matches!(app.selected_section, Section::Chats | Section::Communities)
+        && !app.rail_on_logout;
+    let (areas, contact_area) =
+        layout::contact_navigation_areas(body_area, app.pane_visibility, show_contact);
 
     if let Some(area) = areas.section_rail {
         render_section_rail(frame, app, area);
@@ -144,6 +149,9 @@ pub fn draw_with_plan(
             render_structural_placeholder(frame, app, area);
         }
         render_structural_placeholder(frame, app, areas.conversation);
+    }
+    if let Some(area) = contact_area {
+        contact_info::render(frame, app, area);
     }
     render_attachment_viewer(frame, app, media_render_plan);
     render_url_picker(frame, app);
@@ -360,6 +368,9 @@ pub fn render_chats_with_plan(
     visibility_plan: &mut VisibilityPlan,
     area: Rect,
 ) {
+    if area.is_empty() && app.contact_info.is_some() {
+        return;
+    }
     // Outer block wrapping messages + composer, like Concord's panel_block_owned
     let outer_title = app
         .open_chat()

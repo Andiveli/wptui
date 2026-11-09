@@ -87,6 +87,14 @@ impl App<'_> {
             };
             row.reason = chat.is_none().then_some("chat required");
         }
+        if self.contact_info_target().is_none() {
+            for row in &mut rows {
+                if row.action_token == ContextualAction::ContactInfo {
+                    row.row_style = super::contextual_actions::RowStyle::Disabled;
+                    row.reason = Some("select a contact conversation");
+                }
+            }
+        }
         self.contextual_menu = Some((rows, 0));
     }
 
@@ -110,6 +118,10 @@ impl App<'_> {
                 self.contextual_menu = None;
                 self.toggle_chat_read(&chat);
             }
+            return;
+        }
+        if row.action_token == ContextualAction::ContactInfo && self.contact_info_target().is_none()
+        {
             return;
         }
         let context = self.contextual_context();
@@ -136,6 +148,7 @@ impl App<'_> {
 
 fn contextual_action_to_app_action(action: ContextualAction) -> AppAction {
     match action {
+        ContextualAction::ContactInfo => AppAction::OpenContactInfo,
         ContextualAction::Copy => AppAction::CopyMessage,
         ContextualAction::React => AppAction::ReactMessage,
         ContextualAction::Reply => AppAction::ReplyMessage,
@@ -837,6 +850,34 @@ mod tests {
             })
         );
         assert!(!crate::ui::contact_list::ContactListItem::from_chat(&app, &chat).unread);
+    }
+
+    #[test]
+    fn empty_chat_menu_preserves_read_toggle_and_contact_info_guards() {
+        let mut app = TestApp::new();
+        app.focus_pane = FocusPane::ChatList;
+        app.selected_section = Section::Chats;
+        app.open_contextual_actions();
+
+        for action in [ContextualAction::MarkRead, ContextualAction::ContactInfo] {
+            let index = app
+                .contextual_menu
+                .as_ref()
+                .unwrap()
+                .0
+                .iter()
+                .position(|row| row.action_token == action)
+                .unwrap();
+            assert_eq!(
+                app.contextual_menu.as_ref().unwrap().0[index].row_style,
+                RowStyle::Disabled
+            );
+            app.contextual_menu.as_mut().unwrap().1 = index;
+            app.activate_contextual_action();
+            assert!(app.contextual_menu.is_some());
+            assert!(app.contact_info.is_none());
+            assert!(app.chats.is_empty());
+        }
     }
 
     #[test]

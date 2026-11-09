@@ -162,6 +162,7 @@ impl App<'_> {
             | AppAction::ToggleChatList
             | AppAction::FocusPane(_)
             | AppAction::OpenContextualActions
+            | AppAction::OpenContactInfo
             | AppAction::ToggleShortcutPopup
             | AppAction::ToggleComposerDirection
             | AppAction::PlannedLeaderAction(_)
@@ -239,6 +240,16 @@ mod tests {
         app.dispatch_action(AppAction::InsertMode);
 
         assert_eq!(app.conversation_mode, ConversationMode::ComposerEditing);
+    }
+
+    #[test]
+    fn contact_info_is_returned_to_its_dispatcher() {
+        let mut app = TestApp::new();
+
+        assert_eq!(
+            app.dispatch_navigation_conversation_action(AppAction::OpenContactInfo),
+            Err(AppAction::OpenContactInfo)
+        );
     }
 
     #[test]
