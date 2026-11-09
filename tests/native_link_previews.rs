@@ -427,3 +427,46 @@ fn edit_and_delete_remove_stale_native_metadata_in_memory_and_after_restart() {
         assert!(app.native_link_preview(&id.into()).is_none());
     }
 }
+
+#[test]
+fn edit_before_target_keeps_effective_text_and_no_preview_after_restart() {
+    let expected = "edited https://new.example.test/path?q=%2F#part";
+    let destinations = ["https://new.example.test/path?q=%2F#part"];
+    for native in [None, Some(preview())] {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("edit-before-target.db");
+        let original = message("pending-target", URL);
+        {
+            let mut app = TestApp::with_database(&path);
+            assert!(app.handle_whatsapp_event(wr::Event::MessageAction {
+                action_id: "pending-edit".into(),
+                target_message_id: original.info.id.clone(),
+                chat: original.info.chat.clone(),
+                sender: original.info.sender.clone(),
+                kind: wr::MessageActionKind::Edit {
+                    replacement: expected.into(),
+                },
+                occurred_at: 2,
+                arrival_order: 1,
+            }));
+            assert!(!app.messages.contains_key(&original.info.id));
+            ingest(&mut app, original.clone(), native);
+            assert_source(&app, "pending-target", expected, &destinations);
+            assert!(app.message_status(&original.info.id).edited);
+            assert!(!app.message_status(&original.info.id).deleted);
+            assert!(app.native_link_preview(&original.info.id).is_none());
+        }
+        let mut app = TestApp::with_database(&path);
+        app.load_data_from_db();
+        assert_source(&app, "pending-target", expected, &destinations);
+        assert!(app.message_status(&original.info.id).edited);
+        assert!(!app.message_status(&original.info.id).deleted);
+        assert!(app.native_link_preview(&original.info.id).is_none());
+        let actions = app.db_handler.get_message_actions();
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].action_id.as_ref(), "pending-edit");
+        assert!(
+            matches!(&actions[0].kind, wp_tui::app::MessageActionKind::Edit { replacement } if replacement.is_empty())
+        );
+    }
+}
