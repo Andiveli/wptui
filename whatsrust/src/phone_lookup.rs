@@ -118,8 +118,20 @@ mod tests {
     }
 
     #[test]
+    fn distinguishes_recipient_response_shapes_without_bridge_payloads() {
+        // Debug names keep this tests-only stage compilable before enum additions.
+        for (status, expected) in [(9, "Err(LidOnly)"), (10, "Err(DifferentPhoneNumber)")] {
+            assert_eq!(
+                format!("{:?}", lookup_result(status, "+15551234567", None)),
+                expected,
+                "status {status}"
+            );
+        }
+    }
+
+    #[test]
     fn diagnostic_statuses_cannot_carry_a_recipient() {
-        for status in [5, 6, 7, 8] {
+        for status in [5, 6, 7, 8, 9, 10] {
             assert_eq!(
                 lookup_result(status, "+15551234567", Some("15551234567@s.whatsapp.net")),
                 Err(PhoneLookupError::InvalidBridgeResult)

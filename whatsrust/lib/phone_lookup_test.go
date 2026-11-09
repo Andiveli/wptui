@@ -24,8 +24,17 @@ func TestLookupPhoneRequiresServerConfirmedRequestedNumber(t *testing.T) {
 		{name: "registered LID", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: lid, PhoneNumber: pn, IsIn: true}}, want: phoneLookupResult{status: phoneLookupFound, jid: pn.String()}, query: true},
 		{name: "registered PN", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: pn, IsIn: true}}, want: phoneLookupResult{status: phoneLookupFound, jid: pn.String()}, query: true},
 		{name: "not registered", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: lid, PhoneNumber: pn}}, want: phoneLookupResult{status: phoneLookupNotRegistered}, query: true},
-		// New diagnostic statuses append to the ABI; existing values 0-4 stay fixed.
-		{name: "mismatched PN", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: lid, PhoneNumber: types.NewJID("15559876543", types.DefaultUserServer), IsIn: true}}, want: phoneLookupResult{status: 7}, query: true},
+		{name: "registered device PN", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: types.JID{User: pn.User, Server: types.DefaultUserServer, Device: 2}, IsIn: true}}, want: phoneLookupResult{status: phoneLookupFound, jid: pn.String()}, query: true},
+		{name: "exact associated PN despite different JID", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: types.NewJID("15559876543", types.DefaultUserServer), PhoneNumber: pn, IsIn: true}}, want: phoneLookupResult{status: phoneLookupFound, jid: pn.String()}, query: true},
+		{name: "exact JID despite different associated PN", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: pn, PhoneNumber: types.NewJID("15559876543", types.DefaultUserServer), IsIn: true}}, want: phoneLookupResult{status: phoneLookupFound, jid: pn.String()}, query: true},
+		// Shape-only diagnostics append 9/10; existing ABI values 0-8 stay fixed.
+		// Neither category confirms a recipient or proves number normalization.
+		{name: "LID only without associated PN", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: lid, IsIn: true}}, want: phoneLookupResult{status: 9}, query: true},
+		{name: "mismatched associated PN", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: lid, PhoneNumber: types.NewJID("15559876543", types.DefaultUserServer), IsIn: true}}, want: phoneLookupResult{status: 10}, query: true},
+		{name: "mismatched JID PN", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: types.NewJID("15559876543", types.DefaultUserServer), IsIn: true}}, want: phoneLookupResult{status: 10}, query: true},
+		{name: "missing identities", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, IsIn: true}}, want: phoneLookupResult{status: 7}, query: true},
+		{name: "unexpected JID namespace", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: types.NewJID(pn.User, types.GroupServer), IsIn: true}}, want: phoneLookupResult{status: 7}, query: true},
+		{name: "LID with unexpected associated namespace", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: lid, PhoneNumber: types.NewJID(pn.User, types.GroupServer), IsIn: true}}, want: phoneLookupResult{status: 7}, query: true},
 		{name: "mismatched query", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: "+15559876543", JID: lid, PhoneNumber: pn, IsIn: true}}, want: phoneLookupResult{status: 8}, query: true},
 		{name: "matching response after unrelated query", phone: phone, responses: []types.IsOnWhatsAppResponse{
 			{Query: "+15559876543", JID: lid, PhoneNumber: types.NewJID("15559876543", types.DefaultUserServer), IsIn: true},
