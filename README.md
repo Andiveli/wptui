@@ -56,6 +56,16 @@ underlined label; clicking it opens the original URL. The active composer
 fragment reveals the link source for editing. Formatting never fetches content
 or opens a link automatically.
 
+Incoming chat text also displays bare HTTP(S) URLs as the complete host (including
+subdomains and any port) plus the final nonempty path segment: for example,
+`https://github.com/Andiveli/wptui` becomes `github.com · wptui`, while
+`https://example.com/` becomes `example.com`. Query strings and fragments are
+omitted from the label, not the click destination; path segments are not decoded.
+Ambiguous or unsupported authorities remain raw. This helps you inspect the host,
+but is not phishing detection or a safety guarantee. No site or title is fetched.
+Outgoing text, the composer, statuses, captions, reply summaries, system text,
+code, explicit Markdown links, and literal image syntax keep their existing display.
+
 Formatting changes only the local display. Sending, editing, copying, and searching
 still use the original text; other WhatsApp clients display the syntax they support.
 The composer previews the same formatting while you type. Markers reappear in

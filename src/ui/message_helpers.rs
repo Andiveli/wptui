@@ -276,10 +276,22 @@ pub(crate) fn markdown_content_lines(
     width: usize,
     highlight_ranges: &[Range<usize>],
 ) -> Vec<Line<'static>> {
+    message_text_lines(body, mention_ranges, status, width, highlight_ranges, false)
+}
+
+pub(crate) fn message_text_lines(
+    body: &str,
+    mention_ranges: &[Range<usize>],
+    status: Option<StatusLabel>,
+    width: usize,
+    highlight_ranges: &[Range<usize>],
+    incoming_urls: bool,
+) -> Vec<Line<'static>> {
     if matches!(status, Some(StatusLabel::Deleted)) {
         return inline_content_lines(body, mention_ranges, status, width);
     }
-    let projection = crate::ui::markdown::Markdown::new(body, None).project(body);
+    let projection = crate::ui::markdown::Markdown::new(body, None)
+        .project_with_incoming_urls(body, incoming_urls);
     content_lines(
         &projection.text,
         &projection.ranges(mention_ranges),

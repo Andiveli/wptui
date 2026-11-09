@@ -4,7 +4,7 @@ use crate::app::{App, FileMeta, Metadata};
 
 use super::message_helpers::forwarding_label;
 use super::message_layout::{self, LayoutInput, file_kind};
-use super::{AuthorGroupContext, status_label};
+use super::{AuthorGroupContext, MessageTextMode, status_label};
 
 pub fn message_height(
     message: &wr::Message,
@@ -13,8 +13,25 @@ pub fn message_height(
     author_group: AuthorGroupContext,
     app: &mut App,
 ) -> usize {
+    let text_mode = if App::is_status_chat(&message.info.chat) {
+        MessageTextMode::Status
+    } else {
+        MessageTextMode::Chat
+    };
+    message_height_with_mode(message, width, is_selected, author_group, app, text_mode)
+}
+
+pub(crate) fn message_height_with_mode(
+    message: &wr::Message,
+    width: usize,
+    is_selected: bool,
+    author_group: AuthorGroupContext,
+    app: &mut App,
+    text_mode: MessageTextMode,
+) -> usize {
     let input = LayoutInput {
         width,
+        incoming_urls: text_mode.incoming_urls(message),
         is_selected,
         has_quote: message.info.quote_id.is_some(),
         has_reactions: app.reactions.contains_key(&message.info.id),
@@ -51,6 +68,7 @@ pub(crate) fn message_height_for_id(
     is_selected: bool,
     author_group: AuthorGroupContext,
     app: &mut App,
+    text_mode: MessageTextMode,
 ) -> usize {
     if !app.messages.contains_key(id) {
         app.invalidate_message_sequences_containing(id);
@@ -60,6 +78,7 @@ pub(crate) fn message_height_for_id(
         let message = app.messages.get(id).expect("cached message must exist");
         LayoutInput {
             width,
+            incoming_urls: text_mode.incoming_urls(message),
             is_selected,
             has_quote: message.info.quote_id.is_some(),
             has_reactions: app.reactions.contains_key(id),

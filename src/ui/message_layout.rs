@@ -5,7 +5,7 @@ use whatsrust::{self as wr, FileKind};
 
 use super::message_helpers::{
     AuthorGroupContext, ForwardingLabel, StatusLabel, forwarding_indicator_lines,
-    inline_content_lines, markdown_content_lines,
+    inline_content_lines, markdown_content_lines, message_text_lines,
 };
 
 pub const IMAGE_HEIGHT: usize = 12;
@@ -61,6 +61,7 @@ pub(crate) enum HeightFileKind {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct LayoutInput<'a> {
     pub(crate) width: usize,
+    pub(crate) incoming_urls: bool,
     pub(crate) is_selected: bool,
     pub(crate) has_quote: bool,
     pub(crate) has_reactions: bool,
@@ -75,6 +76,7 @@ struct MessageHeightEntry {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct OwnedLayoutInput {
     width: usize,
+    incoming_urls: bool,
     is_selected: bool,
     has_quote: bool,
     has_reactions: bool,
@@ -85,6 +87,7 @@ impl<'a> From<&LayoutInput<'a>> for OwnedLayoutInput {
     fn from(input: &LayoutInput<'a>) -> Self {
         Self {
             width: input.width,
+            incoming_urls: input.incoming_urls,
             is_selected: input.is_selected,
             has_quote: input.has_quote,
             has_reactions: input.has_reactions,
@@ -122,6 +125,7 @@ impl<'a> From<&LayoutInput<'a>> for OwnedLayoutInput {
 impl OwnedLayoutInput {
     fn matches(&self, input: &LayoutInput<'_>) -> bool {
         self.width == input.width
+            && self.incoming_urls == input.incoming_urls
             && self.is_selected == input.is_selected
             && self.has_quote == input.has_quote
             && self.has_reactions == input.has_reactions
@@ -281,7 +285,7 @@ pub(crate) fn height(
             status,
             forwarding,
         } => {
-            markdown_content_lines(body, &[], *status, content_width, &[]).len()
+            message_text_lines(body, &[], *status, content_width, &[], input.incoming_urls).len()
                 + forwarding_indicator_lines(*forwarding, content_width)
         }
         HeightContent::File {
@@ -334,6 +338,7 @@ mod tests {
     fn text(body: &str) -> LayoutInput<'_> {
         LayoutInput {
             width: 20,
+            incoming_urls: false,
             is_selected: false,
             has_quote: false,
             has_reactions: false,

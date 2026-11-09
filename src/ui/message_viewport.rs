@@ -49,6 +49,7 @@ pub(super) fn render(
             is_selected,
             author_group,
             app,
+            text_mode,
         ) as isize;
 
         let bottom = y;

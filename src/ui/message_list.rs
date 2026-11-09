@@ -220,6 +220,15 @@ pub(crate) enum MessageTextMode {
     Status,
 }
 
+impl MessageTextMode {
+    fn incoming_urls(self, message: &wr::Message) -> bool {
+        self == Self::Chat
+            && !message.info.is_from_me
+            && !App::is_status_chat(&message.info.chat)
+            && matches!(&message.message, wr::MessageContent::Text(_))
+    }
+}
+
 fn status_label(app: &App, message_id: &wr::MessageId) -> Option<StatusLabel> {
     let status = app.message_status(message_id);
     status
@@ -766,6 +775,55 @@ mod layout_contract_tests {
             ),
             lines.len() + 1,
             "public height must measure the displayed label, not the source"
+        );
+    }
+
+    #[test]
+    fn incoming_chat_and_status_heights_do_not_share_a_stale_presentation() {
+        let message = url_message("https://example.com/docs/installation?q=one#part", false);
+        let mut app = crate::app::test_support::TestApp::new();
+        for mode in [
+            MessageTextMode::Chat,
+            MessageTextMode::Status,
+            MessageTextMode::Chat,
+        ] {
+            let label = if mode == MessageTextMode::Chat {
+                "example.com · installation"
+            } else {
+                "https://example.com/docs/installation?q=one#part"
+            };
+            let expected = super::inline_content_lines(label, &[], None, 12).len() + 1;
+            assert_eq!(
+                super::message_layout_integration::message_height_with_mode(
+                    &message,
+                    12,
+                    false,
+                    super::AuthorGroupContext::STARTS_GROUP,
+                    &mut app,
+                    mode,
+                ),
+                expected
+            );
+        }
+        assert_eq!(app.message_height_cache.measurement_count(), 3);
+        let mut status = message.clone();
+        status.info.chat = crate::app::STATUS_BROADCAST_CHAT.to_owned().into();
+        assert_eq!(
+            super::message_height(
+                &status,
+                12,
+                false,
+                super::AuthorGroupContext::STARTS_GROUP,
+                &mut app,
+            ),
+            super::inline_content_lines(
+                "https://example.com/docs/installation?q=one#part",
+                &[],
+                None,
+                12,
+            )
+            .len()
+                + 1
         );
     }
 
@@ -1336,6 +1394,7 @@ mod layout_contract_tests {
         let lines = super::inline_content_lines(body, &[], None, width);
         let input = super::message_layout::LayoutInput {
             width,
+            incoming_urls: false,
             is_selected: false,
             has_quote: false,
             has_reactions: false,
@@ -1380,10 +1439,23 @@ pub(super) fn record_url_hits(
     area: Rect,
     alignment: Alignment,
 ) {
+    record_url_hits_with_policy(app, id, body, status, area, alignment, false);
+}
+
+fn record_url_hits_with_policy(
+    app: &mut App,
+    id: &wr::MessageId,
+    body: &str,
+    status: Option<StatusLabel>,
+    area: Rect,
+    alignment: Alignment,
+    incoming_urls: bool,
+) {
     if area.is_empty() || matches!(status, Some(StatusLabel::Deleted)) {
         return;
     }
-    let projection = crate::ui::markdown::Markdown::new(body, None).project(body);
+    let projection = crate::ui::markdown::Markdown::new(body, None)
+        .project_with_incoming_urls(body, incoming_urls);
     let body = projection.text.as_str();
     let mut targets = Vec::new();
     let mut search_from = 0;
@@ -1619,12 +1691,14 @@ fn render_message(
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
-            let lines = markdown_content_lines(
+            let incoming_urls = text_mode.incoming_urls(message);
+            let lines = message_helpers::message_text_lines(
                 text,
                 &mention_ranges,
                 status,
                 content_area.width as usize,
                 &highlight_ranges,
+                incoming_urls,
             );
             Paragraph::new(lines)
                 .style(if is_pending {
@@ -1634,7 +1708,15 @@ fn render_message(
                 })
                 .alignment(alignment)
                 .render(content_area, buf);
-            record_url_hits(app, &message.info.id, text, status, content_area, alignment);
+            record_url_hits_with_policy(
+                app,
+                &message.info.id,
+                text,
+                status,
+                content_area,
+                alignment,
+                incoming_urls,
+            );
         }
         wr::MessageContent::File(data) => {
             render_file(
@@ -1713,7 +1795,12 @@ pub fn render_messages_with_plan(
     let optimistic_items = app.pending_messages_for_chat(&chat_jid);
     let notice_height = u16::from(banner.is_some());
     let pending_height = u16::from(pending > 0);
-    let optimistic_height = pending_tail_height(app, &optimistic_items, area.width as usize);
+    let optimistic_height = pending_tail_height(
+        app,
+        &optimistic_items,
+        area.width as usize,
+        MessageTextMode::Chat,
+    );
     let notice_area = Rect::new(area.x, area.y, area.width, notice_height);
     let list_area = Rect::new(
         area.x,
@@ -1805,7 +1892,12 @@ pub fn render_messages_with_plan(
     result
 }
 
-fn pending_tail_height(app: &mut App, items: &[wr::Message], width: usize) -> u16 {
+fn pending_tail_height(
+    app: &mut App,
+    items: &[wr::Message],
+    width: usize,
+    text_mode: MessageTextMode,
+) -> u16 {
     let groups = items
         .iter()
         .enumerate()
@@ -1817,8 +1909,14 @@ fn pending_tail_height(app: &mut App, items: &[wr::Message], width: usize) -> u1
         .iter()
         .enumerate()
         .map(|(index, message)| {
-            message_height(message, width, false, groups[index], app)
-                + spacing_after_message(index, &groups, None)
+            message_layout_integration::message_height_with_mode(
+                message,
+                width,
+                false,
+                groups[index],
+                app,
+                text_mode,
+            ) + spacing_after_message(index, &groups, None)
         })
         .sum::<usize>()
         .min(u16::MAX as usize) as u16
@@ -1846,8 +1944,14 @@ fn render_pending_tail(
         .iter()
         .enumerate()
         .map(|(index, message)| {
-            message_height(message, area.width as usize, false, groups[index], app)
-                + spacing_after_message(index, &groups, None)
+            message_layout_integration::message_height_with_mode(
+                message,
+                area.width as usize,
+                false,
+                groups[index],
+                app,
+                text_mode,
+            ) + spacing_after_message(index, &groups, None)
         })
         .collect::<Vec<_>>();
     let newest = items.len() - 1;
@@ -1911,7 +2015,9 @@ pub fn render_own_status_messages(
     area: Rect,
 ) {
     let pending = app.pending_own_status_messages();
-    let pending_height = pending_tail_height(app, &pending, area.width as usize).min(area.height);
+    let pending_height =
+        pending_tail_height(app, &pending, area.width as usize, MessageTextMode::Status)
+            .min(area.height);
     let list_area = Rect::new(
         area.x,
         area.y,
@@ -2036,6 +2142,7 @@ fn render_message_items(
         &items,
         &author_groups,
         unread_count,
+        text_mode,
     );
     app.finish_message_list_phase(
         crate::app::runtime_diagnostics::Phase::MessageSelectionReconciliation,

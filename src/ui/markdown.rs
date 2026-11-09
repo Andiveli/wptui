@@ -26,7 +26,96 @@ pub(crate) struct Projection {
     mapping: Vec<(Range<usize>, Range<usize>)>,
 }
 
+// Only a conservative, unambiguous authority is shortened. Unsupported URL
+// syntax stays raw; this is a display policy, not URL validation or phishing detection.
+struct IncomingUrl {
+    source: Range<usize>,
+    host: Range<usize>,
+    segment: Option<Range<usize>>,
+}
+
+impl IncomingUrl {
+    fn parse(url: &str, offset: usize) -> Option<Self> {
+        let authority_start = url.find("://")? + 3;
+        let rest = &url[authority_start..];
+        let authority_end = authority_start + rest.find(['/', '?', '#']).unwrap_or(rest.len());
+        let authority = &url[authority_start..authority_end];
+        let (host, port) = if authority.starts_with('[') {
+            let end = authority.find(']')?;
+            authority[1..end].parse::<std::net::Ipv6Addr>().ok()?;
+            (&authority[..=end], &authority[end + 1..])
+        } else {
+            let end = authority.find(':').unwrap_or(authority.len());
+            let host = &authority[..end];
+            if host.len() > 253
+                || !host.split('.').all(|part| {
+                    !part.is_empty()
+                        && part.len() <= 63
+                        && part
+                            .as_bytes()
+                            .first()
+                            .is_some_and(u8::is_ascii_alphanumeric)
+                        && part
+                            .as_bytes()
+                            .last()
+                            .is_some_and(u8::is_ascii_alphanumeric)
+                        && part.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                })
+            {
+                return None;
+            }
+            (host, &authority[end..])
+        };
+        if host.is_empty()
+            || (!port.is_empty() && {
+                let digits = port.strip_prefix(':')?;
+                digits.is_empty()
+                    || !digits.bytes().all(|b| b.is_ascii_digit())
+                    || digits.parse::<u16>().is_err()
+            })
+        {
+            return None;
+        }
+        // Browsers may normalize backslashes and dot segments. Keep such input
+        // literal rather than inventing a label for an ambiguous destination.
+        if url.chars().any(|ch| ch == '\\' || ch.is_control()) {
+            return None;
+        }
+        let path_end = authority_end
+            + url[authority_end..]
+                .find(['?', '#'])
+                .unwrap_or(url.len() - authority_end);
+        let path = &url[authority_end..path_end];
+        if path.split('/').any(|part| matches!(part, "." | "..")) {
+            return None;
+        }
+        let end = path_end - path.bytes().rev().take_while(|b| *b == b'/').count();
+        let segment = if end > authority_end {
+            let start = url[..end].rfind('/')? + 1;
+            Some(offset + start..offset + end)
+        } else {
+            None
+        };
+        Some(Self {
+            source: offset..offset + url.len(),
+            host: offset + authority_start..offset + authority_end,
+            segment,
+        })
+    }
+}
+
 impl Projection {
+    fn append_source(&mut self, source: &str, range: Range<usize>, style: Style) {
+        for (relative, ch) in source[range.clone()].char_indices() {
+            let start = self.text.len();
+            self.text.push(ch);
+            let display = start..self.text.len();
+            self.styles.push((display.clone(), style));
+            let byte = range.start + relative;
+            self.mapping.push((byte..byte + ch.len_utf8(), display));
+        }
+    }
+
     pub(crate) fn ranges(&self, source: &[Range<usize>]) -> Vec<Range<usize>> {
         self.mapping
             .iter()
@@ -99,6 +188,15 @@ impl Markdown {
     }
 
     pub(crate) fn project(&self, source: &str) -> Projection {
+        self.project_with_incoming_urls(source, false)
+    }
+
+    pub(crate) fn project_with_incoming_urls(&self, source: &str, incoming: bool) -> Projection {
+        let replacements = if incoming {
+            self.incoming_urls(source)
+        } else {
+            Vec::new()
+        };
         let mut result = Projection {
             text: String::new(),
             styles: Vec::new(),
@@ -106,6 +204,23 @@ impl Markdown {
             mapping: Vec::new(),
         };
         for (byte, ch) in source.char_indices() {
+            if let Some(url) = replacements.iter().find(|url| url.source.contains(&byte)) {
+                if byte == url.source.start {
+                    let style = self.style(byte).add_modifier(Modifier::UNDERLINED);
+                    result.append_source(source, url.host.clone(), style);
+                    if let Some(segment) = &url.segment {
+                        let start = result.text.len();
+                        result.text.push_str(" · ");
+                        let display = start..result.text.len();
+                        result.styles.push((display.clone(), style));
+                        // Synthetic separator belongs to this source URL, not
+                        // to any suffix or later mention/search offset.
+                        result.mapping.push((url.source.clone(), display));
+                        result.append_source(source, segment.clone(), style);
+                    }
+                }
+                continue;
+            }
             // Paragraph layout splits on LF. Drop only its paired CR from the
             // display so a blank CRLF row is empty, not whitespace-only. Mapping
             // below still uses the original source bytes; editor/source stay raw.
@@ -133,7 +248,53 @@ impl Markdown {
                 url: source[link.destination.clone()].to_owned(),
             })
             .collect();
+        for url in replacements {
+            result.links.push(ProjectedLink {
+                ranges: result.ranges(std::slice::from_ref(&url.source)),
+                url: source[url.source].to_owned(),
+            });
+        }
         result
+    }
+
+    fn incoming_urls(&self, source: &str) -> Vec<IncomingUrl> {
+        // Reuse the opener's boundaries and punctuation rules, locating each
+        // occurrence in order (including repeated destinations).
+        let mut from = 0;
+        let mut urls = Vec::new();
+        let images = source
+            .match_indices("![")
+            .filter_map(|(start, _)| {
+                let line = source[start..].split('\n').next()?;
+                let label = line.find("](")?;
+                let end = label + 2 + line[label + 2..].find(')')? + 1;
+                Some(start..start + end)
+            })
+            .collect::<Vec<_>>();
+        for url in crate::url::extract_openable_urls(source) {
+            let Some(offset) = source[from..].find(&url) else {
+                continue;
+            };
+            let start = from + offset;
+            from = start + url.len();
+            let range = start..from;
+            if range.clone().any(|byte| {
+                !self.visible(byte) || self.style(byte).add_modifier.contains(Modifier::REVERSED)
+            }) || self.links.iter().any(|link| {
+                [link.label.clone(), link.destination.clone()]
+                    .iter()
+                    .any(|part| part.start < range.end && part.end > range.start)
+            }) || images
+                .iter()
+                .any(|image| image.start < range.end && image.end > range.start)
+            {
+                continue;
+            }
+            if let Some(label) = IncomingUrl::parse(&url, start) {
+                urls.push(label);
+            }
+        }
+        urls
     }
 
     fn paint(&mut self, range: Range<usize>, style: Style) {
@@ -320,6 +481,83 @@ impl Markdown {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn incoming_projection_preserves_repeated_destinations_suffix_and_source_mapping() {
+        let url = "https://docs.example.com:8443/a/%69nstall?q=one#part";
+        let source = format!("**start** ({url}), @阿丽 {url} tail");
+        let projection = Markdown::new(&source, None).project_with_incoming_urls(&source, true);
+        let label = "docs.example.com:8443 · %69nstall";
+        assert_eq!(
+            projection.text,
+            format!("start ({label}), @阿丽 {label} tail")
+        );
+        assert_eq!(projection.links.len(), 2);
+        for link in &projection.links {
+            assert_eq!(link.url, url);
+            assert_eq!(
+                link.ranges
+                    .iter()
+                    .map(|range| &projection.text[range.clone()])
+                    .collect::<String>(),
+                label
+            );
+        }
+        for token in ["@阿丽", "tail", "%69nstall"] {
+            let start = source.find(token).unwrap();
+            let ranges = projection.ranges(&[start..start + token.len()]);
+            let mapped = ranges
+                .iter()
+                .map(|range| &projection.text[range.clone()])
+                .collect::<String>();
+            // A match within a URL also owns its synthetic separator.
+            assert_eq!(
+                mapped,
+                if token == "%69nstall" {
+                    " · %69nstall"
+                } else {
+                    token
+                }
+            );
+        }
+        assert_eq!(
+            Markdown::new(&source, None).project(&source).text,
+            format!("start ({url}), @阿丽 {url} tail")
+        );
+    }
+
+    #[test]
+    fn incoming_projection_keeps_actual_ip_host_and_rejects_ambiguous_authorities() {
+        for (source, expected) in [
+            (
+                "https://[2001:db8::1]:8443/a/end",
+                "[2001:db8::1]:8443 · end",
+            ),
+            ("http://127.0.0.1/a/end", "127.0.0.1 · end"),
+            (
+                "https://good.example@evil.example/end",
+                "https://good.example@evil.example/end",
+            ),
+            ("https://example.com:bad/end", "https://example.com:bad/end"),
+            (
+                "https://example.com:99999/end",
+                "https://example.com:99999/end",
+            ),
+            (
+                "https://example.com\\evil/end",
+                "https://example.com\\evil/end",
+            ),
+            ("https://%65xample.com/end", "https://%65xample.com/end"),
+        ] {
+            let projection = Markdown::new(source, None).project_with_incoming_urls(source, true);
+            assert_eq!(projection.text, expected);
+            if expected != source {
+                assert_eq!(projection.links[0].url, source);
+            } else {
+                assert!(projection.links.is_empty());
+            }
+        }
+    }
 
     #[test]
     fn whatsapp_and_extended_markdown_project_without_rewriting_source() {
