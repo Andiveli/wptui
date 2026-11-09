@@ -258,9 +258,7 @@ impl Markdown {
     }
 
     fn incoming_urls(&self, source: &str) -> Vec<IncomingUrl> {
-        // Reuse the opener's boundaries and punctuation rules, locating each
-        // occurrence in order (including repeated destinations).
-        let mut from = 0;
+        // Reuse the opener's exact accepted occurrences and punctuation rules.
         let mut urls = Vec::new();
         // Unsupported bracket text stays literal. Pair bounds on each logical
         // line, including nested brackets, without swallowing neighboring URLs.
@@ -287,13 +285,8 @@ impl Markdown {
                 Some(start..start + end)
             })
             .collect::<Vec<_>>();
-        for url in crate::url::extract_openable_urls(source) {
-            let Some(offset) = source[from..].find(&url) else {
-                continue;
-            };
-            let start = from + offset;
-            from = start + url.len();
-            let range = start..from;
+        for range in crate::url::extract_openable_url_ranges(source) {
+            let start = range.start;
             if range.clone().any(|byte| {
                 !self.visible(byte) || self.style(byte).add_modifier.contains(Modifier::REVERSED)
             }) || self.links.iter().any(|link| {
@@ -309,7 +302,7 @@ impl Markdown {
             {
                 continue;
             }
-            if let Some(label) = IncomingUrl::parse(&url, start) {
+            if let Some(label) = IncomingUrl::parse(&source[range], start) {
                 urls.push(label);
             }
         }
