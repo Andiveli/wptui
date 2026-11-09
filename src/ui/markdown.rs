@@ -502,6 +502,53 @@ mod tests {
     use super::*;
 
     #[test]
+    fn incoming_projection_keeps_extractor_occurrence_identity() {
+        let url = "https://example.com/docs/install";
+        let label = "example.com · install";
+        for (source, expected, default_display) in [
+            (
+                format!("x{url} {url} @阿丽 tail"),
+                format!("x{url} {label} @阿丽 tail"),
+                format!("x{url} {url} @阿丽 tail"),
+            ),
+            (
+                format!("`x{url}` {url} @阿丽 tail"),
+                format!("x{url} {label} @阿丽 tail"),
+                format!("x{url} {url} @阿丽 tail"),
+            ),
+        ] {
+            let saved = source.clone();
+            let markdown = Markdown::new(&source, None);
+            let projection = markdown.project_with_incoming_urls(&source, true);
+            assert_eq!(projection.text, expected, "{source}");
+            assert_eq!(projection.links.len(), 1, "{source}");
+            assert_eq!(projection.links[0].url, url);
+            assert_eq!(
+                projection.links[0]
+                    .ranges
+                    .iter()
+                    .map(|range| &projection.text[range.clone()])
+                    .collect::<String>(),
+                label
+            );
+            for token in ["@阿丽", "tail"] {
+                let start = source.find(token).unwrap();
+                let mapped = projection.ranges(&[start..start + token.len()]);
+                assert_eq!(mapped[0].start, expected.find(token).unwrap());
+                assert_eq!(
+                    mapped
+                        .iter()
+                        .map(|range| &projection.text[range.clone()])
+                        .collect::<String>(),
+                    token
+                );
+            }
+            assert_eq!(markdown.project(&source).text, default_display);
+            assert_eq!(source, saved);
+        }
+    }
+
+    #[test]
     fn incoming_projection_preserves_repeated_destinations_suffix_and_source_mapping() {
         let url = "https://docs.example.com:8443/a/%69nstall?q=one#part";
         let source = format!("**start** ({url}), @阿丽 {url} tail");
