@@ -30,6 +30,8 @@ const (
 	phoneLookupEmptyResponse
 	phoneLookupResponseMismatch
 	phoneLookupQueryMismatch
+	phoneLookupLidOnly
+	phoneLookupDifferentPhoneNumber
 )
 
 type phoneLookupResult struct {
@@ -74,6 +76,14 @@ func lookupPhone(ctx context.Context, phone string, query phoneLookupQuery) phon
 		}
 		if response.PhoneNumber.ToNonAD() == requested || response.JID.ToNonAD() == requested {
 			return phoneLookupResult{status: phoneLookupFound, jid: requested.String()}
+		}
+		// These categories describe response shape only, not an alternate recipient.
+		if response.JID.Server == types.HiddenUserServer && response.JID.User != "" && response.PhoneNumber == (types.JID{}) {
+			return phoneLookupResult{status: phoneLookupLidOnly}
+		}
+		if (response.JID.Server == types.DefaultUserServer && response.JID.User != "") ||
+			(response.PhoneNumber.Server == types.DefaultUserServer && response.PhoneNumber.User != "") {
+			return phoneLookupResult{status: phoneLookupDifferentPhoneNumber}
 		}
 		return phoneLookupResult{status: phoneLookupResponseMismatch}
 	}
