@@ -6,11 +6,23 @@ use ratatui::style::{Modifier, Style};
 pub(crate) struct Markdown {
     hidden: Vec<bool>,
     styles: Vec<Style>,
+    links: Vec<LabeledLink>,
+}
+
+struct LabeledLink {
+    label: Range<usize>,
+    destination: Range<usize>,
+}
+
+pub(crate) struct ProjectedLink {
+    pub(crate) ranges: Vec<Range<usize>>,
+    pub(crate) url: String,
 }
 
 pub(crate) struct Projection {
     pub(crate) text: String,
     pub(crate) styles: Vec<(Range<usize>, Style)>,
+    pub(crate) links: Vec<ProjectedLink>,
     mapping: Vec<(Range<usize>, Range<usize>)>,
 }
 
@@ -33,6 +45,7 @@ impl Markdown {
         let mut result = Self {
             hidden: vec![false; source.len()],
             styles: vec![Style::default(); source.len()],
+            links: Vec::new(),
         };
         result.parse(source, 0..source.len(), active, 0);
         let mut offset = 0;
@@ -83,6 +96,7 @@ impl Markdown {
         let mut result = Projection {
             text: String::new(),
             styles: Vec::new(),
+            links: Vec::new(),
             mapping: Vec::new(),
         };
         for (byte, ch) in source.char_indices() {
@@ -101,6 +115,15 @@ impl Markdown {
             }
             result.mapping.push((byte..byte + ch.len_utf8(), display));
         }
+        result.links = self
+            .links
+            .iter()
+            .map(|link| ProjectedLink {
+                ranges: result.ranges(std::slice::from_ref(&link.label)),
+                // Do not re-extract or trim destinations: punctuation is URL data.
+                url: source[link.destination.clone()].to_owned(),
+            })
+            .collect();
         result
     }
 
@@ -161,7 +184,8 @@ impl Markdown {
                     continue;
                 }
             }
-            // Keep link destinations readable, with their original openable URL.
+            // Hide link syntax only in the display; retain the exact destination
+            // separately so mouse probes can mark the projected label.
             if ch == '['
                 && (at == 0 || !source[..at].ends_with('!'))
                 && let Some(label_end) = tail.find("](")
@@ -171,14 +195,16 @@ impl Markdown {
                 let end = label_end + 2 + url_end + 1;
                 let destination = &source[label_end + 2..end - 1];
                 if destination.starts_with("https://") || destination.starts_with("http://") {
-                    self.paint(
-                        at + 1..end - 1,
+                    self.format(
+                        at..end,
+                        at + 1..label_end,
                         Style::default().add_modifier(Modifier::UNDERLINED),
+                        active,
                     );
-                    if !active.is_some_and(|cursor| at <= cursor && cursor <= end) {
-                        self.hidden[at] = true;
-                        self.hidden[label_end] = true;
-                    }
+                    self.links.push(LabeledLink {
+                        label: at + 1..label_end,
+                        destination: label_end + 2..end - 1,
+                    });
                     self.parse(source, at + 1..label_end, active, depth + 1);
                     at = end;
                     continue;
@@ -350,6 +376,34 @@ mod tests {
         let ranges = projected.ranges(&[start..start + "阿丽".len()]);
         assert_eq!(ranges.first().unwrap().start, 0);
         assert_eq!(ranges.last().unwrap().end, "阿丽".len());
+    }
+
+    #[test]
+    fn labeled_link_metadata_maps_visible_label_and_preserves_exact_destination() {
+        let source = "[**阿丽** 👩‍💻](https://example.com/_docs_?q=1&x=2!) tail";
+        let projected = Markdown::new(source, None).project(source);
+        assert_eq!(projected.text, "阿丽 👩‍💻 tail");
+        assert_eq!(projected.links.len(), 1);
+        let link = &projected.links[0];
+        assert_eq!(link.url, "https://example.com/_docs_?q=1&x=2!");
+        assert_eq!(
+            link.ranges
+                .iter()
+                .map(|range| &projected.text[range.clone()])
+                .collect::<String>(),
+            "阿丽 👩‍💻"
+        );
+        let destination = source.find("https://").unwrap();
+        assert!(
+            projected
+                .ranges(&[destination..source.find(')').unwrap()])
+                .is_empty()
+        );
+        let tail = source.find("tail").unwrap();
+        assert_eq!(
+            projected.ranges(&[tail..source.len()])[0].start,
+            "阿丽 👩‍💻 ".len()
+        );
     }
 
     #[test]

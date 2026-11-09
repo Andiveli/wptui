@@ -49,8 +49,10 @@ trigger it. Reading that group clears the alert.
 Messages and attachment captions render WhatsApp formatting locally: `*bold*`,
 `_italic_`, `~strikethrough~`, inline backticks, triple-backtick code, quotes,
 and lists. wptui also recognizes `**bold**`, `__bold__`, `~~strikethrough~~`,
-`# headings`, and `[label](https://example.com)` links. Link destinations stay
-visible; formatting never fetches content or opens a link automatically.
+`# headings`, and `[label](https://example.com)` links. Labeled links show only
+an underlined label; clicking it opens the original URL. The active composer
+fragment reveals the link source for editing. Formatting never fetches content
+or opens a link automatically.
 
 Formatting changes only the local display. Sending, editing, copying, and searching
 still use the original text; other WhatsApp clients display the syntax they support.

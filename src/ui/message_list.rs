@@ -763,6 +763,59 @@ mod layout_contract_tests {
     }
 
     #[test]
+    fn labeled_link_hits_follow_wrapped_bidi_graphemes_and_override_url_labels() {
+        use ratatui::{buffer::Buffer, layout::Alignment, style::Color, widgets::Widget};
+
+        let destination = "https://example.com/_docs_?q=1&x=2!";
+        for label in ["**אְב** 👩‍💻 阿丽", "https://label.test"] {
+            let source = format!("before [{label}]({destination}) after");
+            let visible_label = label.replace("**", "");
+            let visible = format!("before {visible_label} after");
+            for width in [4, 40] {
+                let mut app = crate::app::test_support::TestApp::new();
+                let area = Rect::new(3, 2, width, 12);
+                super::record_url_hits(
+                    &mut app,
+                    &"label-cells".into(),
+                    &source,
+                    None,
+                    area,
+                    Alignment::Left,
+                );
+                let mut expected = Buffer::empty(Rect::new(0, 0, width, 12));
+                ratatui::widgets::Paragraph::new(super::inline_content_lines(
+                    &visible,
+                    &[7..7 + visible_label.len()],
+                    None,
+                    width as usize,
+                ))
+                .alignment(Alignment::Left)
+                .render(expected.area, &mut expected);
+                let expected_cells = (0..12)
+                    .flat_map(|y| (0..width).map(move |x| (x, y)))
+                    .filter(|&(x, y)| expected[(x, y)].fg == Color::Blue)
+                    .map(|(x, y)| Rect::new(x + 3, y + 2, 1, 1))
+                    .collect::<Vec<_>>();
+                assert!(!expected_cells.is_empty());
+                assert_eq!(
+                    app.mouse_hit_map
+                        .urls
+                        .iter()
+                        .map(|hit| hit.area)
+                        .collect::<Vec<_>>(),
+                    expected_cells
+                );
+                assert!(
+                    app.mouse_hit_map
+                        .urls
+                        .iter()
+                        .all(|hit| hit.url == destination)
+                );
+            }
+        }
+    }
+
+    #[test]
     fn visual_wrapping_and_cached_height_agree_at_narrow_width() {
         use std::sync::Arc;
 
@@ -805,7 +858,7 @@ mod layout_contract_tests {
 pub use message_layout_integration::message_height;
 
 /// Probe the exact wrapped/bidi paragraph into an offscreen buffer. Marking one
-/// source URL as a mention changes only style, not the rendered cell positions.
+/// projected URL or labeled-link range as a mention changes only style, not geometry.
 /// The actual message is rendered unchanged; the probe's blue cells become hits.
 pub(super) fn record_url_hits(
     app: &mut App,
@@ -820,6 +873,7 @@ pub(super) fn record_url_hits(
     }
     let projection = crate::ui::markdown::Markdown::new(body, None).project(body);
     let body = projection.text.as_str();
+    let mut targets = Vec::new();
     let mut search_from = 0;
     for url in crate::url::extract_openable_urls(body) {
         let Some(offset) = body[search_from..].find(&url) else {
@@ -827,10 +881,28 @@ pub(super) fn record_url_hits(
         };
         let start = search_from + offset;
         search_from = start + url.len();
+        // A URL-looking label belongs to its explicit destination, not to the
+        // URL extractor. Bare URLs and URLs in literal/code text keep that path.
+        if projection.links.iter().any(|link| {
+            link.ranges
+                .iter()
+                .any(|range| range.start < search_from && range.end > start)
+        }) {
+            continue;
+        }
+        targets.push((vec![start..search_from], url));
+    }
+    targets.extend(
+        projection
+            .links
+            .into_iter()
+            .map(|link| (link.ranges, link.url)),
+    );
+    for (ranges, url) in targets {
         let mut probe = Buffer::empty(Rect::new(0, 0, area.width, area.height));
         Paragraph::new(inline_content_lines(
             body,
-            &[start..search_from],
+            &ranges,
             status,
             area.width as usize,
         ))
