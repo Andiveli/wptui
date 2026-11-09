@@ -100,7 +100,10 @@ impl Markdown {
             mapping: Vec::new(),
         };
         for (byte, ch) in source.char_indices() {
-            if !self.visible(byte) {
+            // Paragraph layout splits on LF. Drop only its paired CR from the
+            // display so a blank CRLF row is empty, not whitespace-only. Mapping
+            // below still uses the original source bytes; editor/source stay raw.
+            if !self.visible(byte) || (ch == '\r' && source[byte + 1..].starts_with('\n')) {
                 continue;
             }
             let start = result.text.len();
@@ -185,11 +188,13 @@ impl Markdown {
                 }
             }
             // Hide link syntax only in the display; retain the exact destination
-            // separately so mouse probes can mark the projected label.
+            // separately so mouse probes can mark the projected label. Neither
+            // closure may come from a later logical line (including an image).
+            let line_tail = &source[at..line_end];
             if ch == '['
                 && (at == 0 || !source[..at].ends_with('!'))
-                && let Some(label_end) = tail.find("](")
-                && let Some(url_end) = tail[label_end + 2..].find(')')
+                && let Some(label_end) = line_tail.find("](")
+                && let Some(url_end) = line_tail[label_end + 2..].find(')')
             {
                 let label_end = at + label_end;
                 let end = label_end + 2 + url_end + 1;
@@ -404,6 +409,64 @@ mod tests {
             projected.ranges(&[tail..source.len()])[0].start,
             "阿丽 👩‍💻 ".len()
         );
+    }
+
+    #[test]
+    fn link_closures_cannot_cross_logical_lines() {
+        for newline in ["\n", "\r\n"] {
+            for prefix in [
+                "[enlace sin destino]",
+                "[split",
+                "[split](https://example.com",
+            ] {
+                let source = format!(
+                    "{prefix}{newline}![imagen no soportada](https://example.com/image.png)"
+                );
+                let projection = Markdown::new(&source, None).project(&source);
+                assert_eq!(projection.text, source.replace("\r\n", "\n"));
+                assert!(projection.links.is_empty());
+                assert!(
+                    projection
+                        .styles
+                        .iter()
+                        .all(|(_, style)| *style == Style::default())
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn crlf_projection_keeps_original_unicode_and_link_offsets() {
+        let source = "**阿丽**\r\n\r\n[site](https://example.com)\r\n@שלום\rsolo";
+        let saved = source.to_owned();
+        let projection = Markdown::new(source, None).project(source);
+        assert_eq!(projection.text, "阿丽\n\nsite\n@שלום\rsolo");
+        for text in ["阿丽", "site", "@שלום", "\rsolo"] {
+            let start = source.find(text).unwrap();
+            let mapped = projection.ranges(&[start..start + text.len()]);
+            assert_eq!(
+                mapped
+                    .iter()
+                    .map(|range| &projection.text[range.clone()])
+                    .collect::<String>(),
+                text
+            );
+            assert_eq!(mapped[0].start, projection.text.find(text).unwrap());
+        }
+        for (at, _) in source.match_indices("\r\n") {
+            assert!(projection.ranges(&[at..at + 1]).is_empty());
+            let newline = projection.ranges(&[at + 1..at + 2]);
+            assert_eq!(newline.len(), 1);
+            assert_eq!(&projection.text[newline[0].clone()], "\n");
+        }
+        assert_eq!(projection.links.len(), 1);
+        assert_eq!(projection.links[0].url, "https://example.com");
+        let label_start = source.find("site").unwrap();
+        assert_eq!(
+            projection.links[0].ranges,
+            projection.ranges(&[label_start..label_start + 4])
+        );
+        assert_eq!(source, saved);
     }
 
     #[test]

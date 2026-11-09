@@ -563,6 +563,38 @@ mod tests {
     }
 
     #[test]
+    fn crlf_markdown_preserves_blank_rows_mentions_and_search_offsets() {
+        let source = "**title**\r\n\r\n@阿丽 [site](https://example.com)";
+        let mention_start = source.find('@').unwrap();
+        let mention = mention_start..mention_start + "@阿丽".len();
+        let link_start = source.find("site").unwrap();
+        let lines = super::markdown_content_lines(
+            source,
+            &[mention.clone()],
+            Some(StatusLabel::Edited),
+            80,
+            &[mention, link_start..link_start + 4],
+        );
+        assert_eq!(
+            lines.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            ["title", "", "@阿丽 site (edited)"]
+        );
+        let mut painted = Buffer::empty(Rect::new(0, 0, 80, 3));
+        Paragraph::new(lines).render(painted.area, &mut painted);
+        assert!(painted[(0, 0)].modifier.contains(Modifier::BOLD));
+        assert_eq!(painted[(0, 2)].fg, Color::Blue);
+        assert_eq!(painted[(0, 2)].bg, Color::Yellow);
+        assert!(painted[(0, 2)].modifier.contains(Modifier::BOLD));
+        assert_eq!(painted[(6, 2)].symbol(), "s");
+        assert_eq!(painted[(6, 2)].bg, Color::Yellow);
+        assert!(painted[(6, 2)].modifier.contains(Modifier::UNDERLINED));
+        assert_eq!(painted[(11, 2)].symbol(), "(");
+        assert_eq!(painted[(11, 2)].fg, Color::DarkGray);
+        // The plain/system path is intentionally not normalized by Markdown.
+        assert_eq!(inline_content_lines("a\r\n\r\nb", &[], None, 80).len(), 2);
+    }
+
+    #[test]
     fn markdown_wrapping_uses_visible_graphemes_and_keeps_rtl_styles() {
         for source in [
             "**hello**",
