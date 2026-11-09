@@ -106,6 +106,18 @@ mod tests {
                 "Could not check number",
             ),
             (
+                Err(PhoneLookupError::InvalidNumber),
+                "Use + followed by 7-15 digits",
+            ),
+            (
+                Err(PhoneLookupError::ClientUnavailable),
+                "WhatsApp is not connected",
+            ),
+            (
+                Err(PhoneLookupError::InvalidBridgeResult),
+                "Could not verify number",
+            ),
+            (
                 Ok(Some(JID::from("15559876543@s.whatsapp.net".to_owned()))),
                 "Could not verify number",
             ),
@@ -114,6 +126,11 @@ mod tests {
             assert!(app.handle_phone_lookup_event(completed(1, result)));
             assert!(app.chats.is_empty());
             assert_eq!(app.open_chat(), None);
+            assert!(app.chat_messages.is_empty());
+            assert!(app.pending_phone_lookup.is_none());
+            assert!(app.contact_search_active);
+            assert_eq!(app.contact_search.input.to_string(), "+15551234567");
+            assert_eq!(app.focus_pane, FocusPane::ChatList);
             assert!(
                 matches!(app.action_notice, Some(ActionNotice::Unavailable(ref message)) if message == notice)
             );
@@ -133,5 +150,30 @@ mod tests {
             Some(2)
         );
         assert!(app.chats.is_empty());
+        assert_eq!(app.open_chat(), None);
+        assert!(app.chat_messages.is_empty());
+        assert!(app.action_notice.is_none());
+    }
+
+    #[test]
+    fn stale_failure_cannot_replace_notice_or_consume_pending_lookup() {
+        let mut app = awaiting_lookup();
+        app.pending_phone_lookup = Some((2, "+15551234567".into()));
+        app.action_notice = Some(ActionNotice::Unavailable("Checking number...".into()));
+        assert!(!app.handle_phone_lookup_event(completed(
+            1,
+            Err(PhoneLookupError::RequestFailed)
+        )));
+        assert_eq!(
+            app.pending_phone_lookup.as_ref().map(|pending| pending.0),
+            Some(2)
+        );
+        assert!(matches!(
+            app.action_notice,
+            Some(ActionNotice::Unavailable(ref message)) if message == "Checking number..."
+        ));
+        assert!(app.chats.is_empty());
+        assert_eq!(app.open_chat(), None);
+        assert!(app.chat_messages.is_empty());
     }
 }

@@ -661,6 +661,56 @@ pub(super) fn render_composer(
 }
 
 #[cfg(test)]
+mod action_notice_tests {
+    use super::action_notice_text;
+    use crate::app::{actions::ActionNotice, test_support::TestApp};
+
+    #[test]
+    fn unavailable_notice_renders_only_the_friendly_message() {
+        let mut app = TestApp::new();
+        for message in [
+            "Could not check number",
+            "Number check timed out",
+            "WhatsApp returned no number result",
+            "WhatsApp returned a mismatched number result",
+            "Could not verify number",
+            "WhatsApp is not connected",
+            "Number is not on WhatsApp",
+            "Use + followed by 7-15 digits",
+        ] {
+            app.action_notice = Some(ActionNotice::Unavailable(message.into()));
+            assert_eq!(action_notice_text(&app), Some(message.to_owned()));
+        }
+    }
+
+    #[test]
+    fn existing_notice_formatting_is_preserved() {
+        let mut app = TestApp::new();
+        assert_eq!(action_notice_text(&app), None);
+        app.action_notice = Some(ActionNotice::Forwarded {
+            succeeded: 2,
+            failed: 0,
+            failure: whatsrust::ForwardFailure::None,
+        });
+        assert_eq!(action_notice_text(&app).as_deref(), Some("Forwarded: 2"));
+        app.action_notice = Some(ActionNotice::Forwarded {
+            succeeded: 1,
+            failed: 1,
+            failure: whatsrust::ForwardFailure::SendFailed,
+        });
+        assert_eq!(
+            action_notice_text(&app).as_deref(),
+            Some("Forwarded: 1 ok, 1 failed (Send failed)")
+        );
+        app.action_notice = Some(ActionNotice::ReplyPrivatelyNamed("Synthetic contact".into()));
+        assert_eq!(
+            action_notice_text(&app).as_deref(),
+            Some("Replying to Synthetic contact privately")
+        );
+    }
+}
+
+#[cfg(test)]
 mod composer_focus_tests {
     use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Color};
 

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"go.mau.fi/whatsmeow/types"
@@ -23,10 +24,15 @@ func TestLookupPhoneRequiresServerConfirmedRequestedNumber(t *testing.T) {
 		{name: "registered LID", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: lid, PhoneNumber: pn, IsIn: true}}, want: phoneLookupResult{status: phoneLookupFound, jid: pn.String()}, query: true},
 		{name: "registered PN", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: pn, IsIn: true}}, want: phoneLookupResult{status: phoneLookupFound, jid: pn.String()}, query: true},
 		{name: "not registered", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: lid, PhoneNumber: pn}}, want: phoneLookupResult{status: phoneLookupNotRegistered}, query: true},
-		{name: "mismatched PN", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: lid, PhoneNumber: types.NewJID("15559876543", types.DefaultUserServer), IsIn: true}}, want: phoneLookupResult{status: phoneLookupFailed}, query: true},
-		{name: "mismatched query", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: "+15559876543", JID: lid, PhoneNumber: pn, IsIn: true}}, want: phoneLookupResult{status: phoneLookupFailed}, query: true},
-		{name: "missing reply", phone: phone, want: phoneLookupResult{status: phoneLookupFailed}, query: true},
-		{name: "transport failure", phone: phone, err: errors.New("network"), want: phoneLookupResult{status: phoneLookupFailed}, query: true},
+		// New diagnostic statuses append to the ABI; existing values 0-4 stay fixed.
+		{name: "mismatched PN", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: lid, PhoneNumber: types.NewJID("15559876543", types.DefaultUserServer), IsIn: true}}, want: phoneLookupResult{status: 7}, query: true},
+		{name: "mismatched query", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: "+15559876543", JID: lid, PhoneNumber: pn, IsIn: true}}, want: phoneLookupResult{status: 7}, query: true},
+		{name: "missing reply", phone: phone, want: phoneLookupResult{status: 6}, query: true},
+		{name: "deadline exceeded", phone: phone, err: context.DeadlineExceeded, want: phoneLookupResult{status: 5}, query: true},
+		{name: "wrapped deadline exceeded", phone: phone, err: fmt.Errorf("synthetic query: %w", context.DeadlineExceeded), want: phoneLookupResult{status: 5}, query: true},
+		{name: "transport failure", phone: phone, err: errors.New("synthetic network failure"), want: phoneLookupResult{status: 4}, query: true},
+		{name: "cancelled query remains generic failure", phone: phone, err: context.Canceled, want: phoneLookupResult{status: 4}, query: true},
+		{name: "registered query without plus", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone[1:], JID: pn, IsIn: true}}, want: phoneLookupResult{status: 0, jid: pn.String()}, query: true},
 		{name: "missing plus", phone: "15551234567", want: phoneLookupResult{status: phoneLookupInvalidNumber}},
 		{name: "non-digit", phone: "+1555abc4567", want: phoneLookupResult{status: phoneLookupInvalidNumber}},
 		{name: "too short", phone: "+123456", want: phoneLookupResult{status: phoneLookupInvalidNumber}},

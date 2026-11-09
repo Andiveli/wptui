@@ -76,6 +76,38 @@ mod tests {
     }
 
     #[test]
+    fn preserves_existing_failure_statuses() {
+        for (status, expected) in [
+            (2, PhoneLookupError::InvalidNumber),
+            (3, PhoneLookupError::ClientUnavailable),
+            (4, PhoneLookupError::RequestFailed),
+        ] {
+            assert_eq!(lookup_result(status, "+15551234567", None), Err(expected));
+        }
+    }
+
+    #[test]
+    fn exposes_safe_diagnostic_categories_without_bridge_payloads() {
+        for (status, category) in [(5, "TimedOut"), (6, "EmptyResponse"), (7, "ResponseMismatch")] {
+            // Compare public Debug output until the production variants exist, so
+            // the RED is behavioral rather than an undefined-variant build error.
+            let result = lookup_result(status, "+15551234567", None)
+                .map_err(|error| format!("{error:?}"));
+            assert_eq!(result, Err(category.to_owned()), "status {status}");
+        }
+    }
+
+    #[test]
+    fn diagnostic_statuses_cannot_carry_a_recipient() {
+        for status in [5, 6, 7] {
+            assert_eq!(
+                lookup_result(status, "+15551234567", Some("15551234567@s.whatsapp.net")),
+                Err(PhoneLookupError::InvalidBridgeResult)
+            );
+        }
+    }
+
+    #[test]
     fn distinguishes_unregistered_from_lookup_failure() {
         assert_eq!(lookup_result(1, "+15551234567", None), Ok(None));
         assert_eq!(
