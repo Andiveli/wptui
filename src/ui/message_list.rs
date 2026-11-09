@@ -657,6 +657,132 @@ mod layout_contract_tests {
         ));
     }
 
+    const SCREENSHOT_MARKDOWN: &str = concat!(
+        "# Encabezado 1\n## Encabezado 2\n### Encabezado 3\n\n",
+        "> Una cita de prueba\n\n",
+        "[Ejemplo](https://example.com)\n\n",
+        "[enlace sin destino]\n",
+        "![imagen no soportada](https://example.com/image.png)"
+    );
+
+    fn render_screenshot_markdown(source: &str) -> ratatui::buffer::Buffer {
+        let mut app = crate::app::test_support::TestApp::new();
+        let chat: wr::JID = "screenshot@example.test".to_owned().into();
+        let id: wr::MessageId = "screenshot-markdown".into();
+        app.add_message(wr::Message {
+            info: wr::MessageInfo {
+                id: id.clone(),
+                chat: chat.clone(),
+                sender: "sender@example.test".to_owned().into(),
+                mentions_self: false,
+                timestamp: 0,
+                is_from_me: true,
+                quote_id: None,
+                read_by: 0,
+                forwarding: Default::default(),
+            },
+            message: wr::MessageContent::Text(source.into()),
+        });
+        app.open_chat = Some(chat);
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                // Exercise the public list path, including height/viewport planning,
+                // rather than projecting each syntax example independently.
+                super::render_messages_with_plan(
+                    frame,
+                    &mut app,
+                    &mut MediaRenderPlan::default(),
+                    &mut crate::app::read_receipts::VisibilityPlan::default(),
+                    Rect::new(0, 0, 80, 24),
+                );
+            })
+            .unwrap();
+        assert!(matches!(
+            &app.messages[&id].message,
+            wr::MessageContent::Text(text) if text.as_ref() == source
+        ));
+        terminal.backend().buffer().clone()
+    }
+
+    fn screenshot_row(buffer: &ratatui::buffer::Buffer, y: u16) -> String {
+        (0..buffer.area.width)
+            .map(|x| buffer[(x, y)].symbol())
+            .collect::<String>()
+            .trim_end()
+            .to_owned()
+    }
+
+    fn assert_screenshot_blocks(source: &str) {
+        let buffer = render_screenshot_markdown(source);
+        let first = (0..buffer.area.height)
+            .find(|&y| screenshot_row(&buffer, y) == "Encabezado 1")
+            .expect("first heading must be visible without its hash");
+        for (offset, text, modifier) in [
+            (0, "Encabezado 1", Modifier::BOLD),
+            (1, "Encabezado 2", Modifier::BOLD),
+            (2, "Encabezado 3", Modifier::BOLD),
+            (3, "", Modifier::empty()),
+            (4, "Una cita de prueba", Modifier::ITALIC | Modifier::DIM),
+            (5, "", Modifier::empty()),
+            (6, "Ejemplo", Modifier::UNDERLINED),
+            (7, "", Modifier::empty()),
+        ] {
+            let y = first + offset;
+            assert_eq!(screenshot_row(&buffer, y), text, "row {offset}: {source:?}");
+            for x in 0..text.chars().count() as u16 {
+                assert!(
+                    buffer[(x, y)].modifier.contains(modifier),
+                    "row {offset}, cell {x}: {source:?}"
+                );
+            }
+        }
+    }
+
+    fn assert_screenshot_literals(source: &str) {
+        let buffer = render_screenshot_markdown(source);
+        // Anchor at the preceding valid link so a missing opening bracket cannot
+        // prevent the malformed-link assertion from identifying the changed row.
+        let link_row = (0..buffer.area.height)
+            .find(|&y| screenshot_row(&buffer, y) == "Ejemplo")
+            .expect("valid link must still show only its label");
+        assert_eq!(screenshot_row(&buffer, link_row + 1), "");
+        for (offset, text) in [
+            (2, "[enlace sin destino]"),
+            (3, "![imagen no soportada](https://example.com/image.png)"),
+        ] {
+            let y = link_row + offset;
+            assert_eq!(screenshot_row(&buffer, y), text, "row {offset}: {source:?}");
+            for x in 0..text.len() as u16 {
+                assert_eq!(
+                    buffer[(x, y)].modifier,
+                    Modifier::empty(),
+                    "literal style at row {offset}, cell {x}: {source:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn combined_screenshot_lf_headings_quotes_and_valid_link_are_formatted() {
+        assert_screenshot_blocks(SCREENSHOT_MARKDOWN);
+    }
+
+    #[test]
+    fn combined_screenshot_crlf_headings_quotes_and_valid_link_are_formatted() {
+        assert_screenshot_blocks(&SCREENSHOT_MARKDOWN.replace('\n', "\r\n"));
+    }
+
+    #[test]
+    fn combined_screenshot_lf_malformed_link_and_http_image_stay_literal() {
+        assert_screenshot_literals(SCREENSHOT_MARKDOWN);
+    }
+
+    #[test]
+    fn combined_screenshot_crlf_malformed_link_and_http_image_stay_literal() {
+        assert_screenshot_literals(&SCREENSHOT_MARKDOWN.replace('\n', "\r\n"));
+    }
+
     #[test]
     fn labeled_link_renders_only_styled_label_and_hits_only_label_cells() {
         use ratatui::buffer::Buffer;

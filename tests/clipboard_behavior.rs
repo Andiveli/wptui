@@ -237,6 +237,38 @@ fn terminal_paste_preserves_all_lines_until_explicit_submission() {
 }
 
 #[test]
+fn terminal_paste_combined_screenshot_fixture_submits_unchanged_markdown_source() {
+    let source = concat!(
+        "# Encabezado 1\n## Encabezado 2\n### Encabezado 3\n\n",
+        "> Una cita de prueba\n\n",
+        "[Ejemplo](https://example.com)\n\n",
+        "[enlace sin destino]\n",
+        "![imagen no soportada](https://example.com/image.png)"
+    );
+    let mut app = TestApp::new();
+    app.focus_pane = wp_tui::app::actions::FocusPane::Conversation;
+    app.conversation_mode = ConversationMode::ComposerEditing;
+    app.clipboard_reader = Box::new(NoClipboardAccess);
+
+    app.on_terminal_event(Event::Paste(source.into()));
+
+    assert_eq!(app.composer.text(), source);
+    assert_eq!(app.conversation_mode, ConversationMode::ComposerEditing);
+    assert!(app.composer.pending.is_empty());
+    assert_eq!(app.action_notice, None);
+
+    // Only obtain the payload: never dispatch an outgoing network message.
+    let outcome = app.composer.apply(ComposerAction::Submit);
+    assert_eq!(outcome.text_messages(), [source]);
+    assert!(outcome.file_messages().is_empty());
+    let ComposerOutcome::Submit { display_text, .. } = outcome else {
+        panic!("Expected the exact combined screenshot text payload");
+    };
+    assert_eq!(display_text.as_ref(), source);
+    assert!(app.composer.text().is_empty());
+}
+
+#[test]
 fn terminal_paste_rejection_preserves_draft_attachments_and_mode() {
     use wp_tui::app::actions::{FocusPane, Section, VimComposerMode};
 
