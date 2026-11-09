@@ -83,6 +83,14 @@ impl App<'_> {
             } else {
                 app.add_message(message);
             }
+            // Insertion projects pending actions and may retain a newer message.
+            // Persist that effective state, not the stale callback body, after any
+            // projection writeback has materialized and cleared edit replacements.
+            let message_for_persistence = app
+                .messages
+                .get(&message_for_persistence.info.id)
+                .cloned()
+                .unwrap_or(message_for_persistence);
             let chat = app
                 .chats
                 .get(&message_for_persistence.info.chat)
