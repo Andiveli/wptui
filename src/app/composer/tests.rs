@@ -377,6 +377,31 @@ fn literal_markdown_and_bare_url_code_previews_keep_exact_submit_source() {
 }
 
 #[test]
+fn incoming_url_examples_remain_raw_in_composer_preview_and_submit() {
+    for source in [
+        "https://github.com/Andiveli/wptui",
+        "https://example.com/docs/installation",
+        "https://example.com/",
+        "https://docs.api.example.com:8443/a/install?q=one#part",
+    ] {
+        let mut composer = Composer::default();
+        composer.insert_text(source);
+        assert_eq!(
+            composer.visual_layout(ComposerDirection::Auto, 80).text(),
+            source
+        );
+        assert_eq!(composer.text(), source);
+        let outcome = composer.apply(ComposerAction::Submit);
+        assert_eq!(outcome.text_messages(), vec![source]);
+        assert!(matches!(
+            &outcome,
+            ComposerOutcome::Submit { display_text, .. } if display_text.as_ref() == source
+        ));
+        assert!(composer.text().is_empty());
+    }
+}
+
+#[test]
 fn malformed_link_before_http_image_keeps_preview_and_submit_source() {
     let source = concat!(
         "[enlace sin destino]\n",
