@@ -29,6 +29,7 @@ const (
 	phoneLookupTimedOut
 	phoneLookupEmptyResponse
 	phoneLookupResponseMismatch
+	phoneLookupQueryMismatch
 )
 
 type phoneLookupResult struct {
@@ -76,7 +77,7 @@ func lookupPhone(ctx context.Context, phone string, query phoneLookupQuery) phon
 		}
 		return phoneLookupResult{status: phoneLookupResponseMismatch}
 	}
-	return phoneLookupResult{status: phoneLookupResponseMismatch}
+	return phoneLookupResult{status: phoneLookupQueryMismatch}
 }
 
 //export C_LookupPhone
