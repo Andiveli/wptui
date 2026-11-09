@@ -404,6 +404,83 @@ fn malformed_link_before_http_image_keeps_preview_and_submit_source() {
 }
 
 #[test]
+fn owner_three_space_blocks_preview_reveal_active_source_and_submit_unchanged() {
+    use ratatui::style::Modifier;
+
+    // Exact L18 source, including three ASCII spaces and the empty rows.
+    let source = concat!(
+        "# Encabezado 1\n",
+        "   ## Encabezado 2\n",
+        "   ### Encabezado 3\n\n",
+        "   > Una cita de prueba\n\n",
+        "   [Ejemplo](https://example.com)\n\n",
+        "   [enlace sin destino]\n",
+        "   ![imagen no soportada](https://example.com/image.png)"
+    );
+    let mut composer = Composer::default();
+    composer.insert_text(source);
+    assert_eq!(composer.text(), source);
+    let layout = composer.visual_layout(ComposerDirection::Auto, 80);
+    for (row, text, modifier) in [
+        (0, "Encabezado 1", Modifier::BOLD),
+        (1, "Encabezado 2", Modifier::BOLD),
+        (2, "Encabezado 3", Modifier::BOLD),
+        (4, "Una cita de prueba", Modifier::ITALIC | Modifier::DIM),
+        (6, "Ejemplo", Modifier::UNDERLINED),
+    ] {
+        let line = &layout.lines()[row];
+        // Composer indentation geometry is not part of this regression.
+        assert_eq!(line.to_string().trim_start(), text, "preview row {row}");
+        for span in &line.spans {
+            if !span.content.trim().is_empty() {
+                assert!(span.style.add_modifier.contains(modifier), "row {row}");
+            }
+        }
+    }
+    for row in [3, 5, 7] {
+        assert_eq!(layout.lines()[row].to_string(), "");
+    }
+    for (row, literal) in [
+        (8, "[enlace sin destino]"),
+        (9, "![imagen no soportada](https://example.com/image.png)"),
+    ] {
+        let line = &layout.lines()[row];
+        assert_eq!(line.to_string().trim_start(), literal);
+        assert!(
+            line.spans
+                .iter()
+                .all(|span| span.style.add_modifier.is_empty())
+        );
+    }
+
+    // Moving into each block must reveal its original marker for editing,
+    // without changing the stored text or inventing an indentation policy.
+    for fragment in [
+        "## Encabezado 2",
+        "### Encabezado 3",
+        "> Una cita de prueba",
+    ] {
+        let start = source.find(fragment).unwrap();
+        composer.set_cursor_offset(source[..start + 1].chars().count());
+        assert!(
+            composer
+                .visual_layout(ComposerDirection::Auto, 80)
+                .text()
+                .contains(fragment),
+            "active block must reveal {fragment:?}"
+        );
+        assert_eq!(composer.text(), source);
+    }
+    let outcome = composer.apply(ComposerAction::Submit);
+    assert_eq!(outcome.text_messages(), vec![source]);
+    assert!(matches!(
+        &outcome,
+        ComposerOutcome::Submit { display_text, .. } if display_text.as_ref() == source
+    ));
+    assert!(composer.text().is_empty());
+}
+
+#[test]
 fn live_markdown_reveals_only_active_fragment_and_navigation_reaches_source() {
     use ratatui::style::Modifier;
     let mut composer = Composer::default();

@@ -665,6 +665,17 @@ mod layout_contract_tests {
         "![imagen no soportada](https://example.com/image.png)"
     );
 
+    // Owner-provided source from L18: only the first heading is at column zero.
+    const OWNER_INDENTED_MARKDOWN: &str = concat!(
+        "# Encabezado 1\n",
+        "   ## Encabezado 2\n",
+        "   ### Encabezado 3\n\n",
+        "   > Una cita de prueba\n\n",
+        "   [Ejemplo](https://example.com)\n\n",
+        "   [enlace sin destino]\n",
+        "   ![imagen no soportada](https://example.com/image.png)"
+    );
+
     fn render_screenshot_markdown(source: &str) -> ratatui::buffer::Buffer {
         let mut app = crate::app::test_support::TestApp::new();
         let chat: wr::JID = "screenshot@example.test".to_owned().into();
@@ -781,6 +792,60 @@ mod layout_contract_tests {
     #[test]
     fn combined_screenshot_crlf_malformed_link_and_http_image_stay_literal() {
         assert_screenshot_literals(&SCREENSHOT_MARKDOWN.replace('\n', "\r\n"));
+    }
+
+    #[test]
+    fn owner_three_space_headings_hide_markers_and_render_bold() {
+        let buffer = render_screenshot_markdown(OWNER_INDENTED_MARKDOWN);
+        let first = (0..buffer.area.height)
+            .find(|&y| screenshot_row(&buffer, y) == "Encabezado 1")
+            .expect("first heading must be visible without its hash");
+        for (offset, text) in [
+            (0, "Encabezado 1"),
+            (1, "Encabezado 2"),
+            (2, "Encabezado 3"),
+        ] {
+            let y = first + offset;
+            assert_eq!(screenshot_row(&buffer, y), text, "heading row {offset}");
+            for x in 0..text.len() as u16 {
+                assert!(buffer[(x, y)].modifier.contains(Modifier::BOLD));
+            }
+        }
+        assert_eq!(screenshot_row(&buffer, first + 3), "");
+    }
+
+    #[test]
+    fn owner_three_space_quote_hides_marker_and_renders_italic_dim() {
+        let buffer = render_screenshot_markdown(OWNER_INDENTED_MARKDOWN);
+        // Anchor at the unchanged first heading, not a heading that is currently
+        // broken, so the quote rule produces its own independent failure.
+        let first = (0..buffer.area.height)
+            .find(|&y| screenshot_row(&buffer, y) == "Encabezado 1")
+            .expect("first heading must be visible without its hash");
+        let y = first + 4;
+        let text = "Una cita de prueba";
+        assert_eq!(screenshot_row(&buffer, y), text);
+        for x in 0..text.len() as u16 {
+            assert!(
+                buffer[(x, y)]
+                    .modifier
+                    .contains(Modifier::ITALIC | Modifier::DIM)
+            );
+        }
+        assert_eq!(screenshot_row(&buffer, y - 1), "");
+        assert_eq!(screenshot_row(&buffer, y + 1), "");
+    }
+
+    #[test]
+    fn owner_three_space_valid_label_and_unsupported_literals_are_preserved() {
+        assert_screenshot_literals(OWNER_INDENTED_MARKDOWN);
+        let buffer = render_screenshot_markdown(OWNER_INDENTED_MARKDOWN);
+        let y = (0..buffer.area.height)
+            .find(|&y| screenshot_row(&buffer, y) == "Ejemplo")
+            .expect("valid link must show only Ejemplo, without its destination");
+        for x in 0.."Ejemplo".len() as u16 {
+            assert!(buffer[(x, y)].modifier.contains(Modifier::UNDERLINED));
+        }
     }
 
     #[test]
