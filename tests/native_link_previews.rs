@@ -329,6 +329,63 @@ fn ineligible_status_and_nontext_consume_adjunct_without_retaining_preview() {
     ));
 }
 
+/// Both legacy text and native-preview ingestion enqueue a chat/message write
+/// before action projection enqueues ordinary message writebacks. The writer
+/// must preserve that order even after pending replacements become markers.
+#[test]
+fn queued_ingestion_and_edit_writebacks_keep_latest_text_with_or_without_preview() {
+    let expected = "latest https://latest.example.test/path?q=%2F#part";
+    let destinations = ["https://latest.example.test/path?q=%2F#part"];
+    for native in [None, Some(preview())] {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("queued-edits.db");
+        {
+            let mut app = TestApp::with_database(&path);
+            let original = message("queued-edit", URL);
+            ingest(&mut app, original.clone(), native.clone());
+            assert_source(&app, "queued-edit", URL, &[URL]);
+            if let Some(native) = &native {
+                assert_preview(&app, "queued-edit", 0..URL.len(), native);
+            } else {
+                assert!(app.native_link_preview(&"queued-edit".into()).is_none());
+            }
+            for (action_id, replacement, occurred_at, arrival_order) in [
+                ("latest-edit", expected, 3, 2),
+                ("older-edit", "older https://older.example.test", 2, 1),
+            ] {
+                assert!(app.handle_whatsapp_event(wr::Event::MessageAction {
+                    action_id: action_id.into(),
+                    target_message_id: original.info.id.clone(),
+                    chat: original.info.chat.clone(),
+                    sender: original.info.sender.clone(),
+                    kind: wr::MessageActionKind::Edit {
+                        replacement: replacement.into(),
+                    },
+                    occurred_at,
+                    arrival_order,
+                }));
+                assert_source(&app, "queued-edit", expected, &destinations);
+                assert!(app.native_link_preview(&"queued-edit".into()).is_none());
+                assert!(app.message_status(&"queued-edit".into()).edited);
+            }
+        }
+        let mut app = TestApp::with_database(&path);
+        app.load_data_from_db();
+        assert_source(&app, "queued-edit", expected, &destinations);
+        assert!(app.native_link_preview(&"queued-edit".into()).is_none());
+        assert!(app.message_status(&"queued-edit".into()).edited);
+        let actions = app.db_handler.get_message_actions();
+        assert_eq!(actions.len(), 2);
+        assert!(
+            actions.iter().all(|action| matches!(
+                &action.kind,
+                wp_tui::app::MessageActionKind::Edit { replacement } if replacement.is_empty()
+            )),
+            "materialized edits must not retain replacement bodies"
+        );
+    }
+}
+
 #[test]
 fn edit_and_delete_remove_stale_native_metadata_in_memory_and_after_restart() {
     for (id, kind, expected) in [
