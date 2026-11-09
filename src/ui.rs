@@ -674,6 +674,7 @@ mod action_notice_tests {
             "Number check timed out",
             "WhatsApp returned no number result",
             "WhatsApp returned a mismatched number result",
+            "WhatsApp returned a mismatched query result",
             "Could not verify number",
             "WhatsApp is not connected",
             "Number is not on WhatsApp",

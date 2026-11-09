@@ -12,6 +12,7 @@ pub enum PhoneLookupError {
     TimedOut,
     EmptyResponse,
     ResponseMismatch,
+    QueryMismatch,
 }
 
 pub fn lookup_phone(phone: &str) -> Result<Option<JID>, PhoneLookupError> {
@@ -53,6 +54,7 @@ fn lookup_result(
         5 if jid.is_none() => Err(PhoneLookupError::TimedOut),
         6 if jid.is_none() => Err(PhoneLookupError::EmptyResponse),
         7 if jid.is_none() => Err(PhoneLookupError::ResponseMismatch),
+        8 if jid.is_none() => Err(PhoneLookupError::QueryMismatch),
         _ => Err(PhoneLookupError::InvalidBridgeResult),
     }
 }
@@ -110,8 +112,8 @@ mod tests {
     #[test]
     fn distinguishes_query_mismatch_without_bridge_payloads() {
         assert_eq!(
-            format!("{:?}", lookup_result(8, "+15551234567", None)),
-            "Err(QueryMismatch)"
+            lookup_result(8, "+15551234567", None),
+            Err(PhoneLookupError::QueryMismatch)
         );
     }
 

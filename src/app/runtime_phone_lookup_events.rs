@@ -67,6 +67,9 @@ impl App<'_> {
                     PhoneLookupError::ResponseMismatch => {
                         "WhatsApp returned a mismatched number result"
                     }
+                    PhoneLookupError::QueryMismatch => {
+                        "WhatsApp returned a mismatched query result"
+                    }
                 });
                 true
             }
@@ -136,6 +139,10 @@ mod tests {
             (
                 Err(PhoneLookupError::ResponseMismatch),
                 "WhatsApp returned a mismatched number result",
+            ),
+            (
+                Err(PhoneLookupError::QueryMismatch),
+                "WhatsApp returned a mismatched query result",
             ),
             (
                 Ok(Some(JID::from("15559876543@s.whatsapp.net".to_owned()))),
