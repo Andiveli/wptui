@@ -482,9 +482,9 @@ fn start_runtime(
                     }
                 } {
                     Ok(wr::ProfilePictureAvailability::Available(picture)) => {
-                        let unchanged = cached_source
-                            .as_ref()
-                            .is_some_and(|(id, bytes)| id == &picture.id && bytes == &picture.bytes);
+                        let unchanged = cached_source.as_ref().is_some_and(|(id, bytes)| {
+                            id == &picture.id && bytes == &picture.bytes
+                        });
                         if unchanged {
                             None
                         } else {
