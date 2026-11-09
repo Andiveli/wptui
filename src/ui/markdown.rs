@@ -262,6 +262,22 @@ impl Markdown {
         // occurrence in order (including repeated destinations).
         let mut from = 0;
         let mut urls = Vec::new();
+        // Unsupported bracket text stays literal. Pair bounds on each logical
+        // line, including nested brackets, without swallowing neighboring URLs.
+        let mut brackets = Vec::new();
+        let mut openings = Vec::new();
+        for (byte, ch) in source.char_indices() {
+            match ch {
+                '[' => openings.push(byte),
+                ']' => {
+                    if let Some(start) = openings.pop() {
+                        brackets.push(start..byte + 1);
+                    }
+                }
+                '\n' => openings.clear(),
+                _ => {}
+            }
+        }
         let images = source
             .match_indices("![")
             .filter_map(|(start, _)| {
@@ -287,6 +303,9 @@ impl Markdown {
             }) || images
                 .iter()
                 .any(|image| image.start < range.end && image.end > range.start)
+                // Test the URL's start, not overlap: brackets inside an IPv6
+                // authority belong to the URL and must not exclude it.
+                || brackets.iter().any(|bracket| bracket.contains(&start))
             {
                 continue;
             }
@@ -524,6 +543,64 @@ mod tests {
             Markdown::new(&source, None).project(&source).text,
             format!("start ({url}), @阿丽 {url} tail")
         );
+    }
+
+    #[test]
+    fn incoming_projection_preserves_literal_brackets_without_excluding_neighbor_urls() {
+        let url = "https://example.com/docs/install";
+        let label = "example.com · install";
+        for (source, expected, link_count) in [
+            (format!("[{url}]"), format!("[{url}]"), 0),
+            (
+                format!("{url} [{url}] {url} tail"),
+                format!("{label} [{url}] {label} tail"),
+                2,
+            ),
+            (
+                format!("{url} [text] {url} tail"),
+                format!("{label} [text] {label} tail"),
+                2,
+            ),
+            (
+                format!("[outer [inner] {url}] {url} tail"),
+                format!("[outer [inner] {url}] {label} tail"),
+                1,
+            ),
+            (
+                format!("[open\n{url} tail]"),
+                format!("[open\n{label} tail]"),
+                1,
+            ),
+        ] {
+            let saved = source.clone();
+            let projection = Markdown::new(&source, None).project_with_incoming_urls(&source, true);
+            assert_eq!(projection.text, expected, "{source}");
+            assert_eq!(projection.links.len(), link_count, "{source}");
+            for link in &projection.links {
+                assert_eq!(link.url, url);
+                assert_eq!(
+                    link.ranges
+                        .iter()
+                        .map(|range| &projection.text[range.clone()])
+                        .collect::<String>(),
+                    label
+                );
+            }
+            for token in [format!("[{url}]"), "tail".to_owned()] {
+                if let Some(start) = source.find(&token) {
+                    let ranges = projection.ranges(&[start..start + token.len()]);
+                    assert_eq!(
+                        ranges
+                            .iter()
+                            .map(|range| &projection.text[range.clone()])
+                            .collect::<String>(),
+                        token
+                    );
+                    assert_eq!(ranges[0].start, projection.text.find(&token).unwrap());
+                }
+            }
+            assert_eq!(source, saved);
+        }
     }
 
     #[test]
