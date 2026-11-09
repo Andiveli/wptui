@@ -51,24 +51,30 @@ impl Markdown {
         let mut offset = 0;
         for line in source.split('\n') {
             let end = offset + line.len();
+            // Recognize only up to three ASCII spaces; keep indentation visible
+            // and all formatting ranges anchored to the original source bytes.
+            let spaces = line.bytes().take_while(|byte| *byte == b' ').count();
+            let indent = if spaces <= 3 { spaces } else { 0 };
+            let block = &line[indent..];
+            let marker = offset + indent;
             // Code owns its contents, including what otherwise looks like a heading.
             if !result
                 .styles
-                .get(offset)
+                .get(marker)
                 .is_some_and(|s| s.add_modifier.contains(Modifier::REVERSED))
             {
-                let hashes = line.bytes().take_while(|byte| *byte == b'#').count();
-                if (1..=6).contains(&hashes) && line.as_bytes().get(hashes) == Some(&b' ') {
+                let hashes = block.bytes().take_while(|byte| *byte == b'#').count();
+                if (1..=6).contains(&hashes) && block.as_bytes().get(hashes) == Some(&b' ') {
                     result.format(
-                        offset..end,
-                        offset + hashes + 1..end,
+                        marker..end,
+                        marker + hashes + 1..end,
                         Style::default().add_modifier(Modifier::BOLD),
                         active,
                     );
-                } else if line.starts_with("> ") {
+                } else if block.starts_with("> ") {
                     result.format(
-                        offset..end,
-                        offset + 2..end,
+                        marker..end,
+                        marker + 2..end,
                         Style::default().add_modifier(Modifier::ITALIC | Modifier::DIM),
                         active,
                     );
@@ -477,6 +483,82 @@ mod tests {
             "# *literal*"
         );
         assert_eq!(Markdown::new(source, Some(12)).project(source).text, source);
+    }
+
+    #[test]
+    fn indented_blocks_preserve_source_offsets_and_active_markers() {
+        for indent in ["", " ", "  ", "   "] {
+            for (marker, modifier) in [
+                ("## ", Modifier::BOLD),
+                ("> ", Modifier::ITALIC | Modifier::DIM),
+            ] {
+                let source = format!("before\n{indent}{marker}阿丽\nafter");
+                let markdown = Markdown::new(&source, None);
+                let projected = markdown.project(&source);
+                assert_eq!(projected.text, format!("before\n{indent}阿丽\nafter"));
+                let content = source.find("阿丽").unwrap();
+                for byte in content..content + "阿丽".len() {
+                    assert!(markdown.style(byte).add_modifier.contains(modifier));
+                }
+                let prefix = "before\n".len();
+                for byte in prefix..prefix + indent.len() {
+                    assert!(markdown.visible(byte));
+                    assert_eq!(markdown.style(byte), Style::default());
+                }
+                let mapped = projected.ranges(&[content..content + "阿丽".len()]);
+                assert_eq!(mapped[0].start, prefix + indent.len());
+                assert_eq!(
+                    mapped.last().unwrap().end,
+                    prefix + indent.len() + "阿丽".len()
+                );
+                assert_eq!(
+                    Markdown::new(&source, Some(content)).project(&source).text,
+                    source
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn block_prefix_boundaries_and_indented_code_stay_literal() {
+        for source in [
+            "    ## heading",
+            "    > quote",
+            "     # heading",
+            "     > quote",
+            "\t## heading",
+            "\t> quote",
+            " \t# heading",
+            " \t> quote",
+            "   - item",
+            "   * item",
+        ] {
+            let projected = Markdown::new(source, None).project(source);
+            assert_eq!(projected.text, source);
+            assert!(
+                projected
+                    .styles
+                    .iter()
+                    .all(|(_, style)| *style == Style::default())
+            );
+        }
+        let source = "   ```\n   ## heading\n   > quote\n```";
+        let markdown = Markdown::new(source, None);
+        assert_eq!(
+            markdown.project(source).text,
+            "      ## heading\n   > quote"
+        );
+        for marker in ["##", ">"] {
+            let at = source.find(marker).unwrap();
+            assert!(markdown.visible(at));
+            assert_eq!(markdown.style(at).add_modifier, Modifier::REVERSED);
+        }
+        assert_eq!(
+            Markdown::new(source, Some(source.find("heading").unwrap()))
+                .project(source)
+                .text,
+            source
+        );
     }
 
     #[test]
