@@ -333,13 +333,8 @@ impl ContactAvatars {
                 ..
             } => {
                 self.unavailable.remove(&target);
-                let changed = self
-                    .protocols
-                    .get(&target)
-                    .is_none_or(|(id, _)| id != &picture_id);
-                if changed {
-                    self.insert(target.clone(), picture_id, protocol);
-                }
+                // Workers emit Available only when the ID or source bytes changed.
+                self.insert(target.clone(), picture_id, protocol);
                 self.refreshed.insert(target);
             }
             AvatarResult::Fallback { protocol, .. } => {
@@ -453,21 +448,23 @@ fn start_runtime(
                     .as_ref()
                     .and_then(|cache| cache.load_current(jid).ok().flatten())
                     .and_then(|(id, bytes)| {
-                        decode_protocol(&picker, &bytes).map(|protocol| (id, protocol))
+                        decode_protocol(&picker, &bytes).map(|protocol| (id, bytes, protocol))
                     });
-                let cached_id = cached.as_ref().map(|(id, _)| id.clone());
-                if let Some((picture_id, protocol)) = cached {
+                let cached_source = if let Some((picture_id, bytes, protocol)) = cached {
                     let _ = app_tx.send(AppInput::App(AppEvent::ContactAvatar(
                         AvatarResult::Cached {
                             generation: request.generation,
                             target: request.target.clone(),
-                            picture_id,
+                            picture_id: picture_id.clone(),
                             protocol,
                         },
                     )));
-                }
+                    Some((picture_id, bytes))
+                } else {
+                    None
+                };
                 if !request.refresh {
-                    if cached_id.is_some() {
+                    if cached_source.is_some() {
                         continue;
                     }
                     let _ = app_tx.send(AppInput::App(AppEvent::ContactAvatar(
@@ -485,20 +482,24 @@ fn start_runtime(
                     }
                 } {
                     Ok(wr::ProfilePictureAvailability::Available(picture)) => {
-                        let unchanged = cached_id.as_ref().is_some_and(|id| id == &picture.id);
+                        let unchanged = cached_source
+                            .as_ref()
+                            .is_some_and(|(id, bytes)| id == &picture.id && bytes == &picture.bytes);
                         if unchanged {
                             None
                         } else {
-                            if let Some(cache) = &cache {
-                                let _ = cache.store(jid, &picture.id, &picture.bytes);
-                            }
                             match decode_protocol(&picker, &picture.bytes) {
-                                Some(protocol) => Some(AvatarResult::Available {
-                                    generation: request.generation,
-                                    target: request.target.clone(),
-                                    picture_id: picture.id,
-                                    protocol,
-                                }),
+                                Some(protocol) => {
+                                    if let Some(cache) = &cache {
+                                        let _ = cache.store(jid, &picture.id, &picture.bytes);
+                                    }
+                                    Some(AvatarResult::Available {
+                                        generation: request.generation,
+                                        target: request.target.clone(),
+                                        picture_id: picture.id,
+                                        protocol,
+                                    })
+                                }
                                 None => Some(AvatarResult::Failed {
                                     generation: request.generation,
                                     target: request.target.clone(),
@@ -1374,7 +1375,91 @@ mod tests {
             );
             let (id, bytes) = legacy_cache.load_current(&contact).unwrap().unwrap();
             assert_eq!(id.as_ref(), "same-photo-id");
-            assert!(bytes == legacy_bytes, "legacy cache must remain unchanged");
+            assert!(
+                bytes == full_bytes,
+                "the original cache handle must also read the replacement full source"
+            );
+        }
+    }
+
+    #[test]
+    fn unchanged_and_invalid_downloads_preserve_cached_source() {
+        for (download_id, valid, expected_event) in [
+            ("same-photo-id", true, "refreshed"),
+            ("same-photo-id", false, "failed"),
+            ("new-photo-id", false, "failed"),
+        ] {
+            let root = tempdir().unwrap();
+            let contact = jid(1);
+            let target = AvatarTarget::Contact(contact.clone());
+            let bytes = include_bytes!("../../assets/contact-avatar-default.png");
+            let cache = cache_for_target(root.path(), &target).unwrap();
+            cache.store(&contact, "same-photo-id", bytes).unwrap();
+            let query = Arc::new(FakeAvatarQuery::default());
+            query.contact_results.lock().unwrap().push_back(Ok(
+                wr::ProfilePictureAvailability::Available(wr::ProfilePicture {
+                    id: download_id.into(),
+                    picture_type: "image".into(),
+                    bytes: if valid {
+                        bytes.to_vec()
+                    } else {
+                        b"invalid image".to_vec()
+                    },
+                }),
+            ));
+            let (app_tx, app_rx) = mpsc::channel();
+            let avatar_query: SharedAvatarQueryPort = query.clone();
+            let runtime = start_runtime(
+                root.path().into(),
+                app_tx,
+                Arc::new(Mutex::new(Picker::halfblocks())),
+                avatar_query,
+            );
+            *runtime.desired.lock().unwrap() = (1, [target.clone()].into());
+            runtime
+                .sender
+                .send(AvatarRequest {
+                    generation: 1,
+                    target: target.clone(),
+                    refresh: true,
+                })
+                .unwrap();
+            let mut events = Vec::new();
+            for _ in 0..2 {
+                match app_rx.recv_timeout(Duration::from_secs(2)).unwrap() {
+                    AppInput::App(AppEvent::ContactAvatar(result)) => {
+                        assert_eq!(result.generation(), 1);
+                        assert_eq!(result.target(), &target);
+                        events.push(match result {
+                            AvatarResult::Cached { .. } => "cached",
+                            AvatarResult::Failed { .. } => "failed",
+                            _ => panic!("unexpected preservation result"),
+                        });
+                    }
+                    AppInput::App(AppEvent::ContactAvatarRefreshed {
+                        generation,
+                        target: refreshed_target,
+                    }) => {
+                        assert_eq!(generation, 1);
+                        assert_eq!(refreshed_target, target);
+                        events.push("refreshed");
+                    }
+                    other => panic!("unexpected preservation input: {other:?}"),
+                }
+            }
+            runtime.shutdown();
+            assert_eq!(events, vec!["cached", expected_event]);
+            assert!(matches!(
+                app_rx.try_recv(),
+                Err(mpsc::TryRecvError::Disconnected)
+            ));
+            assert_eq!(
+                *query.calls.lock().unwrap(),
+                vec![AvatarQueryCall::Contact(contact.clone())]
+            );
+            let (id, stored) = cache.load_current(&contact).unwrap().unwrap();
+            assert_eq!(id.as_ref(), "same-photo-id");
+            assert_eq!(stored, bytes.to_vec());
         }
     }
 
