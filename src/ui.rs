@@ -702,7 +702,9 @@ mod action_notice_tests {
             action_notice_text(&app).as_deref(),
             Some("Forwarded: 1 ok, 1 failed (Send failed)")
         );
-        app.action_notice = Some(ActionNotice::ReplyPrivatelyNamed("Synthetic contact".into()));
+        app.action_notice = Some(ActionNotice::ReplyPrivatelyNamed(
+            "Synthetic contact".into(),
+        ));
         assert_eq!(
             action_notice_text(&app).as_deref(),
             Some("Replying to Synthetic contact privately")

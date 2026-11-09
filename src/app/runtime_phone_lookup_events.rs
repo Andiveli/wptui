@@ -160,10 +160,7 @@ mod tests {
         let mut app = awaiting_lookup();
         app.pending_phone_lookup = Some((2, "+15551234567".into()));
         app.action_notice = Some(ActionNotice::Unavailable("Checking number...".into()));
-        assert!(!app.handle_phone_lookup_event(completed(
-            1,
-            Err(PhoneLookupError::RequestFailed)
-        )));
+        assert!(!app.handle_phone_lookup_event(completed(1, Err(PhoneLookupError::RequestFailed))));
         assert_eq!(
             app.pending_phone_lookup.as_ref().map(|pending| pending.0),
             Some(2)
