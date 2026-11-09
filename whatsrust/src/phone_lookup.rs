@@ -108,8 +108,16 @@ mod tests {
     }
 
     #[test]
+    fn distinguishes_query_mismatch_without_bridge_payloads() {
+        assert_eq!(
+            format!("{:?}", lookup_result(8, "+15551234567", None)),
+            "Err(QueryMismatch)"
+        );
+    }
+
+    #[test]
     fn diagnostic_statuses_cannot_carry_a_recipient() {
-        for status in [5, 6, 7] {
+        for status in [5, 6, 7, 8] {
             assert_eq!(
                 lookup_result(status, "+15551234567", Some("15551234567@s.whatsapp.net")),
                 Err(PhoneLookupError::InvalidBridgeResult)

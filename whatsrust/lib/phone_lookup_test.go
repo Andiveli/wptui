@@ -26,7 +26,11 @@ func TestLookupPhoneRequiresServerConfirmedRequestedNumber(t *testing.T) {
 		{name: "not registered", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: lid, PhoneNumber: pn}}, want: phoneLookupResult{status: phoneLookupNotRegistered}, query: true},
 		// New diagnostic statuses append to the ABI; existing values 0-4 stay fixed.
 		{name: "mismatched PN", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: lid, PhoneNumber: types.NewJID("15559876543", types.DefaultUserServer), IsIn: true}}, want: phoneLookupResult{status: 7}, query: true},
-		{name: "mismatched query", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: "+15559876543", JID: lid, PhoneNumber: pn, IsIn: true}}, want: phoneLookupResult{status: 7}, query: true},
+		{name: "mismatched query", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: "+15559876543", JID: lid, PhoneNumber: pn, IsIn: true}}, want: phoneLookupResult{status: 8}, query: true},
+		{name: "matching response after unrelated query", phone: phone, responses: []types.IsOnWhatsAppResponse{
+			{Query: "+15559876543", JID: lid, PhoneNumber: types.NewJID("15559876543", types.DefaultUserServer), IsIn: true},
+			{Query: phone, JID: lid, PhoneNumber: pn, IsIn: true},
+		}, want: phoneLookupResult{status: phoneLookupFound, jid: pn.String()}, query: true},
 		{name: "missing reply", phone: phone, want: phoneLookupResult{status: 6}, query: true},
 		{name: "deadline exceeded", phone: phone, err: context.DeadlineExceeded, want: phoneLookupResult{status: 5}, query: true},
 		{name: "wrapped deadline exceeded", phone: phone, err: fmt.Errorf("synthetic query: %w", context.DeadlineExceeded), want: phoneLookupResult{status: 5}, query: true},
