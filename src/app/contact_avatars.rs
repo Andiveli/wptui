@@ -1230,7 +1230,9 @@ mod tests {
         let target = AvatarTarget::Contact(contact.clone());
         let encode = |source: &image::DynamicImage| {
             let mut bytes = io::Cursor::new(Vec::new());
-            source.write_to(&mut bytes, image::ImageFormat::Png).unwrap();
+            source
+                .write_to(&mut bytes, image::ImageFormat::Png)
+                .unwrap();
             bytes.into_inner()
         };
         let legacy = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
@@ -1238,17 +1240,13 @@ mod tests {
             100,
             image::Rgb([255, 0, 0]),
         ));
-        let full = image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(
-            640,
-            640,
-            |x, y| {
-                image::Rgb([
-                    ((x / 8) % 2 * 192) as u8,
-                    ((y / 8) % 2 * 160) as u8,
-                    ((x + y) % 256) as u8,
-                ])
-            },
-        ));
+        let full = image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(640, 640, |x, y| {
+            image::Rgb([
+                ((x / 8) % 2 * 192) as u8,
+                ((y / 8) % 2 * 160) as u8,
+                ((x + y) % 256) as u8,
+            ])
+        }));
         let legacy_bytes = encode(&legacy);
         let full_bytes = encode(&full);
         assert!(full_bytes.len() <= 512 * 1024);
@@ -1260,11 +1258,13 @@ mod tests {
         for online in [true, false] {
             let query = Arc::new(FakeAvatarQuery::default());
             query.contact_results.lock().unwrap().push_back(if online {
-                Ok(wr::ProfilePictureAvailability::Available(wr::ProfilePicture {
-                    id: "same-photo-id".into(),
-                    picture_type: "image".into(),
-                    bytes: full_bytes.clone(),
-                }))
+                Ok(wr::ProfilePictureAvailability::Available(
+                    wr::ProfilePicture {
+                        id: "same-photo-id".into(),
+                        picture_type: "image".into(),
+                        bytes: full_bytes.clone(),
+                    },
+                ))
             } else {
                 Err(wr::ProfilePictureError::Download)
             });
@@ -1334,9 +1334,11 @@ mod tests {
                     avatars.protocol_mut(&target).unwrap()
                 };
                 let mut actual = Buffer::empty(area);
-                StatefulImage::default()
-                    .resize(Resize::Scale(None))
-                    .render(area, &mut actual, protocol);
+                StatefulImage::default().resize(Resize::Scale(None)).render(
+                    area,
+                    &mut actual,
+                    protocol,
+                );
                 let reference = picker
                     .lock()
                     .unwrap()
