@@ -53,7 +53,19 @@ jobs:
         run: cargo fmt --check
 
       - name: Run Rust tests
+        env:
+          WPTUI_CAPTURE_PREVIEW_SNAPSHOTS: ${{ github.ref == 'refs/heads/preview/visible-link-previews' && '1' || '' }}
         run: cargo test --locked -- --test-threads=1
+
+      # Feature-branch cell evidence only, not terminal image-protocol screenshots.
+      - name: Upload link preview TestBackend snapshots
+        if: success() && github.ref == 'refs/heads/preview/visible-link-previews'
+        uses: actions/upload-artifact@v7
+        with:
+          name: link-preview-cells-${{ github.sha }}
+          path: target/preview-snapshots/*.json
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Build Linux preview
         run: cargo build --locked --release
