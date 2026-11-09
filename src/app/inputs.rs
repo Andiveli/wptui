@@ -61,6 +61,11 @@ impl App<'_> {
     }
 
     pub fn on_terminal_event(&mut self, event: Event) {
+        if let Event::Paste(ref text) = event {
+            // A paste block is text, never a stream of keys that could submit.
+            self.handle_terminal_paste(text);
+            return;
+        }
         if let Event::Mouse(mouse) = event {
             self.on_mouse_event(mouse);
             return;

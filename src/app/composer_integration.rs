@@ -28,17 +28,36 @@ impl App<'_> {
         self.composer_viewport_width = width.max(1);
     }
 
+    fn composer_owns_input(&self) -> bool {
+        self.focus_pane == FocusPane::Conversation
+            && matches!(self.selected_section, Section::Chats | Section::Communities)
+            && matches!(
+                self.conversation_mode,
+                ConversationMode::ComposerEditing | ConversationMode::EditingMessage
+            )
+    }
+
+    pub(crate) fn accepts_terminal_paste(&self) -> bool {
+        self.composer_owns_input()
+            && !self.pending_logout
+            && !self.logout_in_progress
+            && !self.should_quit
+            && !self.composer_blocked()
+            && !(self.conversation_mode == ConversationMode::ComposerEditing
+                && self.vim_composer_mode == Some(VimComposerMode::Normal))
+    }
+
+    pub(crate) fn handle_terminal_paste(&mut self, text: &str) {
+        if self.accepts_terminal_paste() {
+            self.composer.insert_text(text);
+        }
+    }
+
     /// Handles the composer-owned part of terminal input.
     ///
     /// Returns `true` when the composer owns the current input context.
     pub(crate) fn handle_composer_input(&mut self, key: Key) -> bool {
-        if self.focus_pane != FocusPane::Conversation
-            || !matches!(self.selected_section, Section::Chats | Section::Communities)
-            || !matches!(
-                self.conversation_mode,
-                ConversationMode::ComposerEditing | ConversationMode::EditingMessage
-            )
-        {
+        if !self.composer_owns_input() {
             return false;
         }
 

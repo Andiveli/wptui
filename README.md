@@ -476,6 +476,13 @@ removes the local row, but does not itself prove removal from every recipient's 
 | Media viewer | Previous / next | `h`/`l` or arrows |
 | Media viewer | Save image or video as a file | `s` opens folder picker; `j`/`k` or Up/Down selects, `h`/Left goes up, `l`/Right opens folder, `/` filters folders; `Enter` edits basename, `Enter` saves; `Esc` leaves search/editing before closing |
 
+In an editable Chats/Communities composer (including Vim Insert and message editing),
+terminal paste inserts the complete text block at the cursor, preserving line breaks without
+sending. Press `Enter` separately to submit. Bracketed paste is enabled only while that
+composer owns editable input; search and other screens keep their existing input behavior.
+If the terminal delivers `Ctrl+V` as a key instead, the existing clipboard text/file/image
+handling still applies.
+
 Save As starts in the app's current working directory. Browse folders in the viewer, then edit the
 separate proposed basename and confirm. The extension is displayed but fixed from the source
 media format (or a kind-based fallback). The basename must be a single component, not a path.

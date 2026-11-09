@@ -60,6 +60,14 @@ impl wp_tui::app::actions::ClipboardReader for TextClipboardReader {
     }
 }
 
+struct NoClipboardAccess;
+
+impl wp_tui::app::actions::ClipboardReader for NoClipboardAccess {
+    fn read_paste(&mut self) -> Result<ClipboardPaste, ClipboardError> {
+        panic!("Terminal paste must use its event payload, not the system clipboard")
+    }
+}
+
 struct AttachmentClipboardReader;
 
 impl wp_tui::app::actions::ClipboardReader for AttachmentClipboardReader {
@@ -195,6 +203,120 @@ fn control_v_preserves_complete_text_through_composer_submission() {
         };
         assert_eq!(display_text.as_ref(), expected, "{name}: display source");
         assert!(app.composer.text().is_empty(), "{name}: submitted draft");
+    }
+}
+
+#[test]
+fn terminal_paste_preserves_all_lines_until_explicit_submission() {
+    let mut app = TestApp::new();
+    app.focus_pane = wp_tui::app::actions::FocusPane::Conversation;
+    app.conversation_mode = ConversationMode::ComposerEditing;
+    app.clipboard_reader = Box::new(NoClipboardAccess);
+    let pasted = "uno\ndos\ntres";
+
+    app.on_terminal_event(Event::Paste(pasted.into()));
+
+    assert_eq!(
+        app.composer.text(),
+        pasted,
+        "complete terminal paste source"
+    );
+    assert_eq!(app.conversation_mode, ConversationMode::ComposerEditing);
+    assert!(app.composer.pending.is_empty());
+    assert_eq!(app.action_notice, None);
+
+    let outcome = app.composer.apply(ComposerAction::Submit);
+
+    assert_eq!(outcome.text_messages(), [pasted]);
+    assert!(outcome.file_messages().is_empty());
+    let ComposerOutcome::Submit { display_text, .. } = outcome else {
+        panic!("Expected one explicitly submitted multiline message");
+    };
+    assert_eq!(display_text.as_ref(), pasted);
+    assert!(app.composer.text().is_empty());
+}
+
+#[test]
+fn terminal_paste_rejection_preserves_draft_attachments_and_mode() {
+    use wp_tui::app::actions::{FocusPane, Section, VimComposerMode};
+
+    for guard in [
+        "focus",
+        "section",
+        "navigation",
+        "vim normal",
+        "logout",
+        "logging out",
+        "blocked",
+    ] {
+        let mut app = TestApp::new();
+        app.focus_pane = FocusPane::Conversation;
+        app.conversation_mode = ConversationMode::ComposerEditing;
+        app.clipboard_reader = Box::new(NoClipboardAccess);
+        app.composer.insert_text("draft");
+        app.composer
+            .queue_attachment("existing.pdf".into(), whatsrust::FileKind::Document);
+        match guard {
+            "focus" => app.focus_pane = FocusPane::ChatList,
+            "section" => app.selected_section = Section::Status,
+            "navigation" => app.conversation_mode = ConversationMode::MessageNavigation,
+            "vim normal" => app.vim_composer_mode = Some(VimComposerMode::Normal),
+            "logout" => app.pending_logout = true,
+            "logging out" => app.logout_in_progress = true,
+            "blocked" => {
+                let group = whatsrust::JID("123@g.us".into());
+                app.open_chat_by_jid(group.clone());
+                app.group_permissions.insert(
+                    group.clone(),
+                    whatsrust::GroupInfo {
+                        jid: group,
+                        name: "Admins only".into(),
+                        is_announce: true,
+                        is_admin: false,
+                    },
+                );
+            }
+            _ => unreachable!(),
+        }
+        let text = app.composer.text();
+        let pending = app.composer.pending.len();
+        let mode = app.conversation_mode;
+
+        app.on_terminal_event(Event::Paste("uno\ndos\ntres".into()));
+
+        assert_eq!(app.composer.text(), text, "{guard}");
+        assert_eq!(app.composer.pending.len(), pending, "{guard}");
+        if pending != 0 {
+            assert_eq!(app.composer.pending[0].path.as_ref(), "existing.pdf");
+        }
+        assert_eq!(app.conversation_mode, mode, "{guard}");
+        assert_eq!(app.action_notice, None, "{guard}");
+        assert!(!app.should_quit, "{guard}");
+    }
+}
+
+#[test]
+fn terminal_paste_inserts_at_cursor_in_message_editing_and_vim_insert() {
+    use wp_tui::app::actions::{FocusPane, VimComposerMode};
+
+    for mode in [
+        ConversationMode::EditingMessage,
+        ConversationMode::ComposerEditing,
+    ] {
+        let mut app = TestApp::new();
+        app.focus_pane = FocusPane::Conversation;
+        app.conversation_mode = mode;
+        app.vim_composer_mode = Some(VimComposerMode::Insert);
+        app.clipboard_reader = Box::new(NoClipboardAccess);
+        app.composer.insert_text("ab");
+        app.on_terminal_event(terminal_event(Key::k(KeyCode::Left)));
+
+        app.on_terminal_event(Event::Paste("uno\ndos\ntres".into()));
+
+        assert_eq!(app.composer.text(), "auno\ndos\ntresb");
+        assert_eq!(app.conversation_mode, mode);
+        assert!(app.composer.pending.is_empty());
+        assert_eq!(app.action_notice, None);
     }
 }
 

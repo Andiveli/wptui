@@ -181,8 +181,12 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
     let mut media_render_plan = MediaRenderPlan::default();
     let mut visibility_plan = crate::app::read_receipts::VisibilityPlan::default();
     let draw_result = terminal_session
-        .terminal_mut()
-        .draw(|frame| ui::draw_with_plan(frame, app, &mut media_render_plan, &mut visibility_plan));
+        .sync_paste_mode(app.accepts_terminal_paste())
+        .and_then(|()| {
+            terminal_session.terminal_mut().draw(|frame| {
+                ui::draw_with_plan(frame, app, &mut media_render_plan, &mut visibility_plan)
+            })
+        });
     if let Err(error) = &draw_result {
         error!("Failed to draw terminal UI: {error}");
         app.news.star.shutdown();
@@ -285,6 +289,11 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
                 true
             }
         };
+
+        if let Err(error) = terminal_session.sync_paste_mode(app.accepts_terminal_paste()) {
+            error!("Failed to synchronize terminal paste mode: {error}");
+            break;
+        }
 
         app.activate_news_star();
         app.sync_selected_presence();
