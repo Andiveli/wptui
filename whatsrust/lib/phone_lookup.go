@@ -74,7 +74,7 @@ func lookupPhone(ctx context.Context, phone string, query phoneLookupQuery) phon
 		if !response.IsIn {
 			return phoneLookupResult{status: phoneLookupNotRegistered}
 		}
-		if response.PhoneNumber.ToNonAD() == requested || response.JID.ToNonAD() == requested {
+		if matchesRequestedPhoneIdentity(response.PhoneNumber, requested) || matchesRequestedPhoneIdentity(response.JID, requested) {
 			return phoneLookupResult{status: phoneLookupFound, jid: requested.String()}
 		}
 		// These categories describe response shape only, not an alternate recipient.
@@ -88,6 +88,16 @@ func lookupPhone(ctx context.Context, phone string, query phoneLookupQuery) phon
 		return phoneLookupResult{status: phoneLookupResponseMismatch}
 	}
 	return phoneLookupResult{status: phoneLookupQueryMismatch}
+}
+
+// matchesRequestedPhoneIdentity recognizes only the SDK's legacy user namespace
+// as equivalent to the canonical PN namespace. Digits and integrator stay exact.
+func matchesRequestedPhoneIdentity(identity, requested types.JID) bool {
+	identity = identity.ToNonAD()
+	if identity.Server == types.LegacyUserServer {
+		identity.Server = types.DefaultUserServer
+	}
+	return identity == requested
 }
 
 //export C_LookupPhone

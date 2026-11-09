@@ -217,6 +217,9 @@ number, recipient identity, or raw error details; number lookup adds no diagnost
 The LID-only and different-phone-number categories describe response shape only:
 they do not prove legitimate number normalization or permit opening another recipient.
 Only confirmation of the exact requested phone number permits opening a conversation.
+For that comparison, WhatsApp's legacy `c.us` user namespace is treated as equivalent
+to `s.whatsapp.net`, without changing any phone-number digits. An accepted lookup
+opens the canonical `s.whatsapp.net` identity for the number entered, never a different number.
 
 ### Diagnostics
 
