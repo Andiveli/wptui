@@ -312,6 +312,71 @@ fn markdown_preview_cursor_uses_visible_columns_and_submit_keeps_source() {
 }
 
 #[test]
+fn labeled_link_preview_reveals_active_source_and_submits_original_destination() {
+    use ratatui::style::Modifier;
+
+    let source = "[Ejemplo](https://example.com) tail";
+    let mut composer = Composer::default();
+    composer.insert_text(source);
+    composer.set_cursor_offset(3);
+    assert_eq!(
+        composer.visual_layout(ComposerDirection::Auto, 80).text(),
+        source
+    );
+    assert_eq!(composer.text(), source);
+    composer.set_cursor_offset(source.chars().count());
+    let layout = composer.visual_layout(ComposerDirection::Auto, 80);
+    assert_eq!(layout.text(), "Ejemplo tail");
+    for span in layout.lines()[0].spans.iter().take("Ejemplo".len()) {
+        assert!(span.style.add_modifier.contains(Modifier::UNDERLINED));
+    }
+    assert_eq!(composer.visual_cursor(80, ComposerDirection::Auto), (0, 12));
+    assert_eq!(composer.text(), source);
+    let outcome = composer.apply(ComposerAction::Submit);
+    assert_eq!(outcome.text_messages(), vec![source]);
+    assert!(matches!(
+        &outcome,
+        ComposerOutcome::Submit { display_text, .. } if display_text.as_ref() == source
+    ));
+    assert!(composer.text().is_empty());
+}
+
+#[test]
+fn literal_markdown_and_bare_url_code_previews_keep_exact_submit_source() {
+    for (source, preview) in [
+        ("[enlace sin destino] tail", "[enlace sin destino] tail"),
+        (
+            "![imagen no soportada](https://example.com/image.png) tail",
+            "![imagen no soportada](https://example.com/image.png) tail",
+        ),
+        (
+            "https://example.com/_docs_ tail",
+            "https://example.com/_docs_ tail",
+        ),
+        (
+            "`[Ejemplo](https://example.com)` tail",
+            "[Ejemplo](https://example.com) tail",
+        ),
+    ] {
+        let mut composer = Composer::default();
+        composer.insert_text(source);
+        assert_eq!(
+            composer.visual_layout(ComposerDirection::Auto, 80).text(),
+            preview,
+            "{source}"
+        );
+        assert_eq!(composer.text(), source);
+        let outcome = composer.apply(ComposerAction::Submit);
+        assert_eq!(outcome.text_messages(), vec![source]);
+        assert!(matches!(
+            &outcome,
+            ComposerOutcome::Submit { display_text, .. } if display_text.as_ref() == source
+        ));
+        assert!(composer.text().is_empty());
+    }
+}
+
+#[test]
 fn live_markdown_reveals_only_active_fragment_and_navigation_reaches_source() {
     use ratatui::style::Modifier;
     let mut composer = Composer::default();

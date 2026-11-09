@@ -542,6 +542,27 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_bracket_text_and_http_image_remain_exactly_literal() {
+        for source in [
+            "[enlace sin destino]",
+            "![imagen no soportada](https://example.com/image.png)",
+        ] {
+            let saved = source.to_owned();
+            let lines = super::markdown_content_lines(source, &[], None, 80, &[]);
+            assert_eq!(lines.len(), 1, "{source}");
+            assert_eq!(lines[0].to_string(), source);
+            assert_eq!(lines, inline_content_lines(source, &[], None, 80));
+            let mut painted = Buffer::empty(Rect::new(0, 0, 80, 1));
+            Paragraph::new(lines).render(painted.area, &mut painted);
+            let text = (0..source.len() as u16)
+                .map(|x| painted[(x, 0)].symbol())
+                .collect::<String>();
+            assert_eq!(text, source);
+            assert_eq!(source, saved);
+        }
+    }
+
+    #[test]
     fn markdown_wrapping_uses_visible_graphemes_and_keeps_rtl_styles() {
         for source in [
             "**hello**",

@@ -339,7 +339,7 @@ mod tests {
     fn nesting_unicode_links_and_source_ranges_are_preserved() {
         let source = "**_阿丽 👩‍💻_** [site](https://example.com)";
         let projected = Markdown::new(source, None).project(source);
-        assert_eq!(projected.text, "阿丽 👩‍💻 site(https://example.com)");
+        assert_eq!(projected.text, "阿丽 👩‍💻 site");
         assert!(
             projected.styles[0]
                 .1

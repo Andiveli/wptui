@@ -576,6 +576,139 @@ mod layout_contract_tests {
     }
 
     #[test]
+    fn outgoing_multiline_headings_and_quotes_hide_markers_with_styles_and_keep_source() {
+        use ratatui::buffer::Buffer;
+
+        // One message, not independent parser instances: include both kinds of
+        // fences and surrounding text to exercise paragraph offsets and code ownership.
+        let source = concat!(
+            "# Heading one\n## Heading two\n### Heading three\n",
+            "#### Heading four\n##### Heading five\n###### Heading six\n\n",
+            "*bold* _italic_ ~strike~ `inline` **strong** **_nested_**\n",
+            "> Quote one\n> Quote two\n- item\n1. item\n",
+            "before plain\n```\n# literal heading\n> literal quote\n```\n",
+            "between fences\n```rust\n## rust heading\n> rust quote\n```\n",
+            "after café\n"
+        );
+        let expected = [
+            ("Heading one", Modifier::BOLD),
+            ("Heading two", Modifier::BOLD),
+            ("Heading three", Modifier::BOLD),
+            ("Heading four", Modifier::BOLD),
+            ("Heading five", Modifier::BOLD),
+            ("Heading six", Modifier::BOLD),
+            ("", Modifier::empty()),
+            ("bold italic strike inline strong nested", Modifier::empty()),
+            ("Quote one", Modifier::ITALIC | Modifier::DIM),
+            ("Quote two", Modifier::ITALIC | Modifier::DIM),
+            ("- item", Modifier::empty()),
+            ("1. item", Modifier::empty()),
+            ("before plain", Modifier::empty()),
+            ("# literal heading", Modifier::REVERSED),
+            ("> literal quote", Modifier::REVERSED),
+            ("between fences", Modifier::empty()),
+            ("## rust heading", Modifier::REVERSED),
+            ("> rust quote", Modifier::REVERSED),
+            ("after café", Modifier::empty()),
+            ("", Modifier::empty()),
+        ];
+        let mut app = crate::app::test_support::TestApp::new();
+        let message = wr::Message {
+            info: wr::MessageInfo {
+                id: "outgoing-markdown-block".into(),
+                chat: "chat@g.us".to_owned().into(),
+                sender: "sender@s.whatsapp.net".to_owned().into(),
+                mentions_self: false,
+                timestamp: 0,
+                is_from_me: true,
+                quote_id: None,
+                read_by: 0,
+                forwarding: Default::default(),
+            },
+            message: wr::MessageContent::Text(source.into()),
+        };
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 80, 24));
+        super::render_message(
+            &mut buffer,
+            &message,
+            false,
+            super::AuthorGroupContext::CONTINUATION,
+            &mut app,
+            Rect::new(0, 0, 80, 24),
+            &mut MediaRenderPlan::default(),
+            false,
+            MessageTextMode::Chat,
+        );
+        for (y, (text, modifier)) in expected.iter().enumerate() {
+            let painted = (0..80)
+                .map(|x| buffer[(x, y as u16)].symbol())
+                .collect::<String>();
+            assert_eq!(painted.trim_end(), *text, "outgoing row {y}");
+            for x in 0..text.chars().count() {
+                assert!(
+                    buffer[(x as u16, y as u16)].modifier.contains(*modifier),
+                    "style at outgoing row {y}, cell {x}: {text}"
+                );
+            }
+        }
+        assert!(matches!(
+            &message.message,
+            wr::MessageContent::Text(text) if text.as_ref() == source
+        ));
+    }
+
+    #[test]
+    fn labeled_link_renders_only_styled_label_and_hits_only_label_cells() {
+        use ratatui::buffer::Buffer;
+
+        let source = "before [Ejemplo](https://example.com) after";
+        let mut app = crate::app::test_support::TestApp::new();
+        let id: wr::MessageId = "labeled-link".into();
+        let message = wr::Message {
+            info: wr::MessageInfo {
+                id: id.clone(),
+                chat: "chat@g.us".to_owned().into(),
+                sender: "sender@s.whatsapp.net".to_owned().into(),
+                mentions_self: false,
+                timestamp: 0,
+                is_from_me: true,
+                quote_id: None,
+                read_by: 0,
+                forwarding: Default::default(),
+            },
+            message: wr::MessageContent::Text(source.into()),
+        };
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 60, 3));
+        super::render_message(
+            &mut buffer,
+            &message,
+            false,
+            super::AuthorGroupContext::CONTINUATION,
+            &mut app,
+            Rect::new(3, 1, 50, 1),
+            &mut MediaRenderPlan::default(),
+            false,
+            MessageTextMode::Chat,
+        );
+        let hits = &app.mouse_hit_map.urls;
+        assert_eq!(hits.len(), "Ejemplo".len());
+        for (index, hit) in hits.iter().enumerate() {
+            assert_eq!(hit.id, id);
+            assert_eq!(hit.url, "https://example.com");
+            assert_eq!(hit.area, Rect::new(10 + index as u16, 1, 1, 1));
+            let cell = &buffer[(hit.area.x, hit.area.y)];
+            assert_eq!(cell.symbol(), &"Ejemplo"[index..index + 1]);
+            assert!(cell.modifier.contains(Modifier::UNDERLINED));
+        }
+        let painted = (3..53).map(|x| buffer[(x, 1)].symbol()).collect::<String>();
+        assert_eq!(painted.trim_end(), "before Ejemplo after");
+        assert!(matches!(
+            &message.message,
+            wr::MessageContent::Text(text) if text.as_ref() == source
+        ));
+    }
+
+    #[test]
     fn formatted_bare_url_keeps_its_original_mouse_destination() {
         let body = "https://example.com/_docs_";
         let mut app = crate::app::test_support::TestApp::new();
@@ -601,10 +734,10 @@ mod layout_contract_tests {
             widgets::{Paragraph, Widget},
         };
         let mut app = crate::app::test_support::TestApp::new();
-        for body in [
-            "**https://example.com**",
-            "[site](https://example.com)",
-            "`https://example.com`",
+        for (body, expected_cells) in [
+            ("**https://example.com**", "https://example.com"),
+            ("[site](https://example.com)", "site"),
+            ("`https://example.com`", "https://example.com"),
         ] {
             app.mouse_hit_map.urls.clear();
             super::record_url_hits(
@@ -625,7 +758,7 @@ mod layout_contract_tests {
                 .iter()
                 .map(|hit| buffer[(hit.area.x - 3, hit.area.y - 4)].symbol())
                 .collect::<String>();
-            assert_eq!(painted, "https://example.com");
+            assert_eq!(painted, expected_cells);
         }
     }
 
