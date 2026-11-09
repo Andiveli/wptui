@@ -13,6 +13,7 @@ import "C"
 
 import (
 	"context"
+	"errors"
 	"time"
 	"unsafe"
 
@@ -25,6 +26,9 @@ const (
 	phoneLookupInvalidNumber
 	phoneLookupUnavailable
 	phoneLookupFailed
+	phoneLookupTimedOut
+	phoneLookupEmptyResponse
+	phoneLookupResponseMismatch
 )
 
 type phoneLookupResult struct {
@@ -51,7 +55,13 @@ func lookupPhone(ctx context.Context, phone string, query phoneLookupQuery) phon
 	}
 	responses, err := query(ctx, []string{phone})
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return phoneLookupResult{status: phoneLookupTimedOut}
+		}
 		return phoneLookupResult{status: phoneLookupFailed}
+	}
+	if len(responses) == 0 {
+		return phoneLookupResult{status: phoneLookupEmptyResponse}
 	}
 	requested := types.NewJID(phone[1:], types.DefaultUserServer)
 	for _, response := range responses {
@@ -64,9 +74,9 @@ func lookupPhone(ctx context.Context, phone string, query phoneLookupQuery) phon
 		if response.PhoneNumber.ToNonAD() == requested || response.JID.ToNonAD() == requested {
 			return phoneLookupResult{status: phoneLookupFound, jid: requested.String()}
 		}
-		return phoneLookupResult{status: phoneLookupFailed}
+		return phoneLookupResult{status: phoneLookupResponseMismatch}
 	}
-	return phoneLookupResult{status: phoneLookupFailed}
+	return phoneLookupResult{status: phoneLookupResponseMismatch}
 }
 
 //export C_LookupPhone
