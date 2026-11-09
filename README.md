@@ -191,6 +191,26 @@ When running through Cargo, separate application arguments with `--`:
 cargo run -- --phone +1234567890
 ```
 
+### Number lookup notices
+
+An unsuccessful number check leaves the search open without opening a conversation
+or sending a message. The notice appears as plain text:
+
+| Notice | Meaning / next step |
+|---|---|
+| `Number is not on WhatsApp` | WhatsApp reported that the requested number is not registered. |
+| `Number check timed out` | The check exceeded its deadline; retry the search. |
+| `WhatsApp returned no number result` | No result was returned; retry the search. |
+| `WhatsApp returned a mismatched number result` | The reply did not confirm the requested number; no recipient is opened. Retry the search. |
+| `Could not check number` | The request failed; retry the search. |
+| `Could not verify number` | The result could not be safely verified; no recipient is opened. |
+| `WhatsApp is not connected` | Reconnect WhatsApp, then retry the search. |
+| `Use + followed by 7-15 digits` | Correct the international number format, then retry. |
+
+A failed, timed-out, empty, or mismatched check does **not** mean the number is
+unregistered. These notices use fixed categories, without including the entered
+number, recipient identity, or raw error details; number lookup adds no diagnostic logging.
+
 ### Diagnostics
 
 To trace edited/deleted message processing, run with:

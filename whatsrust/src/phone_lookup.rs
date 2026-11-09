@@ -9,6 +9,9 @@ pub enum PhoneLookupError {
     ClientUnavailable,
     RequestFailed,
     InvalidBridgeResult,
+    TimedOut,
+    EmptyResponse,
+    ResponseMismatch,
 }
 
 pub fn lookup_phone(phone: &str) -> Result<Option<JID>, PhoneLookupError> {
@@ -47,6 +50,9 @@ fn lookup_result(
         2 if jid.is_none() => Err(PhoneLookupError::InvalidNumber),
         3 if jid.is_none() => Err(PhoneLookupError::ClientUnavailable),
         4 if jid.is_none() => Err(PhoneLookupError::RequestFailed),
+        5 if jid.is_none() => Err(PhoneLookupError::TimedOut),
+        6 if jid.is_none() => Err(PhoneLookupError::EmptyResponse),
+        7 if jid.is_none() => Err(PhoneLookupError::ResponseMismatch),
         _ => Err(PhoneLookupError::InvalidBridgeResult),
     }
 }
@@ -88,12 +94,16 @@ mod tests {
 
     #[test]
     fn exposes_safe_diagnostic_categories_without_bridge_payloads() {
-        for (status, category) in [(5, "TimedOut"), (6, "EmptyResponse"), (7, "ResponseMismatch")] {
-            // Compare public Debug output until the production variants exist, so
-            // the RED is behavioral rather than an undefined-variant build error.
-            let result = lookup_result(status, "+15551234567", None)
-                .map_err(|error| format!("{error:?}"));
-            assert_eq!(result, Err(category.to_owned()), "status {status}");
+        for (status, expected) in [
+            (5, PhoneLookupError::TimedOut),
+            (6, PhoneLookupError::EmptyResponse),
+            (7, PhoneLookupError::ResponseMismatch),
+        ] {
+            assert_eq!(
+                lookup_result(status, "+15551234567", None),
+                Err(expected),
+                "status {status}"
+            );
         }
     }
 

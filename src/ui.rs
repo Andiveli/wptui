@@ -560,6 +560,7 @@ pub(super) fn action_notice_text(app: &App) -> Option<String> {
         crate::app::actions::ActionNotice::ReplyPrivatelyNamed(name) => {
             format!("Replying to {name} privately")
         }
+        crate::app::actions::ActionNotice::Unavailable(message) => message.clone(),
         _ => format!("{notice:?}"),
     })
 }
@@ -687,6 +688,8 @@ mod action_notice_tests {
     fn existing_notice_formatting_is_preserved() {
         let mut app = TestApp::new();
         assert_eq!(action_notice_text(&app), None);
+        app.action_notice = Some(ActionNotice::Cancelled);
+        assert_eq!(action_notice_text(&app).as_deref(), Some("Cancelled"));
         app.action_notice = Some(ActionNotice::Forwarded {
             succeeded: 2,
             failed: 0,

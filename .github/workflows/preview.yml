@@ -52,6 +52,9 @@ jobs:
       - name: Check Rust formatting
         run: cargo fmt --check
 
+      - name: Test Rust bridge adapter
+        run: cargo test --manifest-path whatsrust/Cargo.toml --locked -- --test-threads=1
+
       - name: Run Rust tests
         run: cargo test --locked -- --test-threads=1
 

@@ -55,6 +55,11 @@ impl App<'_> {
                     PhoneLookupError::ClientUnavailable => "WhatsApp is not connected",
                     PhoneLookupError::RequestFailed => "Could not check number",
                     PhoneLookupError::InvalidBridgeResult => "Could not verify number",
+                    PhoneLookupError::TimedOut => "Number check timed out",
+                    PhoneLookupError::EmptyResponse => "WhatsApp returned no number result",
+                    PhoneLookupError::ResponseMismatch => {
+                        "WhatsApp returned a mismatched number result"
+                    }
                 });
                 true
             }
@@ -116,6 +121,15 @@ mod tests {
             (
                 Err(PhoneLookupError::InvalidBridgeResult),
                 "Could not verify number",
+            ),
+            (Err(PhoneLookupError::TimedOut), "Number check timed out"),
+            (
+                Err(PhoneLookupError::EmptyResponse),
+                "WhatsApp returned no number result",
+            ),
+            (
+                Err(PhoneLookupError::ResponseMismatch),
+                "WhatsApp returned a mismatched number result",
             ),
             (
                 Ok(Some(JID::from("15559876543@s.whatsapp.net".to_owned()))),
