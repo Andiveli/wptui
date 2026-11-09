@@ -1,9 +1,16 @@
 use super::App;
-use super::actions::{FocusPane, Section};
+use super::actions::{ActionNotice, FocusPane, Section};
 use super::events::AppEvent;
 use whatsrust::PhoneLookupError;
 
 impl App<'_> {
+    fn phone_lookup_unavailable(&mut self, message: &str) {
+        self.unavailable(message);
+        if let Some(ActionNotice::Unavailable(message)) = self.action_notice.take() {
+            self.action_notice = Some(ActionNotice::PhoneLookup(message));
+        }
+    }
+
     pub(crate) fn handle_phone_lookup_event(&mut self, event: AppEvent) -> bool {
         let AppEvent::PhoneLookupFinished {
             generation,
@@ -35,7 +42,7 @@ impl App<'_> {
                     .strip_prefix('+')
                     .map(|digits| format!("{digits}@s.whatsapp.net"));
                 if expected.as_deref() != Some(jid.0.as_ref()) {
-                    self.unavailable("Could not verify number");
+                    self.phone_lookup_unavailable("Could not verify number");
                     return true;
                 }
                 self.contact_search.clean();
@@ -46,11 +53,11 @@ impl App<'_> {
                 true
             }
             Ok(None) => {
-                self.unavailable("Number is not on WhatsApp");
+                self.phone_lookup_unavailable("Number is not on WhatsApp");
                 true
             }
             Err(error) => {
-                self.unavailable(match error {
+                self.phone_lookup_unavailable(match error {
                     PhoneLookupError::InvalidNumber => "Use + followed by 7-15 digits",
                     PhoneLookupError::ClientUnavailable => "WhatsApp is not connected",
                     PhoneLookupError::RequestFailed => "Could not check number",
@@ -70,7 +77,6 @@ impl App<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::actions::ActionNotice;
     use crate::app::test_support::TestApp;
     use whatsrust::JID;
 
@@ -146,7 +152,7 @@ mod tests {
             assert_eq!(app.contact_search.input.to_string(), "+15551234567");
             assert_eq!(app.focus_pane, FocusPane::ChatList);
             assert!(
-                matches!(app.action_notice, Some(ActionNotice::Unavailable(ref message)) if message == notice)
+                matches!(app.action_notice, Some(ActionNotice::PhoneLookup(ref message)) if message == notice)
             );
         }
     }
@@ -173,7 +179,7 @@ mod tests {
     fn stale_failure_cannot_replace_notice_or_consume_pending_lookup() {
         let mut app = awaiting_lookup();
         app.pending_phone_lookup = Some((2, "+15551234567".into()));
-        app.action_notice = Some(ActionNotice::Unavailable("Checking number...".into()));
+        app.action_notice = Some(ActionNotice::PhoneLookup("Checking number...".into()));
         assert!(!app.handle_phone_lookup_event(completed(1, Err(PhoneLookupError::RequestFailed))));
         assert_eq!(
             app.pending_phone_lookup.as_ref().map(|pending| pending.0),
@@ -181,7 +187,7 @@ mod tests {
         );
         assert!(matches!(
             app.action_notice,
-            Some(ActionNotice::Unavailable(ref message)) if message == "Checking number..."
+            Some(ActionNotice::PhoneLookup(ref message)) if message == "Checking number..."
         ));
         assert!(app.chats.is_empty());
         assert_eq!(app.open_chat(), None);

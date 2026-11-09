@@ -560,7 +560,7 @@ pub(super) fn action_notice_text(app: &App) -> Option<String> {
         crate::app::actions::ActionNotice::ReplyPrivatelyNamed(name) => {
             format!("Replying to {name} privately")
         }
-        crate::app::actions::ActionNotice::Unavailable(message) => message.clone(),
+        crate::app::actions::ActionNotice::PhoneLookup(message) => message.clone(),
         _ => format!("{notice:?}"),
     })
 }
@@ -667,7 +667,7 @@ mod action_notice_tests {
     use crate::app::{actions::ActionNotice, test_support::TestApp};
 
     #[test]
-    fn unavailable_notice_renders_only_the_friendly_message() {
+    fn phone_lookup_notice_renders_only_the_friendly_message() {
         let mut app = TestApp::new();
         for message in [
             "Could not check number",
@@ -679,7 +679,7 @@ mod action_notice_tests {
             "Number is not on WhatsApp",
             "Use + followed by 7-15 digits",
         ] {
-            app.action_notice = Some(ActionNotice::Unavailable(message.into()));
+            app.action_notice = Some(ActionNotice::PhoneLookup(message.into()));
             assert_eq!(action_notice_text(&app), Some(message.to_owned()));
         }
     }
@@ -688,6 +688,11 @@ mod action_notice_tests {
     fn existing_notice_formatting_is_preserved() {
         let mut app = TestApp::new();
         assert_eq!(action_notice_text(&app), None);
+        app.unavailable("send failed");
+        assert_eq!(
+            action_notice_text(&app).as_deref(),
+            Some("Unavailable(\"send failed\")")
+        );
         app.action_notice = Some(ActionNotice::Cancelled);
         assert_eq!(action_notice_text(&app).as_deref(), Some("Cancelled"));
         app.action_notice = Some(ActionNotice::Forwarded {

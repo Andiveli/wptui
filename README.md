@@ -193,8 +193,9 @@ cargo run -- --phone +1234567890
 
 ### Number lookup notices
 
-An unsuccessful number check leaves the search open without opening a conversation
-or sending a message. The notice appears as plain text:
+When a number check finishes unsuccessfully, it leaves the search open without
+opening a conversation or sending a message. Its result notice appears as plain text;
+local input validation and unrelated notices retain their existing formatting:
 
 | Notice | Meaning / next step |
 |---|---|
