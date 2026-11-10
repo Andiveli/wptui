@@ -306,11 +306,17 @@ fn excluded_modes_and_protected_source_occurrences_never_show_native_cards() {
             "explicit" => format!("[site]({URL})"),
             "image" => format!("![image]({URL})"),
             "brackets" => format!("[{URL}]"),
-            "protected-duplicate" => format!("`{URL}` then {URL}"),
+            "protected-duplicate" => format!("```\n{URL}\n```\nthen {URL}"),
             _ => URL.to_owned(),
         };
         let mut app = fixture(&source, jpeg(32, 16));
-        if matches!(case, "inline-code" | "fence" | "protected-duplicate") {
+        if case == "inline-code" {
+            assert!(
+                app.native_link_preview(&"native-ui".into()).is_none(),
+                "this inline-code fixture has no exact native URL binding"
+            );
+        }
+        if matches!(case, "fence" | "protected-duplicate") {
             let (range, _) = app.native_link_preview(&"native-ui".into()).unwrap();
             assert_eq!(
                 range.start,
