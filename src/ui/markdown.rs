@@ -257,6 +257,20 @@ impl Markdown {
         result
     }
 
+    /// Match an accepted original occurrence, never a projected display range.
+    pub(crate) fn accepts_incoming_url(
+        &self,
+        source: &str,
+        range: &Range<usize>,
+        destination: &str,
+    ) -> bool {
+        source.get(range.clone()) == Some(destination)
+            && self
+                .incoming_urls(source)
+                .iter()
+                .any(|url| &url.source == range)
+    }
+
     fn incoming_urls(&self, source: &str) -> Vec<IncomingUrl> {
         // Reuse the opener's exact accepted occurrences and punctuation rules.
         let mut urls = Vec::new();
