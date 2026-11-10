@@ -69,6 +69,16 @@ fn lookup_result(
     }
 }
 
+// Keep local observation data separate from the recipient validation result.
+fn lookup_observed_result(
+    status: u8,
+    phone: &str,
+    jid: Option<&str>,
+    _observation: Option<&str>,
+) -> Result<Option<JID>, PhoneLookupError> {
+    lookup_result(status, phone, jid)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,6 +180,37 @@ mod tests {
         for status in [5, 6, 7, 8, 9, 10] {
             assert_eq!(
                 lookup_result(status, "+15551234567", Some("15551234567@s.whatsapp.net")),
+                Err(PhoneLookupError::InvalidBridgeResult)
+            );
+        }
+    }
+
+    #[test]
+    fn local_observation_is_separate_and_debug_redacted() {
+        let text = "Requested: \"+15551234567\"\nPhoneNumber.User: \"15559876543\"";
+        let result = lookup_observed_result(166, "+15551234567", None, Some(text));
+        let debug = format!("{result:?}");
+        assert!(debug.contains("ResponseObservation"));
+        assert!(!debug.contains("15551234567"));
+        assert!(!debug.contains("15559876543"));
+    }
+
+    #[test]
+    fn local_observation_rejects_recipient_success_controls_and_oversize() {
+        let recipient = Some("15551234567@s.whatsapp.net");
+        let huge = "x".repeat(8193);
+        for (status, jid, text) in [
+            (0, recipient, "local text"),
+            (166, recipient, "local text"),
+            (10, None, "local text"),
+            (255, None, "local text"),
+            (166, None, "bad\u{1b}[2J"),
+            (166, None, "bad\rtext"),
+            (166, None, ""),
+            (166, None, huge.as_str()),
+        ] {
+            assert_eq!(
+                lookup_observed_result(status, "+15551234567", jid, Some(text)),
                 Err(PhoneLookupError::InvalidBridgeResult)
             );
         }
