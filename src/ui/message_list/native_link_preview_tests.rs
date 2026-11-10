@@ -17,7 +17,11 @@ use crate::app::{
     native_link_thumbnails::{EntryState, ThumbnailKey, prepare_thumbnail},
     read_receipts::VisibilityPlan,
     runtime_diagnostics::MessageListCounts,
-    test_support::{FixedClock, RecordingNotifier, TestApp, message},
+    test_support::{
+        FakeAvatarQuery, FakeChatReadCursorPort, FakeChatSettingsQuery, FakeCommunityQuery,
+        FakeContactSource, FakeDmResolver, FakeMessagePushNamePort, FixedClock,
+        RecordingChatReadSyncPort, RecordingNotifier, message,
+    },
 };
 
 const URL: &str = "https://example.test/article?q=%2F#part";
@@ -35,8 +39,64 @@ fn jpeg(width: u32, height: u32) -> Vec<u8> {
     bytes.into_inner()
 }
 
+// Keep disposable state alive until the explicitly configured App is dropped.
+// Unlike the general TestApp constructor, this never queries terminal capabilities.
+struct TestApp {
+    app: App<'static>,
+    _dir: tempfile::TempDir,
+}
+
+impl TestApp {
+    fn new() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let picker = Picker::halfblocks();
+        let protocol = picker.protocol_type();
+        let mut app = crate::app::bootstrap::with_data_dir_and_picker_and_ports(
+            dir.path(),
+            dir.path(),
+            picker,
+            protocol,
+            Box::new(FixedClock::new(1_704_110_400)),
+            Box::new(RecordingNotifier::default()),
+        );
+        app.set_contact_source(Box::new(FakeContactSource::default()));
+        app.set_chat_settings_query(Box::new(FakeChatSettingsQuery::default()));
+        app.set_message_push_name(Box::new(FakeMessagePushNamePort::default()));
+        app.set_community_query(Box::new(FakeCommunityQuery::default()));
+        app.set_dm_resolver(Box::new(FakeDmResolver::default()));
+        app.set_avatar_query(Arc::new(FakeAvatarQuery::default()));
+        app.set_chat_read_sync(Box::new(RecordingChatReadSyncPort::default()));
+        app.set_chat_read_cursor(Box::new(FakeChatReadCursorPort::default()));
+        app.db_handler.init();
+        Self { app, _dir: dir }
+    }
+}
+
+impl std::ops::Deref for TestApp {
+    type Target = App<'static>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.app
+    }
+}
+
+impl std::ops::DerefMut for TestApp {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.app
+    }
+}
+
+impl Drop for TestApp {
+    fn drop(&mut self) {
+        self.app.shutdown_avatar_runtime();
+        self.app.shutdown_read_receipt_worker();
+        self.app.shutdown_read_sync_worker();
+        self.app.db_handler.stop();
+    }
+}
+
 fn fixture(source: &str, thumbnail: Vec<u8>) -> TestApp {
-    let mut app = TestApp::with_ports(FixedClock::new(1_704_110_400), RecordingNotifier::default());
+    let mut app = TestApp::new();
     let chat: wr::JID = "fixture@example.test".to_owned().into();
     let mut item = message(&chat, "native-ui", 1_704_110_400);
     item.message = wr::MessageContent::Text(source.into());
