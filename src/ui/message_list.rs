@@ -39,6 +39,8 @@ mod message_preview_tests;
 mod message_stacks;
 #[path = "message_viewport.rs"]
 mod message_viewport;
+#[cfg(test)]
+mod native_link_preview_tests;
 
 pub(crate) use message_preview_cache::bounded_source as bounded_stack_source;
 pub use message_preview_cache::{CropResults, StackPreviewCache};
