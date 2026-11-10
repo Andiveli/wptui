@@ -136,6 +136,31 @@ mod tests {
     }
 
     #[test]
+    fn decodes_only_six_comparison_bits_without_a_recipient() {
+        for bits in 0..64_u8 {
+            let phone = [bits & 1 != 0, bits & 2 != 0, bits & 4 != 0];
+            let jid = [bits & 8 != 0, bits & 16 != 0, bits & 32 != 0];
+            let expected = format!("Err(ResponseComparison {{ phone: {phone:?}, jid: {jid:?} }})");
+            assert_eq!(
+                format!("{:?}", lookup_result(128 + bits, "+15551234567", None)),
+                expected,
+                "comparison bits {bits}"
+            );
+            let recipient = Some("15551234567@s.whatsapp.net");
+            assert_eq!(
+                lookup_result(128 + bits, "+15551234567", recipient),
+                Err(PhoneLookupError::InvalidBridgeResult)
+            );
+        }
+        for status in [127, 192, 255] {
+            assert_eq!(
+                lookup_result(status, "+15551234567", None),
+                Err(PhoneLookupError::InvalidBridgeResult)
+            );
+        }
+    }
+
+    #[test]
     fn diagnostic_statuses_cannot_carry_a_recipient() {
         for status in [5, 6, 7, 8, 9, 10] {
             assert_eq!(
