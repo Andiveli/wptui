@@ -394,40 +394,16 @@ mod tests {
     use crate::app::test_support::{RecordingChatReadSyncPort, RecordingLifecycleControl, TestApp};
 
     struct NativeAdmissionFixture {
-        app: App<'static>,
-        _dir: tempfile::TempDir,
+        fixture: crate::app::test_support::FixedPickerApp,
     }
 
     impl NativeAdmissionFixture {
         fn new() -> Self {
-            use crate::app::test_support::{
-                FakeAvatarQuery, FakeChatReadCursorPort, FakeChatSettingsQuery, FakeCommunityQuery,
-                FakeContactSource, FakeDmResolver, FakeMessagePushNamePort, FixedClock,
-                RecordingNotifier, message,
-            };
+            use crate::app::test_support::{FixedPickerApp, message};
             use image::{DynamicImage, Rgb, RgbImage};
-            use ratatui_image::picker::Picker;
 
-            let dir = tempfile::tempdir().unwrap();
-            let picker = Picker::halfblocks();
-            let protocol = picker.protocol_type();
-            let mut app = crate::app::bootstrap::with_data_dir_and_picker_and_ports(
-                dir.path(),
-                dir.path(),
-                picker,
-                protocol,
-                Box::new(FixedClock::new(1_704_110_400)),
-                Box::new(RecordingNotifier::default()),
-            );
-            app.set_contact_source(Box::new(FakeContactSource::default()));
-            app.set_chat_settings_query(Box::new(FakeChatSettingsQuery::default()));
-            app.set_message_push_name(Box::new(FakeMessagePushNamePort::default()));
-            app.set_community_query(Box::new(FakeCommunityQuery::default()));
-            app.set_dm_resolver(Box::new(FakeDmResolver::default()));
-            app.set_avatar_query(Arc::new(FakeAvatarQuery::default()));
-            app.set_chat_read_sync(Box::new(RecordingChatReadSyncPort::default()));
-            app.set_chat_read_cursor(Box::new(FakeChatReadCursorPort::default()));
-            app.db_handler.init();
+            let mut fixture = FixedPickerApp::new();
+            let app = &mut fixture.app;
 
             let chat: wr::JID = "admission@example.test".to_owned().into();
             let source = "https://example.test/article?q=%2F#part";
@@ -458,16 +434,7 @@ mod tests {
             let mut item = message(&other, "other-admission", 1_704_110_401);
             item.message = wr::MessageContent::Text("Other conversation".into());
             app.add_message(item);
-            Self { app, _dir: dir }
-        }
-    }
-
-    impl Drop for NativeAdmissionFixture {
-        fn drop(&mut self) {
-            self.app.shutdown_avatar_runtime();
-            self.app.shutdown_read_receipt_worker();
-            self.app.shutdown_read_sync_worker();
-            self.app.db_handler.stop();
+            Self { fixture }
         }
     }
 
@@ -513,7 +480,7 @@ mod tests {
         let mut observations = Vec::new();
         for case in ["chats", "communities", "news", "logout", "wrong-chat"] {
             let mut fixture = NativeAdmissionFixture::new();
-            let app = &mut fixture.app;
+            let app = &mut fixture.fixture.app;
             let mut media_jobs = MediaJobOwner::new();
             let (download_tx, download_rx) = mpsc::channel();
             app.selected_section = if case == "communities" {
