@@ -2,8 +2,9 @@ use std::ffi::{CStr, CString};
 
 use crate::abi::{C_FreeLookupPhoneResult, C_LookupPhone};
 use crate::models::JID;
+use crate::phone_lookup_observation::LocalPhoneLookupObservation;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PhoneLookupError {
     InvalidNumber,
     ClientUnavailable,
@@ -17,6 +18,7 @@ pub enum PhoneLookupError {
     DifferentPhoneNumber,
     // Temporary independent comparisons: digits, allowed domain, integrator.
     ResponseComparison { phone: [bool; 3], jid: [bool; 3] },
+    ResponseObservation(LocalPhoneLookupObservation),
 }
 
 pub fn lookup_phone(phone: &str) -> Result<Option<JID>, PhoneLookupError> {
@@ -30,9 +32,27 @@ pub fn lookup_phone(phone: &str) -> Result<Option<JID>, PhoneLookupError> {
             .ok()
             .map(str::to_owned)
     };
+    let observation = if result.observation.is_null() {
+        None
+    } else {
+        unsafe { CStr::from_ptr(result.observation) }
+            .to_str()
+            .ok()
+            .map(str::to_owned)
+    };
+    let invalid_text = (!result.jid.is_null() && jid.is_none())
+        || (!result.observation.is_null() && observation.is_none());
     let status = result.status;
     unsafe { C_FreeLookupPhoneResult(result) };
-    lookup_result(status, phone.to_str().unwrap_or_default(), jid.as_deref())
+    if invalid_text {
+        return Err(PhoneLookupError::InvalidBridgeResult);
+    }
+    lookup_observed_result(
+        status,
+        phone.to_str().unwrap_or_default(),
+        jid.as_deref(),
+        observation.as_deref(),
+    )
 }
 
 fn lookup_result(
@@ -74,9 +94,18 @@ fn lookup_observed_result(
     status: u8,
     phone: &str,
     jid: Option<&str>,
-    _observation: Option<&str>,
+    observation: Option<&str>,
 ) -> Result<Option<JID>, PhoneLookupError> {
-    lookup_result(status, phone, jid)
+    let result = lookup_result(status, phone, jid);
+    let Some(text) = observation else {
+        return result;
+    };
+    if !matches!(&result, Err(PhoneLookupError::ResponseComparison { .. })) {
+        return Err(PhoneLookupError::InvalidBridgeResult);
+    }
+    let observation = LocalPhoneLookupObservation::from_display_text(text.to_owned())
+        .ok_or(PhoneLookupError::InvalidBridgeResult)?;
+    Err(PhoneLookupError::ResponseObservation(observation))
 }
 
 #[cfg(test)]
@@ -193,6 +222,10 @@ mod tests {
         assert!(debug.contains("ResponseObservation"));
         assert!(!debug.contains("15551234567"));
         assert!(!debug.contains("15559876543"));
+        let Err(PhoneLookupError::ResponseObservation(observation)) = result else {
+            panic!("expected a local observation");
+        };
+        assert_eq!(observation.display_text(), text);
     }
 
     #[test]

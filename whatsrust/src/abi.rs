@@ -16,6 +16,7 @@ pub(super) type CPresenceCallback = extern "C" fn(CJID, bool, i64, *mut c_void);
 pub(super) struct CPhoneLookupResult {
     pub(super) status: u8,
     pub(super) jid: *mut c_char,
+    pub(super) observation: *mut c_char,
 }
 
 #[repr(C)]

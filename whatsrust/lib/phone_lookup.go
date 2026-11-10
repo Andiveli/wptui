@@ -7,6 +7,7 @@ package main
 typedef struct {
 	uint8_t status;
 	char* jid;
+	char* observation;
 } PhoneLookupResult;
 */
 import "C"
@@ -131,9 +132,13 @@ func C_LookupPhone(phone *C.char) C.PhoneLookupResult {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	result := lookupPhone(ctx, C.GoString(phone), client.IsOnWhatsApp)
+	result, observation := lookupPhoneObserved(ctx, C.GoString(phone), client.IsOnWhatsApp)
 	if result.status != phoneLookupFound {
-		return C.PhoneLookupResult{status: C.uint8_t(result.status)}
+		output := C.PhoneLookupResult{status: C.uint8_t(result.status)}
+		if observation != "" {
+			output.observation = C.CString(observation)
+		}
+		return output
 	}
 	return C.PhoneLookupResult{status: C.uint8_t(result.status), jid: C.CString(result.jid)}
 }
@@ -141,4 +146,5 @@ func C_LookupPhone(phone *C.char) C.PhoneLookupResult {
 //export C_FreeLookupPhoneResult
 func C_FreeLookupPhoneResult(result C.PhoneLookupResult) {
 	C.free(unsafe.Pointer(result.jid))
+	C.free(unsafe.Pointer(result.observation))
 }

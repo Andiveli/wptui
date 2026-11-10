@@ -76,6 +76,9 @@ impl App<'_> {
                     PhoneLookupError::DifferentPhoneNumber => {
                         "WhatsApp returned a different phone number"
                     }
+                    PhoneLookupError::ResponseObservation(_) => {
+                        "Local number response available"
+                    }
                     PhoneLookupError::ResponseComparison { phone, jid } => {
                         let notice = format!(
                             "Lookup comparison PN(d/n/i)={}/{}/{} JID(d/n/i)={}/{}/{}",
