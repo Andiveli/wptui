@@ -83,7 +83,7 @@ func lookupPhone(ctx context.Context, phone string, query phoneLookupQuery) phon
 		}
 		if (response.JID.Server == types.DefaultUserServer && response.JID.User != "") ||
 			(response.PhoneNumber.Server == types.DefaultUserServer && response.PhoneNumber.User != "") {
-			return phoneLookupResult{status: phoneLookupDifferentPhoneNumber}
+			return phoneLookupResult{status: phoneLookupComparisonStatus(response.PhoneNumber, response.JID, requested)}
 		}
 		return phoneLookupResult{status: phoneLookupResponseMismatch}
 	}
@@ -98,6 +98,26 @@ func matchesRequestedPhoneIdentity(identity, requested types.JID) bool {
 		identity.Server = types.DefaultUserServer
 	}
 	return identity == requested
+}
+
+// phoneLookupComparisonStatus temporarily carries only six independent booleans
+// for a rejected lookup. It never contains a recipient or changes acceptance.
+// Bits 0-2 compare PN digits/domain/integrator; bits 3-5 compare the returned JID.
+func phoneLookupComparisonStatus(phoneNumber, jid, requested types.JID) uint8 {
+	status := uint8(128)
+	for index, identity := range []types.JID{phoneNumber, jid} {
+		shift := uint(index * 3)
+		if identity.User == requested.User {
+			status |= 1 << shift
+		}
+		if identity.Server == types.DefaultUserServer || identity.Server == types.LegacyUserServer {
+			status |= 2 << shift
+		}
+		if identity.Integrator == requested.Integrator {
+			status |= 4 << shift
+		}
+	}
+	return status
 }
 
 //export C_LookupPhone
