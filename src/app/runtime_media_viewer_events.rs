@@ -27,7 +27,10 @@ impl App<'_> {
         key: &crate::app::native_link_thumbnails::ThumbnailKey,
     ) -> bool {
         if self.open_chat.as_ref() != Some(&key.chat)
-            || self.selected_section != crate::app::actions::Section::Chats
+            || !matches!(
+                self.selected_section,
+                crate::app::actions::Section::Chats | crate::app::actions::Section::Communities
+            )
             || self.rail_on_logout
             || self.logout_in_progress
             || self.should_quit
