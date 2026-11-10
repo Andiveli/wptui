@@ -424,6 +424,190 @@ fn adapter_rejects_wrong_identity_and_releases_stale_results_without_file_state(
 }
 
 #[test]
+fn stale_completion_wakes_blocked_current_demand_but_not_an_empty_viewport() {
+    use super::events::{AppEvent, NativeLinkThumbnailResult};
+    use super::native_link_previews::NativeLinkPreviewRecord;
+    use super::test_support::RecordingNotifier;
+
+    for has_current_demand in [true, false] {
+        let dir = tempfile::tempdir().unwrap();
+        let picker = Picker::halfblocks();
+        let protocol_type = picker.protocol_type();
+        let mut app = super::bootstrap::with_data_dir_and_picker_and_ports(
+            dir.path(),
+            dir.path(),
+            picker,
+            protocol_type,
+            Box::new(super::SystemClock),
+            Box::new(RecordingNotifier::default()),
+        );
+        let [a, b, c, d] = [key("a"), key("b"), key("c"), key("d")];
+        let bytes = jpeg(8, 8);
+        app.open_chat = Some(a.chat.clone());
+        for target in [&a, &b, &c, &d] {
+            app.messages.insert(
+                target.message_id.clone(),
+                whatsrust::Message {
+                    info: whatsrust::MessageInfo {
+                        id: target.message_id.clone(),
+                        chat: target.chat.clone(),
+                        sender: target.chat.clone(),
+                        mentions_self: false,
+                        timestamp: 1,
+                        is_from_me: false,
+                        quote_id: None,
+                        read_by: 0,
+                        forwarding: Default::default(),
+                    },
+                    message: whatsrust::MessageContent::Text(target.source.clone()),
+                },
+            );
+            app.restore_native_link_preview(NativeLinkPreviewRecord {
+                chat: target.chat.clone(),
+                message_id: target.message_id.clone(),
+                source: target.source.clone(),
+                preview: whatsrust::NativeLinkPreview {
+                    matched_text: target.matched_url.clone(),
+                    title: "Native".into(),
+                    description: "Description".into(),
+                    jpeg_thumbnail: bytes.clone(),
+                },
+            });
+            assert!(app.native_thumbnail_is_current(target));
+        }
+        assert!(app.metadata.is_empty());
+        assert!(app.message_actions.is_empty());
+        let (download_tx, download_rx) = mpsc::channel();
+        let mut owner = MediaJobOwner::new();
+        let copies = Cell::new(0);
+        let supply = || {
+            copies.set(copies.get() + 1);
+            Some(bytes.clone())
+        };
+        app.native_link_thumbnails
+            .reconcile(&[a.clone(), b.clone()]);
+        let old_a = app.native_link_thumbnails.admit(&a, supply).unwrap();
+        let old_b = app.native_link_thumbnails.admit(&b, supply).unwrap();
+        assert_eq!(copies.get(), 2);
+        assert_eq!(app.native_link_thumbnails.outstanding(), 2);
+        for target in [&a, &b] {
+            assert_eq!(
+                app.native_link_thumbnails.state(target),
+                EntryState::Loading
+            );
+        }
+        let current = if has_current_demand {
+            vec![c.clone(), d.clone()]
+        } else {
+            vec![]
+        };
+        app.native_link_thumbnails.reconcile(&current);
+        assert!(old_a.guard().is_cancelled());
+        assert!(old_b.guard().is_cancelled());
+        assert_eq!(app.native_link_thumbnails.len(), 0);
+        for target in [&c, &d] {
+            assert!(app.native_link_thumbnails.admit(target, supply).is_none());
+            assert_eq!(app.native_link_thumbnails.state(target), EntryState::Absent);
+        }
+        assert_eq!(copies.get(), 2, "blocked demand must not copy bytes");
+        assert_eq!(app.native_link_thumbnails.outstanding(), 2);
+
+        let mut current_jobs = Vec::new();
+        for (old, next) in [(&old_a, &c), (&old_b, &d)] {
+            let before = app.native_link_thumbnails.outstanding();
+            let should_draw = app.handle_media_viewer_event(
+                AppEvent::SetNativeLinkThumbnail(NativeLinkThumbnailResult {
+                    ticket: old.ticket(),
+                    protocol: Some(protocol()),
+                }),
+                &download_tx,
+                &mut owner,
+            );
+            assert_eq!(app.native_link_thumbnails.outstanding(), before - 1);
+            for stale in [&a, &b] {
+                assert_eq!(app.native_link_thumbnails.state(stale), EntryState::Absent);
+                assert!(app.native_link_thumbnails.protocol_mut(stale).is_none());
+            }
+            // runtime_loop uses this return value as should_draw. Emulate that
+            // next draw's admission directly, without workers or timing waits.
+            assert_eq!(should_draw, has_current_demand, "pending demand must wake");
+            if has_current_demand {
+                let job = app.native_link_thumbnails.admit(next, supply).unwrap();
+                assert_eq!(app.native_link_thumbnails.outstanding(), 2);
+                assert_eq!(app.native_link_thumbnails.state(next), EntryState::Loading);
+                current_jobs.push(job);
+            }
+            let before_duplicate = app.native_link_thumbnails.outstanding();
+            assert!(!app.handle_media_viewer_event(
+                AppEvent::SetNativeLinkThumbnail(NativeLinkThumbnailResult {
+                    ticket: old.ticket(),
+                    protocol: Some(protocol()),
+                }),
+                &download_tx,
+                &mut owner,
+            ));
+            assert_eq!(app.native_link_thumbnails.outstanding(), before_duplicate);
+            for target in &current {
+                let expected = if current_jobs.len() == 2 || target == &c {
+                    EntryState::Loading
+                } else {
+                    EntryState::Absent
+                };
+                assert_eq!(app.native_link_thumbnails.state(target), expected);
+                assert!(app.native_link_thumbnails.protocol_mut(target).is_none());
+            }
+            assert!(app.metadata.is_empty());
+            assert!(app.message_actions.is_empty());
+            assert!(matches!(
+                download_rx.try_recv(),
+                Err(mpsc::TryRecvError::Empty)
+            ));
+        }
+        assert_eq!(copies.get(), if has_current_demand { 4 } else { 2 });
+        for (index, job) in current_jobs.iter().enumerate() {
+            assert!(app.handle_media_viewer_event(
+                AppEvent::SetNativeLinkThumbnail(NativeLinkThumbnailResult {
+                    ticket: job.ticket(),
+                    protocol: Some(protocol()),
+                }),
+                &download_tx,
+                &mut owner,
+            ));
+            assert_eq!(app.native_link_thumbnails.outstanding(), 1 - index);
+        }
+        assert_eq!(app.native_link_thumbnails.outstanding(), 0);
+        assert_eq!(app.native_link_thumbnails.len(), current.len());
+        for target in [&a, &b, &c, &d] {
+            let ready = current.contains(target);
+            assert_eq!(
+                app.native_link_thumbnails.state(target),
+                if ready {
+                    EntryState::Ready
+                } else {
+                    EntryState::Absent
+                }
+            );
+            assert_eq!(
+                app.native_link_thumbnails.protocol_mut(target).is_some(),
+                ready
+            );
+            assert!(app.native_thumbnail_is_current(target));
+            let (_, preview) = app.native_link_preview(&target.message_id).unwrap();
+            assert_eq!(preview.matched_text, target.matched_url);
+            assert_eq!(preview.title.as_ref(), "Native");
+            assert_eq!(preview.description.as_ref(), "Description");
+            assert_eq!(preview.jpeg_thumbnail, bytes);
+        }
+        assert!(app.metadata.is_empty());
+        assert!(app.message_actions.is_empty());
+        assert!(matches!(
+            download_rx.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+    }
+}
+
+#[test]
 fn managed_publication_still_delivers_active_results_and_blocks_after_shutdown() {
     let mut owner = MediaJobOwner::new();
     let permit = owner.permit();
