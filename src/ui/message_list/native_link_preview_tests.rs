@@ -284,3 +284,257 @@ fn missing_metadata_keeps_old_label_and_metadata_markdown_stays_literal() {
     assert_eq!(hit_cells(&app, &buffer), LABEL);
     assert!(keys(plan).is_empty());
 }
+
+#[test]
+fn excluded_modes_and_protected_source_occurrences_never_show_native_cards() {
+    for case in [
+        "outgoing",
+        "status",
+        "caption",
+        "system",
+        "inline-code",
+        "fence",
+        "explicit",
+        "image",
+        "brackets",
+        "quote",
+        "protected-duplicate",
+    ] {
+        let source = match case {
+            "inline-code" => format!("`{URL}`"),
+            "fence" => format!("```\n{URL}\n```"),
+            "explicit" => format!("[site]({URL})"),
+            "image" => format!("![image]({URL})"),
+            "brackets" => format!("[{URL}]"),
+            "protected-duplicate" => format!("`{URL}` then {URL}"),
+            _ => URL.to_owned(),
+        };
+        let mut app = fixture(&source, jpeg(32, 16));
+        if matches!(case, "inline-code" | "fence" | "protected-duplicate") {
+            let (range, _) = app.native_link_preview(&"native-ui".into()).unwrap();
+            assert_eq!(
+                range.start,
+                source.find(URL).unwrap(),
+                "T1 bound occurrence"
+            );
+        }
+        let mut item = app.messages["native-ui"].clone();
+        let mut mode = MessageTextMode::Chat;
+        match case {
+            "outgoing" => item.info.is_from_me = true,
+            "status" => mode = MessageTextMode::Status,
+            "caption" => {
+                item.message = wr::MessageContent::File(wr::FileContent {
+                    path: "document.txt".into(),
+                    kind: wr::FileKind::Document,
+                    caption: Some(URL.into()),
+                    ..Default::default()
+                })
+            }
+            "system" => item.message = wr::MessageContent::ViewOnceUnavailable,
+            "quote" => {
+                let mut reply = message(&item.info.chat, "reply-ui", 2);
+                reply.info.quote_id = Some(item.info.id.clone());
+                reply.message = wr::MessageContent::Text("Reply body".into());
+                item = reply;
+            }
+            _ => {}
+        }
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 140, 16));
+        let mut plan = MediaRenderPlan::default();
+        render_message(
+            &mut buffer,
+            &item,
+            false,
+            AuthorGroupContext::STARTS_GROUP,
+            &mut app,
+            Rect::new(0, 0, 140, 16),
+            &mut plan,
+            true,
+            mode,
+        );
+        let painted = text(&buffer);
+        assert!(!painted.contains(TITLE), "{case}");
+        assert!(!painted.contains(DESCRIPTION), "{case}");
+        assert!(keys(plan).is_empty(), "{case}");
+        if case == "protected-duplicate" {
+            assert!(
+                painted.contains(LABEL),
+                "later plain occurrence retains label"
+            );
+            source_and_hits(&app, &source);
+            assert!(hit_cells(&app, &buffer).ends_with(LABEL));
+        } else if case == "quote" {
+            assert!(painted.contains(URL), "quote snippet remains raw");
+            assert!(
+                app.mouse_hit_map.urls.is_empty(),
+                "quote creates no URL hits"
+            );
+        } else if case == "system" {
+            assert!(painted.contains(wr::VIEW_ONCE_UNAVAILABLE_DESCRIPTION));
+        } else {
+            assert!(
+                painted.contains(if case == "explicit" { "site" } else { URL }),
+                "{case}"
+            );
+            assert!(app.mouse_hit_map.urls.iter().all(|hit| hit.url == URL));
+        }
+        assert!(matches!(&app.messages["native-ui"].message,
+            wr::MessageContent::Text(stored) if stored.as_ref() == source));
+    }
+}
+
+#[test]
+fn composer_and_hidden_conversations_produce_no_native_work_or_hidden_hits() {
+    use crate::app::actions::Section;
+
+    for hidden in ["other-chat", "news", "logout", "composer-only"] {
+        let mut app = fixture(URL, jpeg(32, 16));
+        match hidden {
+            "other-chat" | "composer-only" => {
+                let chat: wr::JID = "other@example.test".to_owned().into();
+                let mut other = message(&chat, "other-chat-body", 1_704_110_401);
+                other.message = wr::MessageContent::Text("Other conversation".into());
+                app.add_message(other);
+                app.open_chat = Some(chat);
+                if hidden == "composer-only" {
+                    app.composer.insert_text(URL);
+                }
+            }
+            "news" => app.selected_section = Section::News,
+            "logout" => app.rail_on_logout = true,
+            _ => unreachable!(),
+        }
+        let (buffer, demand) = draw(&mut app, (180, 50));
+        assert!(demand.is_empty(), "{hidden}");
+        assert!(app.mouse_hit_map.urls.is_empty(), "hidden hits: {hidden}");
+        assert!(!text(&buffer).contains(TITLE), "{hidden}");
+        if matches!(hidden, "other-chat" | "composer-only") {
+            assert!(text(&buffer).contains("Other conversation"));
+        }
+        assert_eq!(app.native_link_thumbnails.outstanding(), 0);
+        if hidden == "composer-only" {
+            assert_eq!(app.composer.text(), URL);
+            assert!(text(&buffer).contains(URL));
+        }
+    }
+}
+
+#[test]
+fn shortcut_popup_preserves_hits_and_only_suppresses_occluded_native_images() {
+    for size in SIZES {
+        let mut app = fixture(URL, jpeg(32, 16));
+        let (absent, key) = single_key(&mut app, size);
+        finish_ready(&mut app, &key);
+        let (ready, refreshed) = single_key(&mut app, size);
+        assert_eq!(refreshed, key);
+        let image = changed_rect(&absent, &ready);
+        assert_eq!(image.as_size(), key.size);
+        let popup = shortcut_popup_area(ready.area);
+        let occluded = !image.intersection(popup).is_empty();
+        let hits = app
+            .mouse_hit_map
+            .urls
+            .iter()
+            .map(|hit| (hit.area, hit.url.clone()))
+            .collect::<Vec<_>>();
+        assert!(
+            !hits.is_empty(),
+            "retain original hit regions, not modal cleanup"
+        );
+        app.shortcut_popup = true;
+        for _ in 0..2 {
+            let (overlaid, demand) = draw(&mut app, size);
+            assert_eq!(
+                app.mouse_hit_map
+                    .urls
+                    .iter()
+                    .map(|hit| (hit.area, hit.url.clone()))
+                    .collect::<Vec<_>>(),
+                hits
+            );
+            if occluded {
+                assert!(
+                    demand.is_empty(),
+                    "entire native image must be safely paintable"
+                );
+            } else {
+                assert_eq!(
+                    demand,
+                    vec![key.clone()],
+                    "uncovered image remains visible demand"
+                );
+            }
+            for y in image.y..image.bottom() {
+                for x in image.x..image.right() {
+                    if Rect::new(x, y, 1, 1).intersection(popup).is_empty() {
+                        let expected = if occluded {
+                            &absent[(x, y)]
+                        } else {
+                            &ready[(x, y)]
+                        };
+                        assert_eq!(
+                            &overlaid[(x, y)],
+                            expected,
+                            "native cell outside popup at {size:?} ({x},{y})"
+                        );
+                    }
+                }
+            }
+            assert_eq!(app.native_link_thumbnails.state(&key), EntryState::Ready);
+            assert_eq!(app.native_link_thumbnails.outstanding(), 0);
+        }
+    }
+}
+
+#[test]
+fn visible_unselected_requests_but_selected_offscreen_does_not() {
+    for size in SIZES {
+        let mut app = fixture(URL, jpeg(32, 16));
+        assert!(app.message_list_state.selected.is_none());
+        let (_, key) = single_key(&mut app, size);
+        assert_eq!(app.native_link_thumbnails.state(&key), EntryState::Absent);
+        assert_eq!(
+            app.native_link_thumbnails.outstanding(),
+            0,
+            "draw only records demand"
+        );
+        let chat = app.messages["native-ui"].info.chat.clone();
+        for index in 0..60 {
+            let mut spacer = message(&chat, &format!("newer-{index}"), 1_704_110_401 + index);
+            spacer.message = wr::MessageContent::Text("Newer plain message".into());
+            app.add_message(spacer);
+        }
+        let (items, _, _) = chat_message_sequence(&mut app, &chat).unwrap();
+        let native_index = items
+            .iter()
+            .position(|id| id.as_ref() == "native-ui")
+            .unwrap();
+        assert_eq!(
+            native_index, 60,
+            "native message is oldest, not newest index zero"
+        );
+        app.message_list_state.selected = Some(native_index);
+        app.message_list_state.selected_message = Some("native-ui".into());
+        app.message_list_state.update_selected = false;
+        // Keep normal latest-history offset zero. The previous anchor refers to
+        // native-ui at index zero; reconciliation rejects it after these inserts.
+        assert_eq!(app.message_list_state.offset, 0);
+        let (buffer, demand) = draw(&mut app, size);
+        assert!(text(&buffer).contains("Newer plain message"));
+        assert!(demand.is_empty(), "selected but offscreen at {size:?}");
+        assert!(app.mouse_hit_map.urls.is_empty());
+        assert!(
+            !app.mouse_hit_map
+                .messages
+                .iter()
+                .any(|hit| hit.id.as_ref() == "native-ui")
+        );
+        assert_eq!(app.message_list_state.selected, Some(native_index));
+        assert_eq!(
+            app.message_list_state.get_selected_message().as_deref(),
+            Some("native-ui")
+        );
+        assert_eq!(app.native_link_thumbnails.outstanding(), 0);
+    }
+}
