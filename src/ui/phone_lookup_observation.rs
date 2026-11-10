@@ -22,7 +22,8 @@ pub(super) fn render(frame: &mut Frame, app: &App) {
         Paragraph::new(view.observation.display_text()).scroll((view.row, view.column)),
         body,
     );
-    let help = "Esc close | j/k up/down | h/l left/right | Home reset\nLocal only; do not share values";
+    let help =
+        "Esc close | j/k up/down | h/l left/right | Home reset\nLocal only; do not share values";
     frame.render_widget(Paragraph::new(help).wrap(Wrap { trim: false }), hint);
 }
 
