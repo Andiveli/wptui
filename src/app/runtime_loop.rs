@@ -485,7 +485,8 @@ mod tests {
                     &mut crate::app::read_receipts::VisibilityPlan::default(),
                 );
             })
-            .map(|_| ());
+            .map(|_| ())
+            .map_err(|never| -> std::io::Error { match never {} });
         (result, plan)
     }
 
