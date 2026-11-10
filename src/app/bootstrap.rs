@@ -141,6 +141,7 @@ fn with_dirs_and_picker_and_ports(
         notifier,
         messages: HashMap::new(),
         native_link_previews: HashMap::new(),
+        native_link_thumbnails: Default::default(),
         message_actions: HashMap::new(),
         local_action_sequence: 0,
         message_action_diagnostics: MessageActionDiagnostics::new(false),

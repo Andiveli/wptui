@@ -65,6 +65,7 @@ pub(crate) mod mouse_input;
 pub mod native_link_previews;
 #[cfg(test)]
 mod native_link_thumbnail_tests;
+pub(crate) mod native_link_thumbnails;
 pub mod navigation_conversation_dispatch;
 pub mod news;
 pub(crate) mod news_star;
@@ -227,6 +228,7 @@ pub struct App<'a> {
     pub messages: HashMap<wr::MessageId, wr::Message>,
     pub(crate) native_link_previews:
         HashMap<wr::MessageId, native_link_previews::NativeLinkPreviewRecord>,
+    pub(crate) native_link_thumbnails: native_link_thumbnails::NativeLinkThumbnails,
     pub message_actions: HashMap<wr::MessageId, Vec<MessageAction>>,
     local_action_sequence: u64,
     message_action_diagnostics: MessageActionDiagnostics,
