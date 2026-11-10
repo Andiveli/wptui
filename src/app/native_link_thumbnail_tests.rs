@@ -326,6 +326,104 @@ fn memory_jpeg_preparation_is_bounded_before_decode_and_uses_no_terminal_query()
 }
 
 #[test]
+fn adapter_rejects_wrong_identity_and_releases_stale_results_without_file_state() {
+    use super::events::{
+        AppEvent, AppEventFamily, NativeLinkThumbnailRequest, NativeLinkThumbnailResult,
+    };
+    use super::native_link_previews::NativeLinkPreviewRecord;
+    use super::test_support::RecordingNotifier;
+
+    let dir = tempfile::tempdir().unwrap();
+    let picker = Picker::halfblocks();
+    let protocol_type = picker.protocol_type();
+    let mut app = super::bootstrap::with_data_dir_and_picker_and_ports(
+        dir.path(),
+        dir.path(),
+        picker,
+        protocol_type,
+        Box::new(super::SystemClock),
+        Box::new(RecordingNotifier::default()),
+    );
+    let target = key("adapter");
+    app.open_chat = Some(target.chat.clone());
+    app.messages.insert(
+        target.message_id.clone(),
+        whatsrust::Message {
+            info: whatsrust::MessageInfo {
+                id: target.message_id.clone(),
+                chat: target.chat.clone(),
+                sender: target.chat.clone(),
+                mentions_self: false,
+                timestamp: 1,
+                is_from_me: false,
+                quote_id: None,
+                read_by: 0,
+                forwarding: Default::default(),
+            },
+            message: whatsrust::MessageContent::Text(target.source.clone()),
+        },
+    );
+    app.restore_native_link_preview(NativeLinkPreviewRecord {
+        chat: target.chat.clone(),
+        message_id: target.message_id.clone(),
+        source: target.source.clone(),
+        preview: whatsrust::NativeLinkPreview {
+            matched_text: target.matched_url.clone(),
+            title: "Native".into(),
+            description: "Description".into(),
+            jpeg_thumbnail: jpeg(8, 8),
+        },
+    });
+    assert!(app.native_thumbnail_is_current(&target));
+    let (download_tx, download_rx) = mpsc::channel();
+    let mut owner = MediaJobOwner::new();
+    for change in ["chat", "source", "url", "geometry"] {
+        let mut wrong = target.clone();
+        match change {
+            "chat" => wrong.chat = "other@s.whatsapp.net".to_owned().into(),
+            "source" => wrong.source = "changed source".into(),
+            "url" => wrong.matched_url = "https://example.test/other".into(),
+            "geometry" => wrong.size = Size::new(u16::MAX, 4),
+            _ => unreachable!(),
+        }
+        assert!(!app.native_thumbnail_is_current(&wrong), "{change}");
+        let request = AppEvent::LoadNativeLinkThumbnail(NativeLinkThumbnailRequest(wrong));
+        assert_eq!(request.family(), AppEventFamily::MediaViewer);
+        assert!(!app.handle_media_viewer_event(request, &download_tx, &mut owner));
+        assert_eq!(app.native_link_thumbnails.outstanding(), 0);
+        assert_eq!(app.native_link_thumbnails.len(), 0);
+    }
+    app.native_link_thumbnails
+        .reconcile(std::slice::from_ref(&target));
+    let job = app
+        .native_link_thumbnails
+        .admit(&target, || Some(vec![1]))
+        .unwrap();
+    // Current metadata may change between the last draw and result delivery.
+    app.open_chat = Some("other@s.whatsapp.net".to_owned().into());
+    let result = AppEvent::SetNativeLinkThumbnail(NativeLinkThumbnailResult {
+        ticket: job.ticket(),
+        protocol: Some(protocol()),
+    });
+    assert_eq!(result.family(), AppEventFamily::MediaViewer);
+    assert!(!app.handle_media_viewer_event(result, &download_tx, &mut owner));
+    assert_eq!(app.native_link_thumbnails.outstanding(), 0);
+    assert_eq!(
+        app.native_link_thumbnails.state(&target),
+        EntryState::Absent
+    );
+    assert!(app.metadata.is_empty());
+    assert!(matches!(
+        download_rx.try_recv(),
+        Err(mpsc::TryRecvError::Empty)
+    ));
+    assert_eq!(
+        AppEvent::LoadFilePreview("existing".into()).family(),
+        AppEventFamily::MediaViewer
+    );
+}
+
+#[test]
 fn managed_publication_still_delivers_active_results_and_blocks_after_shutdown() {
     let mut owner = MediaJobOwner::new();
     let permit = owner.permit();

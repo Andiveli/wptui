@@ -46,6 +46,10 @@ fn same_media_render_effect(left: &MediaRenderEffect, right: &MediaRenderEffect)
             MediaRenderEffect::LoadViewerPreview(left_key),
             MediaRenderEffect::LoadViewerPreview(right_key),
         ) => left_key == right_key,
+        (
+            MediaRenderEffect::LoadNativeLinkThumbnail(left),
+            MediaRenderEffect::LoadNativeLinkThumbnail(right),
+        ) => left == right,
         _ => false,
     }
 }
@@ -68,8 +72,22 @@ fn dispatch_media_render_plan(
     download_tx: &DownloadSender,
     media_jobs: &mut MediaJobOwner,
 ) {
+    let effects = plan.into_effects();
+    // Also reconcile an empty plan: cached/hidden panes must cancel old demand.
+    let visible = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            MediaRenderEffect::LoadNativeLinkThumbnail(key)
+                if app.native_thumbnail_is_current(key) =>
+            {
+                Some(key.clone())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    app.native_link_thumbnails.reconcile(&visible);
     let mut dispatched = Vec::new();
-    for effect in plan.into_effects() {
+    for effect in effects {
         if dispatched
             .iter()
             .any(|previous| same_media_render_effect(previous, &effect))
@@ -83,6 +101,9 @@ fn dispatch_media_render_plan(
             MediaRenderEffect::LoadFilePreview(message_id) => {
                 AppEvent::LoadFilePreview(message_id.clone())
             }
+            MediaRenderEffect::LoadNativeLinkThumbnail(key) => AppEvent::LoadNativeLinkThumbnail(
+                crate::app::events::NativeLinkThumbnailRequest(key.clone()),
+            ),
             MediaRenderEffect::LoadViewerPreview(key) => {
                 let Some(key) = viewer_preview_request(&mut app.viewer_preview, key.clone()) else {
                     continue;

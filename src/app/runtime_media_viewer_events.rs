@@ -20,6 +20,37 @@ use crate::ui::message_list::{IMAGE_HEIGHT, IMAGE_WIDTH, VIDEO_HEIGHT, VIDEO_WID
 type DownloadSender = Sender<(wr::MessageId, wr::FileId)>;
 
 impl App<'_> {
+    /// Metadata/identity validation is separate from cache visibility. Only the
+    /// successful draw plan supplies visibility and exact preparation geometry.
+    pub(crate) fn native_thumbnail_is_current(
+        &self,
+        key: &crate::app::native_link_thumbnails::ThumbnailKey,
+    ) -> bool {
+        if self.open_chat.as_ref() != Some(&key.chat)
+            || self.selected_section != crate::app::actions::Section::Chats
+            || self.rail_on_logout
+            || self.logout_in_progress
+            || self.should_quit
+            || !crate::app::native_link_thumbnails::valid_size(key.size)
+        {
+            return false;
+        }
+        let Some(message) = self.messages.get(&key.message_id) else {
+            return false;
+        };
+        if message.info.chat != key.chat
+            || !matches!(&message.message, wr::MessageContent::Text(source) if source == &key.source)
+        {
+            return false;
+        }
+        self.native_link_preview(&key.message_id)
+            .is_some_and(|(_, preview)| {
+                preview.matched_text == key.matched_url
+                    && !preview.jpeg_thumbnail.is_empty()
+                    && preview.jpeg_thumbnail.len() <= 256 * 1024
+            })
+    }
+
     fn retry_pending_sticker_previews(
         &mut self,
         download_tx: &DownloadSender,
@@ -49,6 +80,63 @@ impl App<'_> {
         media_jobs: &mut MediaJobOwner,
     ) -> bool {
         match event {
+            AppEvent::LoadNativeLinkThumbnail(request) => {
+                let key = request.0;
+                if !self.native_thumbnail_is_current(&key) {
+                    return false;
+                }
+                // Temporarily own the cache so the admission supplier can use the
+                // validated accessor without cloning bytes on hits or full slots.
+                let mut cache = std::mem::take(&mut self.native_link_thumbnails);
+                let job = cache.admit(&key, || {
+                    self.native_link_preview(&key.message_id)
+                        .map(|(_, preview)| preview.jpeg_thumbnail.clone())
+                });
+                self.native_link_thumbnails = cache;
+                let Some(job) = job else {
+                    return false;
+                };
+                let tx = self.tx.clone();
+                let picker = Arc::clone(&self.picker);
+                media_jobs.spawn(move |permit| {
+                    let ticket = job.ticket();
+                    // A panicking decoder/encoder still returns this slot to the event owner.
+                    let protocol = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        job.run_with(
+                            crate::app::native_link_thumbnails::decode_thumbnail,
+                            |image, size| {
+                                crate::app::native_link_thumbnails::prepare_image(
+                                    image, size, &picker,
+                                )
+                            },
+                        )
+                    }))
+                    .unwrap_or_else(|_| {
+                        log::error!("Native link thumbnail preparation panicked");
+                        None
+                    });
+                    // Cancelled jobs publish an empty completion too; only shutdown
+                    // suppresses publication through the existing managed permit.
+                    permit.send(
+                        &tx,
+                        AppInput::App(AppEvent::SetNativeLinkThumbnail(
+                            crate::app::events::NativeLinkThumbnailResult { ticket, protocol },
+                        )),
+                    );
+                });
+                false
+            }
+            AppEvent::SetNativeLinkThumbnail(result) => {
+                let current = self
+                    .native_link_thumbnails
+                    .key_for_ticket(&result.ticket)
+                    .is_some_and(|key| self.native_thumbnail_is_current(key));
+                if !current {
+                    self.native_link_thumbnails.cancel(&result.ticket);
+                }
+                self.native_link_thumbnails
+                    .finish(result.ticket, result.protocol)
+            }
             AppEvent::SetComposerPreviews(results) => self.finish_composer_previews(results),
             AppEvent::OutboundSendSucceeded { .. } | AppEvent::OutboundSendFailed { .. } => {
                 unreachable!("runtime_loop must route Send events to handle_send_event")

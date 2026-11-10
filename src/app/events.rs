@@ -274,6 +274,7 @@ pub(crate) enum MediaRenderEffect {
     DownloadFile(wr::MessageId, wr::FileId),
     LoadFilePreview(wr::MessageId),
     LoadViewerPreview(ViewerPreviewKey),
+    LoadNativeLinkThumbnail(crate::app::native_link_thumbnails::ThumbnailKey),
 }
 
 #[derive(Default)]
@@ -311,6 +312,15 @@ impl MediaRenderPlan {
     pub(crate) fn into_effects(self) -> Vec<MediaRenderEffect> {
         self.effects
     }
+}
+
+/// Owned runtime payloads; callers cannot forge an admission ticket.
+#[derive(Debug)]
+pub struct NativeLinkThumbnailRequest(pub(crate) crate::app::native_link_thumbnails::ThumbnailKey);
+
+pub struct NativeLinkThumbnailResult {
+    pub(crate) ticket: crate::app::native_link_thumbnails::ThumbnailTicket,
+    pub(crate) protocol: Option<StatefulProtocol>,
 }
 
 pub enum AppEvent {
@@ -360,6 +370,8 @@ pub enum AppEvent {
     ),
     LoadViewerPreview(ViewerPreviewKey),
     SetViewerPreview(ViewerPreviewKey, Option<StatefulProtocol>),
+    LoadNativeLinkThumbnail(NativeLinkThumbnailRequest),
+    SetNativeLinkThumbnail(NativeLinkThumbnailResult),
     SetComposerPreviews(Vec<(u64, Option<StatefulProtocol>)>),
     SetFileState(wr::MessageId, FileMeta),
     SetAudioDuration(wr::MessageId, Arc<str>, Option<u64>),
@@ -404,6 +416,8 @@ impl AppEvent {
             | Self::SetStickerPreview(_, _, _)
             | Self::LoadViewerPreview(_)
             | Self::SetViewerPreview(_, _)
+            | Self::LoadNativeLinkThumbnail(_)
+            | Self::SetNativeLinkThumbnail(_)
             | Self::SetComposerPreviews(_)
             | Self::SetFileState(_, _)
             | Self::SetAudioDuration(_, _, _) => AppEventFamily::MediaViewer,
@@ -527,6 +541,8 @@ impl fmt::Debug for AppEvent {
                 .field(key)
                 .field(&protocol.is_some())
                 .finish(),
+            AppEvent::LoadNativeLinkThumbnail(_) => f.write_str("LoadNativeLinkThumbnail"),
+            AppEvent::SetNativeLinkThumbnail(_) => f.write_str("SetNativeLinkThumbnail"),
             AppEvent::SetComposerPreviews(results) => f
                 .debug_tuple("SetComposerPreviews")
                 .field(&results.len())
