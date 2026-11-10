@@ -15,7 +15,8 @@ use crate::app::{App, FileMeta, Metadata};
 use super::message_formatting::unread_divider_line;
 use super::message_list_state::ViewportAnchor;
 use super::{
-    AuthorGroupContext, MessageTextMode, preview_height, render_message, spacing_after_message,
+    AuthorGroupContext, MessageTextMode, preview_height, render_message_with_window,
+    spacing_after_message,
 };
 
 pub(super) fn render(
@@ -33,6 +34,7 @@ pub(super) fn render(
     text_mode: MessageTextMode,
     media_render_plan: &mut MediaRenderPlan,
 ) -> Option<ViewportAnchor> {
+    let frame_area = frame.area();
     let divider_after = unread_count.checked_sub(1);
     let mut viewport_anchor = None;
 
@@ -134,7 +136,7 @@ pub(super) fn render(
                     _ => true,
                 };
 
-                render_message(
+                render_message_with_window(
                     &mut buf,
                     &item,
                     is_selected,
@@ -144,6 +146,12 @@ pub(super) fn render(
                     media_render_plan,
                     render_image,
                     text_mode,
+                    crate::ui::native_link_preview::PaintWindow {
+                        viewport: list_area,
+                        frame: frame_area,
+                        offset_x: i64::from(list_area.x),
+                        offset_y: top_i64,
+                    },
                 );
 
                 let buf_area = Rect::new(
@@ -215,7 +223,7 @@ pub(super) fn render(
                     height: height as u16,
                 };
 
-                render_message(
+                render_message_with_window(
                     frame.buffer_mut(),
                     &item,
                     is_selected,
@@ -225,6 +233,7 @@ pub(super) fn render(
                     media_render_plan,
                     true,
                     text_mode,
+                    crate::ui::native_link_preview::PaintWindow::direct(list_area, frame_area),
                 );
             }
             if too_low || too_high {

@@ -66,6 +66,16 @@ but is not phishing detection or a safety guarantee. No site or title is fetched
 Outgoing text, the composer, statuses, captions, reply summaries, system text,
 code, explicit Markdown links, and literal image syntax keep their existing display.
 
+When WhatsApp supplies native preview metadata for an eligible incoming bare URL,
+a compact preview below the body shows its title and description literally (not
+as Markdown). Only an embedded JPEG can supply the thumbnail; no website, external
+image URL, or thumbnail direct path is fetched. The original host/path label and
+exact click destination remain unchanged. Missing or ineligible metadata keeps the
+existing label. Thumbnail work is automatic only while its entire reserved image
+area is visible and not covered by a popup; selection and keyboard focus do not
+trigger loading. Loading or unusable images keep the same reserved geometry and
+leave the text and original link usable. The preview adds no clickable card action.
+
 Formatting changes only the local display. Sending, editing, copying, and searching
 still use the original text; other WhatsApp clients display the syntax they support.
 The composer previews the same formatting while you type. Markers reappear in
@@ -84,8 +94,8 @@ machine. It is not uploaded anywhere; the client only exchanges data with the Wh
 when it links or syncs, like any official client.
 
 Incoming chat text can retain WhatsApp-supplied link-preview metadata in a separate
-local database table; old messages without metadata load normally. This transport
-and storage stage does not yet display preview cards. Native metadata is optional:
+local database table; old messages without metadata load normally. Native metadata
+is optional and is displayed only for eligible incoming plain-body URLs:
 no website, external image URL, or thumbnail direct path is fetched. Titles are
 limited to 2,048 UTF-8 bytes, descriptions to 8,192 bytes, and embedded thumbnails
 to 256 KiB; an oversized image is omitted without discarding valid text metadata.

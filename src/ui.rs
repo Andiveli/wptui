@@ -5,6 +5,7 @@ mod contacts;
 pub(crate) mod layout;
 pub(crate) mod markdown;
 pub mod message_list;
+mod native_link_preview;
 mod navigation;
 mod news;
 mod status;

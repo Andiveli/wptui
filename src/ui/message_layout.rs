@@ -21,6 +21,7 @@ enum OwnedHeightContent {
     },
     Text {
         body: Arc<str>,
+        native: Option<crate::ui::native_link_preview::OwnedSummary>,
         forwarding: Option<ForwardingLabel>,
         status: Option<StatusLabel>,
     },
@@ -34,6 +35,12 @@ enum OwnedHeightContent {
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum HeightContent<'a> {
+    NativeText {
+        body: &'a str,
+        forwarding: Option<ForwardingLabel>,
+        status: Option<StatusLabel>,
+        native: crate::ui::native_link_preview::Summary<'a>,
+    },
     Informational {
         body: &'a str,
     },
@@ -102,6 +109,18 @@ impl<'a> From<&LayoutInput<'a>> for OwnedLayoutInput {
                     status,
                 } => OwnedHeightContent::Text {
                     body: body.into(),
+                    native: None,
+                    forwarding,
+                    status,
+                },
+                HeightContent::NativeText {
+                    body,
+                    forwarding,
+                    status,
+                    native,
+                } => OwnedHeightContent::Text {
+                    body: body.into(),
+                    native: Some(native.into()),
                     forwarding,
                     status,
                 },
@@ -138,6 +157,7 @@ impl OwnedLayoutInput {
                 (
                     OwnedHeightContent::Text {
                         body,
+                        native: None,
                         forwarding,
                         status,
                     },
@@ -148,6 +168,25 @@ impl OwnedLayoutInput {
                     },
                 ) => {
                     body.as_ref() == other
+                        && *forwarding == other_forwarding
+                        && *status == other_status
+                }
+                (
+                    OwnedHeightContent::Text {
+                        body,
+                        native: Some(native),
+                        forwarding,
+                        status,
+                    },
+                    HeightContent::NativeText {
+                        body: other,
+                        native: other_native,
+                        forwarding: other_forwarding,
+                        status: other_status,
+                    },
+                ) => {
+                    body.as_ref() == other
+                        && native.matches(other_native)
                         && *forwarding == other_forwarding
                         && *status == other_status
                 }
@@ -203,6 +242,29 @@ impl MessageHeightCache {
 
     pub fn measurement_count(&self) -> u64 {
         self.measurements
+    }
+
+    pub(super) fn cached_ids(&self) -> Vec<wr::MessageId> {
+        self.entries.keys().cloned().collect()
+    }
+
+    pub(super) fn native_matches(
+        &self,
+        id: &wr::MessageId,
+        summary: Option<crate::ui::native_link_preview::Summary<'_>>,
+    ) -> bool {
+        let cached = self
+            .entries
+            .get(id)
+            .and_then(|entry| match &entry.input.content {
+                OwnedHeightContent::Text { native, .. } => native.as_ref(),
+                _ => None,
+            });
+        match (cached, summary) {
+            (Some(cached), Some(summary)) => cached.matches(summary),
+            (None, None) => true,
+            _ => false,
+        }
     }
 
     pub fn invalidate(&mut self, id: &wr::MessageId) {
@@ -284,9 +346,19 @@ pub(crate) fn height(
             body,
             status,
             forwarding,
+        }
+        | HeightContent::NativeText {
+            body,
+            status,
+            forwarding,
+            ..
         } => {
             message_text_lines(body, &[], *status, content_width, &[], input.incoming_urls).len()
                 + forwarding_indicator_lines(*forwarding, content_width)
+                + match input.content {
+                    HeightContent::NativeText { native, .. } => native.height(content_width),
+                    _ => 0,
+                }
         }
         HeightContent::File {
             kind,

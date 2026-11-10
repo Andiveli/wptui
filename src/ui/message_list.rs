@@ -49,12 +49,13 @@ pub use message_formatting::reaction_chips;
 use message_formatting::{
     author_color, media_paragraph, message_block, message_content_area, reaction_line,
 };
+pub(crate) use message_helpers::inline_content_lines;
 pub use message_helpers::{
     AUTHOR_GROUP_MAX_GAP, AuthorGroupContext, get_quoted_text, reply_summary, starts_author_group,
 };
 use message_helpers::{
     StatusLabel, directionally_ordered_spans, fit_text_to_width, forwarding_indicator_lines,
-    forwarding_label, inline_content_lines, markdown_content_lines, reply_summary_for_width,
+    forwarding_label, markdown_content_lines, reply_summary_for_width,
 };
 pub use message_layout::{
     IMAGE_HEIGHT, IMAGE_WIDTH, MESSAGE_HEIGHT_CACHE_CAPACITY, MessageHeightCache, VIDEO_HEIGHT,
@@ -223,7 +224,7 @@ pub(crate) enum MessageTextMode {
 }
 
 impl MessageTextMode {
-    fn incoming_urls(self, message: &wr::Message) -> bool {
+    pub(crate) fn incoming_urls(self, message: &wr::Message) -> bool {
         self == Self::Chat
             && !message.info.is_from_me
             && !App::is_status_chat(&message.info.chat)
@@ -1541,6 +1542,33 @@ fn render_message(
     render_image: bool,
     text_mode: MessageTextMode,
 ) {
+    let window = crate::ui::native_link_preview::PaintWindow::direct(buf.area, buf.area);
+    render_message_with_window(
+        buf,
+        message,
+        is_selected,
+        author_group,
+        app,
+        area,
+        media_render_plan,
+        render_image,
+        text_mode,
+        window,
+    );
+}
+
+fn render_message_with_window(
+    buf: &mut Buffer,
+    message: &wr::Message,
+    is_selected: bool,
+    author_group: AuthorGroupContext,
+    app: &mut App,
+    area: Rect,
+    media_render_plan: &mut MediaRenderPlan,
+    render_image: bool,
+    text_mode: MessageTextMode,
+    native_window: crate::ui::native_link_preview::PaintWindow,
+) {
     let is_pending = App::is_pending_message_id(&message.info.id);
     let alignment = match &message.message {
         wr::MessageContent::Text(text) => crate::ui::bidi::Direction::from_text(text).alignment(),
@@ -1702,6 +1730,7 @@ fn render_message(
                 &highlight_ranges,
                 incoming_urls,
             );
+            let body_height = lines.len().min(u16::MAX as usize) as u16;
             Paragraph::new(lines)
                 .style(if is_pending {
                     Style::default().dim()
@@ -1718,6 +1747,22 @@ fn render_message(
                 content_area,
                 alignment,
                 incoming_urls,
+            );
+            let native_area = Rect::new(
+                content_area.x,
+                content_area.y.saturating_add(body_height),
+                content_area.width,
+                content_area.height.saturating_sub(body_height),
+            );
+            crate::ui::native_link_preview::render(
+                buf,
+                app,
+                message,
+                text_mode,
+                native_area,
+                native_window,
+                render_image,
+                media_render_plan,
             );
         }
         wr::MessageContent::File(data) => {
@@ -2138,6 +2183,7 @@ fn render_message_items(
     app.mouse_hit_map.message_list = Some(list_area);
     let width = list_area.width as isize;
     let selection_started = app.message_list_phase_started();
+    message_layout_integration::refresh_native_heights(app, text_mode);
     let (start_index, y) = message_list_reconciliation::reconcile(
         app,
         list_area,
