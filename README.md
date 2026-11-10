@@ -221,6 +221,31 @@ For that comparison, WhatsApp's legacy `c.us` user namespace is treated as equiv
 to `s.whatsapp.net`, without changing any phone-number digits. An accepted lookup
 opens the canonical `s.whatsapp.net` identity for the number entered, never a different number.
 
+### Temporary new-number comparison preview
+
+This preview replaces the different-phone-number rejection notice with a temporary
+payload-free comparison, for example:
+
+```text
+Lookup comparison PN(d/n/i)=0/1/1 JID(d/n/i)=0/0/1
+```
+
+`PN` compares the response's associated phone-number field; `JID` compares its
+other identity field. Each triple contains independent booleans (`1` yes, `0` no):
+
+- `d`: the field's user digits exactly equal the entered phone-number digits.
+- `n`: its domain is an allowed phone-number domain (`s.whatsapp.net` or `c.us`).
+- `i`: its `Integrator` equals the requested identity's integrator (zero).
+
+These are comparisons, not field values or proof of a valid recipient. An absent
+field can still have `i=1` because its default integrator is zero. No number, JID,
+raw response, or diagnostic log is emitted or persisted by this observation.
+Only the existing lookup action makes a request; the preview adds no background
+queries, sends no message, and leaves the exact-recipient guard unchanged. The
+comparison remains a rejected lookup and cannot open a conversation. Share only
+the comparison line, not the number, screenshot, or recipient identifiers.
+This temporary observation is not a fix for the reported new-number failure.
+
 ### Diagnostics
 
 To trace edited/deleted message processing, run with:

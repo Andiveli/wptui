@@ -57,7 +57,7 @@ impl App<'_> {
                 true
             }
             Err(error) => {
-                self.phone_lookup_unavailable(match error {
+                let message = match error {
                     PhoneLookupError::InvalidNumber => "Use + followed by 7-15 digits",
                     PhoneLookupError::ClientUnavailable => "WhatsApp is not connected",
                     PhoneLookupError::RequestFailed => "Could not check number",
@@ -76,7 +76,21 @@ impl App<'_> {
                     PhoneLookupError::DifferentPhoneNumber => {
                         "WhatsApp returned a different phone number"
                     }
-                });
+                    PhoneLookupError::ResponseComparison { phone, jid } => {
+                        let notice = format!(
+                            "Lookup comparison PN(d/n/i)={}/{}/{} JID(d/n/i)={}/{}/{}",
+                            u8::from(phone[0]),
+                            u8::from(phone[1]),
+                            u8::from(phone[2]),
+                            u8::from(jid[0]),
+                            u8::from(jid[1]),
+                            u8::from(jid[2])
+                        );
+                        self.phone_lookup_unavailable(&notice);
+                        return true;
+                    }
+                };
+                self.phone_lookup_unavailable(message);
                 true
             }
         }
@@ -157,6 +171,48 @@ mod tests {
             (
                 Err(PhoneLookupError::DifferentPhoneNumber),
                 "WhatsApp returned a different phone number",
+            ),
+            (
+                Err(PhoneLookupError::ResponseComparison {
+                    phone: [false, true, true],
+                    jid: [false, false, true],
+                }),
+                "Lookup comparison PN(d/n/i)=0/1/1 JID(d/n/i)=0/0/1",
+            ),
+            (
+                Err(PhoneLookupError::ResponseComparison {
+                    phone: [false, false, true],
+                    jid: [false, true, true],
+                }),
+                "Lookup comparison PN(d/n/i)=0/0/1 JID(d/n/i)=0/1/1",
+            ),
+            (
+                Err(PhoneLookupError::ResponseComparison {
+                    phone: [true, true, false],
+                    jid: [false, false, true],
+                }),
+                "Lookup comparison PN(d/n/i)=1/1/0 JID(d/n/i)=0/0/1",
+            ),
+            (
+                Err(PhoneLookupError::ResponseComparison {
+                    phone: [false, false, true],
+                    jid: [true, true, false],
+                }),
+                "Lookup comparison PN(d/n/i)=0/0/1 JID(d/n/i)=1/1/0",
+            ),
+            (
+                Err(PhoneLookupError::ResponseComparison {
+                    phone: [true, false, true],
+                    jid: [false, true, true],
+                }),
+                "Lookup comparison PN(d/n/i)=1/0/1 JID(d/n/i)=0/1/1",
+            ),
+            (
+                Err(PhoneLookupError::ResponseComparison {
+                    phone: [false, true, true],
+                    jid: [false, true, true],
+                }),
+                "Lookup comparison PN(d/n/i)=0/1/1 JID(d/n/i)=0/1/1",
             ),
             (
                 Ok(Some(JID::from("15559876543@s.whatsapp.net".to_owned()))),

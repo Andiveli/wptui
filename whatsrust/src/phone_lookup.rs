@@ -15,6 +15,8 @@ pub enum PhoneLookupError {
     QueryMismatch,
     LidOnly,
     DifferentPhoneNumber,
+    // Temporary independent comparisons: digits, allowed domain, integrator.
+    ResponseComparison { phone: [bool; 3], jid: [bool; 3] },
 }
 
 pub fn lookup_phone(phone: &str) -> Result<Option<JID>, PhoneLookupError> {
@@ -59,6 +61,10 @@ fn lookup_result(
         8 if jid.is_none() => Err(PhoneLookupError::QueryMismatch),
         9 if jid.is_none() => Err(PhoneLookupError::LidOnly),
         10 if jid.is_none() => Err(PhoneLookupError::DifferentPhoneNumber),
+        128..=191 if jid.is_none() => Err(PhoneLookupError::ResponseComparison {
+            phone: [status & 1 != 0, status & 2 != 0, status & 4 != 0],
+            jid: [status & 8 != 0, status & 16 != 0, status & 32 != 0],
+        }),
         _ => Err(PhoneLookupError::InvalidBridgeResult),
     }
 }
@@ -140,10 +146,9 @@ mod tests {
         for bits in 0..64_u8 {
             let phone = [bits & 1 != 0, bits & 2 != 0, bits & 4 != 0];
             let jid = [bits & 8 != 0, bits & 16 != 0, bits & 32 != 0];
-            let expected = format!("Err(ResponseComparison {{ phone: {phone:?}, jid: {jid:?} }})");
             assert_eq!(
-                format!("{:?}", lookup_result(128 + bits, "+15551234567", None)),
-                expected,
+                lookup_result(128 + bits, "+15551234567", None),
+                Err(PhoneLookupError::ResponseComparison { phone, jid }),
                 "comparison bits {bits}"
             );
             let recipient = Some("15551234567@s.whatsapp.net");
