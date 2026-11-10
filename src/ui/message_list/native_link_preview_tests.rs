@@ -538,3 +538,302 @@ fn visible_unselected_requests_but_selected_offscreen_does_not() {
         assert_eq!(app.native_link_thumbnails.outstanding(), 0);
     }
 }
+
+#[test]
+fn repeated_loading_ready_and_failed_draws_refresh_same_key_without_geometry_or_hit_changes() {
+    for size in SIZES {
+        for ready in [true, false] {
+            let mut app = fixture(URL, jpeg(32, 16));
+            let (absent, key) = single_key(&mut app, size);
+            let width = app.mouse_hit_map.message_list.unwrap().width as usize;
+            let measured = height(&mut app, width);
+            let anchor = app.message_list_state.viewport_anchor.clone();
+            let selection = app.message_list_state.get_selected_message();
+            let hits = app
+                .mouse_hit_map
+                .urls
+                .iter()
+                .map(|hit| (hit.area, hit.url.clone()))
+                .collect::<Vec<_>>();
+            app.native_link_thumbnails
+                .reconcile(std::slice::from_ref(&key));
+            let bytes = jpeg(u32::from(key.size.width), u32::from(key.size.height) * 2);
+            let job = app
+                .native_link_thumbnails
+                .admit(&key, || Some(bytes.clone()))
+                .unwrap();
+            for _ in 0..2 {
+                let (loading, refreshed) = single_key(&mut app, size);
+                assert_eq!(refreshed, key);
+                assert_eq!(loading, absent);
+                assert_eq!(app.native_link_thumbnails.outstanding(), 1);
+            }
+            let protocol = if ready {
+                prepare_thumbnail(
+                    &bytes,
+                    key.size,
+                    &Arc::new(Mutex::new(Picker::halfblocks())),
+                )
+            } else {
+                None
+            };
+            assert!(app.native_link_thumbnails.finish(job.ticket(), protocol));
+            for _ in 0..2 {
+                let (painted, refreshed) = single_key(&mut app, size);
+                assert_eq!(refreshed, key);
+                assert_eq!(height(&mut app, width), measured);
+                assert_eq!(app.message_list_state.viewport_anchor, anchor);
+                assert_eq!(app.message_list_state.get_selected_message(), selection);
+                assert_eq!(
+                    app.mouse_hit_map
+                        .urls
+                        .iter()
+                        .map(|hit| (hit.area, hit.url.clone()))
+                        .collect::<Vec<_>>(),
+                    hits
+                );
+                assert_eq!(app.native_link_thumbnails.outstanding(), 0);
+                assert_eq!(app.native_link_thumbnails.len(), 1);
+                assert!(
+                    app.native_link_thumbnails
+                        .admit(&key, || panic!("draw retried cached bytes"))
+                        .is_none()
+                );
+                assert_eq!(
+                    app.native_link_thumbnails.state(&key),
+                    if ready {
+                        EntryState::Ready
+                    } else {
+                        EntryState::Failed
+                    }
+                );
+                if ready {
+                    let image = changed_rect(&absent, &painted);
+                    assert_eq!(image.as_size(), key.size, "full reserved geometry");
+                    assert_eq!(
+                        image.intersection(app.mouse_hit_map.message_list.unwrap()),
+                        image
+                    );
+                } else {
+                    assert_eq!(
+                        painted, absent,
+                        "negative cache keeps reserved text fallback"
+                    );
+                }
+                source_and_hits(&app, URL);
+            }
+        }
+    }
+}
+
+#[test]
+fn clipped_thumbnail_requires_entire_reserved_rect_and_narrow_columns_stay_text_only() {
+    let mut app = fixture(URL, jpeg(32, 16));
+    let area = Rect::new(5, 5, 100, 40);
+    let measured = height(&mut app, area.width as usize);
+    let bottom = isize::from(area.y) + measured as isize;
+    let (absent, demand) = viewport(&mut app, area, bottom);
+    assert_eq!(
+        demand.len(),
+        1,
+        "fully visible viewport must request thumbnail"
+    );
+    let key = demand[0].clone();
+    finish_ready(&mut app, &key);
+    let (ready, _) = viewport(&mut app, area, bottom);
+    let image = changed_rect(&absent, &ready);
+    assert_eq!(image.as_size(), key.size);
+    for (name, clipped) in [
+        (
+            "one-image-row-clipped-at-top",
+            Rect::new(area.x, image.y + 1, area.width, area.bottom() - image.y - 1),
+        ),
+        (
+            "one-image-row-clipped-at-bottom",
+            Rect::new(area.x, area.y, area.width, image.bottom() - area.y - 1),
+        ),
+        (
+            "text-visible-image-offscreen",
+            Rect::new(area.x, area.y, area.width, image.y - area.y),
+        ),
+    ] {
+        let (painted, demand) = viewport(&mut app, clipped, bottom);
+        assert!(demand.is_empty(), "{name}");
+        assert!(
+            !painted
+                .content
+                .iter()
+                .any(|cell| matches!(cell.bg, Color::Rgb(r, _, _) if r > 200)),
+            "no partial protocol: {name}"
+        );
+        assert!(
+            app.mouse_hit_map
+                .urls
+                .iter()
+                .all(|hit| hit.area.intersection(clipped) == hit.area)
+        );
+        assert_eq!(app.native_link_thumbnails.outstanding(), 0);
+    }
+    let tiny = Rect::new(5, 5, 1, 40);
+    let tiny_height = height(&mut app, 1);
+    let (_, demand) = viewport(&mut app, tiny, 5 + tiny_height as isize);
+    assert!(
+        demand.is_empty(),
+        "no unsafe image in one-column text layout"
+    );
+}
+
+#[test]
+fn stale_source_or_size_protocol_is_not_painted_and_resize_replans_normal_draw() {
+    for change in ["source", "size"] {
+        let mut app = fixture(URL, jpeg(32, 16));
+        let (absent, key) = single_key(&mut app, (180, 50));
+        let mut stale = key.clone();
+        if change == "source" {
+            stale.source = format!("old {URL}").into();
+        } else {
+            stale.size.width += 1;
+        }
+        finish_ready(&mut app, &stale);
+        let (painted, current) = single_key(&mut app, (180, 50));
+        assert_eq!(current, key);
+        assert_eq!(painted, absent, "stale {change} protocol must not paint");
+        let narrow_width = key.size.width.saturating_sub(1).max(1);
+        let area = Rect::new(5, 5, narrow_width, 40);
+        let measured = height(&mut app, narrow_width as usize);
+        let (_, demand) = viewport(&mut app, area, 5 + measured as isize);
+        assert!(demand.iter().all(|new| new.source == key.source
+            && new.matched_url == key.matched_url
+            && new.size != stale.size
+            && new.size.width <= narrow_width));
+        let (_, restored) = single_key(&mut app, (180, 50));
+        assert_eq!(restored, key);
+    }
+    let source = format!("{} {URL}", "words ".repeat(8));
+    let mut app = fixture(&source, jpeg(32, 16));
+    let (_, wide_key) = single_key(&mut app, (180, 50));
+    let wide_width = app.mouse_hit_map.message_list.unwrap().width as usize;
+    let wide_height = height(&mut app, wide_width);
+    finish_ready(&mut app, &wide_key);
+    let (_, narrow_key) = single_key(&mut app, (80, 24));
+    let narrow_width = app.mouse_hit_map.message_list.unwrap().width as usize;
+    assert!(narrow_width < wide_width);
+    assert!(
+        height(&mut app, narrow_width) > wide_height,
+        "resize remeasures wrapped body"
+    );
+    assert!(usize::from(narrow_key.size.width) <= narrow_width);
+    assert_eq!(narrow_key.source, wide_key.source);
+    assert_eq!(narrow_key.matched_url, wide_key.matched_url);
+    if narrow_key.size != wide_key.size {
+        assert_eq!(
+            app.native_link_thumbnails.state(&narrow_key),
+            EntryState::Absent
+        );
+    }
+    source_and_hits(&app, &source);
+}
+
+#[test]
+fn invalid_jpeg_negative_cache_retains_native_text_and_original_input() {
+    let mut app = fixture(URL, b"not JPEG".to_vec());
+    let (before, key) = single_key(&mut app, (180, 50));
+    assert!(text(&before).contains(TITLE));
+    app.native_link_thumbnails
+        .reconcile(std::slice::from_ref(&key));
+    let job = app
+        .native_link_thumbnails
+        .admit(&key, || Some(b"not JPEG".to_vec()))
+        .unwrap();
+    let protocol = prepare_thumbnail(
+        b"not JPEG",
+        key.size,
+        &Arc::new(Mutex::new(Picker::halfblocks())),
+    );
+    assert!(protocol.is_none());
+    assert!(app.native_link_thumbnails.finish(job.ticket(), protocol));
+    let (after, refreshed) = single_key(&mut app, (180, 50));
+    assert_eq!(refreshed, key);
+    assert_eq!(before, after);
+    assert_eq!(app.native_link_thumbnails.state(&key), EntryState::Failed);
+    assert_eq!(app.native_link_thumbnails.outstanding(), 0);
+    assert!(
+        app.native_link_thumbnails
+            .admit(&key, || panic!("negative retry"))
+            .is_none()
+    );
+    source_and_hits(&app, URL);
+}
+
+#[test]
+fn outgoing_and_document_heights_remain_the_existing_non_native_contract() {
+    let mut app = fixture(URL, Vec::new());
+    for caption in [false, true] {
+        let mut item = app.messages["native-ui"].clone();
+        item.info.is_from_me = true;
+        if caption {
+            item.message = wr::MessageContent::File(wr::FileContent {
+                path: "document.txt".into(),
+                kind: wr::FileKind::Document,
+                caption: Some(URL.into()),
+                ..Default::default()
+            });
+        }
+        for width in [20, 80, 140] {
+            let expected =
+                inline_content_lines(URL, &[], None, width).len() + if caption { 2 } else { 1 };
+            assert_eq!(
+                message_height(
+                    &item,
+                    width,
+                    false,
+                    AuthorGroupContext::STARTS_GROUP,
+                    &mut app
+                ),
+                expected
+            );
+        }
+    }
+    let other_url = "https://other.test/kept?q=%2F#part";
+    let chat = app.messages["native-ui"].info.chat.clone();
+    let mut other = message(&chat, "other-layout", 1_704_110_401);
+    other.info.is_from_me = true;
+    other.message = wr::MessageContent::Text(other_url.into());
+    app.add_message(other.clone());
+    let expected = message_height(
+        &other,
+        100,
+        false,
+        AuthorGroupContext::STARTS_GROUP,
+        &mut app,
+    );
+    for _ in 0..2 {
+        let (buffer, _) = draw(&mut app, (180, 50));
+        assert_eq!(
+            message_height(
+                &other,
+                100,
+                false,
+                AuthorGroupContext::STARTS_GROUP,
+                &mut app
+            ),
+            expected
+        );
+        let hits = app
+            .mouse_hit_map
+            .urls
+            .iter()
+            .filter(|hit| hit.id == other.info.id)
+            .collect::<Vec<_>>();
+        assert!(!hits.is_empty());
+        assert!(hits.iter().all(|hit| hit.url == other_url));
+        assert_eq!(
+            hits.iter()
+                .map(|hit| buffer[(hit.area.x, hit.area.y)].symbol())
+                .collect::<String>(),
+            other_url
+        );
+        assert!(matches!(&app.messages[&other.info.id].message,
+            wr::MessageContent::Text(stored) if stored.as_ref() == other_url));
+    }
+}
