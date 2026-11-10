@@ -631,7 +631,7 @@ fn clipped_thumbnail_requires_entire_reserved_rect_and_narrow_columns_stay_text_
     let mut app = fixture(URL, jpeg(32, 16));
     let area = Rect::new(5, 5, 100, 40);
     let measured = height(&mut app, area.width as usize);
-    let bottom = isize::from(area.y) + measured as isize;
+    let bottom = isize::try_from(area.y).expect("fixture row fits isize") + measured as isize;
     let (absent, demand) = viewport(&mut app, area, bottom);
     assert_eq!(
         demand.len(),
