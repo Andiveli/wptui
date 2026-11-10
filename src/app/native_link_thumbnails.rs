@@ -184,6 +184,14 @@ impl NativeLinkThumbnails {
         })
     }
 
+    pub(crate) fn pending_visible_keys(&self) -> impl Iterator<Item = &ThumbnailKey> {
+        self.visible.iter().filter(|key| {
+            self.cache_capacity > 0
+                && self.jobs.len() < self.job_capacity
+                && self.state(key) == EntryState::Absent
+        })
+    }
+
     pub(crate) fn key_for_ticket(&self, ticket: &ThumbnailTicket) -> Option<&ThumbnailKey> {
         self.jobs
             .iter()

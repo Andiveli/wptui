@@ -134,8 +134,17 @@ impl App<'_> {
                 if !current {
                     self.native_link_thumbnails.cancel(&result.ticket);
                 }
-                self.native_link_thumbnails
-                    .finish(result.ticket, result.protocol)
+                let outstanding = self.native_link_thumbnails.outstanding();
+                let accepted = self
+                    .native_link_thumbnails
+                    .finish(result.ticket, result.protocol);
+                // A stale completion can unblock demand without installing a protocol.
+                accepted
+                    || (self.native_link_thumbnails.outstanding() < outstanding
+                        && self
+                            .native_link_thumbnails
+                            .pending_visible_keys()
+                            .any(|key| self.native_thumbnail_is_current(key)))
             }
             AppEvent::SetComposerPreviews(results) => self.finish_composer_previews(results),
             AppEvent::OutboundSendSucceeded { .. } | AppEvent::OutboundSendFailed { .. } => {
