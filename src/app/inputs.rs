@@ -62,6 +62,9 @@ impl App<'_> {
     }
 
     pub fn on_terminal_event(&mut self, event: Event) {
+        if self.handle_phone_lookup_observation_input(&event) {
+            return;
+        }
         if let Event::Mouse(mouse) = event {
             self.on_mouse_event(mouse);
             return;

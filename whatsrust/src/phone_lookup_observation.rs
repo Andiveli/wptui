@@ -6,10 +6,8 @@ pub struct LocalPhoneLookupObservation(String);
 
 impl LocalPhoneLookupObservation {
     pub fn from_display_text(text: String) -> Option<Self> {
-        if text.is_empty()
-            || text.len() > 8192
-            || !text.bytes().all(|byte| byte == b'\n' || (32..=126).contains(&byte))
-        {
+        let safe = text.bytes().all(|byte| matches!(byte, b'\n' | b' '..=b'~'));
+        if text.is_empty() || text.len() > 8192 || !safe {
             return None;
         }
         Some(Self(text))

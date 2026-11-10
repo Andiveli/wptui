@@ -221,10 +221,29 @@ For that comparison, WhatsApp's legacy `c.us` user namespace is treated as equiv
 to `s.whatsapp.net`, without changing any phone-number digits. An accepted lookup
 opens the canonical `s.whatsapp.net` identity for the number entered, never a different number.
 
-### Temporary new-number comparison preview
+### Temporary local number-response inspection
 
-This preview replaces the different-phone-number rejection notice with a temporary
-payload-free comparison, for example:
+For the matched, registered response that failed the phone-identity comparison,
+this preview opens a **local-only, read-only window**. It shows the requested
+number, response `Query` and `IsIn`, and the `PhoneNumber` and `JID` fields. Each
+identity has a quoted string representation plus labeled `User`, `Server`,
+`RawAgent`, `Device` and `Integrator` components, so formatting and field order
+can be inspected without guessing.
+
+Use `j`/`k` or up/down arrows to scroll vertically, `h`/`l` or left/right arrows
+to scroll horizontally, `Home` to reset the view, and `Esc` to close and release
+its in-memory observation. Other input is captured by the window: `Enter` does
+not open a conversation or send a message. Values are length-bounded and controls
+are escaped as visible ASCII rather than interpreted by the terminal.
+
+Actual values are retained only in volatile memory for this display, with redacted
+Debug output. They are not added to notices, logs, files, the chat store, or the
+clipboard. No additional lookup is made, and the exact-recipient guard is unchanged.
+**Do not share the displayed numbers, JIDs, screenshots, or full response text.**
+Report only whether you see a formatting difference or different digits.
+
+If the local snapshot is unavailable or exceeds its limits, the existing six-boolean
+comparison remains as a fallback, for example:
 
 ```text
 Lookup comparison PN(d/n/i)=0/1/1 JID(d/n/i)=0/0/1
@@ -239,7 +258,7 @@ other identity field. Each triple contains independent booleans (`1` yes, `0` no
 
 These are comparisons, not field values or proof of a valid recipient. An absent
 field can still have `i=1` because its default integrator is zero. No number, JID,
-raw response, or diagnostic log is emitted or persisted by this observation.
+raw response, or diagnostic log is emitted or persisted by the boolean fallback.
 Only the existing lookup action makes a request; the preview adds no background
 queries, sends no message, and leaves the exact-recipient guard unchanged. The
 comparison remains a rejected lookup and cannot open a conversation. Share only

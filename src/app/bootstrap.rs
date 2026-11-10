@@ -226,6 +226,7 @@ fn with_dirs_and_picker_and_ports(
         url_opener: Box::new(SystemUrlOpener),
         launch_executor: Box::new(crate::media::CommandLaunchExecutor),
         attachment_viewer: None,
+        phone_lookup_observation: None,
         viewer_preview: None,
         viewer_zoom: 100,
         read_receipts: ReadReceiptCoordinator::default(),

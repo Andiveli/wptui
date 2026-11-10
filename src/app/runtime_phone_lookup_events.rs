@@ -36,6 +36,7 @@ impl App<'_> {
         {
             return false;
         }
+        self.phone_lookup_observation = None;
         match result {
             Ok(Some(jid)) => {
                 let expected = phone
@@ -76,8 +77,11 @@ impl App<'_> {
                     PhoneLookupError::DifferentPhoneNumber => {
                         "WhatsApp returned a different phone number"
                     }
-                    PhoneLookupError::ResponseObservation(_) => {
-                        "Local number response available"
+                    PhoneLookupError::ResponseObservation(observation) => {
+                        self.phone_lookup_observation = Some(
+                            super::phone_lookup_observation::ObservationView::new(observation),
+                        );
+                        "Local number response shown; Esc closes"
                     }
                     PhoneLookupError::ResponseComparison { phone, jid } => {
                         let notice = format!(
@@ -104,7 +108,7 @@ impl App<'_> {
 mod tests {
     use super::*;
     use crate::app::test_support::TestApp;
-    use whatsrust::JID;
+    use whatsrust::{JID, LocalPhoneLookupObservation};
 
     fn awaiting_lookup() -> TestApp {
         let mut app = TestApp::new();
@@ -234,6 +238,39 @@ mod tests {
             assert!(
                 matches!(app.action_notice, Some(ActionNotice::PhoneLookup(ref message)) if message == notice)
             );
+        }
+    }
+
+    #[test]
+    fn local_response_is_visible_only_for_current_rejected_lookup() {
+        for generation in [1, 2] {
+            let mut app = awaiting_lookup();
+            app.pending_phone_lookup = Some((generation, "+15551234567".into()));
+            let raw = "Requested: \"+15551234567\"\nPhoneNumber.User: \"15559876543\"";
+            let observation = LocalPhoneLookupObservation::from_display_text(raw.into()).unwrap();
+            let event = completed(1, Err(PhoneLookupError::ResponseObservation(observation)));
+            assert!(!format!("{event:?}").contains("15559876543"));
+            assert_eq!(app.handle_phone_lookup_event(event), generation == 1);
+            assert!(app.chats.is_empty());
+            assert_eq!(app.open_chat(), None);
+            assert!(app.chat_messages.is_empty());
+            assert!(app.contact_search_active);
+            assert_eq!(app.contact_search.input.to_string(), "+15551234567");
+            assert_eq!(app.focus_pane, FocusPane::ChatList);
+            if generation == 1 {
+                let view = app.phone_lookup_observation.as_ref().unwrap();
+                assert_eq!(view.observation.display_text(), raw);
+                assert!(app.pending_phone_lookup.is_none());
+                assert!(matches!(
+                    app.action_notice,
+                    Some(ActionNotice::PhoneLookup(ref text))
+                        if text == "Local number response shown; Esc closes"
+                ));
+            } else {
+                assert!(app.phone_lookup_observation.is_none());
+                assert_eq!(app.pending_phone_lookup.as_ref().unwrap().0, 2);
+                assert!(app.action_notice.is_none());
+            }
         }
     }
 

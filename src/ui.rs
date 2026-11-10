@@ -5,6 +5,7 @@ mod contacts;
 pub(crate) mod layout;
 pub mod message_list;
 mod navigation;
+mod phone_lookup_observation;
 mod status;
 pub mod status_list;
 pub mod text_input;
@@ -157,6 +158,7 @@ pub fn draw_with_plan(
     render_share_picker(frame, app);
     render_file_picker(frame, app);
     render_keybind_overlays(frame, app);
+    phone_lookup_observation::render(frame, app);
 }
 
 fn render_keybind_overlays(frame: &mut Frame, app: &App) {

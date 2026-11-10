@@ -87,6 +87,7 @@ impl App<'_> {
             || self.pending_logout
             || self.logout_in_progress
             || self.shortcut_popup
+            || self.phone_lookup_observation.is_some()
             || self.leader_menu.is_some()
             || self.contextual_menu.is_some()
             || self.attachment_viewer.is_some()
