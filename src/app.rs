@@ -63,6 +63,8 @@ pub mod message_push_name_port;
 pub mod message_reactions;
 pub(crate) mod mouse_input;
 pub mod native_link_previews;
+#[cfg(test)]
+mod native_link_thumbnail_tests;
 pub mod navigation_conversation_dispatch;
 pub mod news;
 pub(crate) mod news_star;
