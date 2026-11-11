@@ -126,6 +126,151 @@ mod tests {
         }
     }
 
+    fn awaiting_number_lookup(phone: &str) -> TestApp {
+        let mut app = awaiting_lookup();
+        app.contact_search.input = phone.into();
+        app.pending_phone_lookup = Some((1, phone.into()));
+        app
+    }
+
+    fn confirmed_number_event(generation: u64, phone: &str, confirmed: &str) -> AppEvent {
+        AppEvent::PhoneLookupFinished {
+            generation,
+            phone: phone.into(),
+            result: Ok(Some(JID::from(confirmed.to_owned()))),
+        }
+    }
+
+    #[test]
+    fn equivalent_confirmed_number_opens_server_pn_without_sending() {
+        for (phone, confirmed) in [
+            ("+525512345678", "5215512345678"),
+            ("+5215512345678", "525512345678"),
+            ("+541112345678", "5491112345678"),
+            ("+5491112345678", "541112345678"),
+            ("+525512345678", "525512345678"),
+            ("+5215512345678", "5215512345678"),
+            ("+541112345678", "541112345678"),
+            ("+5491112345678", "5491112345678"),
+            ("+593991234567", "593991234567"),
+        ] {
+            let mut app = awaiting_number_lookup(phone);
+            let confirmed = format!("{confirmed}@s.whatsapp.net");
+            let jid = JID::from(confirmed.clone());
+            assert!(app.handle_phone_lookup_event(confirmed_number_event(1, phone, &confirmed)));
+            assert_eq!(app.open_chat(), Some(jid.clone()), "{phone} -> {confirmed}");
+            assert_eq!(app.get_selected_chat(), Some(jid.clone()));
+            assert_eq!(app.chats.len(), 1);
+            assert!(app.chats.contains_key(&jid));
+            assert!(app.chat_messages.is_empty());
+            assert!(app.pending_phone_lookup.is_none());
+            assert!(app.contact_search.input.is_empty());
+            assert!(!app.contact_search_active);
+            assert_eq!(app.focus_pane, FocusPane::Conversation);
+            assert!(app.action_notice.is_none());
+        }
+    }
+
+    fn assert_confirmed_number_rejected(phone: &str, confirmed: &str) {
+        let mut app = awaiting_number_lookup(phone);
+        assert!(app.handle_phone_lookup_event(confirmed_number_event(1, phone, confirmed)));
+        assert!(app.chats.is_empty(), "{phone} -> {confirmed}");
+        assert_eq!(app.open_chat(), None);
+        assert_eq!(app.get_selected_chat(), None);
+        assert!(app.chat_messages.is_empty());
+        assert!(app.pending_phone_lookup.is_none());
+        assert!(app.contact_search_active);
+        assert_eq!(app.contact_search.input.to_string(), phone);
+        assert_eq!(app.focus_pane, FocusPane::ChatList);
+        assert_eq!(app.selected_section, Section::Chats);
+        assert!(matches!(
+            app.action_notice,
+            Some(ActionNotice::PhoneLookup(ref message)) if message == "Could not verify number"
+        ));
+    }
+
+    #[test]
+    fn unsupported_confirmed_numbers_leave_chat_and_search_state_unchanged() {
+        for (left, right) in [
+            ("525512345678", "5215512345679"),
+            ("541112345678", "5491112345679"),
+            ("52551234567", "521551234567"),
+            ("54111234567", "549111234567"),
+            ("5255123456789", "52155123456789"),
+            ("5411123456789", "54911123456789"),
+            ("593991234567", "5931991234567"),
+            ("535512345678", "5315512345678"),
+            ("525512345678", "5495512345678"),
+            ("54111512345678", "5491112345678"),
+            ("5401112345678", "5491112345678"),
+        ] {
+            for (requested, confirmed) in [(left, right), (right, left)] {
+                assert_confirmed_number_rejected(
+                    &format!("+{requested}"),
+                    &format!("{confirmed}@s.whatsapp.net"),
+                );
+            }
+        }
+        for (phone, confirmed) in [
+            ("+525512345678", "5215512345678"),
+            ("+5215512345678", "525512345678"),
+            ("+541112345678", "5491112345678"),
+            ("+5491112345678", "541112345678"),
+            ("+525512345678", "525512345678"),
+            ("+541112345678", "541112345678"),
+        ] {
+            for jid in [
+                format!("{confirmed}@lid"),
+                format!("{confirmed}@c.us"),
+                format!("{confirmed}@g.us"),
+                format!("{confirmed}@S.WHATSAPP.NET"),
+                format!("{confirmed}:1@s.whatsapp.net"),
+                format!("{confirmed}.1:1@s.whatsapp.net"),
+                format!("{confirmed}_1@s.whatsapp.net"),
+                format!("+{confirmed}@s.whatsapp.net"),
+            ] {
+                assert_confirmed_number_rejected(phone, &jid);
+            }
+        }
+    }
+
+    #[test]
+    fn stale_equivalent_confirmed_numbers_cannot_open_a_chat() {
+        for (phone, confirmed) in [
+            ("+525512345678", "5215512345678"),
+            ("+5215512345678", "525512345678"),
+            ("+541112345678", "5491112345678"),
+            ("+5491112345678", "541112345678"),
+        ] {
+            for stale in ["generation", "pending phone", "edited search"] {
+                let mut app = awaiting_number_lookup(phone);
+                match stale {
+                    "generation" => app.pending_phone_lookup = Some((2, phone.into())),
+                    "pending phone" => {
+                        app.pending_phone_lookup = Some((1, "+593991234567".into()));
+                    }
+                    _ => app.contact_search.input = "+593991234567".into(),
+                }
+                let pending = app.pending_phone_lookup.clone();
+                let search = app.contact_search.input.to_string();
+                let confirmed = format!("{confirmed}@s.whatsapp.net");
+                assert!(!app.handle_phone_lookup_event(confirmed_number_event(1, phone, &confirmed)));
+                assert!(app.chats.is_empty());
+                assert_eq!(app.open_chat(), None);
+                assert!(app.chat_messages.is_empty());
+                assert!(app.contact_search_active);
+                assert_eq!(app.contact_search.input.to_string(), search);
+                assert_eq!(app.focus_pane, FocusPane::ChatList);
+                assert!(app.action_notice.is_none());
+                if stale == "edited search" {
+                    assert!(app.pending_phone_lookup.is_none());
+                } else {
+                    assert_eq!(app.pending_phone_lookup, pending);
+                }
+            }
+        }
+    }
+
     #[test]
     fn verified_number_opens_chat_without_sending_a_message() {
         let mut app = awaiting_lookup();
