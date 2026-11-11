@@ -42,8 +42,8 @@ type phoneLookupResult struct {
 
 type phoneLookupQuery func(context.Context, []string) ([]types.IsOnWhatsAppResponse, error)
 
-// A positive server response for exactly the requested PN is the only
-// authority to open an unsaved conversation. Keep the PN as the chat key:
+// A positive server response confirming the requested PN, exactly or through
+// the narrow country equivalences, is required. Keep the PN as the chat key:
 // an unknown LID has no display name and would disappear from the chat list.
 func lookupPhone(ctx context.Context, phone string, query phoneLookupQuery) phoneLookupResult {
 	if len(phone) < 8 || len(phone) > 16 || phone[0] != '+' {
@@ -77,6 +77,13 @@ func lookupPhone(ctx context.Context, phone string, query phoneLookupQuery) phon
 		}
 		if matchesRequestedPhoneIdentity(response.PhoneNumber, requested) || matchesRequestedPhoneIdentity(response.JID, requested) {
 			return phoneLookupResult{status: phoneLookupFound, jid: requested.String()}
+		}
+		// Preserve exact success across both fields before considering any
+		// equivalent spelling. Return the confirmed PN, not a rewritten request.
+		for _, identity := range []types.JID{response.PhoneNumber, response.JID} {
+			if confirmed, ok := countryEquivalentPhoneIdentity(identity, requested); ok {
+				return phoneLookupResult{status: phoneLookupFound, jid: confirmed.String()}
+			}
 		}
 		// These categories describe response shape only, not an alternate recipient.
 		if response.JID.Server == types.HiddenUserServer && response.JID.User != "" && response.PhoneNumber == (types.JID{}) {
