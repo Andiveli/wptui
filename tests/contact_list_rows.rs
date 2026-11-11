@@ -81,16 +81,20 @@ fn selection_highlights_both_rows_as_one_item() {
     assert_eq!(buffer[(0, 1)].bg, Color::Reset);
     assert_eq!(buffer[(0, 2)].bg, Color::Reset);
     // Bob (rows 3-5, selected)
-    assert_eq!(buffer[(0, 3)].bg, Color::DarkGray);
-    assert_eq!(buffer[(0, 4)].bg, Color::DarkGray);
+    assert_eq!(buffer[(0, 3)].bg, Color::Rgb(36, 46, 56));
+    assert_eq!(buffer[(0, 4)].bg, Color::Rgb(36, 46, 56));
     assert_eq!(buffer[(0, 5)].bg, Color::Reset);
+    assert_eq!(buffer[(5, 3)].fg, Color::Rgb(230, 237, 243));
+    assert_eq!(buffer[(5, 4)].fg, Color::Rgb(230, 237, 243));
+    assert_eq!(buffer[(0, 3)].fg, Color::Rgb(230, 237, 243));
+    assert!(buffer[(5, 3)].modifier.contains(Modifier::BOLD));
     // Bob's initials at row 3, preview "g" at row 4
     assert_eq!(buffer[(5, 3)].symbol(), "B");
     assert_eq!(buffer[(5, 4)].symbol(), "g");
 }
 
 #[test]
-fn unread_rows_keep_green_text_and_independent_yellow_attention_marker() {
+fn selected_unread_rows_keep_readable_text_and_independent_attention_marker() {
     let mut unread = item("Group", "3 unread");
     unread.unread = true;
     unread.attention = true;
@@ -107,12 +111,35 @@ fn unread_rows_keep_green_text_and_independent_yellow_attention_marker() {
     assert_eq!(buffer[(5, 0)].symbol(), "@");
     assert_eq!(buffer[(7, 0)].symbol(), "G");
     assert_eq!(buffer[(7, 1)].symbol(), "3");
+    assert_eq!(buffer[(5, 0)].fg, Color::Rgb(255, 214, 102));
+    assert_eq!(buffer[(7, 0)].fg, Color::Rgb(230, 237, 243));
+    assert_eq!(buffer[(7, 1)].fg, Color::Rgb(230, 237, 243));
+    assert!(buffer[(5, 0)].modifier.contains(Modifier::BOLD));
+    assert!(buffer[(7, 0)].modifier.contains(Modifier::BOLD));
+    assert_eq!(buffer[(7, 0)].bg, Color::Rgb(36, 46, 56));
+}
+
+#[test]
+fn unselected_unread_rows_keep_their_existing_colors() {
+    let mut unread = item("Group", "3 unread");
+    unread.unread = true;
+    unread.attention = true;
+    let items = vec![unread, item("Alice", "hello")];
+    let area = Rect::new(0, 0, 30, 6);
+    let mut buffer = Buffer::empty(area);
+
+    ContactList::new(&items).render(
+        area,
+        &mut buffer,
+        &mut ListState::default().with_selected(Some(1)),
+    );
+
+    assert_eq!(buffer[(5, 0)].symbol(), "@");
     assert_eq!(buffer[(5, 0)].fg, Color::Yellow);
     assert_eq!(buffer[(7, 0)].fg, Color::Green);
     assert_eq!(buffer[(7, 1)].fg, Color::Green);
-    assert!(buffer[(5, 0)].modifier.contains(Modifier::BOLD));
+    assert_eq!(buffer[(7, 0)].bg, Color::Reset);
     assert!(buffer[(7, 0)].modifier.contains(Modifier::BOLD));
-    assert_eq!(buffer[(7, 0)].bg, Color::DarkGray);
 }
 
 #[test]
