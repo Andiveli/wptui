@@ -254,7 +254,9 @@ mod tests {
                 let pending = app.pending_phone_lookup.clone();
                 let search = app.contact_search.input.to_string();
                 let confirmed = format!("{confirmed}@s.whatsapp.net");
-                assert!(!app.handle_phone_lookup_event(confirmed_number_event(1, phone, &confirmed)));
+                assert!(
+                    !app.handle_phone_lookup_event(confirmed_number_event(1, phone, &confirmed))
+                );
                 assert!(app.chats.is_empty());
                 assert_eq!(app.open_chat(), None);
                 assert!(app.chat_messages.is_empty());
