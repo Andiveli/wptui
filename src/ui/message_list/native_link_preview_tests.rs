@@ -7,6 +7,7 @@ use std::{
 
 use image::{DynamicImage, Rgb, RgbImage};
 use ratatui::{Terminal, backend::TestBackend, buffer::Buffer, layout::Rect};
+use ratatui_image::picker::Picker;
 use whatsrust as wr;
 
 use super::*;
