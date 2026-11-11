@@ -9,18 +9,43 @@ import (
 	"go.mau.fi/whatsmeow/types"
 )
 
+type phoneLookupTestCase struct {
+	name      string
+	phone     string
+	responses []types.IsOnWhatsAppResponse
+	err       error
+	want      phoneLookupResult
+	query     bool
+}
+
+func runPhoneLookupTests(t *testing.T, tests []phoneLookupTestCase) {
+	t.Helper()
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			got := lookupPhone(context.Background(), tc.phone, func(_ context.Context, phones []string) ([]types.IsOnWhatsAppResponse, error) {
+				calls++
+				if len(phones) != 1 || phones[0] != tc.phone {
+					t.Fatalf("unexpected lookup: %v", phones)
+				}
+				return tc.responses, tc.err
+			})
+			wantCalls := 0
+			if tc.query {
+				wantCalls = 1
+			}
+			if calls != wantCalls || got != tc.want {
+				t.Fatalf("lookup = %+v, calls = %d; want %+v, calls = %d", got, calls, tc.want, wantCalls)
+			}
+		})
+	}
+}
+
 func TestLookupPhoneRequiresServerConfirmedRequestedNumber(t *testing.T) {
 	phone := "+15551234567"
 	pn := types.NewJID("15551234567", types.DefaultUserServer)
 	lid := types.NewJID("99887766", types.HiddenUserServer)
-	tests := []struct {
-		name      string
-		phone     string
-		responses []types.IsOnWhatsAppResponse
-		err       error
-		want      phoneLookupResult
-		query     bool
-	}{
+	tests := []phoneLookupTestCase{
 		{name: "registered LID", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: lid, PhoneNumber: pn, IsIn: true}}, want: phoneLookupResult{status: phoneLookupFound, jid: pn.String()}, query: true},
 		{name: "registered PN", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: pn, IsIn: true}}, want: phoneLookupResult{status: phoneLookupFound, jid: pn.String()}, query: true},
 		{name: "registered legacy associated PN", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: lid, PhoneNumber: types.NewJID(pn.User, types.LegacyUserServer), IsIn: true}}, want: phoneLookupResult{status: phoneLookupFound, jid: pn.String()}, query: true},
@@ -63,19 +88,5 @@ func TestLookupPhoneRequiresServerConfirmedRequestedNumber(t *testing.T) {
 		{name: "too short", phone: "+123456", want: phoneLookupResult{status: phoneLookupInvalidNumber}},
 		{name: "too long", phone: "+1234567890123456", want: phoneLookupResult{status: phoneLookupInvalidNumber}},
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			called := false
-			got := lookupPhone(context.Background(), tc.phone, func(_ context.Context, phones []string) ([]types.IsOnWhatsAppResponse, error) {
-				called = true
-				if len(phones) != 1 || phones[0] != tc.phone {
-					t.Fatalf("unexpected lookup: %v", phones)
-				}
-				return tc.responses, tc.err
-			})
-			if called != tc.query || got != tc.want {
-				t.Fatalf("lookup = %+v, called = %t; want %+v, called = %t", got, called, tc.want, tc.query)
-			}
-		})
-	}
+	runPhoneLookupTests(t, tests)
 }
