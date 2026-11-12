@@ -14,6 +14,9 @@ pub const CONTACT_ITEM_HEIGHT: usize = 3;
 pub const AVATAR_WIDTH: u16 = 4;
 pub const AVATAR_HEIGHT: u16 = 2;
 const AVATAR_GAP: u16 = 1;
+const SELECTED_BACKGROUND: Color = Color::Rgb(36, 46, 56);
+const SELECTED_FOREGROUND: Color = Color::Rgb(230, 237, 243);
+const SELECTED_ATTENTION: Color = Color::Rgb(255, 214, 102);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContactListItem {
@@ -321,8 +324,11 @@ impl StatefulWidget for ContactList<'_> {
                     .min(usize::from(AVATAR_HEIGHT))
                     .min(area.bottom().saturating_sub(y) as usize) as u16,
             );
-            let base = if item_index == selected {
-                Style::default().fg(Color::Green).bg(Color::DarkGray)
+            let is_selected = item_index == selected;
+            let base = if is_selected {
+                Style::default()
+                    .fg(SELECTED_FOREGROUND)
+                    .bg(SELECTED_BACKGROUND)
             } else {
                 Style::default()
             };
@@ -359,7 +365,12 @@ impl StatefulWidget for ContactList<'_> {
             let first = format_row(&item.name, item.local_time.as_deref(), text_width);
             let second = format_row(&item.preview, None, text_width);
             let unread_style = if item.unread {
-                base.fg(Color::Green).add_modifier(Modifier::BOLD)
+                let style = base.add_modifier(Modifier::BOLD);
+                if is_selected {
+                    style
+                } else {
+                    style.fg(Color::Green)
+                }
             } else {
                 base
             };
@@ -370,7 +381,12 @@ impl StatefulWidget for ContactList<'_> {
                         y,
                         "@ ",
                         marker_width as usize,
-                        base.fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                        base.fg(if is_selected {
+                            SELECTED_ATTENTION
+                        } else {
+                            Color::Yellow
+                        })
+                        .add_modifier(Modifier::BOLD),
                     );
                 }
                 buf.set_stringn(
