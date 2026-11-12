@@ -2,6 +2,7 @@ use std::ffi::{CStr, CString};
 
 use crate::abi::{C_FreeLookupPhoneResult, C_LookupPhone};
 use crate::models::JID;
+use crate::phone_lookup_identity::is_confirmed_phone_lookup_identity;
 use crate::phone_lookup_observation::LocalPhoneLookupObservation;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -62,14 +63,13 @@ fn lookup_result(
 ) -> Result<Option<JID>, PhoneLookupError> {
     match status {
         0 => {
-            let Some(digits) = phone.strip_prefix('+') else {
+            let Some(confirmed) = jid else {
                 return Err(PhoneLookupError::InvalidBridgeResult);
             };
-            let expected = format!("{digits}@s.whatsapp.net");
-            if jid != Some(expected.as_str()) {
+            if !is_confirmed_phone_lookup_identity(phone, confirmed) {
                 return Err(PhoneLookupError::InvalidBridgeResult);
             }
-            Ok(Some(JID::from(expected)))
+            Ok(Some(JID::from(confirmed.to_owned())))
         }
         1 if jid.is_none() => Ok(None),
         2 if jid.is_none() => Err(PhoneLookupError::InvalidNumber),
