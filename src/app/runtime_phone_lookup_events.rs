@@ -39,10 +39,7 @@ impl App<'_> {
         self.phone_lookup_observation = None;
         match result {
             Ok(Some(jid)) => {
-                let expected = phone
-                    .strip_prefix('+')
-                    .map(|digits| format!("{digits}@s.whatsapp.net"));
-                if expected.as_deref() != Some(jid.0.as_ref()) {
+                if !whatsrust::is_confirmed_phone_lookup_identity(&phone, jid.0.as_ref()) {
                     self.phone_lookup_unavailable("Could not verify number");
                     return true;
                 }
