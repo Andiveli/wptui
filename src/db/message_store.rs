@@ -282,7 +282,7 @@ pub(super) fn persist_in_transaction(tx: &rusqlite::Transaction<'_>, messages: V
             "DELETE FROM native_link_previews WHERE message_id = ?1 AND (?2 OR NOT EXISTS (
                 SELECT 1 FROM text_messages t WHERE t.id = native_link_previews.message_id
                 AND t.chat_jid = native_link_previews.chat_jid AND t.message = native_link_previews.source
-                AND t.is_from_me = 0 AND t.chat_jid != 'status@broadcast'
+                AND t.chat_jid != 'status@broadcast'
                 AND NOT EXISTS (SELECT 1 FROM message_actions a WHERE a.target_message_id = t.id)
             ))",
             rusqlite::params![msg.info.id, !matches!(&msg.message, wr::MessageContent::Text(_))],
@@ -323,14 +323,14 @@ pub(super) fn persist_native_link_preview(
     if source.len() > 64 * 1_024 {
         return;
     }
-    // The message writer may have projected a pending action or retained local
-    // ownership. Check the materialized row, not just the callback candidate.
+    // The message writer may have projected a pending action. Check the
+    // materialized source row, not just the callback candidate, in either direction.
     tx.execute(
         "INSERT OR REPLACE INTO native_link_previews
             (chat_jid, message_id, source, matched_text, title, description, jpeg_thumbnail)
          SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7
          WHERE EXISTS (SELECT 1 FROM text_messages WHERE id = ?2 AND chat_jid = ?1
-            AND message = ?3 AND is_from_me = 0)
+            AND message = ?3)
          AND NOT EXISTS (SELECT 1 FROM message_actions WHERE target_message_id = ?2)",
         rusqlite::params![
             message.info.chat.0,
@@ -373,7 +373,7 @@ fn read_native_link_previews(
             CASE WHEN length(p.jpeg_thumbnail) <= 262144 THEN p.jpeg_thumbnail ELSE X'' END
          FROM native_link_previews p JOIN text_messages t
             ON t.id = p.message_id AND t.chat_jid = p.chat_jid AND t.message = p.source
-         WHERE t.is_from_me = 0 AND t.chat_jid != 'status@broadcast'
+         WHERE t.chat_jid != 'status@broadcast'
             AND length(CAST(p.source AS BLOB)) <= 65536
             AND length(CAST(p.matched_text AS BLOB)) <= 8192
             AND length(CAST(p.title AS BLOB)) <= 2048

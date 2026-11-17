@@ -17,7 +17,7 @@ pub(crate) fn validated_preview(
     message: &wr::Message,
     preview: wr::NativeLinkPreview,
 ) -> Option<(Range<usize>, wr::NativeLinkPreview)> {
-    if message.info.is_from_me || App::is_status_chat(&message.info.chat) {
+    if App::is_status_chat(&message.info.chat) {
         return None;
     }
     let wr::MessageContent::Text(text) = &message.message else {
@@ -39,7 +39,6 @@ impl App<'_> {
         let record = self.native_link_previews.get(id)?;
         let message = self.messages.get(id)?;
         if record.chat != message.info.chat
-            || message.info.is_from_me
             || Self::is_status_chat(&message.info.chat)
             || self
                 .message_actions

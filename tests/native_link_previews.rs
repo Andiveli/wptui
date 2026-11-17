@@ -1,6 +1,4 @@
-//! T1 contract: an owned native adjunct, consumed once at ingestion, then
-//! app-owned and persisted. These new public names intentionally give structural
-//! RED on the base; do not add a second test-only ingestion implementation.
+//! Native adjunct contracts through the existing bridge, ingestion and hydration APIs.
 use std::ops::Range;
 
 use tempfile::tempdir;
@@ -115,6 +113,39 @@ fn incoming_native_fields_round_trip_through_app_ingestion_and_hydration() {
 }
 
 #[test]
+fn symmetric_native_links_round_trip_with_exact_original_occurrence() {
+    for outgoing in [false, true] {
+        for markdown in [false, true] {
+            let dir = tempdir().unwrap();
+            let path = dir.path().join("symmetric.db");
+            let source = if markdown {
+                format!("原文 [My chosen label]({URL}) then {URL}")
+            } else {
+                format!("原文 ({URL}). then {URL}")
+            };
+            // Use the actual opener, including its closing-punctuation trimming.
+            assert_eq!(extract_openable_urls(&source), vec![URL, URL]);
+            let start = source.find(URL).unwrap();
+            let mut original = message("symmetric", &source);
+            original.info.is_from_me = outgoing;
+            {
+                let mut app = TestApp::with_database(&path);
+                ingest(&mut app, original.clone(), Some(preview()));
+                assert_source(&app, "symmetric", &source, &[URL, URL]);
+                assert_preview(&app, "symmetric", start..start + URL.len(), &preview());
+                assert_eq!(app.messages["symmetric"].info.is_from_me, outgoing);
+            }
+            let mut app = TestApp::with_database(&path);
+            app.load_data_from_db();
+            assert_source(&app, "symmetric", &source, &[URL, URL]);
+            assert_preview(&app, "symmetric", start..start + URL.len(), &preview());
+            assert_eq!(app.messages["symmetric"].info.is_from_me, outgoing);
+            assert!(wr::take_native_link_preview(&original.info, &source).is_none());
+        }
+    }
+}
+
+#[test]
 fn ordinary_outgoing_and_legacy_public_writes_keep_text_without_metadata() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("plain.db");
@@ -123,7 +154,7 @@ fn ordinary_outgoing_and_legacy_public_writes_keep_text_without_metadata() {
         ingest(&mut app, message("ordinary", URL), None);
         let mut outgoing = message("outgoing", URL);
         outgoing.info.is_from_me = true;
-        ingest(&mut app, outgoing, Some(preview()));
+        ingest(&mut app, outgoing, None);
         // Existing write callers need not supply a new argument or adjunct.
         app.db_handler.add_message(&message("legacy-writer", URL));
         for id in ["ordinary", "outgoing"] {

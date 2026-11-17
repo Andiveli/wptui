@@ -36,10 +36,15 @@ fn jpeg(width: u32, height: u32) -> Vec<u8> {
 }
 
 fn fixture(source: &str, thumbnail: Vec<u8>) -> TestApp {
+    directional_fixture(source, thumbnail, false)
+}
+
+fn directional_fixture(source: &str, thumbnail: Vec<u8>, outgoing: bool) -> TestApp {
     let mut app = TestApp::new();
     let chat: wr::JID = "fixture@example.test".to_owned().into();
     let mut item = message(&chat, "native-ui", 1_704_110_400);
     item.message = wr::MessageContent::Text(source.into());
+    item.info.is_from_me = outgoing;
     wr::store_native_link_preview(
         &item.info,
         source,
@@ -238,6 +243,73 @@ fn visible_native_text_preserves_label_source_and_exact_destination_at_shipped_s
 }
 
 #[test]
+fn symmetric_plain_and_chosen_markdown_labels_keep_native_card_and_ready_thumbnail() {
+    for outgoing in [false, true] {
+        for (source, label) in [
+            (format!("Read {URL}"), LABEL),
+            (format!("[My chosen label]({URL})"), "My chosen label"),
+        ] {
+            let mut app = directional_fixture(&source, jpeg(32, 16), outgoing);
+            let (absent, key) = single_key(&mut app, (180, 50));
+            assert!(text(&absent).contains(TITLE));
+            assert!(text(&absent).contains(DESCRIPTION));
+            assert_eq!(hit_cells(&app, &absent), label);
+            source_and_hits(&app, &source);
+            assert_eq!(app.native_link_thumbnails.outstanding(), 0);
+            finish_ready(&mut app, &key);
+            let (ready, refreshed) = single_key(&mut app, (180, 50));
+            assert_eq!(refreshed, key);
+            assert_eq!(changed_rect(&absent, &ready).as_size(), key.size);
+            assert_eq!(hit_cells(&app, &ready), label);
+            source_and_hits(&app, &source);
+            assert_eq!(app.native_link_thumbnails.state(&key), EntryState::Ready);
+            assert_eq!(app.native_link_thumbnails.outstanding(), 0);
+        }
+    }
+}
+
+#[test]
+fn missing_or_invalid_metadata_keeps_symmetric_link_fallback() {
+    for outgoing in [false, true] {
+        for (source, label) in [
+            (URL.to_owned(), LABEL),
+            (format!("[My chosen label]({URL})"), "My chosen label"),
+        ] {
+            for invalid in [false, true] {
+                let mut app = TestApp::new();
+                let chat: wr::JID = "fallback@example.test".to_owned().into();
+                let mut item = message(&chat, "native-ui", 1);
+                item.info.is_from_me = outgoing;
+                item.message = wr::MessageContent::Text(source.clone().into());
+                if invalid {
+                    wr::store_native_link_preview(
+                        &item.info,
+                        &source,
+                        wr::NativeLinkPreview {
+                            matched_text: URL.into(),
+                            title: "bad\u{1b}title".into(),
+                            description: DESCRIPTION.into(),
+                            jpeg_thumbnail: jpeg(32, 16),
+                        },
+                    );
+                }
+                app.process_message(item, true);
+                app.open_chat = Some(chat);
+                let (buffer, demand) = draw(&mut app, (180, 50));
+                assert!(text(&buffer).contains(label));
+                assert!(!text(&buffer).contains(DESCRIPTION));
+                assert_eq!(hit_cells(&app, &buffer), label);
+                source_and_hits(&app, &source);
+                assert!(app.native_link_preview(&"native-ui".into()).is_none());
+                assert!(demand.is_empty());
+                assert_eq!(app.native_link_thumbnails.len(), 0);
+                assert_eq!(app.native_link_thumbnails.outstanding(), 0);
+            }
+        }
+    }
+}
+
+#[test]
 fn missing_metadata_keeps_old_label_and_metadata_markdown_stays_literal() {
     let mut plain = TestApp::new();
     let chat: wr::JID = "plain@example.test".to_owned().into();
@@ -288,25 +360,26 @@ fn missing_metadata_keeps_old_label_and_metadata_markdown_stays_literal() {
 #[test]
 fn excluded_modes_and_protected_source_occurrences_never_show_native_cards() {
     for case in [
-        "outgoing",
         "status",
         "caption",
         "system",
         "inline-code",
         "fence",
-        "explicit",
         "image",
         "brackets",
         "quote",
         "protected-duplicate",
+        "protected-image-duplicate",
+        "protected-explicit-duplicate",
     ] {
         let source = match case {
             "inline-code" => format!("`{URL}`"),
             "fence" => format!("```\n{URL}\n```"),
-            "explicit" => format!("[site]({URL})"),
             "image" => format!("![image]({URL})"),
             "brackets" => format!("[{URL}]"),
             "protected-duplicate" => format!("```\n{URL}\n```\nthen {URL}"),
+            "protected-image-duplicate" => format!("![image]({URL})\nthen {URL}"),
+            "protected-explicit-duplicate" => format!("```\n{URL}\n```\nthen [Chosen]({URL})"),
             _ => URL.to_owned(),
         };
         let mut app = fixture(&source, jpeg(32, 16));
@@ -327,7 +400,6 @@ fn excluded_modes_and_protected_source_occurrences_never_show_native_cards() {
         let mut item = app.messages["native-ui"].clone();
         let mut mode = MessageTextMode::Chat;
         match case {
-            "outgoing" => item.info.is_from_me = true,
             "status" => mode = MessageTextMode::Status,
             "caption" => {
                 item.message = wr::MessageContent::File(wr::FileContent {
@@ -363,13 +435,21 @@ fn excluded_modes_and_protected_source_occurrences_never_show_native_cards() {
         assert!(!painted.contains(TITLE), "{case}");
         assert!(!painted.contains(DESCRIPTION), "{case}");
         assert!(keys(plan).is_empty(), "{case}");
-        if case == "protected-duplicate" {
+        if matches!(
+            case,
+            "protected-duplicate" | "protected-image-duplicate" | "protected-explicit-duplicate"
+        ) {
+            let label = if case == "protected-explicit-duplicate" {
+                "Chosen"
+            } else {
+                LABEL
+            };
             assert!(
-                painted.contains(LABEL),
-                "later plain occurrence retains label"
+                painted.contains(label),
+                "later occurrence retains its label"
             );
             source_and_hits(&app, &source);
-            assert!(hit_cells(&app, &buffer).ends_with(LABEL));
+            assert!(hit_cells(&app, &buffer).ends_with(label));
         } else if case == "quote" {
             assert!(painted.contains(URL), "quote snippet remains raw");
             assert!(
@@ -379,10 +459,7 @@ fn excluded_modes_and_protected_source_occurrences_never_show_native_cards() {
         } else if case == "system" {
             assert!(painted.contains(wr::VIEW_ONCE_UNAVAILABLE_DESCRIPTION));
         } else {
-            assert!(
-                painted.contains(if case == "explicit" { "site" } else { URL }),
-                "{case}"
-            );
+            assert!(painted.contains(URL), "{case}");
             assert!(app.mouse_hit_map.urls.iter().all(|hit| hit.url == URL));
         }
         assert!(matches!(&app.messages["native-ui"].message,
@@ -491,6 +568,195 @@ fn shortcut_popup_preserves_hits_and_only_suppresses_occluded_native_images() {
             assert_eq!(app.native_link_thumbnails.outstanding(), 0);
         }
     }
+}
+
+#[test]
+fn phone_observation_suppresses_only_intersecting_native_paint_and_demand() {
+    use crate::app::phone_lookup_observation::ObservationView;
+
+    let size = (180, 50);
+    let source = format!("Read {URL}");
+    let mut app = fixture(&source, jpeg(32, 16));
+    let chat = app.messages["native-ui"].info.chat.clone();
+    let mut outside = message(&chat, "outside-ui", 1_704_110_401);
+    outside.message = wr::MessageContent::Text(source.clone().into());
+    wr::store_native_link_preview(
+        &outside.info,
+        &source,
+        wr::NativeLinkPreview {
+            matched_text: URL.into(),
+            title: TITLE.into(),
+            description: DESCRIPTION.into(),
+            jpeg_thumbnail: jpeg(32, 16),
+        },
+    );
+    app.process_message(outside, true);
+    app.message_list_state.reset();
+    let (absent, demand) = draw(&mut app, size);
+    assert_eq!(demand.len(), 2, "both full images initially eligible");
+    let key_for = |id: &str| {
+        demand
+            .iter()
+            .find(|key| key.message_id.as_ref() == id)
+            .unwrap()
+            .clone()
+    };
+    let covered = key_for("native-ui");
+    let outside = key_for("outside-ui");
+    let width = app.mouse_hit_map.message_list.unwrap().width as usize;
+    let measured = height(&mut app, width);
+    let anchor = app.message_list_state.viewport_anchor.clone();
+    let hits = app
+        .mouse_hit_map
+        .urls
+        .iter()
+        .map(|hit| (hit.id.clone(), hit.area, hit.url.clone()))
+        .collect::<Vec<_>>();
+    let (range, metadata) = app.native_link_preview(&covered.message_id).unwrap();
+    let title = metadata.title.clone();
+    let description = metadata.description.clone();
+    let open_observation = || {
+        let observation = wr::LocalPhoneLookupObservation::from_display_text(
+            "Requested: \"+15551234567\"\nIsIn: false".into(),
+        )
+        .unwrap();
+        Some(ObservationView::new(observation))
+    };
+
+    // Draw only records work. Explicit Halfblocks preparation is outside draw;
+    // FixedPickerApp supplies fake ports and never queries terminal capabilities.
+    app.native_link_thumbnails.reconcile(&demand);
+    let bytes = jpeg(
+        u32::from(covered.size.width),
+        u32::from(covered.size.height) * 2,
+    );
+    let covered_job = app
+        .native_link_thumbnails
+        .admit(&covered, || Some(bytes.clone()))
+        .unwrap();
+    let outside_job = app
+        .native_link_thumbnails
+        .admit(&outside, || Some(bytes.clone()))
+        .unwrap();
+    let (loading, loading_demand) = draw(&mut app, size);
+    assert_eq!(loading, absent, "loading retains reserved geometry");
+    assert_eq!(loading_demand, demand);
+    assert_eq!(app.native_link_thumbnails.outstanding(), 2);
+    app.phone_lookup_observation = open_observation();
+    let (loading_overlay, loading_overlay_demand) = draw(&mut app, size);
+    assert!(text(&loading_overlay).contains("Local number response (private)"));
+    assert_eq!(height(&mut app, width), measured);
+    assert_eq!(app.message_list_state.viewport_anchor, anchor);
+    app.phone_lookup_observation = None;
+
+    let picker = Arc::new(Mutex::new(Picker::halfblocks()));
+    let covered_protocol = prepare_thumbnail(&bytes, covered.size, &picker).unwrap();
+    assert!(
+        app.native_link_thumbnails
+            .finish(covered_job.ticket(), Some(covered_protocol))
+    );
+    let (covered_ready, refreshed) = draw(&mut app, size);
+    assert_eq!(refreshed, demand);
+    let covered_image = changed_rect(&loading, &covered_ready);
+    assert_eq!(covered_image.as_size(), covered.size);
+    let outside_protocol = prepare_thumbnail(&bytes, outside.size, &picker).unwrap();
+    assert!(
+        app.native_link_thumbnails
+            .finish(outside_job.ticket(), Some(outside_protocol))
+    );
+    let (ready, refreshed) = draw(&mut app, size);
+    assert_eq!(refreshed, demand);
+    let outside_image = changed_rect(&covered_ready, &ready);
+    assert_eq!(outside_image.as_size(), outside.size);
+
+    // This is the existing public calculation used by the actual modal renderer,
+    // not a new test-only geometry helper. Prove the fixture before testing guards.
+    let modal = crate::ui::centered_modal_layout(ready.area);
+    assert_eq!(modal, Rect::new(54, 17, 72, 16));
+    let intersection = covered_image.intersection(modal);
+    assert!(!intersection.is_empty(), "actual modal overlap required");
+    assert_ne!(intersection, covered_image, "partial overlap required");
+    assert!(outside_image.intersection(modal).is_empty());
+    assert!(covered_image.intersection(outside_image).is_empty());
+    for image in [covered_image, outside_image] {
+        assert_eq!(
+            image.intersection(app.mouse_hit_map.message_list.unwrap()),
+            image
+        );
+        assert_eq!(image.intersection(ready.area), image);
+    }
+    // Successful full-image paint/demand above proves no other overlay, section,
+    // or partial-viewport guard can account for suppression in this same frame.
+
+    app.phone_lookup_observation = open_observation();
+    let (overlaid, overlaid_demand) = draw(&mut app, size);
+    assert!(text(&overlaid).contains("Local number response (private)"));
+    assert_eq!(
+        overlaid_demand,
+        vec![outside.clone()],
+        "phone observation must exclude intersecting READY image demand, not uncovered demand"
+    );
+    assert_eq!(
+        loading_overlay_demand,
+        vec![outside.clone()],
+        "phone observation must also exclude intersecting loading image demand"
+    );
+    // Modal Clear overwrites intersecting cells even on the broken path. Only
+    // compare cells OUTSIDE it: the uncovered part of a suppressed READY image
+    // must remain the loading fallback, while the other image still paints.
+    for y in covered_image.y..covered_image.bottom() {
+        for x in covered_image.x..covered_image.right() {
+            if Rect::new(x, y, 1, 1).intersection(modal).is_empty() {
+                assert_ne!(ready[(x, y)], loading[(x, y)], "prepared cell proof");
+                assert_eq!(overlaid[(x, y)], loading[(x, y)], "no partial READY paint");
+            }
+        }
+    }
+    for y in outside_image.y..outside_image.bottom() {
+        for x in outside_image.x..outside_image.right() {
+            assert_ne!(ready[(x, y)], loading[(x, y)], "prepared cell proof");
+            assert_eq!(overlaid[(x, y)], ready[(x, y)], "outside READY paint");
+        }
+    }
+    assert_eq!(height(&mut app, width), measured);
+    assert_eq!(app.message_list_state.viewport_anchor, anchor);
+    assert_eq!(
+        app.mouse_hit_map
+            .urls
+            .iter()
+            .map(|hit| { (hit.id.clone(), hit.area, hit.url.clone()) })
+            .collect::<Vec<_>>(),
+        hits,
+        "overlay input guards preserve underlying hits"
+    );
+    assert!(hits.iter().all(|(_, _, url)| url == URL));
+    for key in [&covered, &outside] {
+        assert!(hits.iter().any(|(id, _, _)| id == &key.message_id));
+    }
+    assert_eq!(app.native_link_thumbnails.outstanding(), 0);
+    assert_eq!(app.native_link_thumbnails.len(), 2);
+    for key in [&covered, &outside] {
+        assert_eq!(app.native_link_thumbnails.state(key), EntryState::Ready);
+    }
+
+    app.phone_lookup_observation = None;
+    let (closed, restored) = draw(&mut app, size);
+    assert_eq!(closed, ready, "closing restores paint");
+    assert_eq!(restored, demand);
+    assert_eq!(height(&mut app, width), measured);
+    assert_eq!(app.message_list_state.viewport_anchor, anchor);
+    for key in [&covered, &outside] {
+        let wr::MessageContent::Text(stored) = &app.messages[&key.message_id].message else {
+            panic!("text")
+        };
+        assert!(Arc::ptr_eq(stored, &key.source));
+        assert_eq!(stored.as_ref(), source);
+        assert_eq!(key.matched_url.as_ref(), URL);
+    }
+    let (restored_range, metadata) = app.native_link_preview(&covered.message_id).unwrap();
+    assert_eq!(restored_range, range);
+    assert!(Arc::ptr_eq(&metadata.title, &title));
+    assert!(Arc::ptr_eq(&metadata.description, &description));
 }
 
 #[test]
@@ -772,33 +1038,28 @@ fn invalid_jpeg_negative_cache_retains_native_text_and_original_input() {
 }
 
 #[test]
-fn outgoing_and_document_heights_remain_the_existing_non_native_contract() {
+fn document_heights_remain_non_native_and_outgoing_fallback_keeps_exact_destination() {
     let mut app = fixture(URL, Vec::new());
-    for caption in [false, true] {
-        let mut item = app.messages["native-ui"].clone();
-        item.info.is_from_me = true;
-        if caption {
-            item.message = wr::MessageContent::File(wr::FileContent {
-                path: "document.txt".into(),
-                kind: wr::FileKind::Document,
-                caption: Some(URL.into()),
-                ..Default::default()
-            });
-        }
-        for width in [20, 80, 140] {
-            let expected =
-                inline_content_lines(URL, &[], None, width).len() + if caption { 2 } else { 1 };
-            assert_eq!(
-                message_height(
-                    &item,
-                    width,
-                    false,
-                    AuthorGroupContext::STARTS_GROUP,
-                    &mut app
-                ),
-                expected
-            );
-        }
+    let mut item = app.messages["native-ui"].clone();
+    item.info.is_from_me = true;
+    item.message = wr::MessageContent::File(wr::FileContent {
+        path: "document.txt".into(),
+        kind: wr::FileKind::Document,
+        caption: Some(URL.into()),
+        ..Default::default()
+    });
+    for width in [20, 80, 140] {
+        let expected = inline_content_lines(URL, &[], None, width).len() + 2;
+        assert_eq!(
+            message_height(
+                &item,
+                width,
+                false,
+                AuthorGroupContext::STARTS_GROUP,
+                &mut app
+            ),
+            expected
+        );
     }
     let other_url = "https://other.test/kept?q=%2F#part";
     let chat = app.messages["native-ui"].info.chat.clone();
@@ -837,7 +1098,7 @@ fn outgoing_and_document_heights_remain_the_existing_non_native_contract() {
             hits.iter()
                 .map(|hit| buffer[(hit.area.x, hit.area.y)].symbol())
                 .collect::<String>(),
-            other_url
+            "other.test · kept"
         );
         assert!(matches!(&app.messages[&other.info.id].message,
             wr::MessageContent::Text(stored) if stored.as_ref() == other_url));
