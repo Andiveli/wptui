@@ -71,7 +71,13 @@ func fetchProfilePictureWithParams(ctx context.Context, jidText string, isCommun
 		return profilePictureOutcome{status: profilePictureStatusClientUnavailable}
 	}
 
-	info, err := lookup(ctx, jid.ToNonAD(), &whatsmeow.GetProfilePictureParams{Preview: true, IsCommunity: isCommunity})
+	// User portraits share the full image source with their list thumbnail.
+	// Ordinary groups and community roots keep their existing preview requests.
+	params := &whatsmeow.GetProfilePictureParams{
+		Preview:     isCommunity || jid.Server == types.GroupServer,
+		IsCommunity: isCommunity,
+	}
+	info, err := lookup(ctx, jid.ToNonAD(), params)
 	if errors.Is(err, whatsmeow.ErrProfilePictureUnauthorized) || errors.Is(err, whatsmeow.ErrProfilePictureNotSet) {
 		return profilePictureOutcome{status: profilePictureStatusUnavailable}
 	}
