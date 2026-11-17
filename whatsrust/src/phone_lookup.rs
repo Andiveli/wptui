@@ -2,6 +2,7 @@ use std::ffi::{CStr, CString};
 
 use crate::abi::{C_FreeLookupPhoneResult, C_LookupPhone};
 use crate::models::JID;
+use crate::phone_lookup_identity::is_confirmed_phone_lookup_identity;
 use crate::phone_lookup_observation::LocalPhoneLookupObservation;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -62,14 +63,13 @@ fn lookup_result(
 ) -> Result<Option<JID>, PhoneLookupError> {
     match status {
         0 => {
-            let Some(digits) = phone.strip_prefix('+') else {
+            let Some(confirmed) = jid else {
                 return Err(PhoneLookupError::InvalidBridgeResult);
             };
-            let expected = format!("{digits}@s.whatsapp.net");
-            if jid != Some(expected.as_str()) {
+            if !is_confirmed_phone_lookup_identity(phone, confirmed) {
                 return Err(PhoneLookupError::InvalidBridgeResult);
             }
-            Ok(Some(JID::from(expected)))
+            Ok(Some(JID::from(confirmed.to_owned())))
         }
         1 if jid.is_none() => Ok(None),
         2 if jid.is_none() => Err(PhoneLookupError::InvalidNumber),
@@ -111,6 +111,85 @@ fn lookup_observed_result(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accepts_only_documented_equivalent_confirmed_pns() {
+        for (phone, confirmed) in [
+            ("+525512345678", "5215512345678"),
+            ("+5215512345678", "525512345678"),
+            ("+541112345678", "5491112345678"),
+            ("+5491112345678", "541112345678"),
+            ("+525512345678", "525512345678"),
+            ("+5215512345678", "5215512345678"),
+            ("+541112345678", "541112345678"),
+            ("+5491112345678", "5491112345678"),
+            ("+593991234567", "593991234567"),
+            ("+15551234567", "15551234567"),
+        ] {
+            let confirmed = format!("{confirmed}@s.whatsapp.net");
+            assert_eq!(
+                lookup_result(0, phone, Some(&confirmed)),
+                Ok(Some(JID::from(confirmed.clone()))),
+                "{phone} -> {confirmed}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_unsupported_number_equivalences_in_both_directions() {
+        for (left, right) in [
+            ("525512345678", "5215512345679"), // Different national suffix.
+            ("541112345678", "5491112345679"),
+            ("52551234567", "521551234567"), // Nine national digits.
+            ("54111234567", "549111234567"),
+            ("5255123456789", "52155123456789"), // Eleven national digits.
+            ("5411123456789", "54911123456789"),
+            ("593991234567", "5931991234567"), // Unsupported country.
+            ("535512345678", "5315512345678"),
+            ("525512345678", "5495512345678"), // Different country.
+            ("54111512345678", "5491112345678"), // Domestic 15 is not stripped.
+            ("5401112345678", "5491112345678"), // Domestic zero is not stripped.
+        ] {
+            for (requested, confirmed) in [(left, right), (right, left)] {
+                let phone = format!("+{requested}");
+                let jid = format!("{confirmed}@s.whatsapp.net");
+                assert_eq!(
+                    lookup_result(0, &phone, Some(&jid)),
+                    Err(PhoneLookupError::InvalidBridgeResult),
+                    "{phone} -> {jid}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_noncanonical_confirmed_pn_strings() {
+        for (phone, confirmed) in [
+            ("+525512345678", "5215512345678"),
+            ("+5215512345678", "525512345678"),
+            ("+541112345678", "5491112345678"),
+            ("+5491112345678", "541112345678"),
+            ("+525512345678", "525512345678"),
+            ("+541112345678", "541112345678"),
+        ] {
+            for jid in [
+                format!("{confirmed}@lid"),
+                format!("{confirmed}@c.us"),
+                format!("{confirmed}@g.us"),
+                format!("{confirmed}@S.WHATSAPP.NET"),
+                format!("{confirmed}:1@s.whatsapp.net"),
+                format!("{confirmed}.1:1@s.whatsapp.net"),
+                format!("{confirmed}_1@s.whatsapp.net"),
+                format!("+{confirmed}@s.whatsapp.net"),
+            ] {
+                assert_eq!(
+                    lookup_result(0, phone, Some(&jid)),
+                    Err(PhoneLookupError::InvalidBridgeResult),
+                    "{phone} -> {jid}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn rejects_unsolicited_or_invalid_bridge_results() {

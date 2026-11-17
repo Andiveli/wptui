@@ -16,6 +16,7 @@ mod media;
 mod message_send;
 mod models;
 mod phone_lookup;
+mod phone_lookup_identity;
 mod phone_lookup_observation;
 mod presence;
 mod queries;
@@ -40,6 +41,7 @@ pub use models::{
     ProfilePictureError, VIEW_ONCE_UNAVAILABLE_DESCRIPTION,
 };
 pub use phone_lookup::{PhoneLookupError, lookup_phone};
+pub use phone_lookup_identity::is_confirmed_phone_lookup_identity;
 pub use phone_lookup_observation::LocalPhoneLookupObservation;
 pub use presence::{SubscribePresenceResult, drain_raw_presence_diagnostics, subscribe_presence};
 pub use queries::{
