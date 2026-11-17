@@ -31,8 +31,7 @@ https://github.com/user-attachments/assets/f08d20f9-6051-45e2-a1d2-b0a512242e9c
 - Contextual, Vim-inspired keybindings
 - Andiveli welcome mark in the chat panel before any conversation is opened
 
-The Chats list has **All**, **Unread**, **Groups**, and **Archived** views. All,
-Unread, and Groups exclude archived chats; Archived shows only archived chats.
+The Chats list has **All**, **Unread**, **Groups**, and **Archived** views. Search in **All** also finds saved contacts without chat history. To start a chat with an unsaved number, type `/` in the Chats list, enter `+` followed by 7–15 digits (country code included), and press `Enter`. The app checks whether the number is registered on WhatsApp before opening an empty conversation; it never sends a message automatically. All, Unread, and Groups exclude archived chats; Archived shows only archived chats.
 Filter badges count unread chats (each chat once), including manually marked chats,
 not individual messages. All, Unread, and Groups count unarchived chats; Archived
 counts archived chats. Zero counts are hidden.
@@ -274,6 +273,94 @@ When running through Cargo, separate application arguments with `--`:
 cargo run -- --phone +1234567890
 ```
 
+### Number lookup notices
+
+When a number check finishes unsuccessfully, it leaves the search open without
+opening a conversation or sending a message. Its result notice appears as plain text;
+local input validation and unrelated notices retain their existing formatting:
+
+| Notice | Meaning / next step |
+|---|---|
+| `Number is not on WhatsApp` | WhatsApp reported that the requested number is not registered. |
+| `Number check timed out` | The check exceeded its deadline; retry the search. |
+| `WhatsApp returned no number result` | No result was returned; retry the search. |
+| `WhatsApp returned a mismatched number result` | A registered reply matched the query but had empty or unexpected identities that did not confirm the requested number; no recipient is opened. Retry the search. |
+| `WhatsApp returned only a LID without a phone number` | A registered reply matched the query with a LID and no associated phone number, without confirming the requested number; no recipient is opened. |
+| `WhatsApp returned a different phone number` | A registered reply matched the query and contained a phone-number identity, but neither identity confirmed the requested number exactly or through the narrow Mexico/Argentina equivalences below; no recipient is opened. |
+| `WhatsApp returned a mismatched query result` | Nonempty replies contained no matching query; no recipient is opened. Retry the search. |
+| `Could not check number` | The request failed; retry the search. |
+| `Could not verify number` | The result could not be safely verified; no recipient is opened. |
+| `WhatsApp is not connected` | Reconnect WhatsApp, then retry the search. |
+| `Use + followed by 7-15 digits` | Correct the international number format, then retry. |
+
+A failed, timed-out, empty, or mismatched check does **not** mean the number is
+unregistered. These notices use fixed categories, without including the entered
+number, recipient identity, or raw error details; number lookup adds no diagnostic logging.
+The LID-only and different-phone-number categories describe response shape only:
+they do not prove legitimate number normalization or permit opening another recipient.
+Opening a conversation requires a registered response whose query matches the entered
+number (with or without its leading `+`) and whose phone-number identity confirms it.
+Exact matches take precedence across both returned identity fields. Otherwise, only
+these two country-number equivalences are accepted, in either direction:
+
+- Mexico: `52` + exactly 10 digits ↔ `521` + the same 10 digits.
+- Argentina: `54` + exactly 10 digits ↔ `549` + the same 10 digits.
+
+All other digit differences remain rejected, including different national suffixes,
+wrong lengths, and unsupported countries. This is not domestic-number parsing: it
+does not strip Argentina's domestic `15` or leading zero, or guess area codes.
+For both exact and equivalent matches, only `s.whatsapp.net` and WhatsApp's legacy
+`c.us` user namespace are allowed, with the same integrator after device metadata
+is removed. An accepted equivalent lookup opens the **server-confirmed** spelling,
+not the originally entered spelling, as a non-device `s.whatsapp.net` PN identity.
+A LID alone never authorizes opening a conversation. No extra lookup is made and
+no message is sent automatically.
+
+### Temporary local number-response inspection
+
+For the matched, registered response that failed the phone-identity comparison,
+this preview opens a **local-only, read-only window**. It shows the requested
+number, response `Query` and `IsIn`, and the `PhoneNumber` and `JID` fields. Each
+identity has a quoted string representation plus labeled `User`, `Server`,
+`RawAgent`, `Device` and `Integrator` components, so formatting and field order
+can be inspected without guessing.
+
+Use `j`/`k` or up/down arrows to scroll vertically, `h`/`l` or left/right arrows
+to scroll horizontally, `Home` to reset the view, and `Esc` to close and release
+its in-memory observation. Other input is captured by the window: `Enter` does
+not open a conversation or send a message. Values are length-bounded and controls
+are escaped as visible ASCII rather than interpreted by the terminal.
+
+Actual values are retained only in volatile memory for this display, with redacted
+Debug output. They are not added to notices, logs, files, the chat store, or the
+clipboard. No additional lookup is made; inspection never relaxes the recipient
+confirmation rules above.
+**Do not share the displayed numbers, JIDs, screenshots, or full response text.**
+Report only whether you see a formatting difference or different digits.
+
+If the local snapshot is unavailable or exceeds its limits, the existing six-boolean
+comparison remains as a fallback, for example:
+
+```text
+Lookup comparison PN(d/n/i)=0/1/1 JID(d/n/i)=0/0/1
+```
+
+`PN` compares the response's associated phone-number field; `JID` compares its
+other identity field. Each triple contains independent booleans (`1` yes, `0` no):
+
+- `d`: the field's user digits exactly equal the entered phone-number digits.
+- `n`: its domain is an allowed phone-number domain (`s.whatsapp.net` or `c.us`).
+- `i`: its `Integrator` equals the requested identity's integrator (zero).
+
+These are comparisons, not field values or proof of a valid recipient. An absent
+field can still have `i=1` because its default integrator is zero. No number, JID,
+raw response, or diagnostic log is emitted or persisted by the boolean fallback.
+Only the existing lookup action makes a request; the preview adds no background
+queries, sends no message, and does not relax the recipient confirmation rules
+above. The comparison remains a rejected lookup and cannot open a conversation. Share only
+the comparison line, not the number, screenshot, or recipient identifiers.
+This temporary observation is not a fix for the reported new-number failure.
+
 ### Diagnostics
 
 To trace edited/deleted message processing, run with:
@@ -366,6 +453,21 @@ bridge result still needs real WhatsApp validation; tests do not prove service s
 Keybindings are contextual. Press `Esc` to close the active menu, picker, search, viewer, reply,
 or editor state.
 
+The contact information pane keeps the conversation visible and shows a large profile photo,
+phone number (when known), and shared groups from the local known-group catalog. Membership
+is queried in the background; loading, unavailable, and empty results are shown separately.
+If some group queries fail, available matches remain visible with “Some groups unavailable”,
+including when no matches are found in the successful queries. An incomplete scan is never
+shown as “No known shared groups”; if every query fails, the pane shows “Shared groups unavailable”.
+This is not an account-wide group census. Unknown LID identities are never treated as phone
+numbers. Contacts without a profile photo use the illustrated default portrait; real photos
+still take precedence. Group and community artwork is unchanged.
+
+At 180 columns the contact pane occupies 46 columns. Narrow terminals temporarily hide the
+section rail and chat list before reducing conversation space; very small terminals show
+contact details alone. `Esc` restores the normal layout without changing the draft. Composer
+and picker input retain priority; `i` returns to composing, and `Space a i` focuses details again.
+
 ### Global and navigation
 
 | Action | Key |
@@ -373,11 +475,13 @@ or editor state.
 | Quit | `Ctrl+Q` |
 | Toggle section rail | `Space`, then `1` |
 | Toggle chat list | `Space`, then `2` |
+| Contact information (selected contact or open direct conversation) | `Space`, then `a`, then `i` |
+| Scroll contact details / close contact pane | `j` / `k`, then `Esc` to close |
 | Focus previous / next pane | `h` / `l` or `←` / `→` |
 | Select previous / next item | `k` / `j` or `↑` / `↓` |
 | Jump to first / last item | `g g` / `G` |
 | Move half a page | `Ctrl+U` / `Ctrl+D` |
-| Search chats | `/` |
+| Search chats or start a conversation | `/` in the Chats list (All filter); type a name or `+` followed by 7–15 digits, then press `Enter` |
 | Cycle chat filters (All, Unread, Groups, Archived) | `Tab` in the Chats list |
 | Selected chat: mark read / unread | `Space`, then `a`, then `m` in the contact list |
 
