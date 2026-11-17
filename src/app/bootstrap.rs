@@ -115,6 +115,9 @@ fn with_dirs_and_picker_and_ports(
     let db_handler = DatabaseHandler::new(&db_path);
     let chat_store_write = Box::new(db_handler.chat_store_writer());
     let avatar_query: SharedAvatarQueryPort = Arc::new(crate::avatar_query::WhatsRustAvatarQuery);
+    let group_info_query = Arc::new(crate::group_info_query::WhatsRustGroupInfoQuery);
+    let group_participants_query =
+        Arc::new(crate::group_participants_query::WhatsRustGroupParticipantsQuery);
     let app = App {
         db_handler,
         chat_store_hydration: Box::new(crate::db::SqliteChatStoreHydration::new(&db_path)),
@@ -124,10 +127,8 @@ fn with_dirs_and_picker_and_ports(
         community_query: Box::new(crate::community_query::WhatsRustCommunityQuery),
         chat_settings_query: Box::new(crate::chat_settings::WhatsRustChatSettingsQuery),
         dm_resolver: Box::new(crate::dm_resolution::WhatsRustDmResolver),
-        group_info_query: Box::new(crate::group_info_query::WhatsRustGroupInfoQuery),
-        group_participants_query: Box::new(
-            crate::group_participants_query::WhatsRustGroupParticipantsQuery,
-        ),
+        group_info_query: Box::new(Arc::clone(&group_info_query)),
+        group_participants_query: Box::new(Arc::clone(&group_participants_query)),
         message_push_name: Box::new(crate::message_push_name::WhatsRustMessagePushName),
         message_reaction_write: Box::new(crate::db::SqliteMessageReactionWriter::new(&db_path)),
         chat_read_cursor: Box::new(crate::db::SqliteChatReadCursor::new(&db_path)),
@@ -208,6 +209,12 @@ fn with_dirs_and_picker_and_ports(
             cache_dir.join("contact-avatars"),
             avatar_query,
         ),
+        contact_info: None,
+        contact_info_generation: 0,
+        contact_info_query: Arc::new(contact_info::WhatsRustContactInfoQuery::new(
+            group_info_query,
+            group_participants_query,
+        )),
         focus_pane: FocusPane::ChatList,
         pane_visibility: PaneVisibility::default(),
         selected_section: Section::default(),
@@ -236,6 +243,7 @@ fn with_dirs_and_picker_and_ports(
         url_opener: Box::new(SystemUrlOpener),
         launch_executor: Box::new(crate::media::CommandLaunchExecutor),
         attachment_viewer: None,
+        phone_lookup_observation: None,
         viewer_preview: None,
         viewer_zoom: 100,
         read_receipts: ReadReceiptCoordinator::default(),
@@ -251,6 +259,10 @@ fn with_dirs_and_picker_and_ports(
         optimistic_text_send_worker: crate::app::optimistic_text_send::Worker::new(
             tx.clone(),
             Box::new(crate::text_send::WhatsAppTextSendPort),
+        ),
+        phone_lookup_worker: crate::app::phone_lookup_worker::Worker::new(
+            tx.clone(),
+            Box::new(crate::phone_lookup::WhatsRustPhoneLookup),
         ),
         media_download_worker: Some(crate::app::download_worker::spawn_with_port(
             data_dir.join("media"),
@@ -272,6 +284,8 @@ fn with_dirs_and_picker_and_ports(
         kh: KeybindHandler::default(),
         contact_search_active: false,
         contact_search: TextInput::new(),
+        pending_phone_lookup: None,
+        next_phone_lookup_generation: 0,
         chat_filter: super::ChatFilter::All,
         filtered_chats: Vec::new(),
         should_quit: false,
