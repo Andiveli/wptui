@@ -1,4 +1,4 @@
-use std::{any::Any, panic::catch_unwind, path::PathBuf};
+use std::{panic::catch_unwind, path::PathBuf};
 
 use rusqlite::{Connection, TransactionBehavior};
 use tempfile::{TempDir, tempdir};
@@ -70,7 +70,15 @@ impl History {
     fn load(&self) -> ChatStoreHydration {
         let hydration = SqliteChatStoreHydration::new(self.path());
         let port: &dyn ChatStoreHydrationPort = &hydration;
-        port.load()
+        port.try_load_complete().unwrap().snapshot
+    }
+
+    fn try_load(
+        &self,
+    ) -> rusqlite::Result<wp_tui::app::chat_store::hydration_port::CompleteChatStoreHydration> {
+        let hydration = SqliteChatStoreHydration::new(self.path());
+        let port: &dyn ChatStoreHydrationPort = &hydration;
+        port.try_load_complete()
     }
 
     fn lock_connection(&self) -> Connection {
@@ -137,6 +145,9 @@ fn unlocked_hydration_preserves_complete_seeded_history() {
     let history = History::seed();
     history.assert_complete(&history.load());
     history.assert_complete(&history.load());
+    // Existing infallible callers retain the same complete history.
+    let legacy = SqliteChatStoreHydration::new(history.path());
+    history.assert_complete(&legacy.load());
 }
 
 #[test]
@@ -168,16 +179,6 @@ fn exclusive_lock_on_a_different_database_does_not_block_hydration() {
     other.assert_complete(&other.load());
 }
 
-fn panic_text(payload: &(dyn Any + Send)) -> &str {
-    if let Some(text) = payload.downcast_ref::<String>() {
-        text
-    } else if let Some(text) = payload.downcast_ref::<&str>() {
-        text
-    } else {
-        panic!("expected a SQLite error panic with a string payload");
-    }
-}
-
 #[test]
 fn exhausted_exclusive_lock_must_not_panic_or_return_incomplete_history() {
     let history = History::seed();
@@ -190,25 +191,23 @@ fn exhausted_exclusive_lock_must_not_panic_or_return_incomplete_history() {
     // Keep the lock until load returns/unwinds: it cannot disappear before the
     // existing two-second busy timeout expires. No elapsed-time assertion,
     // sleep, background release, or modified busy timeout is involved.
-    // This exercises the public load path, not necessarily message_store's
-    // row-result unwrap: the earlier chats SELECT can fail first.
-    let outcome = catch_unwind(|| history.load());
+    // Exercise the actual public fallible adapter, including schema preparation.
+    let outcome = catch_unwind(|| history.try_load());
     transaction.rollback().unwrap();
     // Check persisted state even on the expected RED panic path.
     history.assert_complete(&history.load());
 
-    match outcome {
-        Ok(stored) => history.assert_complete(&stored),
-        Err(payload) => {
-            let text = panic_text(payload.as_ref());
-            assert!(
-                text.contains("code: DatabaseBusy, extended_code: 5")
-                    && text.contains("database is locked"),
-                "unexpected hydration panic, rather than SQLITE_BUSY (5): {text}"
-            );
-            // The current infallible port has no typed error outcome to assert.
-            // Catching its panic is diagnostic, never an accepted success.
-            panic!("hydration must handle exhausted SQLITE_BUSY without unwinding: {text}");
+    let result = outcome.expect("fallible hydration must not unwind");
+    let error = match result {
+        Err(error) => error,
+        Ok(_) => panic!("exclusive lock must not produce successful partial history"),
+    };
+    match error {
+        rusqlite::Error::SqliteFailure(code, message) => {
+            assert_eq!(code.code, rusqlite::ErrorCode::DatabaseBusy);
+            assert_eq!(code.extended_code, 5);
+            assert_eq!(message.as_deref(), Some("database is locked"));
         }
+        error => panic!("expected SQLITE_BUSY (5), got {error}"),
     }
 }

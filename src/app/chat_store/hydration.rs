@@ -9,13 +9,19 @@ use super::hydration_port::ChatStoreHydration;
 
 impl App<'_> {
     pub fn load_data_from_db(&mut self) {
+        self.try_load_data_from_db()
+            .expect("Could not hydrate persisted chat history");
+    }
+
+    pub fn try_load_data_from_db(&mut self) -> rusqlite::Result<()> {
         info!("Reading database");
+        let complete = self.chat_store_hydration.try_load_complete()?;
         let ChatStoreHydration {
             chats,
             contacts,
             messages,
             reactions,
-        } = self.chat_store_hydration.load();
+        } = complete.snapshot;
         for chat in chats {
             self.chats.insert(chat.jid.clone(), chat);
         }
@@ -63,7 +69,7 @@ impl App<'_> {
         for message in messages {
             self.add_message_without_sort(message);
         }
-        for record in self.chat_store_hydration.load_native_link_previews() {
+        for record in complete.native_link_previews {
             self.restore_native_link_preview(record);
         }
         let chat_ids = self.chat_messages.keys().cloned().collect::<Vec<_>>();
@@ -82,6 +88,7 @@ impl App<'_> {
             self.messages.len()
         );
         self.invalidate_chat_list();
+        Ok(())
     }
 
     /// Display name for a JID (chat or sender). A LID is not a phone number.

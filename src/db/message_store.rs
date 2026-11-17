@@ -37,25 +37,30 @@ fn decode_mention_ranges(encoded: Option<String>, text: &str) -> Vec<Range<usize
 
 pub(super) fn get_messages(db: &Connection) -> Vec<wr::Message> {
     super::schema::prepare_legacy_message_schema(db);
+    try_get_messages(db).unwrap()
+}
+
+/// The caller prepares legacy columns before entering its read transaction.
+pub(super) fn try_get_messages(db: &Connection) -> rusqlite::Result<Vec<wr::Message>> {
     let mut messages = Vec::new();
     for kind in wr::MessageContent::iter() {
         let msgs = match kind {
             wr::MessageContent::Text(_) => {
-                let mut query = db.prepare("SELECT * FROM text_messages").unwrap();
+                let mut query = db.prepare("SELECT * FROM text_messages")?;
                 query
                     .query_map([], |row| {
-                        let id: String = row.get(0).unwrap();
-                        let chat_jid: String = row.get(1).unwrap();
-                        let sender_jid: String = row.get(2).unwrap();
-                        let timestamp: i64 = row.get(3).unwrap();
-                        let quote_id: Option<String> = row.get(4).unwrap_or(None);
-                        let is_from_me: bool = row.get(5).unwrap();
-                        let read_by: u16 = row.get(6).unwrap();
-                        let message: String = row.get(7).unwrap();
-                        let is_forwarded: bool = row.get(8).unwrap();
-                        let forwarding_score: u32 = row.get(9).unwrap();
-                        let mention_ranges: Option<String> = row.get(10).unwrap_or(None);
-                        let mentions_self: bool = row.get(11).unwrap_or(false);
+                        let id: String = row.get(0)?;
+                        let chat_jid: String = row.get(1)?;
+                        let sender_jid: String = row.get(2)?;
+                        let timestamp: i64 = row.get(3)?;
+                        let quote_id: Option<String> = row.get(4)?;
+                        let is_from_me: bool = row.get(5)?;
+                        let read_by: u16 = row.get(6)?;
+                        let message: String = row.get(7)?;
+                        let is_forwarded: bool = row.get(8)?;
+                        let forwarding_score: u32 = row.get(9)?;
+                        let mention_ranges: Option<String> = row.get(10)?;
+                        let mentions_self: bool = row.get(11)?;
                         let result = wr::Message {
                             info: wr::MessageInfo {
                                 id: id.into(),
@@ -79,29 +84,28 @@ pub(super) fn get_messages(db: &Connection) -> Vec<wr::Message> {
                             decode_mention_ranges(mention_ranges, &message),
                         );
                         Ok(result)
-                    })
-                    .unwrap()
+                    })?
                     .collect::<Vec<Result<_, _>>>()
             }
             wr::MessageContent::File(_) => {
-                let mut query = db.prepare("SELECT * FROM file_messages").unwrap();
+                let mut query = db.prepare("SELECT * FROM file_messages")?;
                 query
                     .query_map([], |row| {
-                        let id: String = row.get(0).unwrap();
-                        let chat_jid: String = row.get(1).unwrap();
-                        let sender_jid: String = row.get(2).unwrap();
-                        let timestamp: i64 = row.get(3).unwrap();
-                        let quote_id: Option<String> = row.get(4).unwrap_or(None);
-                        let is_from_me: bool = row.get(5).unwrap();
-                        let read_by: u16 = row.get(6).unwrap();
-                        let kind: u8 = row.get(7).unwrap();
-                        let path: String = row.get(8).unwrap();
-                        let file_id: String = row.get(9).unwrap();
-                        let caption: Option<String> = row.get(10).unwrap_or(None);
-                        let is_forwarded: bool = row.get(11).unwrap();
-                        let forwarding_score: u32 = row.get(12).unwrap();
-                        let mention_ranges: Option<String> = row.get(13).unwrap_or(None);
-                        let mentions_self: bool = row.get(14).unwrap_or(false);
+                        let id: String = row.get(0)?;
+                        let chat_jid: String = row.get(1)?;
+                        let sender_jid: String = row.get(2)?;
+                        let timestamp: i64 = row.get(3)?;
+                        let quote_id: Option<String> = row.get(4)?;
+                        let is_from_me: bool = row.get(5)?;
+                        let read_by: u16 = row.get(6)?;
+                        let kind: u8 = row.get(7)?;
+                        let path: String = row.get(8)?;
+                        let file_id: String = row.get(9)?;
+                        let caption: Option<String> = row.get(10)?;
+                        let is_forwarded: bool = row.get(11)?;
+                        let forwarding_score: u32 = row.get(12)?;
+                        let mention_ranges: Option<String> = row.get(13)?;
+                        let mentions_self: bool = row.get(14)?;
                         let result = wr::Message {
                             info: wr::MessageInfo {
                                 id: id.into(),
@@ -118,7 +122,9 @@ pub(super) fn get_messages(db: &Connection) -> Vec<wr::Message> {
                                 },
                             },
                             message: wr::MessageContent::File(wr::FileContent {
-                                kind: wr::FileKind::from_repr(kind).unwrap(),
+                                kind: wr::FileKind::from_repr(kind).ok_or(
+                                    rusqlite::Error::IntegralValueOutOfRange(7, kind.into()),
+                                )?,
                                 path: path.into(),
                                 file_id: file_id.into(),
                                 caption: caption.as_ref().map(|c| c.as_str().into()),
@@ -132,14 +138,11 @@ pub(super) fn get_messages(db: &Connection) -> Vec<wr::Message> {
                             );
                         }
                         Ok(result)
-                    })
-                    .unwrap()
+                    })?
                     .collect::<Vec<Result<_, _>>>()
             }
             wr::MessageContent::ViewOnceUnavailable => {
-                let mut query = db
-                    .prepare("SELECT * FROM view_once_unavailable_messages")
-                    .unwrap();
+                let mut query = db.prepare("SELECT * FROM view_once_unavailable_messages")?;
                 query
                     .query_map([], |row| {
                         Ok(wr::Message {
@@ -147,7 +150,7 @@ pub(super) fn get_messages(db: &Connection) -> Vec<wr::Message> {
                                 id: row.get::<_, String>(0)?.into(),
                                 chat: row.get::<_, String>(1)?.into(),
                                 sender: row.get::<_, String>(2)?.into(),
-                                mentions_self: row.get(6).unwrap_or(false),
+                                mentions_self: row.get(6)?,
                                 timestamp: row.get(3)?,
                                 is_from_me: row.get(4)?,
                                 quote_id: None,
@@ -156,24 +159,23 @@ pub(super) fn get_messages(db: &Connection) -> Vec<wr::Message> {
                             },
                             message: wr::MessageContent::ViewOnceUnavailable,
                         })
-                    })
-                    .unwrap()
+                    })?
                     .collect::<Vec<Result<_, _>>>()
             }
         };
         for msg in msgs {
-            let msg = msg.unwrap();
+            let msg = msg?;
             if let Some(source) = db.query_row(
                 "SELECT source FROM forward_sources WHERE id = ?1 AND chat_jid = ?2 AND sender_jid = ?3",
                 rusqlite::params![msg.info.id, msg.info.chat.0, msg.info.sender.0],
                 |row| row.get::<_, Vec<u8>>(0),
-            ).optional().unwrap() {
+            ).optional()? {
                 wr::store_forward_source(&msg.info, source);
             }
             messages.push(msg);
         }
     }
-    messages
+    Ok(messages)
 }
 
 pub(super) fn persist(db: &mut Connection, messages: Vec<wr::Message>) {
@@ -346,11 +348,28 @@ pub(super) fn persist_native_link_preview(
 pub(super) fn get_native_link_previews(
     db: &Connection,
 ) -> Vec<crate::app::native_link_previews::NativeLinkPreviewRecord> {
+    read_native_link_previews(db)
+        .unwrap()
+        .into_iter()
+        .filter_map(Result::ok)
+        .collect()
+}
+
+pub(super) fn try_get_native_link_previews(
+    db: &Connection,
+) -> rusqlite::Result<Vec<crate::app::native_link_previews::NativeLinkPreviewRecord>> {
+    read_native_link_previews(db)?.into_iter().collect()
+}
+
+fn read_native_link_previews(
+    db: &Connection,
+) -> rusqlite::Result<
+    Vec<rusqlite::Result<crate::app::native_link_previews::NativeLinkPreviewRecord>>,
+> {
     // Bound before allocating untrusted stored text/blobs. A large stored image
     // alone becomes text-only, just like a large callback image.
-    let mut query = db
-        .prepare(
-            "SELECT p.chat_jid, p.message_id, p.source, p.matched_text, p.title, p.description,
+    let mut query = db.prepare(
+        "SELECT p.chat_jid, p.message_id, p.source, p.matched_text, p.title, p.description,
             CASE WHEN length(p.jpeg_thumbnail) <= 262144 THEN p.jpeg_thumbnail ELSE X'' END
          FROM native_link_previews p JOIN text_messages t
             ON t.id = p.message_id AND t.chat_jid = p.chat_jid AND t.message = p.source
@@ -361,8 +380,7 @@ pub(super) fn get_native_link_previews(
             AND length(CAST(p.description AS BLOB)) <= 8192
             AND NOT EXISTS (SELECT 1 FROM message_actions a WHERE a.target_message_id = t.id)
          ORDER BY t.timestamp DESC, p.chat_jid, p.message_id LIMIT 256",
-        )
-        .unwrap();
+    )?;
     query
         .query_map([], |row| {
             Ok(crate::app::native_link_previews::NativeLinkPreviewRecord {
@@ -377,7 +395,5 @@ pub(super) fn get_native_link_previews(
                 },
             })
         })
-        .unwrap()
-        .filter_map(Result::ok)
-        .collect()
+        .map(|rows| rows.collect())
 }

@@ -93,6 +93,14 @@ Your WhatsApp data — database, media, and session — lives in `~/.local/share
 machine. It is not uploaded anywhere; the client only exchanges data with the WhatsApp servers
 when it links or syncs, like any official client.
 
+Startup reads chats, contacts, messages, reactions, and native link-preview metadata
+as one SQLite snapshot before applying that history to the app. If hydration fails
+(for example, an exhausted SQLite lock wait), `wp-tui` prints
+`wp-tui: could not hydrate persisted chat history: <error>` and exits with status 1
+without connecting to WhatsApp or opening the terminal UI. It does not treat a
+failed read as empty or partially loaded history, retry it, or extend the existing
+SQLite busy timeout. This error alone does not identify which connection holds a lock.
+
 Incoming chat text can retain WhatsApp-supplied link-preview metadata in a separate
 local database table; old messages without metadata load normally. Native metadata
 is optional and is displayed only for eligible incoming plain-body URLs:
