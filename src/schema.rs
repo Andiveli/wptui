@@ -73,8 +73,13 @@ pub(crate) fn prepare(db: &Connection) {
 /// Applies message-table migrations needed by ordinary operations before
 /// callers explicitly request full schema initialization.
 pub(crate) fn prepare_legacy_message_schema(db: &Connection) {
-    prepare_legacy_forwarding_schema(db);
-    ensure_mention_columns(db);
+    try_prepare_legacy_message_schema(db).unwrap();
+}
+
+pub(crate) fn try_prepare_legacy_message_schema(db: &Connection) -> rusqlite::Result<()> {
+    try_ensure_forwarding_columns(db, "text_messages")?;
+    try_ensure_forwarding_columns(db, "file_messages")?;
+    try_ensure_mention_columns(db)
 }
 
 pub(crate) fn prepare_legacy_forwarding_schema(db: &Connection) {
@@ -152,19 +157,25 @@ fn ensure_read_receipt_schema(db: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 fn columns(db: &Connection, table: &str) -> Vec<String> {
-    db.prepare(&format!("PRAGMA table_info({table})"))
-        .unwrap()
-        .query_map([], |row| row.get::<_, String>(1))
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap()
+    try_columns(db, table).unwrap()
+}
+
+fn try_columns(db: &Connection, table: &str) -> rusqlite::Result<Vec<String>> {
+    db.prepare(&format!("PRAGMA table_info({table})"))?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect()
 }
 
 fn ensure_forwarding_columns(db: &Connection, table: &str) {
-    let present = columns(db, table);
+    try_ensure_forwarding_columns(db, table).unwrap();
+}
+
+fn try_ensure_forwarding_columns(db: &Connection, table: &str) -> rusqlite::Result<()> {
+    let present = try_columns(db, table)?;
     if present.is_empty() {
-        return;
+        return Ok(());
     }
     for (column, definition) in [
         ("is_forwarded", "INTEGER NOT NULL DEFAULT 0"),
@@ -174,22 +185,21 @@ fn ensure_forwarding_columns(db: &Connection, table: &str) {
             db.execute(
                 &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
                 [],
-            )
-            .unwrap();
+            )?;
         }
     }
+    Ok(())
 }
 
-fn ensure_mention_columns(db: &Connection) {
+fn try_ensure_mention_columns(db: &Connection) -> rusqlite::Result<()> {
     for table in ["text_messages", "file_messages"] {
-        let present = columns(db, table);
+        let present = try_columns(db, table)?;
         if !present.is_empty() {
             if !present.iter().any(|column| column == "mention_ranges") {
                 db.execute(
                     &format!("ALTER TABLE {table} ADD COLUMN mention_ranges TEXT"),
                     [],
-                )
-                .unwrap();
+                )?;
             }
             if !present.iter().any(|column| column == "mentions_self") {
                 db.execute(
@@ -197,11 +207,11 @@ fn ensure_mention_columns(db: &Connection) {
                         "ALTER TABLE {table} ADD COLUMN mentions_self INTEGER NOT NULL DEFAULT 0"
                     ),
                     [],
-                )
-                .unwrap();
+                )?;
             }
         }
     }
+    Ok(())
 }
 
 /// Adds the pending edit payload column for legacy databases, then projects
@@ -299,7 +309,12 @@ mod tests {
         )
         .unwrap();
         prepare_legacy_message_schema(&db);
+        let text_columns = columns(&db, "text_messages");
+        let file_columns = columns(&db, "file_messages");
+        try_prepare_legacy_message_schema(&db).unwrap();
         prepare_legacy_message_schema(&db);
+        assert_eq!(columns(&db, "text_messages"), text_columns);
+        assert_eq!(columns(&db, "file_messages"), file_columns);
         assert!(columns(&db, "text_messages").contains(&"is_forwarded".into()));
         assert!(columns(&db, "text_messages").contains(&"mention_ranges".into()));
         assert!(columns(&db, "text_messages").contains(&"mentions_self".into()));

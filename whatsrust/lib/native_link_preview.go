@@ -33,8 +33,8 @@ func safeNativeText(text string, limit int) bool {
 }
 
 // Only embedded bytes are transported. Direct paths never trigger a download.
-func incomingNativeLinkPreview(ext *waE2E.ExtendedTextMessage, fromMe bool) *nativeLinkPreview {
-	if fromMe || ext == nil || ext.GetMatchedText() == "" ||
+func incomingNativeLinkPreview(ext *waE2E.ExtendedTextMessage, _ bool) *nativeLinkPreview {
+	if ext == nil || ext.GetMatchedText() == "" ||
 		!safeNativeText(ext.GetMatchedText(), nativeMatchedTextLimit) ||
 		!safeNativeText(ext.GetTitle(), nativeTitleLimit) ||
 		!safeNativeText(ext.GetDescription(), nativeDescriptionLimit) {

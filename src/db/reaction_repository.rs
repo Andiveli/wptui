@@ -28,9 +28,14 @@ pub(super) fn record(
 }
 
 pub(super) fn get(db: &Connection) -> Vec<(wr::MessageId, wr::JID, Arc<str>)> {
+    try_get(db).unwrap()
+}
+
+pub(super) fn try_get(
+    db: &Connection,
+) -> rusqlite::Result<Vec<(wr::MessageId, wr::JID, Arc<str>)>> {
     let mut query = db
-        .prepare("SELECT message_id, participant_jid, emoji FROM message_reactions ORDER BY message_id, participant_jid")
-        .unwrap();
+        .prepare("SELECT message_id, participant_jid, emoji FROM message_reactions ORDER BY message_id, participant_jid")?;
     query
         .query_map([], |row| {
             Ok((
@@ -38,8 +43,6 @@ pub(super) fn get(db: &Connection) -> Vec<(wr::MessageId, wr::JID, Arc<str>)> {
                 row.get::<_, String>(1)?.into(),
                 Arc::from(row.get::<_, String>(2)?),
             ))
-        })
-        .unwrap()
-        .map(Result::unwrap)
+        })?
         .collect()
 }

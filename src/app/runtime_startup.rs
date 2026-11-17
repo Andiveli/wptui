@@ -12,23 +12,40 @@ mod tests;
 ///
 /// This keeps storage preparation, bridge assembly, connection setup, and the
 /// handoff to the already-running event loop in their original order.
-pub(crate) fn run(app: &mut App<'_>, phone: Option<String>) {
+pub(crate) fn run(app: &mut App<'_>, phone: Option<String>) -> rusqlite::Result<()> {
     crate::updater::startup_check(app.tx.clone());
     app.refresh_news();
     app.db_handler.init();
-    prepare_persisted_state(app);
 
     let tx = app.tx.clone();
     let diagnostics = app.message_action_diagnostics.clone();
-    let download_worker = start_lifecycle(
+    let download_worker = prepare_and_start_lifecycle(
         app,
         phone,
         move || register_runtime_callbacks(tx, diagnostics),
         |data| qr2term::print_qr(data).unwrap(),
         |code| println!("Pairing code: {}", code),
-    );
+    )?;
     info!("Connected, initializing terminal UI");
     crate::app::runtime_loop::run(app, download_worker);
+    Ok(())
+}
+
+fn prepare_and_start_lifecycle(
+    app: &mut App<'_>,
+    phone: Option<String>,
+    register_callbacks: impl FnOnce(),
+    present_qr: impl FnMut(String) + 'static,
+    present_pairing: impl FnMut(String) + 'static,
+) -> rusqlite::Result<crate::app::download_worker::Worker> {
+    prepare_persisted_state(app)?;
+    Ok(start_lifecycle(
+        app,
+        phone,
+        register_callbacks,
+        present_qr,
+        present_pairing,
+    ))
 }
 
 fn start_lifecycle(
@@ -56,7 +73,7 @@ fn start_lifecycle(
     download_worker
 }
 
-pub(crate) fn prepare_persisted_state(app: &mut App<'_>) {
+pub(crate) fn prepare_persisted_state(app: &mut App<'_>) -> rusqlite::Result<()> {
     // Statuses expire 24h after posting (server-side). Prune the local
     // copies at startup so the DB and media dir do not accumulate them.
     let purged_statuses = app
@@ -70,6 +87,7 @@ pub(crate) fn prepare_persisted_state(app: &mut App<'_>) {
             purged_statuses.media_paths.len()
         );
     }
-    app.load_data_from_db();
+    app.try_load_data_from_db()?;
     app.sort_chats();
+    Ok(())
 }

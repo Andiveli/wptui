@@ -178,6 +178,9 @@ fn keybind_overlay_area(frame: Rect, width: u16, rows: usize) -> Rect {
 /// Only actual painted overlays occlude native thumbnails, never keyboard focus.
 fn native_image_occluded(app: &App, frame: Rect, image: Rect) -> bool {
     let overlaps = |area: Rect| !area.intersection(image).is_empty();
+    if app.phone_lookup_observation.is_some() && overlaps(centered_modal_layout(frame)) {
+        return true;
+    }
     let keybind = if app.shortcut_popup {
         Some(keybind_overlay_area(frame, 42, canonical_shortcuts().len()))
     } else if let Some((rows, _)) = &app.reaction_picker {

@@ -573,7 +573,12 @@ impl App<'_> {
     }
 
     pub fn run(&mut self, phone: Option<String>) {
-        runtime_startup::run(self, phone);
+        self.try_run(phone)
+            .expect("Could not hydrate persisted chat history");
+    }
+
+    pub fn try_run(&mut self, phone: Option<String>) -> rusqlite::Result<()> {
+        runtime_startup::run(self, phone)
     }
 
     pub(crate) fn record_phase<T>(&mut self, phase: Phase, work: impl FnOnce(&mut Self) -> T) -> T {
