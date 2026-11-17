@@ -34,21 +34,27 @@ impl App<'_> {
         match key.code {
             KeyCode::Esc => {
                 let chat = self.get_selected_chat();
+                self.pending_phone_lookup = None;
                 self.contact_search_active = false;
                 self.contact_search.clean();
                 self.select_chat(chat);
             }
             KeyCode::Enter => {
+                if self.get_selected_chat().is_none() && self.start_phone_lookup_from_search() {
+                    return;
+                }
                 self.contact_search_active = false;
                 self.dispatch_action(AppAction::OpenChat);
             }
             KeyCode::Char(character) => {
                 let selected = self.get_selected_chat();
+                self.pending_phone_lookup = None;
                 self.contact_search.enter_char(character);
                 self.update_filtered_chats(selected);
             }
             KeyCode::Backspace => {
                 let selected = self.get_selected_chat();
+                self.pending_phone_lookup = None;
                 self.contact_search.delete_char();
                 self.update_filtered_chats(selected);
             }

@@ -7,6 +7,7 @@ pub(crate) mod layout;
 pub mod message_list;
 mod navigation;
 mod news;
+mod phone_lookup_observation;
 mod status;
 pub mod status_list;
 pub mod text_input;
@@ -158,6 +159,7 @@ pub fn draw_with_plan(
     render_share_picker(frame, app);
     render_file_picker(frame, app);
     render_keybind_overlays(frame, app);
+    phone_lookup_observation::render(frame, app);
 }
 
 fn render_keybind_overlays(frame: &mut Frame, app: &App) {
@@ -598,6 +600,7 @@ pub(super) fn action_notice_text(app: &App) -> Option<String> {
         crate::app::actions::ActionNotice::ReplyPrivatelyNamed(name) => {
             format!("Replying to {name} privately")
         }
+        crate::app::actions::ActionNotice::PhoneLookup(message) => message.clone(),
         _ => format!("{notice:?}"),
     })
 }
@@ -749,6 +752,74 @@ pub(super) fn render_composer(
                 (cursor_row.saturating_sub(scroll_top), composer_cursor.1),
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod action_notice_tests {
+    use super::action_notice_text;
+    use crate::app::{actions::ActionNotice, test_support::TestApp};
+
+    #[test]
+    fn phone_lookup_notice_renders_only_the_friendly_message() {
+        let mut app = TestApp::new();
+        for message in [
+            "Could not check number",
+            "Number check timed out",
+            "WhatsApp returned no number result",
+            "WhatsApp returned a mismatched number result",
+            "WhatsApp returned a mismatched query result",
+            "WhatsApp returned only a LID without a phone number",
+            "WhatsApp returned a different phone number",
+            "Lookup comparison PN(d/n/i)=0/1/1 JID(d/n/i)=0/0/1",
+            "Lookup comparison PN(d/n/i)=0/0/1 JID(d/n/i)=0/1/1",
+            "Lookup comparison PN(d/n/i)=1/1/0 JID(d/n/i)=0/0/1",
+            "Lookup comparison PN(d/n/i)=0/0/1 JID(d/n/i)=1/1/0",
+            "Lookup comparison PN(d/n/i)=1/0/1 JID(d/n/i)=0/1/1",
+            "Lookup comparison PN(d/n/i)=0/1/1 JID(d/n/i)=0/1/1",
+            "Could not verify number",
+            "WhatsApp is not connected",
+            "Number is not on WhatsApp",
+            "Use + followed by 7-15 digits",
+        ] {
+            app.action_notice = Some(ActionNotice::PhoneLookup(message.into()));
+            assert_eq!(action_notice_text(&app), Some(message.to_owned()));
+        }
+    }
+
+    #[test]
+    fn existing_notice_formatting_is_preserved() {
+        let mut app = TestApp::new();
+        assert_eq!(action_notice_text(&app), None);
+        app.unavailable("send failed");
+        assert_eq!(
+            action_notice_text(&app).as_deref(),
+            Some("Unavailable(\"send failed\")")
+        );
+        app.action_notice = Some(ActionNotice::Cancelled);
+        assert_eq!(action_notice_text(&app).as_deref(), Some("Cancelled"));
+        app.action_notice = Some(ActionNotice::Forwarded {
+            succeeded: 2,
+            failed: 0,
+            failure: whatsrust::ForwardFailure::None,
+        });
+        assert_eq!(action_notice_text(&app).as_deref(), Some("Forwarded: 2"));
+        app.action_notice = Some(ActionNotice::Forwarded {
+            succeeded: 1,
+            failed: 1,
+            failure: whatsrust::ForwardFailure::SendFailed,
+        });
+        assert_eq!(
+            action_notice_text(&app).as_deref(),
+            Some("Forwarded: 1 ok, 1 failed (Send failed)")
+        );
+        app.action_notice = Some(ActionNotice::ReplyPrivatelyNamed(
+            "Synthetic contact".into(),
+        ));
+        assert_eq!(
+            action_notice_text(&app).as_deref(),
+            Some("Replying to Synthetic contact privately")
+        );
     }
 }
 

@@ -241,6 +241,7 @@ fn with_dirs_and_picker_and_ports(
         url_opener: Box::new(SystemUrlOpener),
         launch_executor: Box::new(crate::media::CommandLaunchExecutor),
         attachment_viewer: None,
+        phone_lookup_observation: None,
         viewer_preview: None,
         viewer_zoom: 100,
         read_receipts: ReadReceiptCoordinator::default(),
@@ -256,6 +257,10 @@ fn with_dirs_and_picker_and_ports(
         optimistic_text_send_worker: crate::app::optimistic_text_send::Worker::new(
             tx.clone(),
             Box::new(crate::text_send::WhatsAppTextSendPort),
+        ),
+        phone_lookup_worker: crate::app::phone_lookup_worker::Worker::new(
+            tx.clone(),
+            Box::new(crate::phone_lookup::WhatsRustPhoneLookup),
         ),
         media_download_worker: Some(crate::app::download_worker::spawn_with_port(
             data_dir.join("media"),
@@ -277,6 +282,8 @@ fn with_dirs_and_picker_and_ports(
         kh: KeybindHandler::default(),
         contact_search_active: false,
         contact_search: TextInput::new(),
+        pending_phone_lookup: None,
+        next_phone_lookup_generation: 0,
         chat_filter: super::ChatFilter::All,
         filtered_chats: Vec::new(),
         should_quit: false,
