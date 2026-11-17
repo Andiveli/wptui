@@ -70,6 +70,7 @@ pub mod news_update;
 pub mod notifications;
 pub mod optimistic_text_send;
 pub mod phone_lookup_input;
+pub(crate) mod phone_lookup_observation;
 pub mod phone_lookup_port;
 pub mod phone_lookup_worker;
 pub mod preferences;
@@ -340,6 +341,7 @@ pub struct App<'a> {
     pub url_opener: Box<dyn UrlOpener>,
     pub launch_executor: Box<dyn crate::media::LaunchExecutor>,
     pub attachment_viewer: Option<AttachmentViewerState>,
+    pub(crate) phone_lookup_observation: Option<phone_lookup_observation::ObservationView>,
     pub viewer_preview: Option<ViewerPreviewState>,
     pub viewer_zoom: u16,
     pub read_receipts: ReadReceiptCoordinator,

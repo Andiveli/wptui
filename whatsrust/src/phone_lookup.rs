@@ -2,8 +2,9 @@ use std::ffi::{CStr, CString};
 
 use crate::abi::{C_FreeLookupPhoneResult, C_LookupPhone};
 use crate::models::JID;
+use crate::phone_lookup_observation::LocalPhoneLookupObservation;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PhoneLookupError {
     InvalidNumber,
     ClientUnavailable,
@@ -17,6 +18,7 @@ pub enum PhoneLookupError {
     DifferentPhoneNumber,
     // Temporary independent comparisons: digits, allowed domain, integrator.
     ResponseComparison { phone: [bool; 3], jid: [bool; 3] },
+    ResponseObservation(LocalPhoneLookupObservation),
 }
 
 pub fn lookup_phone(phone: &str) -> Result<Option<JID>, PhoneLookupError> {
@@ -30,9 +32,27 @@ pub fn lookup_phone(phone: &str) -> Result<Option<JID>, PhoneLookupError> {
             .ok()
             .map(str::to_owned)
     };
+    let observation = if result.observation.is_null() {
+        None
+    } else {
+        unsafe { CStr::from_ptr(result.observation) }
+            .to_str()
+            .ok()
+            .map(str::to_owned)
+    };
+    let invalid_text = (!result.jid.is_null() && jid.is_none())
+        || (!result.observation.is_null() && observation.is_none());
     let status = result.status;
     unsafe { C_FreeLookupPhoneResult(result) };
-    lookup_result(status, phone.to_str().unwrap_or_default(), jid.as_deref())
+    if invalid_text {
+        return Err(PhoneLookupError::InvalidBridgeResult);
+    }
+    lookup_observed_result(
+        status,
+        phone.to_str().unwrap_or_default(),
+        jid.as_deref(),
+        observation.as_deref(),
+    )
 }
 
 fn lookup_result(
@@ -67,6 +87,25 @@ fn lookup_result(
         }),
         _ => Err(PhoneLookupError::InvalidBridgeResult),
     }
+}
+
+// Keep local observation data separate from the recipient validation result.
+fn lookup_observed_result(
+    status: u8,
+    phone: &str,
+    jid: Option<&str>,
+    observation: Option<&str>,
+) -> Result<Option<JID>, PhoneLookupError> {
+    let result = lookup_result(status, phone, jid);
+    let Some(text) = observation else {
+        return result;
+    };
+    if !matches!(&result, Err(PhoneLookupError::ResponseComparison { .. })) {
+        return Err(PhoneLookupError::InvalidBridgeResult);
+    }
+    let observation = LocalPhoneLookupObservation::from_display_text(text.to_owned())
+        .ok_or(PhoneLookupError::InvalidBridgeResult)?;
+    Err(PhoneLookupError::ResponseObservation(observation))
 }
 
 #[cfg(test)]
@@ -170,6 +209,41 @@ mod tests {
         for status in [5, 6, 7, 8, 9, 10] {
             assert_eq!(
                 lookup_result(status, "+15551234567", Some("15551234567@s.whatsapp.net")),
+                Err(PhoneLookupError::InvalidBridgeResult)
+            );
+        }
+    }
+
+    #[test]
+    fn local_observation_is_separate_and_debug_redacted() {
+        let text = "Requested: \"+15551234567\"\nPhoneNumber.User: \"15559876543\"";
+        let result = lookup_observed_result(166, "+15551234567", None, Some(text));
+        let debug = format!("{result:?}");
+        assert!(debug.contains("ResponseObservation"));
+        assert!(!debug.contains("15551234567"));
+        assert!(!debug.contains("15559876543"));
+        let Err(PhoneLookupError::ResponseObservation(observation)) = result else {
+            panic!("expected a local observation");
+        };
+        assert_eq!(observation.display_text(), text);
+    }
+
+    #[test]
+    fn local_observation_rejects_recipient_success_controls_and_oversize() {
+        let recipient = Some("15551234567@s.whatsapp.net");
+        let huge = "x".repeat(8193);
+        for (status, jid, text) in [
+            (0, recipient, "local text"),
+            (166, recipient, "local text"),
+            (10, None, "local text"),
+            (255, None, "local text"),
+            (166, None, "bad\u{1b}[2J"),
+            (166, None, "bad\rtext"),
+            (166, None, ""),
+            (166, None, huge.as_str()),
+        ] {
+            assert_eq!(
+                lookup_observed_result(status, "+15551234567", jid, Some(text)),
                 Err(PhoneLookupError::InvalidBridgeResult)
             );
         }
