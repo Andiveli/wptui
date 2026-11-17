@@ -15,6 +15,7 @@ mod lifecycle;
 mod media;
 mod message_send;
 mod models;
+mod phone_lookup;
 mod presence;
 mod queries;
 mod read_sync;
@@ -37,6 +38,7 @@ pub use models::{
     MessageId, MessageInfo, PresenceUpdate, ProfilePicture, ProfilePictureAvailability,
     ProfilePictureError, VIEW_ONCE_UNAVAILABLE_DESCRIPTION,
 };
+pub use phone_lookup::{PhoneLookupError, lookup_phone};
 pub use presence::{SubscribePresenceResult, drain_raw_presence_diagnostics, subscribe_presence};
 pub use queries::{
     get_chat_settings, get_communities, get_contact_aliases, get_contacts, get_group_info,
