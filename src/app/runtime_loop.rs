@@ -23,6 +23,7 @@ fn dispatch_app_event(
 ) -> bool {
     match event.family() {
         AppEventFamily::Send => app.handle_send_event(event),
+        AppEventFamily::PhoneLookup => app.handle_phone_lookup_event(event),
         AppEventFamily::ReadReceipt => app.handle_read_receipt_event(event),
         AppEventFamily::Avatar => app.handle_avatar_event(event),
         AppEventFamily::Updater => app.handle_updater_event(event),

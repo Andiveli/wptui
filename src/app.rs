@@ -69,6 +69,9 @@ pub(crate) mod news_star;
 pub mod news_update;
 pub mod notifications;
 pub mod optimistic_text_send;
+pub mod phone_lookup_input;
+pub mod phone_lookup_port;
+pub mod phone_lookup_worker;
 pub mod preferences;
 pub mod presence;
 pub mod presence_bridge;
@@ -81,6 +84,7 @@ pub mod runtime_avatar_events;
 pub mod runtime_diagnostics;
 pub mod runtime_loop;
 pub mod runtime_media_viewer_events;
+pub mod runtime_phone_lookup_events;
 pub mod runtime_read_receipt_events;
 pub mod runtime_send_events;
 pub mod runtime_startup;
@@ -343,6 +347,7 @@ pub struct App<'a> {
     pub(crate) chat_read_sync: Box<dyn ChatReadSyncPort>,
     read_sync_worker_stopped_for_logout: bool,
     pub optimistic_text_send_worker: optimistic_text_send::Worker,
+    pub(crate) phone_lookup_worker: phone_lookup_worker::Worker,
     media_download_worker: Option<download_worker::Worker>,
     pub status_send_worker: status_publish::Worker,
     pub pending_status_sends: usize,
@@ -358,6 +363,8 @@ pub struct App<'a> {
 
     pub contact_search_active: bool,
     pub contact_search: TextInput,
+    pub(crate) pending_phone_lookup: Option<(u64, String)>,
+    pub(crate) next_phone_lookup_generation: u64,
     pub chat_filter: ChatFilter,
     pub filtered_chats: Vec<wr::JID>,
 
