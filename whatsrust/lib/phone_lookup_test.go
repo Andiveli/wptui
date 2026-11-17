@@ -36,8 +36,14 @@ func TestLookupPhoneRequiresServerConfirmedRequestedNumber(t *testing.T) {
 		// Shape-only diagnostics append 9/10; existing ABI values 0-8 stay fixed.
 		// Neither category confirms a recipient or proves number normalization.
 		{name: "LID only without associated PN", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: lid, IsIn: true}}, want: phoneLookupResult{status: 9}, query: true},
-		{name: "mismatched associated PN", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: lid, PhoneNumber: types.NewJID("15559876543", types.DefaultUserServer), IsIn: true}}, want: phoneLookupResult{status: 10}, query: true},
-		{name: "mismatched JID PN", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: types.NewJID("15559876543", types.DefaultUserServer), IsIn: true}}, want: phoneLookupResult{status: 10}, query: true},
+		{name: "mismatched associated PN", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: lid, PhoneNumber: types.NewJID("15559876543", types.DefaultUserServer), IsIn: true}}, want: phoneLookupResult{status: 166}, query: true},
+		{name: "mismatched JID PN", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: types.NewJID("15559876543", types.DefaultUserServer), IsIn: true}}, want: phoneLookupResult{status: 180}, query: true},
+		// Comparison bits: PN digits/domain/integrator, then JID digits/domain/integrator.
+		// The temporary observation remains a rejection with an empty recipient.
+		{name: "same PN digits but different integrator", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: lid, PhoneNumber: types.JID{User: pn.User, Server: types.DefaultUserServer, Integrator: 1}, IsIn: true}}, want: phoneLookupResult{status: 163}, query: true},
+		{name: "same JID digits but different integrator", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: types.JID{User: pn.User, Server: types.DefaultUserServer, Integrator: 1}, IsIn: true}}, want: phoneLookupResult{status: 156}, query: true},
+		{name: "same PN digits in rejected namespace alongside different PN JID", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: types.NewJID("15559876543", types.DefaultUserServer), PhoneNumber: types.NewJID(pn.User, types.GroupServer), IsIn: true}}, want: phoneLookupResult{status: 181}, query: true},
+		{name: "legacy comparison namespace alongside different PN JID", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: types.NewJID("15559876543", types.DefaultUserServer), PhoneNumber: types.NewJID("15559876543", types.LegacyUserServer), IsIn: true}}, want: phoneLookupResult{status: 182}, query: true},
 		{name: "missing identities", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, IsIn: true}}, want: phoneLookupResult{status: 7}, query: true},
 		{name: "unexpected JID namespace", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: types.NewJID(pn.User, types.GroupServer), IsIn: true}}, want: phoneLookupResult{status: 7}, query: true},
 		{name: "LID with unexpected associated namespace", phone: phone, responses: []types.IsOnWhatsAppResponse{{Query: phone, JID: lid, PhoneNumber: types.NewJID(pn.User, types.GroupServer), IsIn: true}}, want: phoneLookupResult{status: 7}, query: true},
