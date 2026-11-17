@@ -12,7 +12,7 @@ use crate::app::events::AppEvent;
 use crate::app::runtime_diagnostics::Phase;
 use crate::ui::communities::community_avatar_targets;
 use crate::ui::contact_list::visible_contact_rows;
-use crate::ui::{chat_filter_areas, navigation_areas, show_chat_filter_header};
+use crate::ui::{chat_filter_areas, show_chat_filter_header};
 
 fn contact_avatar_targets(app: &mut App, area: Rect) -> Vec<AvatarTarget> {
     let (rows, items) = app.cached_contact_view();
@@ -57,9 +57,17 @@ impl App<'_> {
     pub(crate) fn schedule_avatar_viewport(&mut self, terminal_area: Rect) {
         let content_area = terminal_area;
         let (_, body_area) = chat_filter_areas(content_area, show_chat_filter_header(self));
-        let targets = if self.rail_on_logout || self.selected_section == Section::Status {
+        let show_contact = self.contact_info.is_some()
+            && matches!(self.selected_section, Section::Chats | Section::Communities)
+            && !self.rail_on_logout;
+        let (areas, _) = crate::ui::layout::contact_navigation_areas(
+            body_area,
+            self.pane_visibility,
+            show_contact,
+        );
+        let mut targets = if self.rail_on_logout || self.selected_section == Section::Status {
             Vec::new()
-        } else if let Some(area) = navigation_areas(body_area, self.pane_visibility).chat_list {
+        } else if let Some(area) = areas.chat_list {
             match self.selected_section {
                 Section::Chats => contact_avatar_targets(self, area),
                 Section::Communities if self.community_detail.is_some() => {
@@ -74,6 +82,14 @@ impl App<'_> {
         } else {
             Vec::new()
         };
+        if let Some(info) = &self.contact_info
+            && matches!(self.selected_section, Section::Chats | Section::Communities)
+            && !self.rail_on_logout
+        {
+            let target = AvatarTarget::Contact(info.contact.clone());
+            targets.retain(|candidate| candidate != &target);
+            targets.insert(0, target);
+        }
         let started = self.runtime_diagnostics.phase_started();
         self.contact_avatars
             .schedule(targets, self.tx.clone(), Arc::clone(&self.picker));
@@ -91,6 +107,7 @@ impl App<'_> {
 
     pub(crate) fn handle_avatar_event(&mut self, event: AppEvent) -> bool {
         match event {
+            AppEvent::ContactInfoLoaded(result) => self.apply_contact_info_result(result),
             AppEvent::ContactAvatar(result) => self.contact_avatars.apply(result),
             AppEvent::ContactAvatarRefreshed { generation, target } => {
                 self.contact_avatars.mark_refreshed(generation, target)
