@@ -56,23 +56,28 @@ underlined label; clicking it opens the original URL. The active composer
 fragment reveals the link source for editing. Formatting never fetches content
 or opens a link automatically.
 
-Incoming chat text also displays bare HTTP(S) URLs as the complete host (including
-subdomains and any port) plus the final nonempty path segment: for example,
+Incoming and outgoing chat text display bare HTTP(S) URLs as the complete host
+(including subdomains and any port) plus the final nonempty path segment: for example,
 `https://github.com/Andiveli/wptui` becomes `github.com · wptui`, while
 `https://example.com/` becomes `example.com`. Query strings and fragments are
 omitted from the label, not the click destination; path segments are not decoded.
 Ambiguous or unsupported authorities remain raw. This helps you inspect the host,
 but is not phishing detection or a safety guarantee. No site or title is fetched.
-Outgoing text, the composer, statuses, captions, reply summaries, system text,
-code, explicit Markdown links, and literal image syntax keep their existing display.
+Explicit Markdown links retain the author's chosen label rather than a URL label.
+The composer, statuses, captions, reply summaries, system text, code, and literal
+image syntax keep their existing display.
 
-When WhatsApp supplies native preview metadata for an eligible incoming bare URL,
-a compact preview below the body shows its title and description literally (not
-as Markdown). Only an embedded JPEG can supply the thumbnail; no website, external
-image URL, or thumbnail direct path is fetched. The original host/path label and
-exact click destination remain unchanged. Missing or ineligible metadata keeps the
-existing label. Thumbnail work is automatic only while its entire reserved image
-area is visible and not covered by a popup; selection and keyboard focus do not
+When WhatsApp supplies native preview metadata for an eligible incoming or outgoing
+chat link, bare or explicit Markdown, a compact preview below the body shows its
+title and description literally (not as Markdown). Only an embedded JPEG can supply
+the thumbnail; no website, external image URL, or thumbnail direct path is fetched.
+The host/path or chosen Markdown label and exact click destination remain unchanged.
+The card binds to the original source occurrence: a protected code/image occurrence
+cannot borrow eligibility from a later matching URL. Missing or invalid metadata
+keeps the normal link presentation. Optimistic desktop sends may lack metadata;
+synced phone-sent messages can carry it. wptui does not generate preview metadata.
+Thumbnail work is automatic only while its entire reserved image area is visible
+and not covered by a popup; selection and keyboard focus do not
 trigger loading. Loading or unusable images keep the same reserved geometry and
 leave the text and original link usable. The preview adds no clickable card action.
 
@@ -101,10 +106,11 @@ without connecting to WhatsApp or opening the terminal UI. It does not treat a
 failed read as empty or partially loaded history, retry it, or extend the existing
 SQLite busy timeout. This error alone does not identify which connection holds a lock.
 
-Incoming chat text can retain WhatsApp-supplied link-preview metadata in a separate
-local database table; old messages without metadata load normally. Native metadata
-is optional and is displayed only for eligible incoming plain-body URLs:
-no website, external image URL, or thumbnail direct path is fetched. Titles are
+Incoming and outgoing chat text can retain WhatsApp-supplied link-preview metadata
+in a separate local database table; old messages without metadata load normally.
+Native metadata is optional and is displayed only for eligible plain or explicit
+Markdown chat links in either direction: no website, external image URL, or thumbnail
+direct path is fetched. Titles are
 limited to 2,048 UTF-8 bytes, descriptions to 8,192 bytes, and embedded thumbnails
 to 256 KiB; an oversized image is omitted without discarding valid text metadata.
 Unsafe or mismatched text metadata is ignored without changing the message or its

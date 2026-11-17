@@ -258,6 +258,8 @@ impl Markdown {
     }
 
     /// Match an accepted original occurrence, never a projected display range.
+    /// The historical name covers chat links in either direction. Explicit links
+    /// authorize only their parsed destination, without shortening the chosen label.
     pub(crate) fn accepts_incoming_url(
         &self,
         source: &str,
@@ -265,10 +267,11 @@ impl Markdown {
         destination: &str,
     ) -> bool {
         source.get(range.clone()) == Some(destination)
-            && self
-                .incoming_urls(source)
-                .iter()
-                .any(|url| &url.source == range)
+            && (self.links.iter().any(|link| &link.destination == range)
+                || self
+                    .incoming_urls(source)
+                    .iter()
+                    .any(|url| &url.source == range))
     }
 
     fn incoming_urls(&self, source: &str) -> Vec<IncomingUrl> {

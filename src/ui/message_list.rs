@@ -224,9 +224,10 @@ pub(crate) enum MessageTextMode {
 }
 
 impl MessageTextMode {
+    // Historical name: chat URL presentation applies in both directions. Layout,
+    // its cache key, rendering and native-card eligibility share this same gate.
     pub(crate) fn incoming_urls(self, message: &wr::Message) -> bool {
         self == Self::Chat
-            && !message.info.is_from_me
             && !App::is_status_chat(&message.info.chat)
             && matches!(&message.message, wr::MessageContent::Text(_))
     }
