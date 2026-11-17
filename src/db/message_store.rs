@@ -53,14 +53,14 @@ pub(super) fn try_get_messages(db: &Connection) -> rusqlite::Result<Vec<wr::Mess
                         let chat_jid: String = row.get(1)?;
                         let sender_jid: String = row.get(2)?;
                         let timestamp: i64 = row.get(3)?;
-                        let quote_id: Option<String> = row.get(4)?;
+                        let quote_id: Option<String> = row.get(4).unwrap_or(None);
                         let is_from_me: bool = row.get(5)?;
                         let read_by: u16 = row.get(6)?;
                         let message: String = row.get(7)?;
                         let is_forwarded: bool = row.get(8)?;
                         let forwarding_score: u32 = row.get(9)?;
-                        let mention_ranges: Option<String> = row.get(10)?;
-                        let mentions_self: bool = row.get(11)?;
+                        let mention_ranges: Option<String> = row.get(10).unwrap_or(None);
+                        let mentions_self: bool = row.get(11).unwrap_or(false);
                         let result = wr::Message {
                             info: wr::MessageInfo {
                                 id: id.into(),
@@ -95,17 +95,17 @@ pub(super) fn try_get_messages(db: &Connection) -> rusqlite::Result<Vec<wr::Mess
                         let chat_jid: String = row.get(1)?;
                         let sender_jid: String = row.get(2)?;
                         let timestamp: i64 = row.get(3)?;
-                        let quote_id: Option<String> = row.get(4)?;
+                        let quote_id: Option<String> = row.get(4).unwrap_or(None);
                         let is_from_me: bool = row.get(5)?;
                         let read_by: u16 = row.get(6)?;
                         let kind: u8 = row.get(7)?;
                         let path: String = row.get(8)?;
                         let file_id: String = row.get(9)?;
-                        let caption: Option<String> = row.get(10)?;
+                        let caption: Option<String> = row.get(10).unwrap_or(None);
                         let is_forwarded: bool = row.get(11)?;
                         let forwarding_score: u32 = row.get(12)?;
-                        let mention_ranges: Option<String> = row.get(13)?;
-                        let mentions_self: bool = row.get(14)?;
+                        let mention_ranges: Option<String> = row.get(13).unwrap_or(None);
+                        let mentions_self: bool = row.get(14).unwrap_or(false);
                         let result = wr::Message {
                             info: wr::MessageInfo {
                                 id: id.into(),
@@ -150,7 +150,7 @@ pub(super) fn try_get_messages(db: &Connection) -> rusqlite::Result<Vec<wr::Mess
                                 id: row.get::<_, String>(0)?.into(),
                                 chat: row.get::<_, String>(1)?.into(),
                                 sender: row.get::<_, String>(2)?.into(),
-                                mentions_self: row.get(6)?,
+                                mentions_self: row.get(6).unwrap_or(false),
                                 timestamp: row.get(3)?,
                                 is_from_me: row.get(4)?,
                                 quote_id: None,
