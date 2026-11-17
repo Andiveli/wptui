@@ -259,6 +259,36 @@ When running through Cargo, separate application arguments with `--`:
 cargo run -- --phone +1234567890
 ```
 
+### Number lookup notices
+
+When a number check finishes unsuccessfully, it leaves the search open without
+opening a conversation or sending a message. Its result notice appears as plain text;
+local input validation and unrelated notices retain their existing formatting:
+
+| Notice | Meaning / next step |
+|---|---|
+| `Number is not on WhatsApp` | WhatsApp reported that the requested number is not registered. |
+| `Number check timed out` | The check exceeded its deadline; retry the search. |
+| `WhatsApp returned no number result` | No result was returned; retry the search. |
+| `WhatsApp returned a mismatched number result` | A registered reply matched the query but had empty or unexpected identities that did not confirm the requested number; no recipient is opened. Retry the search. |
+| `WhatsApp returned only a LID without a phone number` | A registered reply matched the query with a LID and no associated phone number, without confirming the requested number; no recipient is opened. |
+| `WhatsApp returned a different phone number` | A registered reply matched the query and contained a phone-number identity, but neither identity confirmed the exact requested number; no recipient is opened. |
+| `WhatsApp returned a mismatched query result` | Nonempty replies contained no matching query; no recipient is opened. Retry the search. |
+| `Could not check number` | The request failed; retry the search. |
+| `Could not verify number` | The result could not be safely verified; no recipient is opened. |
+| `WhatsApp is not connected` | Reconnect WhatsApp, then retry the search. |
+| `Use + followed by 7-15 digits` | Correct the international number format, then retry. |
+
+A failed, timed-out, empty, or mismatched check does **not** mean the number is
+unregistered. These notices use fixed categories, without including the entered
+number, recipient identity, or raw error details; number lookup adds no diagnostic logging.
+The LID-only and different-phone-number categories describe response shape only:
+they do not prove legitimate number normalization or permit opening another recipient.
+Only confirmation of the exact requested phone number permits opening a conversation.
+For that comparison, WhatsApp's legacy `c.us` user namespace is treated as equivalent
+to `s.whatsapp.net`, without changing any phone-number digits. An accepted lookup
+opens the canonical `s.whatsapp.net` identity for the number entered, never a different number.
+
 ### Diagnostics
 
 To trace edited/deleted message processing, run with:

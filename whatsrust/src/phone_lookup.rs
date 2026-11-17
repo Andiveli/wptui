@@ -9,6 +9,12 @@ pub enum PhoneLookupError {
     ClientUnavailable,
     RequestFailed,
     InvalidBridgeResult,
+    TimedOut,
+    EmptyResponse,
+    ResponseMismatch,
+    QueryMismatch,
+    LidOnly,
+    DifferentPhoneNumber,
 }
 
 pub fn lookup_phone(phone: &str) -> Result<Option<JID>, PhoneLookupError> {
@@ -47,6 +53,12 @@ fn lookup_result(
         2 if jid.is_none() => Err(PhoneLookupError::InvalidNumber),
         3 if jid.is_none() => Err(PhoneLookupError::ClientUnavailable),
         4 if jid.is_none() => Err(PhoneLookupError::RequestFailed),
+        5 if jid.is_none() => Err(PhoneLookupError::TimedOut),
+        6 if jid.is_none() => Err(PhoneLookupError::EmptyResponse),
+        7 if jid.is_none() => Err(PhoneLookupError::ResponseMismatch),
+        8 if jid.is_none() => Err(PhoneLookupError::QueryMismatch),
+        9 if jid.is_none() => Err(PhoneLookupError::LidOnly),
+        10 if jid.is_none() => Err(PhoneLookupError::DifferentPhoneNumber),
         _ => Err(PhoneLookupError::InvalidBridgeResult),
     }
 }
@@ -73,6 +85,64 @@ mod tests {
             lookup_result(255, "+15551234567", None),
             Err(PhoneLookupError::InvalidBridgeResult)
         );
+    }
+
+    #[test]
+    fn preserves_existing_failure_statuses() {
+        for (status, expected) in [
+            (2, PhoneLookupError::InvalidNumber),
+            (3, PhoneLookupError::ClientUnavailable),
+            (4, PhoneLookupError::RequestFailed),
+        ] {
+            assert_eq!(lookup_result(status, "+15551234567", None), Err(expected));
+        }
+    }
+
+    #[test]
+    fn exposes_safe_diagnostic_categories_without_bridge_payloads() {
+        for (status, expected) in [
+            (5, PhoneLookupError::TimedOut),
+            (6, PhoneLookupError::EmptyResponse),
+            (7, PhoneLookupError::ResponseMismatch),
+        ] {
+            assert_eq!(
+                lookup_result(status, "+15551234567", None),
+                Err(expected),
+                "status {status}"
+            );
+        }
+    }
+
+    #[test]
+    fn distinguishes_query_mismatch_without_bridge_payloads() {
+        assert_eq!(
+            lookup_result(8, "+15551234567", None),
+            Err(PhoneLookupError::QueryMismatch)
+        );
+    }
+
+    #[test]
+    fn distinguishes_recipient_response_shapes_without_bridge_payloads() {
+        for (status, expected) in [
+            (9, PhoneLookupError::LidOnly),
+            (10, PhoneLookupError::DifferentPhoneNumber),
+        ] {
+            assert_eq!(
+                lookup_result(status, "+15551234567", None),
+                Err(expected),
+                "status {status}"
+            );
+        }
+    }
+
+    #[test]
+    fn diagnostic_statuses_cannot_carry_a_recipient() {
+        for status in [5, 6, 7, 8, 9, 10] {
+            assert_eq!(
+                lookup_result(status, "+15551234567", Some("15551234567@s.whatsapp.net")),
+                Err(PhoneLookupError::InvalidBridgeResult)
+            );
+        }
     }
 
     #[test]

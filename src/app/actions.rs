@@ -124,6 +124,7 @@ pub enum ActionNotice {
         failure: wr::ForwardFailure,
     },
     ReplyPrivatelyNamed(String),
+    PhoneLookup(String),
     Unavailable(String),
     Unauthorized(String),
     Unsupported(String),

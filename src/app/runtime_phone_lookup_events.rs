@@ -1,9 +1,16 @@
 use super::App;
-use super::actions::{FocusPane, Section};
+use super::actions::{ActionNotice, FocusPane, Section};
 use super::events::AppEvent;
 use whatsrust::PhoneLookupError;
 
 impl App<'_> {
+    fn phone_lookup_unavailable(&mut self, message: &str) {
+        self.unavailable(message);
+        if let Some(ActionNotice::Unavailable(message)) = self.action_notice.take() {
+            self.action_notice = Some(ActionNotice::PhoneLookup(message));
+        }
+    }
+
     pub(crate) fn handle_phone_lookup_event(&mut self, event: AppEvent) -> bool {
         let AppEvent::PhoneLookupFinished {
             generation,
@@ -35,7 +42,7 @@ impl App<'_> {
                     .strip_prefix('+')
                     .map(|digits| format!("{digits}@s.whatsapp.net"));
                 if expected.as_deref() != Some(jid.0.as_ref()) {
-                    self.unavailable("Could not verify number");
+                    self.phone_lookup_unavailable("Could not verify number");
                     return true;
                 }
                 self.contact_search.clean();
@@ -46,15 +53,29 @@ impl App<'_> {
                 true
             }
             Ok(None) => {
-                self.unavailable("Number is not on WhatsApp");
+                self.phone_lookup_unavailable("Number is not on WhatsApp");
                 true
             }
             Err(error) => {
-                self.unavailable(match error {
+                self.phone_lookup_unavailable(match error {
                     PhoneLookupError::InvalidNumber => "Use + followed by 7-15 digits",
                     PhoneLookupError::ClientUnavailable => "WhatsApp is not connected",
                     PhoneLookupError::RequestFailed => "Could not check number",
                     PhoneLookupError::InvalidBridgeResult => "Could not verify number",
+                    PhoneLookupError::TimedOut => "Number check timed out",
+                    PhoneLookupError::EmptyResponse => "WhatsApp returned no number result",
+                    PhoneLookupError::ResponseMismatch => {
+                        "WhatsApp returned a mismatched number result"
+                    }
+                    PhoneLookupError::QueryMismatch => {
+                        "WhatsApp returned a mismatched query result"
+                    }
+                    PhoneLookupError::LidOnly => {
+                        "WhatsApp returned only a LID without a phone number"
+                    }
+                    PhoneLookupError::DifferentPhoneNumber => {
+                        "WhatsApp returned a different phone number"
+                    }
                 });
                 true
             }
@@ -65,7 +86,6 @@ impl App<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::actions::ActionNotice;
     use crate::app::test_support::TestApp;
     use whatsrust::JID;
 
@@ -106,6 +126,39 @@ mod tests {
                 "Could not check number",
             ),
             (
+                Err(PhoneLookupError::InvalidNumber),
+                "Use + followed by 7-15 digits",
+            ),
+            (
+                Err(PhoneLookupError::ClientUnavailable),
+                "WhatsApp is not connected",
+            ),
+            (
+                Err(PhoneLookupError::InvalidBridgeResult),
+                "Could not verify number",
+            ),
+            (Err(PhoneLookupError::TimedOut), "Number check timed out"),
+            (
+                Err(PhoneLookupError::EmptyResponse),
+                "WhatsApp returned no number result",
+            ),
+            (
+                Err(PhoneLookupError::ResponseMismatch),
+                "WhatsApp returned a mismatched number result",
+            ),
+            (
+                Err(PhoneLookupError::QueryMismatch),
+                "WhatsApp returned a mismatched query result",
+            ),
+            (
+                Err(PhoneLookupError::LidOnly),
+                "WhatsApp returned only a LID without a phone number",
+            ),
+            (
+                Err(PhoneLookupError::DifferentPhoneNumber),
+                "WhatsApp returned a different phone number",
+            ),
+            (
                 Ok(Some(JID::from("15559876543@s.whatsapp.net".to_owned()))),
                 "Could not verify number",
             ),
@@ -114,8 +167,13 @@ mod tests {
             assert!(app.handle_phone_lookup_event(completed(1, result)));
             assert!(app.chats.is_empty());
             assert_eq!(app.open_chat(), None);
+            assert!(app.chat_messages.is_empty());
+            assert!(app.pending_phone_lookup.is_none());
+            assert!(app.contact_search_active);
+            assert_eq!(app.contact_search.input.to_string(), "+15551234567");
+            assert_eq!(app.focus_pane, FocusPane::ChatList);
             assert!(
-                matches!(app.action_notice, Some(ActionNotice::Unavailable(ref message)) if message == notice)
+                matches!(app.action_notice, Some(ActionNotice::PhoneLookup(ref message)) if message == notice)
             );
         }
     }
@@ -133,5 +191,27 @@ mod tests {
             Some(2)
         );
         assert!(app.chats.is_empty());
+        assert_eq!(app.open_chat(), None);
+        assert!(app.chat_messages.is_empty());
+        assert!(app.action_notice.is_none());
+    }
+
+    #[test]
+    fn stale_failure_cannot_replace_notice_or_consume_pending_lookup() {
+        let mut app = awaiting_lookup();
+        app.pending_phone_lookup = Some((2, "+15551234567".into()));
+        app.action_notice = Some(ActionNotice::PhoneLookup("Checking number...".into()));
+        assert!(!app.handle_phone_lookup_event(completed(1, Err(PhoneLookupError::RequestFailed))));
+        assert_eq!(
+            app.pending_phone_lookup.as_ref().map(|pending| pending.0),
+            Some(2)
+        );
+        assert!(matches!(
+            app.action_notice,
+            Some(ActionNotice::PhoneLookup(ref message)) if message == "Checking number..."
+        ));
+        assert!(app.chats.is_empty());
+        assert_eq!(app.open_chat(), None);
+        assert!(app.chat_messages.is_empty());
     }
 }
