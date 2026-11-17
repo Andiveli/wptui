@@ -137,9 +137,15 @@ impl App<'_> {
                         self.open_community_detail(root);
                     }
                 } else {
-                    let opened = self.get_selected_chat().is_some();
-                    self.open_selected_chat();
-                    if opened {
+                    let selected = self.get_selected_chat();
+                    if let Some(jid) = selected.as_ref() {
+                        if !self.chats.contains_key(jid) {
+                            self.open_chat_by_jid(jid.clone());
+                        } else {
+                            self.open_selected_chat();
+                        }
+                    }
+                    if selected.is_some() {
                         self.focus_pane = FocusPane::Conversation;
                         if self.message_count() > 0 {
                             self.message_list_state.select(Some(0));
