@@ -509,6 +509,67 @@ mod tests {
     use super::*;
 
     #[test]
+    fn native_explicit_destination_uses_original_range_and_preserves_chosen_label() {
+        let url = "https://example.test/article?q=%2F#part";
+        let source = format!("原文 [My chosen label]({url}) then {url}");
+        let markdown = Markdown::new(&source, None);
+        let ranges = crate::url::extract_openable_url_ranges(&source);
+        assert_eq!(ranges.len(), 2);
+        assert_eq!(&source[ranges[0].clone()], url);
+        assert_eq!(&source[ranges[1].clone()], url);
+        assert!(markdown.accepts_incoming_url(&source, &ranges[0], url));
+        let projected = markdown.project_with_incoming_urls(&source, true);
+        assert_eq!(
+            projected.text,
+            "原文 My chosen label then example.test · article"
+        );
+        assert_eq!(projected.links.len(), 2);
+        assert_eq!(projected.links[0].url, url);
+        assert_eq!(projected.links[1].url, url);
+        assert_eq!(
+            projected.links[0]
+                .ranges
+                .iter()
+                .map(|range| &projected.text[range.clone()])
+                .collect::<String>(),
+            "My chosen label"
+        );
+        assert!(
+            projected.ranges(&[ranges[0].clone()]).is_empty(),
+            "hidden destination must not need a projected range to authorize a card"
+        );
+        assert!(!markdown.accepts_incoming_url(
+            &source,
+            &ranges[0],
+            "https://example.test/article"
+        ));
+    }
+
+    #[test]
+    fn native_protected_first_occurrence_cannot_borrow_later_visible_eligibility() {
+        let url = "https://example.test/article?q=%2F#part";
+        for protected in [
+            format!("```\n{url}\n```"),
+            format!("![image]({url})"),
+            format!("[{url}]"),
+            format!("`{url}`"),
+        ] {
+            let source = format!("{protected}\nthen {url}");
+            let markdown = Markdown::new(&source, None);
+            let first = source.find(url).unwrap();
+            let later = source.rfind(url).unwrap();
+            assert!(
+                !markdown.accepts_incoming_url(&source, &(first..first + url.len()), url),
+                "{source}"
+            );
+            assert!(
+                markdown.accepts_incoming_url(&source, &(later..later + url.len()), url),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
     fn incoming_projection_keeps_extractor_occurrence_identity() {
         let url = "https://example.com/docs/install";
         let label = "example.com · install";

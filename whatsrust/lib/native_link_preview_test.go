@@ -45,7 +45,7 @@ func TestNativePreviewExtendedTextRetainsSuppliedFields(t *testing.T) {
 	}
 }
 
-func TestNativePreviewDoesNotLeakIntoOrdinaryOutgoingOrMissingMetadata(t *testing.T) {
+func TestNativePreviewDoesNotLeakIntoOrdinaryOrOptimisticTextWithoutMetadata(t *testing.T) {
 	previous := observeTextCallback
 	t.Cleanup(func() { observeTextCallback = previous })
 	body := "https://example.test/article"
@@ -62,7 +62,6 @@ func TestNativePreviewDoesNotLeakIntoOrdinaryOutgoingOrMissingMetadata(t *testin
 	}{
 		{name: "conversation", message: &waE2E.Message{Conversation: proto.String(body)}},
 		{name: "extended without metadata", message: &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String(body)}}},
-		{name: "own server echo", message: withPreview(), fromMe: true},
 		{name: "optimistic own text", message: withPreview(), fromMe: true, optimistic: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -86,6 +85,39 @@ func TestNativePreviewDoesNotLeakIntoOrdinaryOutgoingOrMissingMetadata(t *testin
 			}
 			if got.text != body || got.nativePreview != nil || got.localSendID != wantSendID || got.quoteID != "" || len(got.ranges) != 0 {
 				t.Fatalf("legacy callback behavior changed: %#v", got)
+			}
+		})
+	}
+}
+
+func TestNativePreviewOwnServerEchoRetainsSuppliedMetadata(t *testing.T) {
+	previous := observeTextCallback
+	t.Cleanup(func() { observeTextCallback = previous })
+	url := "https://example.test/article?q=%2F#part"
+	for _, body := range []string{url, "[My chosen label](" + url + ")"} {
+		t.Run(body, func(t *testing.T) {
+			var got textCallbackOutput
+			observeTextCallback = func(output textCallbackOutput) { got = output }
+			thumbnail := []byte{0xff, 0xd8, 0xff, 0xd9}
+			HandleMessage(types.MessageInfo{ID: "own-echo", MessageSource: types.MessageSource{IsFromMe: true}}, &waE2E.Message{
+				ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+					Text: proto.String(body), MatchedText: proto.String(url),
+					Title: proto.String("Native title"), Description: proto.String("Native description"),
+					JPEGThumbnail: thumbnail,
+				},
+			}, false)
+			if got.text != body || got.localSendID != 0 || got.quoteID != "" || len(got.ranges) != 0 {
+				t.Fatalf("own echo changed source or callback identity: %#v", got)
+			}
+			if got.nativePreview == nil {
+				t.Fatal("own server echo discarded supplied metadata")
+			}
+			if got.nativePreview.matchedText != url || got.nativePreview.title != "Native title" || got.nativePreview.description != "Native description" || !bytes.Equal(got.nativePreview.jpegThumbnail, thumbnail) {
+				t.Fatalf("own metadata changed: %#v", got.nativePreview)
+			}
+			thumbnail[0] = 0
+			if got.nativePreview.jpegThumbnail[0] != 0xff {
+				t.Fatal("own preview retained borrowed thumbnail memory")
 			}
 		})
 	}

@@ -36,10 +36,15 @@ fn jpeg(width: u32, height: u32) -> Vec<u8> {
 }
 
 fn fixture(source: &str, thumbnail: Vec<u8>) -> TestApp {
+    directional_fixture(source, thumbnail, false)
+}
+
+fn directional_fixture(source: &str, thumbnail: Vec<u8>, outgoing: bool) -> TestApp {
     let mut app = TestApp::new();
     let chat: wr::JID = "fixture@example.test".to_owned().into();
     let mut item = message(&chat, "native-ui", 1_704_110_400);
     item.message = wr::MessageContent::Text(source.into());
+    item.info.is_from_me = outgoing;
     wr::store_native_link_preview(
         &item.info,
         source,
@@ -238,6 +243,73 @@ fn visible_native_text_preserves_label_source_and_exact_destination_at_shipped_s
 }
 
 #[test]
+fn symmetric_plain_and_chosen_markdown_labels_keep_native_card_and_ready_thumbnail() {
+    for outgoing in [false, true] {
+        for (source, label) in [
+            (format!("Read {URL}"), LABEL),
+            (format!("[My chosen label]({URL})"), "My chosen label"),
+        ] {
+            let mut app = directional_fixture(&source, jpeg(32, 16), outgoing);
+            let (absent, key) = single_key(&mut app, (180, 50));
+            assert!(text(&absent).contains(TITLE));
+            assert!(text(&absent).contains(DESCRIPTION));
+            assert_eq!(hit_cells(&app, &absent), label);
+            source_and_hits(&app, &source);
+            assert_eq!(app.native_link_thumbnails.outstanding(), 0);
+            finish_ready(&mut app, &key);
+            let (ready, refreshed) = single_key(&mut app, (180, 50));
+            assert_eq!(refreshed, key);
+            assert_eq!(changed_rect(&absent, &ready).as_size(), key.size);
+            assert_eq!(hit_cells(&app, &ready), label);
+            source_and_hits(&app, &source);
+            assert_eq!(app.native_link_thumbnails.state(&key), EntryState::Ready);
+            assert_eq!(app.native_link_thumbnails.outstanding(), 0);
+        }
+    }
+}
+
+#[test]
+fn missing_or_invalid_metadata_keeps_symmetric_link_fallback() {
+    for outgoing in [false, true] {
+        for (source, label) in [
+            (URL.to_owned(), LABEL),
+            (format!("[My chosen label]({URL})"), "My chosen label"),
+        ] {
+            for invalid in [false, true] {
+                let mut app = TestApp::new();
+                let chat: wr::JID = "fallback@example.test".to_owned().into();
+                let mut item = message(&chat, "native-ui", 1);
+                item.info.is_from_me = outgoing;
+                item.message = wr::MessageContent::Text(source.clone().into());
+                if invalid {
+                    wr::store_native_link_preview(
+                        &item.info,
+                        &source,
+                        wr::NativeLinkPreview {
+                            matched_text: URL.into(),
+                            title: "bad\u{1b}title".into(),
+                            description: DESCRIPTION.into(),
+                            jpeg_thumbnail: jpeg(32, 16),
+                        },
+                    );
+                }
+                app.process_message(item, true);
+                app.open_chat = Some(chat);
+                let (buffer, demand) = draw(&mut app, (180, 50));
+                assert!(text(&buffer).contains(label));
+                assert!(!text(&buffer).contains(DESCRIPTION));
+                assert_eq!(hit_cells(&app, &buffer), label);
+                source_and_hits(&app, &source);
+                assert!(app.native_link_preview(&"native-ui".into()).is_none());
+                assert!(demand.is_empty());
+                assert_eq!(app.native_link_thumbnails.len(), 0);
+                assert_eq!(app.native_link_thumbnails.outstanding(), 0);
+            }
+        }
+    }
+}
+
+#[test]
 fn missing_metadata_keeps_old_label_and_metadata_markdown_stays_literal() {
     let mut plain = TestApp::new();
     let chat: wr::JID = "plain@example.test".to_owned().into();
@@ -288,25 +360,26 @@ fn missing_metadata_keeps_old_label_and_metadata_markdown_stays_literal() {
 #[test]
 fn excluded_modes_and_protected_source_occurrences_never_show_native_cards() {
     for case in [
-        "outgoing",
         "status",
         "caption",
         "system",
         "inline-code",
         "fence",
-        "explicit",
         "image",
         "brackets",
         "quote",
         "protected-duplicate",
+        "protected-image-duplicate",
+        "protected-explicit-duplicate",
     ] {
         let source = match case {
             "inline-code" => format!("`{URL}`"),
             "fence" => format!("```\n{URL}\n```"),
-            "explicit" => format!("[site]({URL})"),
             "image" => format!("![image]({URL})"),
             "brackets" => format!("[{URL}]"),
             "protected-duplicate" => format!("```\n{URL}\n```\nthen {URL}"),
+            "protected-image-duplicate" => format!("![image]({URL})\nthen {URL}"),
+            "protected-explicit-duplicate" => format!("```\n{URL}\n```\nthen [Chosen]({URL})"),
             _ => URL.to_owned(),
         };
         let mut app = fixture(&source, jpeg(32, 16));
@@ -327,7 +400,6 @@ fn excluded_modes_and_protected_source_occurrences_never_show_native_cards() {
         let mut item = app.messages["native-ui"].clone();
         let mut mode = MessageTextMode::Chat;
         match case {
-            "outgoing" => item.info.is_from_me = true,
             "status" => mode = MessageTextMode::Status,
             "caption" => {
                 item.message = wr::MessageContent::File(wr::FileContent {
@@ -363,13 +435,21 @@ fn excluded_modes_and_protected_source_occurrences_never_show_native_cards() {
         assert!(!painted.contains(TITLE), "{case}");
         assert!(!painted.contains(DESCRIPTION), "{case}");
         assert!(keys(plan).is_empty(), "{case}");
-        if case == "protected-duplicate" {
+        if matches!(
+            case,
+            "protected-duplicate" | "protected-image-duplicate" | "protected-explicit-duplicate"
+        ) {
+            let label = if case == "protected-explicit-duplicate" {
+                "Chosen"
+            } else {
+                LABEL
+            };
             assert!(
-                painted.contains(LABEL),
-                "later plain occurrence retains label"
+                painted.contains(label),
+                "later occurrence retains its label"
             );
             source_and_hits(&app, &source);
-            assert!(hit_cells(&app, &buffer).ends_with(LABEL));
+            assert!(hit_cells(&app, &buffer).ends_with(label));
         } else if case == "quote" {
             assert!(painted.contains(URL), "quote snippet remains raw");
             assert!(
@@ -379,10 +459,7 @@ fn excluded_modes_and_protected_source_occurrences_never_show_native_cards() {
         } else if case == "system" {
             assert!(painted.contains(wr::VIEW_ONCE_UNAVAILABLE_DESCRIPTION));
         } else {
-            assert!(
-                painted.contains(if case == "explicit" { "site" } else { URL }),
-                "{case}"
-            );
+            assert!(painted.contains(URL), "{case}");
             assert!(app.mouse_hit_map.urls.iter().all(|hit| hit.url == URL));
         }
         assert!(matches!(&app.messages["native-ui"].message,
@@ -772,33 +849,28 @@ fn invalid_jpeg_negative_cache_retains_native_text_and_original_input() {
 }
 
 #[test]
-fn outgoing_and_document_heights_remain_the_existing_non_native_contract() {
+fn document_heights_remain_non_native_and_outgoing_fallback_keeps_exact_destination() {
     let mut app = fixture(URL, Vec::new());
-    for caption in [false, true] {
-        let mut item = app.messages["native-ui"].clone();
-        item.info.is_from_me = true;
-        if caption {
-            item.message = wr::MessageContent::File(wr::FileContent {
-                path: "document.txt".into(),
-                kind: wr::FileKind::Document,
-                caption: Some(URL.into()),
-                ..Default::default()
-            });
-        }
-        for width in [20, 80, 140] {
-            let expected =
-                inline_content_lines(URL, &[], None, width).len() + if caption { 2 } else { 1 };
-            assert_eq!(
-                message_height(
-                    &item,
-                    width,
-                    false,
-                    AuthorGroupContext::STARTS_GROUP,
-                    &mut app
-                ),
-                expected
-            );
-        }
+    let mut item = app.messages["native-ui"].clone();
+    item.info.is_from_me = true;
+    item.message = wr::MessageContent::File(wr::FileContent {
+        path: "document.txt".into(),
+        kind: wr::FileKind::Document,
+        caption: Some(URL.into()),
+        ..Default::default()
+    });
+    for width in [20, 80, 140] {
+        let expected = inline_content_lines(URL, &[], None, width).len() + 2;
+        assert_eq!(
+            message_height(
+                &item,
+                width,
+                false,
+                AuthorGroupContext::STARTS_GROUP,
+                &mut app
+            ),
+            expected
+        );
     }
     let other_url = "https://other.test/kept?q=%2F#part";
     let chat = app.messages["native-ui"].info.chat.clone();
@@ -837,7 +909,7 @@ fn outgoing_and_document_heights_remain_the_existing_non_native_contract() {
             hits.iter()
                 .map(|hit| buffer[(hit.area.x, hit.area.y)].symbol())
                 .collect::<String>(),
-            other_url
+            "other.test · kept"
         );
         assert!(matches!(&app.messages[&other.info.id].message,
             wr::MessageContent::Text(stored) if stored.as_ref() == other_url));

@@ -742,7 +742,7 @@ mod layout_contract_tests {
             for x in 0..width {
                 if expected[(x, y)].fg == Color::Blue {
                     expected_hits.push(Rect::new(x, first + y, 1, 1));
-                    if !outgoing && label != source {
+                    if label != source {
                         assert!(
                             buffer[(x, first + y)]
                                 .modifier
@@ -783,7 +783,16 @@ mod layout_contract_tests {
 
     #[test]
     fn incoming_chat_and_status_heights_do_not_share_a_stale_presentation() {
-        let message = url_message("https://example.com/docs/installation?q=one#part", false);
+        assert_chat_and_status_heights(false);
+    }
+
+    #[test]
+    fn outgoing_chat_and_status_heights_do_not_share_a_stale_presentation() {
+        assert_chat_and_status_heights(true);
+    }
+
+    fn assert_chat_and_status_heights(outgoing: bool) {
+        let message = url_message("https://example.com/docs/installation?q=one#part", outgoing);
         let mut app = crate::app::test_support::TestApp::new();
         for mode in [
             MessageTextMode::Chat,
@@ -941,13 +950,18 @@ mod layout_contract_tests {
     }
 
     #[test]
-    fn outgoing_bare_urls_keep_full_source_display_and_mouse_destination() {
-        for source in [
-            "https://github.com/Andiveli/wptui",
-            "https://example.com/docs/installation",
-            "https://example.com/",
+    fn outgoing_bare_urls_shorten_display_and_keep_source_and_mouse_destination() {
+        for (source, label) in [
+            ("https://github.com/Andiveli/wptui", "github.com · wptui"),
+            (
+                "https://example.com/docs/installation?q=%2F#part",
+                "example.com · installation",
+            ),
+            ("https://example.com/", "example.com"),
         ] {
-            assert_url_label(source, source, true, 80);
+            for width in [12, 80] {
+                assert_url_label(source, label, true, width);
+            }
         }
     }
 
