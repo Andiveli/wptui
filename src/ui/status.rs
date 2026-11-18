@@ -19,12 +19,13 @@ pub(super) fn render_status_contacts(frame: &mut Frame, app: &mut App, area: Rec
         .collect::<Vec<_>>();
 
     let block = Block::bordered()
+        .style(app.theme.base())
         .title("Status")
         .border_style(
             Style::default().fg(if app.focus_pane == FocusPane::ChatList {
-                Color::Green
+                app.theme.accent(Color::Green)
             } else {
-                Color::White
+                app.theme.border(Color::White)
             }),
         );
     let list_area = block.inner(area);
@@ -36,7 +37,7 @@ pub(super) fn render_status_contacts(frame: &mut Frame, app: &mut App, area: Rec
         return;
     }
     frame.render_stateful_widget(
-        StatusList::new(&items),
+        StatusList::new(&items).theme(app.theme),
         list_area,
         &mut app.status_selection,
     );
@@ -74,27 +75,23 @@ pub(super) fn render_statuses_with_plan(
         let inner_width = area.width.saturating_sub(2);
         let input_rows = if authoring {
             let width = inner_width.saturating_sub(2);
-            let layout = crate::ui::layout::composer_visual_layout_with_direction(
-                app.composer.input.lines(),
-                width,
-                app.composer_direction,
-            );
+            let layout = app.composer.visual_layout(app.composer_direction, width);
             layout
                 .row_count()
                 .max(app.composer.visual_cursor(width, app.composer_direction).0 + 1)
         } else {
             2
         };
-        let mut block =
-            Block::bordered()
-                .title(" Create status ")
-                .border_style(Style::default().fg(if navigating {
-                    Color::Green
-                } else if authoring {
-                    Color::Cyan
-                } else {
-                    Color::White
-                }));
+        let mut block = Block::bordered()
+            .style(app.theme.base())
+            .title(" Create status ")
+            .border_style(Style::default().fg(if navigating {
+                app.theme.accent(Color::Green)
+            } else if authoring {
+                app.theme.accent(Color::Cyan)
+            } else {
+                app.theme.border(Color::White)
+            }));
         if let Some(notice) = action_notice_text(app) {
             let available = (area.width as usize).saturating_sub(" Create status ".len() + 2);
             let notice = crate::ui::truncate_with_ellipsis(&notice, available);
@@ -129,7 +126,8 @@ pub(super) fn render_statuses_with_plan(
                 "MAY BE PUBLISHED\nCHECK BEFORE RETRY"
             };
             frame.render_widget(
-                Paragraph::new(message).style(Style::default().fg(Color::Yellow)),
+                Paragraph::new(message)
+                    .style(app.theme.base().fg(app.theme.attention(Color::Yellow))),
                 warning,
             );
         }
@@ -187,11 +185,12 @@ pub(super) fn render_statuses_with_plan(
         .map(|contact| app.contact_name(&contact).to_string())
         .unwrap_or_else(|| "Status".to_string());
     let border_color = if app.focus_pane == FocusPane::Conversation {
-        Color::Green
+        app.theme.accent(Color::Green)
     } else {
-        Color::White
+        app.theme.border(Color::White)
     };
     let mut block = Block::bordered()
+        .style(app.theme.base())
         .title(title)
         .border_style(Style::default().fg(border_color));
     if let Some(notice) = action_notice_text(app) {

@@ -15,6 +15,10 @@ mod lifecycle;
 mod media;
 mod message_send;
 mod models;
+mod native_link_preview;
+mod phone_lookup;
+mod phone_lookup_identity;
+mod phone_lookup_observation;
 mod presence;
 mod queries;
 mod read_sync;
@@ -37,6 +41,9 @@ pub use models::{
     MessageId, MessageInfo, PresenceUpdate, ProfilePicture, ProfilePictureAvailability,
     ProfilePictureError, VIEW_ONCE_UNAVAILABLE_DESCRIPTION,
 };
+pub use phone_lookup::{PhoneLookupError, lookup_phone};
+pub use phone_lookup_identity::is_confirmed_phone_lookup_identity;
+pub use phone_lookup_observation::LocalPhoneLookupObservation;
 pub use presence::{SubscribePresenceResult, drain_raw_presence_diagnostics, subscribe_presence};
 pub use queries::{
     get_chat_settings, get_communities, get_contact_aliases, get_contacts, get_group_info,
@@ -174,4 +181,9 @@ pub use caches::{forward_source, message_mention_ranges, message_push_name};
 pub use caches::{
     remove_forward_source, store_forward_source, store_message_mention_ranges,
     store_message_push_name,
+};
+pub use caches::{store_native_link_preview, take_native_link_preview};
+pub use native_link_preview::{
+    NATIVE_DESCRIPTION_LIMIT, NATIVE_MATCHED_TEXT_LIMIT, NATIVE_THUMBNAIL_LIMIT,
+    NATIVE_TITLE_LIMIT, NativeLinkPreview,
 };

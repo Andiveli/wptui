@@ -17,15 +17,15 @@ pub(super) fn render_section_rail(frame: &mut Frame, app: &mut App, area: Rect) 
                 section.title()
             };
             ListItem::new(title).style(Style::default().fg(if *section == Section::News {
-                super::news::NEWS_COLOR
+                app.theme.muted(super::news::NEWS_COLOR)
             } else {
-                Color::White
+                app.theme.text(Color::White)
             }))
         })
         .collect::<Vec<_>>();
     items.push(
         ListItem::new(crate::app::actions::LOGOUT_RAIL_TITLE)
-            .style(Style::default().fg(Color::Red)),
+            .style(Style::default().fg(app.theme.error(Color::Red))),
     );
     let selected = if app.rail_on_logout {
         items.len() - 1
@@ -38,19 +38,20 @@ pub(super) fn render_section_rail(frame: &mut Frame, app: &mut App, area: Rect) 
     let mut state = ratatui::widgets::ListState::default().with_selected(Some(selected));
     let row_count = items.len();
     let list = List::new(items)
+        .style(app.theme.base())
         .block(
             Block::bordered()
                 .title("Sections")
                 .border_style(
                     Style::default().fg(if app.focus_pane == FocusPane::SectionRail {
-                        ratatui::style::Color::Green
+                        app.theme.accent(Color::Green)
                     } else {
-                        ratatui::style::Color::White
+                        app.theme.border(Color::White)
                     }),
                 ),
         )
         .highlight_symbol("> ")
-        .highlight_style(if app.rail_on_logout {
+        .highlight_style(app.theme.selection(if app.rail_on_logout {
             Style::default().red()
         } else if app.selected_section == Section::News {
             Style::default()
@@ -58,7 +59,7 @@ pub(super) fn render_section_rail(frame: &mut Frame, app: &mut App, area: Rect) 
                 .bg(super::news::NEWS_COLOR)
         } else {
             Style::default().green()
-        });
+        }));
     frame.render_stateful_widget(list, area, &mut state);
     let inner = Block::bordered().inner(area);
     for (relative_y, index) in (state.offset()..row_count)
@@ -78,6 +79,7 @@ pub(super) fn render_structural_placeholder(frame: &mut Frame, app: &App, area: 
     let section = app.selected_section.title();
     frame.render_widget(
         Paragraph::new(format!("{section} is not available yet."))
+            .style(app.theme.base())
             .block(Block::bordered().title(section)),
         area,
     );
@@ -111,9 +113,9 @@ pub(super) fn render_logout_placeholder(frame: &mut Frame, app: &App, area: Rect
             .block(
                 Block::bordered()
                     .title(crate::app::actions::LOGOUT_RAIL_TITLE)
-                    .border_style(Style::default().fg(Color::Red)),
+                    .border_style(Style::default().fg(app.theme.error(Color::Red))),
             )
-            .style(Style::default().fg(Color::Red)),
+            .style(app.theme.base().fg(app.theme.error(Color::Red))),
         area,
     );
 }

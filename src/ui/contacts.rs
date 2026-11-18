@@ -32,7 +32,7 @@ pub(crate) fn render_chat_filters(frame: &mut Frame, app: &mut App, area: Rect) 
             labels.push(Span::styled(
                 "@ ",
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(app.theme.attention(Color::Yellow))
                     .add_modifier(Modifier::BOLD),
             ));
             offset = offset.saturating_add(2);
@@ -52,7 +52,7 @@ pub(crate) fn render_chat_filters(frame: &mut Frame, app: &mut App, area: Rect) 
             labels.push(Span::styled(
                 label,
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(app.theme.attention(Color::Yellow))
                     .add_modifier(Modifier::BOLD),
             ));
         } else {
@@ -73,7 +73,10 @@ pub(crate) fn render_chat_filters(frame: &mut Frame, app: &mut App, area: Rect) 
         }
     }
     labels.push(Span::raw("  (Tab)"));
-    frame.render_widget(Paragraph::new(Line::from(labels)), area);
+    frame.render_widget(
+        Paragraph::new(Line::from(labels)).style(app.theme.base()),
+        area,
+    );
 }
 
 pub(crate) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -96,6 +99,7 @@ pub(crate) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 
     let block = Block::bordered()
+        .style(app.theme.base())
         .title(if let Some(p) = app.history_sync_percent {
             format!("Contacts ({p}%)")
         } else {
@@ -103,16 +107,16 @@ pub(crate) fn render_contacts(frame: &mut Frame, app: &mut App, area: Rect) {
         })
         .border_style(
             Style::default().fg(if app.focus_pane == FocusPane::ChatList {
-                Color::Green
+                app.theme.accent(Color::Green)
             } else {
-                Color::White
+                app.theme.border(Color::White)
             }),
         );
     let contacts_area = block.inner(list_area);
     app.mouse_hit_map.chat_list = Some(contacts_area);
     block.render(list_area, frame.buffer_mut());
     frame.render_stateful_widget(
-        ContactList::new(&items),
+        ContactList::new(&items).theme(app.theme),
         contacts_area,
         &mut app.chat_list_state,
     );

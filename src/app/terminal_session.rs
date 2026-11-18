@@ -3,7 +3,7 @@ use std::sync::mpsc::Sender;
 
 use log::error;
 use ratatui::crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture},
+    event::{DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture},
     execute,
 };
 
@@ -58,10 +58,65 @@ impl<W: Write> Drop for MouseCapture<W> {
     }
 }
 
+/// Bracketed paste belongs only to editable chat input, not search or navigation.
+struct BracketedPaste<W: Write> {
+    writer: W,
+    enabled: bool,
+}
+
+impl<W: Write> BracketedPaste<W> {
+    fn new(writer: W) -> Self {
+        Self {
+            writer,
+            enabled: false,
+        }
+    }
+
+    fn sync(&mut self, enabled: bool) -> io::Result<()> {
+        if self.enabled == enabled {
+            return Ok(());
+        }
+        if enabled {
+            // Even a failed write may have partially enabled the terminal mode.
+            self.enabled = true;
+            if let Err(error) = execute!(self.writer, EnableBracketedPaste) {
+                self.stop().map_err(|restore_error| {
+                    io::Error::new(
+                        error.kind(),
+                        format!("{error}; paste restoration failed: {restore_error}"),
+                    )
+                })?;
+                return Err(error);
+            }
+            Ok(())
+        } else {
+            self.stop()
+        }
+    }
+
+    fn stop(&mut self) -> io::Result<()> {
+        if self.enabled {
+            execute!(self.writer, DisableBracketedPaste)
+                .or_else(|_| execute!(self.writer, DisableBracketedPaste))?;
+            self.enabled = false;
+        }
+        Ok(())
+    }
+}
+
+impl<W: Write> Drop for BracketedPaste<W> {
+    fn drop(&mut self) {
+        if let Err(error) = self.stop() {
+            error!("Failed to restore terminal paste mode: {error}");
+        }
+    }
+}
+
 /// Owns terminal setup and restoration for the application UI.
 pub(crate) struct TerminalSession {
     terminal: Option<ratatui::DefaultTerminal>,
     mouse_capture: Option<MouseCapture<io::Stdout>>,
+    bracketed_paste: BracketedPaste<io::Stdout>,
 }
 
 impl TerminalSession {
@@ -75,7 +130,12 @@ impl TerminalSession {
         Ok(Self {
             terminal: Some(terminal),
             mouse_capture: Some(mouse_capture),
+            bracketed_paste: BracketedPaste::new(io::stdout()),
         })
+    }
+
+    pub(crate) fn sync_paste_mode(&mut self, enabled: bool) -> io::Result<()> {
+        self.bracketed_paste.sync(enabled)
     }
 
     pub(crate) fn terminal_mut(&mut self) -> &mut ratatui::DefaultTerminal {
@@ -97,6 +157,10 @@ impl TerminalSession {
     }
 
     fn restore_terminal(&mut self) {
+        if let Err(error) = self.bracketed_paste.stop() {
+            // Session Drop retries if explicit restoration could not complete.
+            error!("Failed to restore terminal paste mode: {error}");
+        }
         let mut capture_uncertain = false;
         if let Some(mut capture) = self.mouse_capture.take() {
             if let Err(error) = capture.stop() {
@@ -188,6 +252,75 @@ mod tests {
         fn flush(&mut self) -> io::Result<()> {
             Ok(())
         }
+    }
+
+    #[test]
+    fn paste_mode_switches_only_on_transitions_and_restores_on_drop() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        {
+            let mut paste = BracketedPaste::new(RecordingWriter(Arc::clone(&output)));
+            paste.sync(false).unwrap();
+            assert!(output.lock().unwrap().is_empty());
+            paste.sync(true).unwrap();
+            paste.sync(true).unwrap();
+            paste.sync(false).unwrap();
+            paste.sync(false).unwrap();
+            assert_eq!(*output.lock().unwrap(), b"\x1b[?2004h\x1b[?2004l");
+            paste.sync(true).unwrap();
+        }
+        assert_eq!(
+            *output.lock().unwrap(),
+            b"\x1b[?2004h\x1b[?2004l\x1b[?2004h\x1b[?2004l"
+        );
+    }
+
+    #[test]
+    fn composer_eligibility_switches_paste_mode_off_outside_editing_and_during_logout() {
+        use crate::app::actions::{ConversationMode, FocusPane, Section, VimComposerMode};
+        use crate::app::test_support::TestApp;
+
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let mut paste = BracketedPaste::new(RecordingWriter(Arc::clone(&output)));
+        let mut app = TestApp::new();
+        paste.sync(app.accepts_terminal_paste()).unwrap();
+        assert!(output.lock().unwrap().is_empty());
+        app.focus_pane = FocusPane::Conversation;
+        app.selected_section = Section::Communities;
+        app.conversation_mode = ConversationMode::ComposerEditing;
+        paste.sync(app.accepts_terminal_paste()).unwrap();
+        app.vim_composer_mode = Some(VimComposerMode::Normal);
+        paste.sync(app.accepts_terminal_paste()).unwrap();
+        app.vim_composer_mode = Some(VimComposerMode::Insert);
+        paste.sync(app.accepts_terminal_paste()).unwrap();
+        app.pending_logout = true;
+        paste.sync(app.accepts_terminal_paste()).unwrap();
+        app.pending_logout = false;
+        app.conversation_mode = ConversationMode::EditingMessage;
+        paste.sync(app.accepts_terminal_paste()).unwrap();
+        app.focus_pane = FocusPane::ChatList;
+        paste.sync(app.accepts_terminal_paste()).unwrap();
+        drop(paste);
+        assert_eq!(
+            *output.lock().unwrap(),
+            b"\x1b[?2004h\x1b[?2004l\x1b[?2004h\x1b[?2004l\x1b[?2004h\x1b[?2004l"
+        );
+    }
+
+    #[test]
+    fn paste_explicit_stop_is_idempotent_and_failed_enable_restores() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let mut paste = BracketedPaste::new(FailFirstWriter {
+            output: Arc::clone(&output),
+            first_write: true,
+        });
+        assert!(paste.sync(true).is_err());
+        assert_eq!(*output.lock().unwrap(), b"\x1b[?2004l");
+        paste.sync(true).unwrap();
+        paste.stop().unwrap();
+        let released = output.lock().unwrap().clone();
+        paste.stop().unwrap();
+        drop(paste);
+        assert_eq!(*output.lock().unwrap(), released);
     }
 
     #[test]

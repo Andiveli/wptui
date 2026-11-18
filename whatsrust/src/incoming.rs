@@ -38,6 +38,7 @@ impl CallbackTranslator<*const CMessage> for Message {
             )
         };
 
+        let mut native_preview = None;
         let message = match MessageType::from_repr(msg.message_type).unwrap() {
             MessageType::Text => {
                 let text_message = unsafe { &*(msg.message as *const CIncomingTextMessage) };
@@ -58,6 +59,9 @@ impl CallbackTranslator<*const CMessage> for Message {
                     })
                 };
                 store_message_mention_ranges(&id, &message, ranges);
+                native_preview = unsafe {
+                    crate::native_link_preview::copy_from_ffi(text_message.native_preview)
+                };
                 MessageContent::Text(message.into())
             }
             MessageType::ViewOnceUnavailable => MessageContent::ViewOnceUnavailable,
@@ -124,6 +128,9 @@ impl CallbackTranslator<*const CMessage> for Message {
                 score: msg.info.forwarding_score,
             },
         };
+        if let (MessageContent::Text(text), Some(preview)) = (&message, native_preview) {
+            crate::store_native_link_preview(&info, text, preview);
+        }
         if !msg.forward_source.is_null() && msg.forward_source_len > 0 {
             store_forward_source(&info, unsafe {
                 std::slice::from_raw_parts(msg.forward_source, msg.forward_source_len).to_vec()

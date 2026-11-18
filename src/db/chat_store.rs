@@ -24,18 +24,20 @@ pub(super) fn persist_in_transaction(tx: &rusqlite::Transaction<'_>, chats: Vec<
 }
 
 pub(super) fn get_chats(db: &Connection) -> Vec<Chat> {
-    let mut query = db.prepare("SELECT jid FROM chats").unwrap();
+    try_get_chats(db).unwrap()
+}
+
+pub(super) fn try_get_chats(db: &Connection) -> rusqlite::Result<Vec<Chat>> {
+    let mut query = db.prepare("SELECT jid FROM chats")?;
     query
         .query_map([], |row| {
-            let jid: String = row.get(0).unwrap();
+            let jid: String = row.get(0)?;
             Ok(Chat {
                 jid: jid.into(),
                 last_message_time: None,
             })
-        })
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap()
+        })?
+        .collect()
 }
 
 pub(super) fn add_contact(db: &Connection, jid: &wr::JID, name: &str) {
@@ -48,13 +50,15 @@ pub(super) fn add_contact(db: &Connection, jid: &wr::JID, name: &str) {
 }
 
 pub(super) fn get_contacts(db: &Connection) -> Vec<(wr::JID, Arc<str>)> {
-    let mut stmt = db.prepare("SELECT jid, name FROM contacts").unwrap();
-    let rows = stmt
-        .query_map([], |row| {
-            let jid: String = row.get(0).unwrap();
-            let name: String = row.get(1).unwrap();
-            Ok((jid.into(), Arc::from(name)))
-        })
-        .unwrap();
-    rows.map(|r| r.unwrap()).collect()
+    try_get_contacts(db).unwrap()
+}
+
+pub(super) fn try_get_contacts(db: &Connection) -> rusqlite::Result<Vec<(wr::JID, Arc<str>)>> {
+    let mut stmt = db.prepare("SELECT jid, name FROM contacts")?;
+    stmt.query_map([], |row| {
+        let jid: String = row.get(0)?;
+        let name: String = row.get(1)?;
+        Ok((jid.into(), Arc::from(name)))
+    })?
+    .collect()
 }

@@ -63,12 +63,22 @@ pub mod message_opening;
 pub mod message_push_name_port;
 pub mod message_reactions;
 pub(crate) mod mouse_input;
+pub mod native_link_previews;
+#[cfg(test)]
+mod native_link_thumbnail_tests;
+pub(crate) mod native_link_thumbnails;
 pub mod navigation_conversation_dispatch;
 pub mod news;
 pub(crate) mod news_star;
 pub mod news_update;
 pub mod notifications;
+#[cfg(test)]
+mod notifications_menu_tests;
 pub mod optimistic_text_send;
+pub mod phone_lookup_input;
+pub(crate) mod phone_lookup_observation;
+pub mod phone_lookup_port;
+pub mod phone_lookup_worker;
 pub mod preferences;
 pub mod presence;
 pub mod presence_bridge;
@@ -81,6 +91,7 @@ pub mod runtime_avatar_events;
 pub mod runtime_diagnostics;
 pub mod runtime_loop;
 pub mod runtime_media_viewer_events;
+pub mod runtime_phone_lookup_events;
 pub mod runtime_read_receipt_events;
 pub mod runtime_send_events;
 pub mod runtime_startup;
@@ -100,6 +111,7 @@ pub mod terminal_input_translation;
 pub mod terminal_session;
 #[cfg(test)]
 pub(crate) mod test_support;
+pub(crate) mod theme_selector;
 pub mod unread_messages;
 pub mod whatsapp_events;
 
@@ -223,6 +235,9 @@ pub struct App<'a> {
     pub notifier: Box<dyn Notifier>,
 
     pub messages: HashMap<wr::MessageId, wr::Message>,
+    pub(crate) native_link_previews:
+        HashMap<wr::MessageId, native_link_previews::NativeLinkPreviewRecord>,
+    pub(crate) native_link_thumbnails: native_link_thumbnails::NativeLinkThumbnails,
     pub message_actions: HashMap<wr::MessageId, Vec<MessageAction>>,
     local_action_sequence: u64,
     message_action_diagnostics: MessageActionDiagnostics,
@@ -278,7 +293,11 @@ pub struct App<'a> {
     pub composer: Composer<'a>,
     pub(crate) composer_previews: composer_preview::ComposerPreviews,
     pub(crate) composer_direction: ComposerDirection,
+    pub(crate) theme: crate::ui::theme::Theme,
+    pub(crate) theme_choice: theme_selector::ThemeChoice,
+    pub(crate) theme_selector: Option<usize>,
     pub(crate) mouse_capture_enabled: bool,
+    pub(crate) notifications_enabled: bool,
     pub(crate) composer_viewport_width: u16,
     pub(crate) preferences_path: PathBuf,
     pub message_list_state: MessageListState,
@@ -336,6 +355,7 @@ pub struct App<'a> {
     pub url_opener: Box<dyn UrlOpener>,
     pub launch_executor: Box<dyn crate::media::LaunchExecutor>,
     pub attachment_viewer: Option<AttachmentViewerState>,
+    pub(crate) phone_lookup_observation: Option<phone_lookup_observation::ObservationView>,
     pub viewer_preview: Option<ViewerPreviewState>,
     pub viewer_zoom: u16,
     pub read_receipts: ReadReceiptCoordinator,
@@ -343,6 +363,7 @@ pub struct App<'a> {
     pub(crate) chat_read_sync: Box<dyn ChatReadSyncPort>,
     read_sync_worker_stopped_for_logout: bool,
     pub optimistic_text_send_worker: optimistic_text_send::Worker,
+    pub(crate) phone_lookup_worker: phone_lookup_worker::Worker,
     media_download_worker: Option<download_worker::Worker>,
     pub status_send_worker: status_publish::Worker,
     pub pending_status_sends: usize,
@@ -358,6 +379,8 @@ pub struct App<'a> {
 
     pub contact_search_active: bool,
     pub contact_search: TextInput,
+    pub(crate) pending_phone_lookup: Option<(u64, String)>,
+    pub(crate) next_phone_lookup_generation: u64,
     pub chat_filter: ChatFilter,
     pub filtered_chats: Vec<wr::JID>,
 
@@ -523,6 +546,17 @@ impl App<'_> {
         self.lifecycle_control = lifecycle_control;
     }
 
+    pub(crate) fn toggle_notifications(&mut self) {
+        let next = !self.notifications_enabled;
+        if let Err(error) =
+            crate::app::preferences::save_notifications_enabled(&self.preferences_path, next)
+        {
+            self.unavailable(&format!("Could not persist notifications: {error}"));
+            return;
+        }
+        self.notifications_enabled = next;
+    }
+
     pub(crate) fn toggle_composer_direction(&mut self) {
         let next = self.composer_direction.toggle();
         if let Err(error) =
@@ -557,7 +591,12 @@ impl App<'_> {
     }
 
     pub fn run(&mut self, phone: Option<String>) {
-        runtime_startup::run(self, phone);
+        self.try_run(phone)
+            .expect("Could not hydrate persisted chat history");
+    }
+
+    pub fn try_run(&mut self, phone: Option<String>) -> rusqlite::Result<()> {
+        runtime_startup::run(self, phone)
     }
 
     pub(crate) fn record_phase<T>(&mut self, phase: Phase, work: impl FnOnce(&mut Self) -> T) -> T {

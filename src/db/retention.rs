@@ -32,6 +32,11 @@ pub(super) fn purge(db: &mut Connection, now: i64) -> rusqlite::Result<Vec<PathB
         rusqlite::params![STATUS_BROADCAST_CHAT, cutoff],
     )?;
     tx.execute(
+        "DELETE FROM native_link_previews WHERE (chat_jid, message_id) IN
+            (SELECT chat_jid, id FROM text_messages WHERE chat_jid = ?1 AND timestamp < ?2)",
+        rusqlite::params![STATUS_BROADCAST_CHAT, cutoff],
+    )?;
+    tx.execute(
         "DELETE FROM text_messages WHERE chat_jid = ?1 AND timestamp < ?2",
         rusqlite::params![STATUS_BROADCAST_CHAT, cutoff],
     )?;

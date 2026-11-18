@@ -23,6 +23,7 @@ fn dispatch_app_event(
 ) -> bool {
     match event.family() {
         AppEventFamily::Send => app.handle_send_event(event),
+        AppEventFamily::PhoneLookup => app.handle_phone_lookup_event(event),
         AppEventFamily::ReadReceipt => app.handle_read_receipt_event(event),
         AppEventFamily::Avatar => app.handle_avatar_event(event),
         AppEventFamily::Updater => app.handle_updater_event(event),
@@ -46,6 +47,10 @@ fn same_media_render_effect(left: &MediaRenderEffect, right: &MediaRenderEffect)
             MediaRenderEffect::LoadViewerPreview(left_key),
             MediaRenderEffect::LoadViewerPreview(right_key),
         ) => left_key == right_key,
+        (
+            MediaRenderEffect::LoadNativeLinkThumbnail(left),
+            MediaRenderEffect::LoadNativeLinkThumbnail(right),
+        ) => left == right,
         _ => false,
     }
 }
@@ -68,8 +73,22 @@ fn dispatch_media_render_plan(
     download_tx: &DownloadSender,
     media_jobs: &mut MediaJobOwner,
 ) {
+    let effects = plan.into_effects();
+    // Also reconcile an empty plan: cached/hidden panes must cancel old demand.
+    let visible = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            MediaRenderEffect::LoadNativeLinkThumbnail(key)
+                if app.native_thumbnail_is_current(key) =>
+            {
+                Some(key.clone())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    app.native_link_thumbnails.reconcile(&visible);
     let mut dispatched = Vec::new();
-    for effect in plan.into_effects() {
+    for effect in effects {
         if dispatched
             .iter()
             .any(|previous| same_media_render_effect(previous, &effect))
@@ -83,6 +102,9 @@ fn dispatch_media_render_plan(
             MediaRenderEffect::LoadFilePreview(message_id) => {
                 AppEvent::LoadFilePreview(message_id.clone())
             }
+            MediaRenderEffect::LoadNativeLinkThumbnail(key) => AppEvent::LoadNativeLinkThumbnail(
+                crate::app::events::NativeLinkThumbnailRequest(key.clone()),
+            ),
             MediaRenderEffect::LoadViewerPreview(key) => {
                 let Some(key) = viewer_preview_request(&mut app.viewer_preview, key.clone()) else {
                     continue;
@@ -187,8 +209,12 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
     let mut media_render_plan = MediaRenderPlan::default();
     let mut visibility_plan = crate::app::read_receipts::VisibilityPlan::default();
     let draw_result = terminal_session
-        .terminal_mut()
-        .draw(|frame| ui::draw_with_plan(frame, app, &mut media_render_plan, &mut visibility_plan));
+        .sync_paste_mode(app.accepts_terminal_paste())
+        .and_then(|()| {
+            terminal_session.terminal_mut().draw(|frame| {
+                ui::draw_with_plan(frame, app, &mut media_render_plan, &mut visibility_plan)
+            })
+        });
     if let Err(error) = &draw_result {
         error!("Failed to draw terminal UI: {error}");
         app.news.star.shutdown();
@@ -293,6 +319,11 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
             }
         };
 
+        if let Err(error) = terminal_session.sync_paste_mode(app.accepts_terminal_paste()) {
+            error!("Failed to synchronize terminal paste mode: {error}");
+            break;
+        }
+
         app.activate_news_star();
         app.sync_selected_presence();
         if !app.should_quit && !app.logout_in_progress {
@@ -379,6 +410,216 @@ mod tests {
 
     use crate::app::events::AppEvent;
     use crate::app::test_support::{RecordingChatReadSyncPort, RecordingLifecycleControl, TestApp};
+
+    struct NativeAdmissionFixture {
+        fixture: crate::app::test_support::FixedPickerApp,
+    }
+
+    impl NativeAdmissionFixture {
+        fn new() -> Self {
+            use crate::app::test_support::{FixedPickerApp, message};
+            use image::{DynamicImage, Rgb, RgbImage};
+
+            let mut fixture = FixedPickerApp::new();
+            let app = &mut fixture.app;
+
+            let chat: wr::JID = "admission@example.test".to_owned().into();
+            let source = "https://example.test/article?q=%2F#part";
+            let mut item = message(&chat, "native-admission", 1_704_110_400);
+            item.message = wr::MessageContent::Text(source.into());
+            let mut bytes = std::io::Cursor::new(Vec::new());
+            DynamicImage::ImageRgb8(RgbImage::from_pixel(8, 8, Rgb([220, 30, 40])))
+                .write_to(&mut bytes, image::ImageFormat::Jpeg)
+                .unwrap();
+            wr::store_native_link_preview(
+                &item.info,
+                source,
+                wr::NativeLinkPreview {
+                    matched_text: source.into(),
+                    title: "Native admission".into(),
+                    description: "Stored bytes only".into(),
+                    jpeg_thumbnail: bytes.into_inner(),
+                },
+            );
+            app.process_message(item, true);
+            app.contacts
+                .insert(chat.clone(), "Admission fixture".into());
+            app.open_chat = Some(chat);
+            app.focus_pane = crate::app::actions::FocusPane::Conversation;
+            app.conversation_mode = crate::app::actions::ConversationMode::ComposerEditing;
+            // Wrong-chat rejection uses a real, registered alternate conversation.
+            let other: wr::JID = "other@example.test".to_owned().into();
+            let mut item = message(&other, "other-admission", 1_704_110_401);
+            item.message = wr::MessageContent::Text("Other conversation".into());
+            app.add_message(item);
+            Self { fixture }
+        }
+    }
+
+    fn native_admission_draw(app: &mut App<'_>) -> (std::io::Result<()>, MediaRenderPlan) {
+        use ratatui::{Terminal, backend::TestBackend};
+
+        let mut terminal = Terminal::new(TestBackend::new(180, 50)).unwrap();
+        let mut plan = MediaRenderPlan::default();
+        let result = terminal
+            .draw(|frame| {
+                ui::draw_with_plan(
+                    frame,
+                    app,
+                    &mut plan,
+                    &mut crate::app::read_receipts::VisibilityPlan::default(),
+                );
+            })
+            .map(|_| ())
+            .map_err(|never| -> std::io::Error { match never {} });
+        (result, plan)
+    }
+
+    #[derive(Debug)]
+    struct NativeAdmissionObservation {
+        case: &'static str,
+        draws_succeeded: bool,
+        visible_key_count: usize,
+        initially_cold: bool,
+        hidden_fresh: Option<(usize, usize, usize)>,
+        state: Option<crate::app::native_link_thumbnails::EntryState>,
+        outstanding: usize,
+        cache_len: usize,
+        file_metadata_len: usize,
+        file_image_cache_len: usize,
+        downloads: usize,
+    }
+
+    #[test]
+    fn native_ui_plans_admit_visible_chats_and_communities_but_reject_hidden_or_stale_routes() {
+        use crate::app::actions::Section;
+        use crate::app::native_link_thumbnails::EntryState;
+
+        let mut observations = Vec::new();
+        for case in ["chats", "communities", "news", "logout", "wrong-chat"] {
+            let mut fixture = NativeAdmissionFixture::new();
+            let app = &mut fixture.fixture.app;
+            let mut media_jobs = MediaJobOwner::new();
+            let (download_tx, download_rx) = mpsc::channel();
+            app.selected_section = if case == "communities" {
+                Section::Communities
+            } else {
+                Section::Chats
+            };
+
+            // Inspect one actual UI plan, then draw again into a cold cache.
+            // Never manufacture/relabel a key or rebuild the dispatched plan.
+            let (inspection_result, inspection_plan) = native_admission_draw(app);
+            let visible_keys = inspection_plan
+                .into_effects()
+                .into_iter()
+                .filter_map(|effect| {
+                    if let MediaRenderEffect::LoadNativeLinkThumbnail(key) = effect {
+                        Some(key)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            let mut draws_succeeded = inspection_result.is_ok();
+            let initially_cold = app.native_link_thumbnails.len() == 0
+                && app.native_link_thumbnails.outstanding() == 0;
+            let mut hidden_fresh = None;
+            if matches!(case, "news" | "logout") {
+                app.selected_section = if case == "news" {
+                    Section::News
+                } else {
+                    Section::Chats
+                };
+                app.rail_on_logout = case == "logout";
+                let (result, plan) = native_admission_draw(app);
+                draws_succeeded &= result.is_ok();
+                let count = plan
+                    .into_effects()
+                    .into_iter()
+                    .filter(|effect| {
+                        matches!(effect, MediaRenderEffect::LoadNativeLinkThumbnail(_))
+                    })
+                    .count();
+                let (result, untouched_plan) = native_admission_draw(app);
+                draws_succeeded &= result.is_ok();
+                dispatch_media_render_plan_after_draw(
+                    app,
+                    result,
+                    untouched_plan,
+                    &download_tx,
+                    &mut media_jobs,
+                );
+                hidden_fresh = Some((
+                    count,
+                    app.native_link_thumbnails.outstanding(),
+                    app.native_link_thumbnails.len(),
+                ));
+                // A real prior-visible plan must also be rejected after hiding.
+                app.selected_section = Section::Chats;
+                app.rail_on_logout = false;
+            }
+            let (draw_result, untouched_plan) = native_admission_draw(app);
+            draws_succeeded &= draw_result.is_ok();
+            match case {
+                "news" => app.selected_section = Section::News,
+                "logout" => app.rail_on_logout = true,
+                "wrong-chat" => app.open_chat = Some("other@example.test".to_owned().into()),
+                _ => {}
+            }
+            dispatch_media_render_plan_after_draw(
+                app,
+                draw_result,
+                untouched_plan,
+                &download_tx,
+                &mut media_jobs,
+            );
+            // Publication cannot mutate the cache: no completion is consumed.
+            // Capture before shutdown, then join BEFORE any rule assertion so
+            // the expected Communities RED cannot leak a managed worker.
+            let observed = NativeAdmissionObservation {
+                case,
+                draws_succeeded,
+                visible_key_count: visible_keys.len(),
+                initially_cold,
+                hidden_fresh,
+                state: visible_keys
+                    .first()
+                    .map(|key| app.native_link_thumbnails.state(key)),
+                outstanding: app.native_link_thumbnails.outstanding(),
+                cache_len: app.native_link_thumbnails.len(),
+                file_metadata_len: app.metadata.len(),
+                file_image_cache_len: app.image_cache.len(),
+                downloads: download_rx.try_iter().count(),
+            };
+            media_jobs.shutdown();
+            observations.push(observed);
+        }
+        // Every fresh fixture and managed owner has been torn down before RED.
+        for observed in observations {
+            let admitted = matches!(observed.case, "chats" | "communities");
+            assert!(observed.draws_succeeded, "{observed:?}");
+            assert!(observed.initially_cold, "{observed:?}");
+            assert_eq!(observed.visible_key_count, 1, "{observed:?}");
+            if matches!(observed.case, "news" | "logout") {
+                assert_eq!(observed.hidden_fresh, Some((0, 0, 0)), "{observed:?}");
+            }
+            assert_eq!(
+                observed.state,
+                Some(if admitted {
+                    EntryState::Loading
+                } else {
+                    EntryState::Absent
+                }),
+                "{observed:?}"
+            );
+            assert_eq!(observed.outstanding, usize::from(admitted), "{observed:?}");
+            assert_eq!(observed.cache_len, usize::from(admitted), "{observed:?}");
+            assert_eq!(observed.file_metadata_len, 0, "{observed:?}");
+            assert_eq!(observed.file_image_cache_len, 0, "{observed:?}");
+            assert_eq!(observed.downloads, 0, "{observed:?}");
+        }
+    }
 
     #[test]
     fn terminal_initialization_failure_preserves_the_existing_teardown_order() {

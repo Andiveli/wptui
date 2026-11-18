@@ -455,13 +455,17 @@ fn contact_persistence_routes_through_the_port_and_keeps_a_path_only_adapter() {
                     .contains("set_contact_source(Box::new(")
         );
     }
-    assert_eq!(
-        fs::read_to_string(root.join("src/app/test_support.rs"))
-            .unwrap()
-            .matches("set_contact_source(Box::new(FakeContactSource::default()))")
-            .count(),
-        3
-    );
+    let test_support = fs::read_to_string(root.join("src/app/test_support.rs")).unwrap();
+    let contact_source = "set_contact_source(Box::new(FakeContactSource::default()))";
+    assert_eq!(test_support.matches(contact_source).count(), 4);
+    let fixed_picker = test_support
+        .split_once("impl FixedPickerApp {")
+        .expect("native previews require the fixed-picker fixture")
+        .1
+        .split_once("impl std::ops::Deref for FixedPickerApp")
+        .expect("fixed-picker fixture must retain its scoped implementation")
+        .0;
+    assert_eq!(fixed_picker.matches(contact_source).count(), 1);
 }
 
 #[test]

@@ -71,7 +71,12 @@ pub fn evaluate_availability(
     }
     if matches!(
         action,
-        Some(ContextualAction::Quit | ContextualAction::ContactInfo)
+        Some(
+            ContextualAction::Quit
+                | ContextualAction::ContactInfo
+                | ContextualAction::ToggleNotifications
+                | ContextualAction::Themes
+        )
     ) {
         return ActionAvailability::enabled();
     }
@@ -163,6 +168,8 @@ pub enum ContextualAction {
     Open,
     ViewAttachment,
     GoToReference,
+    ToggleNotifications,
+    Themes,
     Quit,
 }
 
@@ -185,7 +192,7 @@ pub enum ContextualScope {
     Global,
 }
 
-pub const CONTEXTUAL_ACTION_METADATA: [ContextualActionMetadata; 26] = [
+pub const CONTEXTUAL_ACTION_METADATA: [ContextualActionMetadata; 28] = [
     m(
         ContextualAction::Starred,
         "Starred",
@@ -362,9 +369,23 @@ pub const CONTEXTUAL_ACTION_METADATA: [ContextualActionMetadata; 26] = [
         ImplementationStatus::Implemented,
     ),
     m(
+        ContextualAction::ToggleNotifications,
+        "Notifications: On",
+        'n',
+        ContextualScope::Global,
+        ImplementationStatus::Implemented,
+    ),
+    m(
         ContextualAction::Quit,
         "Quit",
         'q',
+        ContextualScope::Global,
+        ImplementationStatus::Implemented,
+    ),
+    m(
+        ContextualAction::Themes,
+        "Themes",
+        't',
         ContextualScope::Global,
         ImplementationStatus::Implemented,
     ),

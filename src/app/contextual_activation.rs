@@ -66,6 +66,16 @@ impl App<'_> {
         let mut rows = contextual_menu_rows(self.contextual_context());
         if let Some(row) = rows
             .iter_mut()
+            .find(|row| row.action_token == ContextualAction::ToggleNotifications)
+        {
+            row.display_label = if self.notifications_enabled {
+                "Notifications: On"
+            } else {
+                "Notifications: Off"
+            };
+        }
+        if let Some(row) = rows
+            .iter_mut()
             .find(|row| row.action_token == ContextualAction::MarkRead)
         {
             let chat = self.selected_read_toggle_chat();
@@ -142,7 +152,11 @@ impl App<'_> {
             return;
         }
         self.contextual_menu = None;
-        self.dispatch_action(contextual_action_to_app_action(row.action_token));
+        if row.action_token == ContextualAction::Themes {
+            self.open_theme_selector();
+        } else {
+            self.dispatch_action(contextual_action_to_app_action(row.action_token));
+        }
     }
 }
 
@@ -160,6 +174,7 @@ fn contextual_action_to_app_action(action: ContextualAction) -> AppAction {
         ContextualAction::DeleteForEveryone => AppAction::DeleteMessage,
         ContextualAction::Attach => AppAction::AttachFile,
         ContextualAction::CreateStatus => AppAction::StartStatusComposition,
+        ContextualAction::ToggleNotifications => AppAction::ToggleNotifications,
         ContextualAction::Quit => AppAction::Quit,
         _ => AppAction::PlannedLeaderAction(
             crate::app::contextual_actions::CONTEXTUAL_ACTION_METADATA

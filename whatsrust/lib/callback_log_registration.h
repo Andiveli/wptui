@@ -21,6 +21,18 @@ typedef struct {
 	uint32_t forwardingScore;
 } MessageInfo;
 
+/* Borrowed only for the synchronous message callback; Rust copies before return. */
+typedef struct {
+	const char* matchedText;
+	size_t matchedTextLen;
+	const char* title;
+	size_t titleLen;
+	const char* description;
+	size_t descriptionLen;
+	const uint8_t* jpegThumbnail;
+	size_t jpegThumbnailLen;
+} NativeLinkPreviewPayload;
+
 typedef struct {
 	MessageInfo info;
 	uint8_t messageType;

@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use super::{prepare_persisted_state, start_lifecycle};
+use super::{prepare_and_start_lifecycle, prepare_persisted_state, start_lifecycle};
 use crate::app::lifecycle_control::{LifecycleControl, QrCallback};
 use crate::app::{
     PurgeExpiredStatuses,
@@ -48,7 +48,7 @@ fn preparation_purges_owned_media_and_sidecar_before_hydration() {
         observations.clone(),
     )));
 
-    prepare_persisted_state(&mut app);
+    prepare_persisted_state(&mut app).unwrap();
 
     assert!(
         matches!(fake.commands.lock().unwrap().as_slice(), [PurgeExpiredStatuses { now }] if *now > 0)
@@ -80,6 +80,51 @@ fn preparation_panics_before_media_deletion_or_hydration_when_retention_fails() 
     );
     assert!(media.exists());
     assert!(observations.lock().unwrap().is_empty());
+}
+
+struct FailingHydration;
+
+impl ChatStoreHydrationPort for FailingHydration {
+    fn load(&self) -> ChatStoreHydration {
+        panic!("startup must use the fallible entry")
+    }
+
+    fn try_load_complete(
+        &self,
+    ) -> rusqlite::Result<crate::app::chat_store::hydration_port::CompleteChatStoreHydration> {
+        Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(5),
+            Some("database is locked".into()),
+        ))
+    }
+}
+
+#[test]
+fn failed_hydration_returns_error_before_client_callbacks_or_connection() {
+    let mut app = TestApp::new();
+    let calls = Arc::new(Mutex::new(vec![]));
+    app.set_lifecycle_control(Arc::new(FakeLifecycleControl::new(calls.clone(), "unused")));
+    app.set_chat_store_hydration(Box::new(FailingHydration));
+    let callbacks = calls.clone();
+    let result = prepare_and_start_lifecycle(
+        &mut app,
+        None,
+        move || record(&callbacks, LifecycleCall::CallbacksRegistered),
+        |_| panic!("no QR before hydration"),
+        |_| panic!("no pairing before hydration"),
+    );
+    let error = match result {
+        Err(error) => error,
+        Ok(_) => panic!("failed hydration must stop startup"),
+    };
+    assert_eq!(
+        error.sqlite_error_code(),
+        Some(rusqlite::ErrorCode::DatabaseBusy)
+    );
+    assert_eq!(error.to_string(), "database is locked");
+    assert!(calls.lock().unwrap().is_empty());
+    // Startup must not have transferred the UI's worker on failure.
+    app.take_media_download_worker().shutdown();
 }
 
 #[derive(Debug, Eq, PartialEq)]

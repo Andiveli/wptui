@@ -104,12 +104,13 @@ pub(crate) fn community_avatar_targets(rows: &[CommunityNavigationRow]) -> Vec<A
 
 pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
     let block = Block::bordered()
+        .style(app.theme.base())
         .title("Communities")
         .border_style(
             Style::default().fg(if app.focus_pane == FocusPane::ChatList {
-                Color::Green
+                app.theme.accent(Color::Green)
             } else {
-                Color::White
+                app.theme.border(Color::White)
             }),
         );
     let inner = block.inner(area);
@@ -137,9 +138,10 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
         }
         let selected = selectable_index == selected;
         let base = if selected {
-            Style::default().fg(Color::Green).bg(Color::DarkGray)
+            app.theme
+                .selection(Style::default().fg(Color::Green).bg(Color::DarkGray))
         } else {
-            Style::default()
+            app.theme.base()
         };
         frame.buffer_mut().set_style(row_area, base);
         let is_root = matches!(&row, CommunityNavigationRow::Root(_));

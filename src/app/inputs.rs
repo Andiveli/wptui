@@ -61,6 +61,16 @@ impl App<'_> {
     }
 
     pub fn on_terminal_event(&mut self, event: Event) {
+        if self.handle_phone_lookup_observation_input(&event) {
+            return;
+        }
+        if let Event::Paste(ref text) = event {
+            // A paste block is text, never a stream of keys that could submit.
+            if self.theme_selector.is_none() {
+                self.handle_terminal_paste(text);
+            }
+            return;
+        }
         if let Event::Mouse(mouse) = event {
             self.on_mouse_event(mouse);
             return;
@@ -76,7 +86,9 @@ impl App<'_> {
                 return;
             }
 
-            if self.handle_composer_input(key.clone()) {
+            if self.theme_selector.is_some() {
+                self.handle_theme_selector_key(&key);
+            } else if self.handle_composer_input(key.clone()) {
             } else if self.selected_section != Section::News
                 && self.file_picker.is_none()
                 && self.attachment_viewer.is_none()
@@ -463,6 +475,7 @@ impl App<'_> {
             | AppAction::OpenContextualActions
             | AppAction::ToggleShortcutPopup
             | AppAction::ToggleComposerDirection
+            | AppAction::ToggleNotifications
             | AppAction::PlannedLeaderAction(_)) => {
                 self.dispatch_lifecycle_settings_action(action)
                     .expect("lifecycle/settings action family must be handled by its dispatcher");
@@ -804,8 +817,35 @@ mod tests {
         assert!(app.leader_menu.is_none());
     }
 
+    fn assert_only_global_actions_enabled(app: &TestApp, character: char) {
+        use crate::app::contextual_actions::{ContextualAction, RowStyle};
+
+        let rows = &app.contextual_menu.as_ref().unwrap().0;
+        let global_actions = [
+            ContextualAction::Quit,
+            ContextualAction::ToggleNotifications,
+            ContextualAction::Themes,
+        ];
+        for action in global_actions {
+            assert_eq!(
+                rows.iter()
+                    .find(|row| row.action_token == action)
+                    .unwrap()
+                    .row_style,
+                RowStyle::Enabled,
+                "character: {character:?}, action: {action:?}"
+            );
+        }
+        assert!(
+            rows.iter()
+                .filter(|row| !global_actions.contains(&row.action_token))
+                .all(|row| row.row_style == RowStyle::Disabled),
+            "character: {character:?}"
+        );
+    }
+
     #[test]
-    fn space_a_opens_contextual_menu_in_section_rail_with_only_disabled_children() {
+    fn space_a_opens_contextual_menu_in_section_rail_with_only_global_actions_enabled() {
         for character in ['A', 'a'] {
             let mut app = TestApp::new();
             app.focus_pane = FocusPane::SectionRail;
@@ -818,23 +858,12 @@ mod tests {
                 KeyModifiers::SHIFT,
             )));
             assert!(app.contextual_menu.is_some(), "character: {character:?}");
-            assert!(
-                app.contextual_menu
-                    .as_ref()
-                    .unwrap()
-                    .0
-                    .iter()
-                    .filter(|row| {
-                        row.action_token != crate::app::contextual_actions::ContextualAction::Quit
-                    })
-                    .all(|row| row.row_style == crate::app::contextual_actions::RowStyle::Disabled),
-                "character: {character:?}"
-            );
+            assert_only_global_actions_enabled(&app, character);
         }
     }
 
     #[test]
-    fn space_a_opens_contextual_menu_in_chat_list_with_only_disabled_children() {
+    fn space_a_opens_contextual_menu_in_chat_list_with_only_global_actions_enabled() {
         for character in ['A', 'a'] {
             let mut app = TestApp::new();
             app.focus_pane = FocusPane::ChatList;
@@ -847,18 +876,7 @@ mod tests {
                 KeyModifiers::SHIFT,
             )));
             assert!(app.contextual_menu.is_some(), "character: {character:?}");
-            assert!(
-                app.contextual_menu
-                    .as_ref()
-                    .unwrap()
-                    .0
-                    .iter()
-                    .filter(|row| {
-                        row.action_token != crate::app::contextual_actions::ContextualAction::Quit
-                    })
-                    .all(|row| row.row_style == crate::app::contextual_actions::RowStyle::Disabled),
-                "character: {character:?}"
-            );
+            assert_only_global_actions_enabled(&app, character);
         }
     }
 
