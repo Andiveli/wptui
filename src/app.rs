@@ -72,6 +72,8 @@ pub mod news;
 pub(crate) mod news_star;
 pub mod news_update;
 pub mod notifications;
+#[cfg(test)]
+mod notifications_menu_tests;
 pub mod optimistic_text_send;
 pub mod phone_lookup_input;
 pub(crate) mod phone_lookup_observation;
@@ -291,6 +293,7 @@ pub struct App<'a> {
     pub(crate) composer_previews: composer_preview::ComposerPreviews,
     pub(crate) composer_direction: ComposerDirection,
     pub(crate) mouse_capture_enabled: bool,
+    pub(crate) notifications_enabled: bool,
     pub(crate) composer_viewport_width: u16,
     pub(crate) preferences_path: PathBuf,
     pub message_list_state: MessageListState,
@@ -537,6 +540,17 @@ impl App<'_> {
         lifecycle_control: Arc<T>,
     ) {
         self.lifecycle_control = lifecycle_control;
+    }
+
+    pub(crate) fn toggle_notifications(&mut self) {
+        let next = !self.notifications_enabled;
+        if let Err(error) =
+            crate::app::preferences::save_notifications_enabled(&self.preferences_path, next)
+        {
+            self.unavailable(&format!("Could not persist notifications: {error}"));
+            return;
+        }
+        self.notifications_enabled = next;
     }
 
     pub(crate) fn toggle_composer_direction(&mut self) {

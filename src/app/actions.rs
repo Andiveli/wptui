@@ -18,6 +18,7 @@ pub enum AppAction {
     CancelStatusComposition,
     ToggleShortcutPopup,
     ToggleComposerDirection,
+    ToggleNotifications,
     StartVimComposer,
     PlannedLeaderAction(&'static str),
     FocusNext,
