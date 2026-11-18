@@ -37,6 +37,25 @@ struct FakeChatStoreHydrationPort {
 }
 
 impl ChatStoreHydrationPort for FakeChatStoreHydrationPort {
+    fn load_native_link_previews(
+        &self,
+    ) -> Vec<crate::app::native_link_previews::NativeLinkPreviewRecord> {
+        let wr::MessageContent::Text(source) = &self.message.message else {
+            return vec![];
+        };
+        vec![crate::app::native_link_previews::NativeLinkPreviewRecord {
+            chat: self.chat.jid.clone(),
+            message_id: self.message.info.id.clone(),
+            source: source.clone(),
+            preview: wr::NativeLinkPreview {
+                matched_text: source.clone(),
+                title: "Legacy preview".into(),
+                description: "Legacy description".into(),
+                jpeg_thumbnail: vec![],
+            },
+        }]
+    }
+
     fn load(&self) -> ChatStoreHydration {
         ChatStoreHydration {
             chats: vec![self.chat.clone()],
@@ -239,7 +258,8 @@ fn hydration_port_populates_selected_persisted_projections_without_out_of_scope_
     let chat_jid = wr::JID::from("hydrated-chat@example.test".to_owned());
     let contact = wr::JID::from("persisted-contact@example.test".to_owned());
     let reaction_participant = wr::JID::from("reactor@example.test".to_owned());
-    let hydrated_message = message(&chat_jid, "hydrated-message", 42);
+    let mut hydrated_message = message(&chat_jid, "hydrated-message", 42);
+    hydrated_message.message = wr::MessageContent::Text("https://example.com/legacy".into());
 
     app.chat_store_hydration = Box::new(FakeChatStoreHydrationPort {
         chat: Chat {
@@ -268,6 +288,94 @@ fn hydration_port_populates_selected_persisted_projections_without_out_of_scope_
     );
     assert!(app.message_actions.is_empty());
     assert!(app.status_last_seen.is_empty());
+    assert_eq!(
+        app.native_link_preview(&hydrated_message.info.id)
+            .unwrap()
+            .1
+            .title
+            .as_ref(),
+        "Legacy preview"
+    );
+}
+
+#[test]
+fn fallible_sqlite_hydration_is_complete_and_preserves_state_on_primary_or_sidecar_error() {
+    for failure in ["primary", "sidecar"] {
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = TestApp::with_database(directory.path());
+        app.db_handler.init();
+        let chat = wr::JID::from("complete@example.test".to_owned());
+        let mut stored = message(&chat, "complete", 42);
+        stored.message = wr::MessageContent::Text("https://example.com/complete".into());
+        app.db_handler.add_chat(&Chat {
+            jid: chat.clone(),
+            last_message_time: None,
+        });
+        app.db_handler.add_message(&stored);
+        app.db_handler.stop();
+        app.db_handler.add_contact(&chat, "Original contact");
+        app.db_handler
+            .record_reaction(&stored.info.id, chat.clone(), "✨".into());
+        let db = rusqlite::Connection::open(directory.path().join("app.db")).unwrap();
+        // Fixture SQL only; observations use the public App hydration interface.
+        db.execute("INSERT INTO native_link_previews VALUES (?1, 'complete', ?2, ?2, 'Native title', 'Native description', X'010203')",
+            rusqlite::params![chat.0, "https://example.com/complete"]).unwrap();
+
+        app.try_load_data_from_db().unwrap();
+        let (_, preview) = app.native_link_preview(&stored.info.id).unwrap();
+        assert_eq!(
+            preview.matched_text.as_ref(),
+            "https://example.com/complete"
+        );
+        assert_eq!(preview.title.as_ref(), "Native title");
+        assert_eq!(preview.description.as_ref(), "Native description");
+        assert_eq!(preview.jpeg_thumbnail, vec![1, 2, 3]);
+        assert_eq!(app.contacts[&chat].as_ref(), "Original contact");
+        assert_eq!(app.reactions[&stored.info.id][&chat].as_ref(), "✨");
+        let counts = (
+            app.chats.len(),
+            app.messages.len(),
+            app.contacts.len(),
+            app.reactions.len(),
+            app.native_link_previews.len(),
+        );
+        let chat_time = app.chats[&chat].last_message_time;
+        let index = app.chat_messages[&chat].clone();
+        db.execute("UPDATE text_messages SET timestamp = 99", [])
+            .unwrap();
+        if failure == "primary" {
+            db.execute("UPDATE contacts SET name = X'FF'", []).unwrap();
+        } else {
+            db.execute("UPDATE contacts SET name = 'Changed contact'", [])
+                .unwrap();
+            db.execute("UPDATE native_link_previews SET title = X'FF'", [])
+                .unwrap();
+        }
+
+        assert!(app.try_load_data_from_db().is_err(), "{failure}");
+        assert_eq!(
+            (
+                app.chats.len(),
+                app.messages.len(),
+                app.contacts.len(),
+                app.reactions.len(),
+                app.native_link_previews.len()
+            ),
+            counts
+        );
+        assert_eq!(app.chats[&chat].last_message_time, chat_time);
+        assert_eq!(app.chat_messages[&chat], index);
+        assert_eq!(app.messages[&stored.info.id].info.timestamp, 42);
+        assert!(
+            matches!(&app.messages[&stored.info.id].message, wr::MessageContent::Text(text) if text.as_ref() == "https://example.com/complete")
+        );
+        assert_eq!(app.contacts[&chat].as_ref(), "Original contact");
+        assert_eq!(app.reactions[&stored.info.id][&chat].as_ref(), "✨");
+        let (_, preview) = app.native_link_preview(&stored.info.id).unwrap();
+        assert_eq!(preview.title.as_ref(), "Native title");
+        assert_eq!(preview.description.as_ref(), "Native description");
+        assert_eq!(preview.jpeg_thumbnail, vec![1, 2, 3]);
+    }
 }
 
 #[test]

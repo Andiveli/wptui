@@ -39,6 +39,8 @@ mod message_preview_tests;
 mod message_stacks;
 #[path = "message_viewport.rs"]
 mod message_viewport;
+#[cfg(test)]
+mod native_link_preview_tests;
 
 pub(crate) use message_preview_cache::bounded_source as bounded_stack_source;
 pub use message_preview_cache::{CropResults, StackPreviewCache};
@@ -47,13 +49,13 @@ pub use message_formatting::reaction_chips;
 use message_formatting::{
     author_color, media_paragraph, message_block, message_content_area, reaction_line,
 };
+pub(crate) use message_helpers::inline_content_lines;
 pub use message_helpers::{
     AUTHOR_GROUP_MAX_GAP, AuthorGroupContext, get_quoted_text, reply_summary, starts_author_group,
 };
 use message_helpers::{
     StatusLabel, directionally_ordered_spans, fit_text_to_width, forwarding_indicator_lines,
-    forwarding_label, inline_content_lines, inline_content_lines_with_highlights,
-    reply_summary_for_width,
+    forwarding_label, markdown_content_lines, reply_summary_for_width,
 };
 pub use message_layout::{
     IMAGE_HEIGHT, IMAGE_WIDTH, MESSAGE_HEIGHT_CACHE_CAPACITY, MessageHeightCache, VIDEO_HEIGHT,
@@ -219,6 +221,16 @@ mod sequence_cache_tests {
 pub(crate) enum MessageTextMode {
     Chat,
     Status,
+}
+
+impl MessageTextMode {
+    // Historical name: chat URL presentation applies in both directions. Layout,
+    // its cache key, rendering and native-card eligibility share this same gate.
+    pub(crate) fn incoming_urls(self, message: &wr::Message) -> bool {
+        self == Self::Chat
+            && !App::is_status_chat(&message.info.chat)
+            && matches!(&message.message, wr::MessageContent::Text(_))
+    }
 }
 
 fn status_label(app: &App, message_id: &wr::MessageId) -> Option<StatusLabel> {
@@ -577,6 +589,821 @@ mod layout_contract_tests {
     }
 
     #[test]
+    fn outgoing_multiline_headings_and_quotes_hide_markers_with_styles_and_keep_source() {
+        use ratatui::buffer::Buffer;
+
+        // One message, not independent parser instances: include both kinds of
+        // fences and surrounding text to exercise paragraph offsets and code ownership.
+        let source = concat!(
+            "# Heading one\n## Heading two\n### Heading three\n",
+            "#### Heading four\n##### Heading five\n###### Heading six\n\n",
+            "*bold* _italic_ ~strike~ `inline` **strong** **_nested_**\n",
+            "> Quote one\n> Quote two\n- item\n1. item\n",
+            "before plain\n```\n# literal heading\n> literal quote\n```\n",
+            "between fences\n```rust\n## rust heading\n> rust quote\n```\n",
+            "after café\n"
+        );
+        let expected = [
+            ("Heading one", Modifier::BOLD),
+            ("Heading two", Modifier::BOLD),
+            ("Heading three", Modifier::BOLD),
+            ("Heading four", Modifier::BOLD),
+            ("Heading five", Modifier::BOLD),
+            ("Heading six", Modifier::BOLD),
+            ("", Modifier::empty()),
+            ("bold italic strike inline strong nested", Modifier::empty()),
+            ("Quote one", Modifier::ITALIC | Modifier::DIM),
+            ("Quote two", Modifier::ITALIC | Modifier::DIM),
+            ("- item", Modifier::empty()),
+            ("1. item", Modifier::empty()),
+            ("before plain", Modifier::empty()),
+            ("# literal heading", Modifier::REVERSED),
+            ("> literal quote", Modifier::REVERSED),
+            ("between fences", Modifier::empty()),
+            ("## rust heading", Modifier::REVERSED),
+            ("> rust quote", Modifier::REVERSED),
+            ("after café", Modifier::empty()),
+            ("", Modifier::empty()),
+        ];
+        let mut app = crate::app::test_support::TestApp::new();
+        let message = wr::Message {
+            info: wr::MessageInfo {
+                id: "outgoing-markdown-block".into(),
+                chat: "chat@g.us".to_owned().into(),
+                sender: "sender@s.whatsapp.net".to_owned().into(),
+                mentions_self: false,
+                timestamp: 0,
+                is_from_me: true,
+                quote_id: None,
+                read_by: 0,
+                forwarding: Default::default(),
+            },
+            message: wr::MessageContent::Text(source.into()),
+        };
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 80, 24));
+        super::render_message(
+            &mut buffer,
+            &message,
+            false,
+            super::AuthorGroupContext::CONTINUATION,
+            &mut app,
+            Rect::new(0, 0, 80, 24),
+            &mut MediaRenderPlan::default(),
+            false,
+            MessageTextMode::Chat,
+        );
+        for (y, (text, modifier)) in expected.iter().enumerate() {
+            let painted = (0..80)
+                .map(|x| buffer[(x, y as u16)].symbol())
+                .collect::<String>();
+            assert_eq!(painted.trim_end(), *text, "outgoing row {y}");
+            for x in 0..text.chars().count() {
+                assert!(
+                    buffer[(x as u16, y as u16)].modifier.contains(*modifier),
+                    "style at outgoing row {y}, cell {x}: {text}"
+                );
+            }
+        }
+        assert!(matches!(
+            &message.message,
+            wr::MessageContent::Text(text) if text.as_ref() == source
+        ));
+    }
+
+    fn url_message(source: &str, outgoing: bool) -> wr::Message {
+        wr::Message {
+            info: wr::MessageInfo {
+                id: "incoming-url-contract".into(),
+                chat: "url@example.test".to_owned().into(),
+                sender: "sender@example.test".to_owned().into(),
+                mentions_self: false,
+                timestamp: 0,
+                is_from_me: outgoing,
+                quote_id: None,
+                read_by: 0,
+                forwarding: Default::default(),
+            },
+            message: wr::MessageContent::Text(source.into()),
+        }
+    }
+
+    fn render_url_message(
+        message: &wr::Message,
+        width: u16,
+    ) -> (crate::app::test_support::TestApp, ratatui::buffer::Buffer) {
+        let mut app = crate::app::test_support::TestApp::new();
+        app.add_message(message.clone());
+        app.open_chat = Some(message.info.chat.clone());
+        let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                super::render_messages_with_plan(
+                    frame,
+                    &mut app,
+                    &mut MediaRenderPlan::default(),
+                    &mut crate::app::read_receipts::VisibilityPlan::default(),
+                    Rect::new(0, 0, width, 24),
+                );
+            })
+            .unwrap();
+        assert_eq!(app.messages.len(), 1);
+        assert_eq!(
+            app.chat_messages[&message.info.chat],
+            vec![message.info.id.clone()]
+        );
+        if let wr::MessageContent::Text(source) = &message.message {
+            assert!(matches!(
+                &app.messages[&message.info.id].message,
+                wr::MessageContent::Text(stored) if stored == source
+            ));
+        }
+        (app, terminal.backend().buffer().clone())
+    }
+
+    // The oracle lays out an already specified label, never a Markdown projection.
+    // Actual output, hits and height all go through the real incoming-message gate.
+    fn assert_url_label(source: &str, label: &str, outgoing: bool, width: u16) {
+        use ratatui::{buffer::Buffer, style::Color, widgets::Widget};
+
+        let message = url_message(source, outgoing);
+        let (mut app, buffer) = render_url_message(&message, width);
+        let lines = super::inline_content_lines(label, &[0..label.len()], None, width as usize);
+        let first_text = lines[0].to_string();
+        let first = (0..buffer.area.height)
+            .find(|&y| screenshot_row(&buffer, y) == first_text.trim_end())
+            .unwrap_or_else(|| panic!("missing label {label:?} for {source:?}"));
+        let mut expected = Buffer::empty(Rect::new(0, 0, width, lines.len() as u16));
+        ratatui::widgets::Paragraph::new(lines.clone()).render(expected.area, &mut expected);
+        let mut expected_hits = Vec::new();
+        for y in 0..expected.area.height {
+            assert_eq!(
+                screenshot_row(&buffer, first + y),
+                screenshot_row(&expected, y)
+            );
+            for x in 0..width {
+                if expected[(x, y)].fg == Color::Blue {
+                    expected_hits.push(Rect::new(x, first + y, 1, 1));
+                    if label != source {
+                        assert!(
+                            buffer[(x, first + y)]
+                                .modifier
+                                .contains(Modifier::UNDERLINED)
+                        );
+                    }
+                }
+            }
+        }
+        assert!(!expected_hits.is_empty());
+        assert_eq!(
+            app.mouse_hit_map
+                .urls
+                .iter()
+                .map(|hit| hit.area)
+                .collect::<Vec<_>>(),
+            expected_hits,
+            "hit cells for {source} at width {width}"
+        );
+        assert!(
+            app.mouse_hit_map
+                .urls
+                .iter()
+                .all(|hit| { hit.id == message.info.id && hit.url == source })
+        );
+        assert_eq!(
+            super::message_height(
+                &message,
+                width as usize,
+                false,
+                super::AuthorGroupContext::STARTS_GROUP,
+                &mut app,
+            ),
+            lines.len() + 1,
+            "public height must measure the displayed label, not the source"
+        );
+    }
+
+    #[test]
+    fn incoming_chat_and_status_heights_do_not_share_a_stale_presentation() {
+        assert_chat_and_status_heights(false);
+    }
+
+    #[test]
+    fn outgoing_chat_and_status_heights_do_not_share_a_stale_presentation() {
+        assert_chat_and_status_heights(true);
+    }
+
+    fn assert_chat_and_status_heights(outgoing: bool) {
+        let message = url_message("https://example.com/docs/installation?q=one#part", outgoing);
+        let mut app = crate::app::test_support::TestApp::new();
+        for mode in [
+            MessageTextMode::Chat,
+            MessageTextMode::Status,
+            MessageTextMode::Chat,
+        ] {
+            let label = if mode == MessageTextMode::Chat {
+                "example.com · installation"
+            } else {
+                "https://example.com/docs/installation?q=one#part"
+            };
+            let expected = super::inline_content_lines(label, &[], None, 12).len() + 1;
+            assert_eq!(
+                super::message_layout_integration::message_height_with_mode(
+                    &message,
+                    12,
+                    false,
+                    super::AuthorGroupContext::STARTS_GROUP,
+                    &mut app,
+                    mode,
+                ),
+                expected
+            );
+        }
+        assert_eq!(app.message_height_cache.measurement_count(), 3);
+        let mut status = message.clone();
+        status.info.chat = crate::app::STATUS_BROADCAST_CHAT.to_owned().into();
+        assert_eq!(
+            super::message_height(
+                &status,
+                12,
+                false,
+                super::AuthorGroupContext::STARTS_GROUP,
+                &mut app,
+            ),
+            super::inline_content_lines(
+                "https://example.com/docs/installation?q=one#part",
+                &[],
+                None,
+                12,
+            )
+            .len()
+                + 1
+        );
+    }
+
+    #[test]
+    fn incoming_bare_urls_use_accepted_domain_and_final_segment_labels() {
+        for (source, label) in [
+            ("https://github.com/Andiveli/wptui", "github.com · wptui"),
+            (
+                "https://example.com/docs/installation",
+                "example.com · installation",
+            ),
+            ("https://example.com/", "example.com"),
+        ] {
+            assert_url_label(source, label, false, 80);
+        }
+    }
+
+    #[test]
+    fn incoming_labels_ignore_query_fragment_and_empty_final_segments_only_for_display() {
+        for (source, label) in [
+            (
+                "http://example.com/docs/install///?q=one#part",
+                "example.com · install",
+            ),
+            ("https://example.com?q=one#part", "example.com"),
+            ("https://example.com/?q=one#part", "example.com"),
+            (
+                "https://example.com/docs/%69nstall",
+                "example.com · %69nstall",
+            ),
+        ] {
+            assert_url_label(source, label, false, 80);
+        }
+    }
+
+    #[test]
+    fn incoming_label_keeps_complete_subdomain_and_port() {
+        assert_url_label(
+            "https://docs.api.example.com:8443/a/install",
+            "docs.api.example.com:8443 · install",
+            false,
+            80,
+        );
+    }
+
+    #[test]
+    fn incoming_userinfo_authority_never_masquerades_as_the_userinfo_site() {
+        let source = "https://github.com@evil.example/path";
+        let message = url_message(source, false);
+        let (app, buffer) = render_url_message(&message, 80);
+        let rows = (0..buffer.area.height)
+            .map(|y| screenshot_row(&buffer, y))
+            .collect::<Vec<_>>();
+        // Either conservative raw fallback or a correctly parsed actual host is safe.
+        assert!(
+            rows.iter()
+                .any(|row| row == source || row == "evil.example · path")
+        );
+        assert!(!rows.iter().any(|row| row == "github.com · path"));
+        assert!(!app.mouse_hit_map.urls.is_empty());
+        assert!(app.mouse_hit_map.urls.iter().all(|hit| hit.url == source));
+        let label = if rows.iter().any(|row| row == source) {
+            source
+        } else {
+            "evil.example · path"
+        };
+        assert_url_label(source, label, false, 80);
+    }
+
+    #[test]
+    fn incoming_unsupported_authority_remains_raw() {
+        let source = "https://example.com:bad/path";
+        assert_url_label(source, source, false, 80);
+    }
+
+    #[test]
+    fn incoming_status_text_keeps_full_url_instead_of_chat_label() {
+        let source = "https://example.com/docs/install";
+        let message = url_message(source, false);
+        let mut app = crate::app::test_support::TestApp::new();
+        let mut terminal = Terminal::new(TestBackend::new(80, 2)).unwrap();
+        terminal
+            .draw(|frame| {
+                super::render_message(
+                    frame.buffer_mut(),
+                    &message,
+                    false,
+                    super::AuthorGroupContext::CONTINUATION,
+                    &mut app,
+                    Rect::new(0, 0, 80, 2),
+                    &mut MediaRenderPlan::default(),
+                    false,
+                    MessageTextMode::Status,
+                );
+            })
+            .unwrap();
+        assert_eq!(screenshot_row(terminal.backend().buffer(), 0), source);
+        assert!(!app.mouse_hit_map.urls.is_empty());
+        assert!(app.mouse_hit_map.urls.iter().all(|hit| hit.url == source));
+    }
+
+    #[test]
+    fn incoming_label_wrap_height_and_mouse_cells_agree_at_narrow_width() {
+        for width in [12, 20] {
+            assert_url_label(
+                "https://example.com/docs/installation?q=one#part",
+                "example.com · installation",
+                false,
+                width,
+            );
+        }
+    }
+
+    #[test]
+    fn outgoing_bare_urls_shorten_display_and_keep_source_and_mouse_destination() {
+        for (source, label) in [
+            ("https://github.com/Andiveli/wptui", "github.com · wptui"),
+            (
+                "https://example.com/docs/installation?q=%2F#part",
+                "example.com · installation",
+            ),
+            ("https://example.com/", "example.com"),
+        ] {
+            for width in [12, 80] {
+                assert_url_label(source, label, true, width);
+            }
+        }
+    }
+
+    #[test]
+    fn incoming_explicit_labels_code_and_unsupported_literals_are_not_shortened() {
+        let url = "https://example.com/docs/install";
+        for (source, visible, modifier) in [
+            (
+                format!("[site]({url})"),
+                "site".to_owned(),
+                Modifier::UNDERLINED,
+            ),
+            (
+                format!("[{url}]({url})"),
+                url.to_owned(),
+                Modifier::UNDERLINED,
+            ),
+            (format!("`{url}`"), url.to_owned(), Modifier::REVERSED),
+            (
+                format!("```\n{url}\n```"),
+                url.to_owned(),
+                Modifier::REVERSED,
+            ),
+            (
+                format!("![image]({url})"),
+                format!("![image]({url})"),
+                Modifier::empty(),
+            ),
+            (format!("[{url}]"), format!("[{url}]"), Modifier::empty()),
+        ] {
+            let (app, buffer) = render_url_message(&url_message(&source, false), 80);
+            let y = (0..buffer.area.height)
+                .find(|&y| screenshot_row(&buffer, y) == visible)
+                .unwrap_or_else(|| panic!("literal/label changed: {source}"));
+            for x in 0..visible.chars().count() as u16 {
+                assert!(buffer[(x, y)].modifier.contains(modifier));
+                if modifier.is_empty() {
+                    assert_eq!(buffer[(x, y)].modifier, Modifier::empty());
+                }
+            }
+            let start = visible.find(url).unwrap_or(0);
+            let length = if visible == "site" {
+                visible.len()
+            } else {
+                url.len()
+            };
+            assert_eq!(
+                app.mouse_hit_map
+                    .urls
+                    .iter()
+                    .map(|hit| hit.area)
+                    .collect::<Vec<_>>(),
+                (start..start + length)
+                    .map(|x| Rect::new(x as u16, y, 1, 1))
+                    .collect::<Vec<_>>(),
+                "preserved hit cells for {source}"
+            );
+            assert!(app.mouse_hit_map.urls.iter().all(|hit| hit.url == url));
+        }
+    }
+
+    #[test]
+    fn incoming_file_caption_reply_and_informational_paths_keep_existing_text() {
+        let source = "https://example.com/docs/install";
+        let mut message = url_message(source, false);
+        assert_eq!(
+            super::reply_summary(&message, "sender"),
+            format!("> sender: {source}")
+        );
+        message.message = wr::MessageContent::File(wr::FileContent {
+            path: "document.txt".into(),
+            kind: wr::FileKind::Document,
+            caption: Some(source.into()),
+            ..Default::default()
+        });
+        let (app, buffer) = render_url_message(&message, 80);
+        assert!((0..buffer.area.height).any(|y| screenshot_row(&buffer, y) == source));
+        assert!(matches!(
+            &app.messages[&message.info.id].message,
+            wr::MessageContent::File(file) if file.caption.as_deref() == Some(source)
+        ));
+        message.message = wr::MessageContent::ViewOnceUnavailable;
+        let (_, buffer) = render_url_message(&message, 80);
+        let rendered = buffer
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains(wr::VIEW_ONCE_UNAVAILABLE_DESCRIPTION));
+    }
+
+    const SCREENSHOT_MARKDOWN: &str = concat!(
+        "# Encabezado 1\n## Encabezado 2\n### Encabezado 3\n\n",
+        "> Una cita de prueba\n\n",
+        "[Ejemplo](https://example.com)\n\n",
+        "[enlace sin destino]\n",
+        "![imagen no soportada](https://example.com/image.png)"
+    );
+
+    // Owner-provided source from L18: only the first heading is at column zero.
+    const OWNER_INDENTED_MARKDOWN: &str = concat!(
+        "# Encabezado 1\n",
+        "   ## Encabezado 2\n",
+        "   ### Encabezado 3\n\n",
+        "   > Una cita de prueba\n\n",
+        "   [Ejemplo](https://example.com)\n\n",
+        "   [enlace sin destino]\n",
+        "   ![imagen no soportada](https://example.com/image.png)"
+    );
+
+    fn render_screenshot_markdown(source: &str) -> ratatui::buffer::Buffer {
+        let mut app = crate::app::test_support::TestApp::new();
+        let chat: wr::JID = "screenshot@example.test".to_owned().into();
+        let id: wr::MessageId = "screenshot-markdown".into();
+        app.add_message(wr::Message {
+            info: wr::MessageInfo {
+                id: id.clone(),
+                chat: chat.clone(),
+                sender: "sender@example.test".to_owned().into(),
+                mentions_self: false,
+                timestamp: 0,
+                is_from_me: true,
+                quote_id: None,
+                read_by: 0,
+                forwarding: Default::default(),
+            },
+            message: wr::MessageContent::Text(source.into()),
+        });
+        app.open_chat = Some(chat);
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                // Exercise the public list path, including height/viewport planning,
+                // rather than projecting each syntax example independently.
+                super::render_messages_with_plan(
+                    frame,
+                    &mut app,
+                    &mut MediaRenderPlan::default(),
+                    &mut crate::app::read_receipts::VisibilityPlan::default(),
+                    Rect::new(0, 0, 80, 24),
+                );
+            })
+            .unwrap();
+        assert!(matches!(
+            &app.messages[&id].message,
+            wr::MessageContent::Text(text) if text.as_ref() == source
+        ));
+        terminal.backend().buffer().clone()
+    }
+
+    fn screenshot_row(buffer: &ratatui::buffer::Buffer, y: u16) -> String {
+        (0..buffer.area.width)
+            .map(|x| buffer[(x, y)].symbol())
+            .collect::<String>()
+            .trim_end()
+            .to_owned()
+    }
+
+    fn assert_screenshot_blocks(source: &str) {
+        let buffer = render_screenshot_markdown(source);
+        let first = (0..buffer.area.height)
+            .find(|&y| screenshot_row(&buffer, y) == "Encabezado 1")
+            .expect("first heading must be visible without its hash");
+        for (offset, text, modifier) in [
+            (0, "Encabezado 1", Modifier::BOLD),
+            (1, "Encabezado 2", Modifier::BOLD),
+            (2, "Encabezado 3", Modifier::BOLD),
+            (3, "", Modifier::empty()),
+            (4, "Una cita de prueba", Modifier::ITALIC | Modifier::DIM),
+            (5, "", Modifier::empty()),
+            (6, "Ejemplo", Modifier::UNDERLINED),
+            (7, "", Modifier::empty()),
+        ] {
+            let y = first + offset;
+            assert_eq!(screenshot_row(&buffer, y), text, "row {offset}: {source:?}");
+            for x in 0..text.chars().count() as u16 {
+                assert!(
+                    buffer[(x, y)].modifier.contains(modifier),
+                    "row {offset}, cell {x}: {source:?}"
+                );
+            }
+        }
+    }
+
+    fn assert_screenshot_literals(source: &str) {
+        let buffer = render_screenshot_markdown(source);
+        // Anchor at the preceding valid link so a missing opening bracket cannot
+        // prevent the malformed-link assertion from identifying the changed row.
+        let link_row = (0..buffer.area.height)
+            .find(|&y| screenshot_row(&buffer, y) == "Ejemplo")
+            .expect("valid link must still show only its label");
+        assert_eq!(screenshot_row(&buffer, link_row + 1), "");
+        for (offset, text) in [
+            (2, "[enlace sin destino]"),
+            (3, "![imagen no soportada](https://example.com/image.png)"),
+        ] {
+            let y = link_row + offset;
+            assert_eq!(screenshot_row(&buffer, y), text, "row {offset}: {source:?}");
+            for x in 0..text.len() as u16 {
+                assert_eq!(
+                    buffer[(x, y)].modifier,
+                    Modifier::empty(),
+                    "literal style at row {offset}, cell {x}: {source:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn combined_screenshot_lf_headings_quotes_and_valid_link_are_formatted() {
+        assert_screenshot_blocks(SCREENSHOT_MARKDOWN);
+    }
+
+    #[test]
+    fn combined_screenshot_crlf_headings_quotes_and_valid_link_are_formatted() {
+        assert_screenshot_blocks(&SCREENSHOT_MARKDOWN.replace('\n', "\r\n"));
+    }
+
+    #[test]
+    fn combined_screenshot_lf_malformed_link_and_http_image_stay_literal() {
+        assert_screenshot_literals(SCREENSHOT_MARKDOWN);
+    }
+
+    #[test]
+    fn combined_screenshot_crlf_malformed_link_and_http_image_stay_literal() {
+        assert_screenshot_literals(&SCREENSHOT_MARKDOWN.replace('\n', "\r\n"));
+    }
+
+    #[test]
+    fn owner_three_space_headings_hide_markers_and_render_bold() {
+        let buffer = render_screenshot_markdown(OWNER_INDENTED_MARKDOWN);
+        let first = (0..buffer.area.height)
+            .find(|&y| screenshot_row(&buffer, y) == "Encabezado 1")
+            .expect("first heading must be visible without its hash");
+        for (offset, text) in [
+            (0, "Encabezado 1"),
+            (1, "Encabezado 2"),
+            (2, "Encabezado 3"),
+        ] {
+            let y = first + offset;
+            assert_eq!(screenshot_row(&buffer, y), text, "heading row {offset}");
+            for x in 0..text.len() as u16 {
+                assert!(buffer[(x, y)].modifier.contains(Modifier::BOLD));
+            }
+        }
+        assert_eq!(screenshot_row(&buffer, first + 3), "");
+    }
+
+    #[test]
+    fn owner_three_space_quote_hides_marker_and_renders_italic_dim() {
+        let buffer = render_screenshot_markdown(OWNER_INDENTED_MARKDOWN);
+        // Anchor at the unchanged first heading, not a heading that is currently
+        // broken, so the quote rule produces its own independent failure.
+        let first = (0..buffer.area.height)
+            .find(|&y| screenshot_row(&buffer, y) == "Encabezado 1")
+            .expect("first heading must be visible without its hash");
+        let y = first + 4;
+        let text = "Una cita de prueba";
+        assert_eq!(screenshot_row(&buffer, y), text);
+        for x in 0..text.len() as u16 {
+            assert!(
+                buffer[(x, y)]
+                    .modifier
+                    .contains(Modifier::ITALIC | Modifier::DIM)
+            );
+        }
+        assert_eq!(screenshot_row(&buffer, y - 1), "");
+        assert_eq!(screenshot_row(&buffer, y + 1), "");
+    }
+
+    #[test]
+    fn owner_three_space_valid_label_and_unsupported_literals_are_preserved() {
+        assert_screenshot_literals(OWNER_INDENTED_MARKDOWN);
+        let buffer = render_screenshot_markdown(OWNER_INDENTED_MARKDOWN);
+        let y = (0..buffer.area.height)
+            .find(|&y| screenshot_row(&buffer, y) == "Ejemplo")
+            .expect("valid link must show only Ejemplo, without its destination");
+        for x in 0.."Ejemplo".len() as u16 {
+            assert!(buffer[(x, y)].modifier.contains(Modifier::UNDERLINED));
+        }
+    }
+
+    #[test]
+    fn labeled_link_renders_only_styled_label_and_hits_only_label_cells() {
+        use ratatui::buffer::Buffer;
+
+        let source = "before [Ejemplo](https://example.com) after";
+        let mut app = crate::app::test_support::TestApp::new();
+        let id: wr::MessageId = "labeled-link".into();
+        let message = wr::Message {
+            info: wr::MessageInfo {
+                id: id.clone(),
+                chat: "chat@g.us".to_owned().into(),
+                sender: "sender@s.whatsapp.net".to_owned().into(),
+                mentions_self: false,
+                timestamp: 0,
+                is_from_me: true,
+                quote_id: None,
+                read_by: 0,
+                forwarding: Default::default(),
+            },
+            message: wr::MessageContent::Text(source.into()),
+        };
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 60, 3));
+        super::render_message(
+            &mut buffer,
+            &message,
+            false,
+            super::AuthorGroupContext::CONTINUATION,
+            &mut app,
+            Rect::new(3, 1, 50, 1),
+            &mut MediaRenderPlan::default(),
+            false,
+            MessageTextMode::Chat,
+        );
+        let hits = &app.mouse_hit_map.urls;
+        assert_eq!(hits.len(), "Ejemplo".len());
+        for (index, hit) in hits.iter().enumerate() {
+            assert_eq!(hit.id, id);
+            assert_eq!(hit.url, "https://example.com");
+            assert_eq!(hit.area, Rect::new(10 + index as u16, 1, 1, 1));
+            let cell = &buffer[(hit.area.x, hit.area.y)];
+            assert_eq!(cell.symbol(), &"Ejemplo"[index..index + 1]);
+            assert!(cell.modifier.contains(Modifier::UNDERLINED));
+        }
+        let painted = (3..53).map(|x| buffer[(x, 1)].symbol()).collect::<String>();
+        assert_eq!(painted.trim_end(), "before Ejemplo after");
+        assert!(matches!(
+            &message.message,
+            wr::MessageContent::Text(text) if text.as_ref() == source
+        ));
+    }
+
+    #[test]
+    fn formatted_bare_url_keeps_its_original_mouse_destination() {
+        let body = "https://example.com/_docs_";
+        let mut app = crate::app::test_support::TestApp::new();
+        super::record_url_hits(
+            &mut app,
+            &"original-url".into(),
+            body,
+            None,
+            Rect::new(0, 0, 40, 2),
+            ratatui::layout::Alignment::Left,
+        );
+        assert!(!app.mouse_hit_map.urls.is_empty());
+        assert!(app.mouse_hit_map.urls.iter().all(|hit| hit.url == body));
+        let visible = super::markdown_content_lines(body, &[], None, 40, &[]);
+        assert_eq!(visible[0].to_string(), body);
+    }
+
+    #[test]
+    fn formatted_urls_keep_exact_painted_hit_cells() {
+        use ratatui::{
+            buffer::Buffer,
+            layout::Alignment,
+            widgets::{Paragraph, Widget},
+        };
+        let mut app = crate::app::test_support::TestApp::new();
+        for (body, expected_cells) in [
+            ("**https://example.com**", "https://example.com"),
+            ("[site](https://example.com)", "site"),
+            ("`https://example.com`", "https://example.com"),
+        ] {
+            app.mouse_hit_map.urls.clear();
+            super::record_url_hits(
+                &mut app,
+                &"markdown-url".into(),
+                body,
+                None,
+                Rect::new(3, 4, 40, 2),
+                Alignment::Left,
+            );
+            let hits = &app.mouse_hit_map.urls;
+            assert!(!hits.is_empty(), "{body}");
+            assert!(hits.iter().all(|hit| hit.url == "https://example.com"));
+            let lines = super::markdown_content_lines(body, &[], None, 40, &[]);
+            let mut buffer = Buffer::empty(Rect::new(0, 0, 40, 2));
+            Paragraph::new(lines).render(buffer.area, &mut buffer);
+            let painted = hits
+                .iter()
+                .map(|hit| buffer[(hit.area.x - 3, hit.area.y - 4)].symbol())
+                .collect::<String>();
+            assert_eq!(painted, expected_cells);
+        }
+    }
+
+    #[test]
+    fn labeled_link_hits_follow_wrapped_bidi_graphemes_and_override_url_labels() {
+        use ratatui::{buffer::Buffer, layout::Alignment, style::Color, widgets::Widget};
+
+        let destination = "https://example.com/_docs_?q=1&x=2!";
+        for label in ["**אְב** 👩‍💻 阿丽", "https://label.test"] {
+            let source = format!("before [{label}]({destination}) after");
+            let visible_label = label.replace("**", "");
+            let visible = format!("before {visible_label} after");
+            for width in [4, 40] {
+                let mut app = crate::app::test_support::TestApp::new();
+                let area = Rect::new(3, 2, width, 12);
+                super::record_url_hits(
+                    &mut app,
+                    &"label-cells".into(),
+                    &source,
+                    None,
+                    area,
+                    Alignment::Left,
+                );
+                let mut expected = Buffer::empty(Rect::new(0, 0, width, 12));
+                ratatui::widgets::Paragraph::new(super::inline_content_lines(
+                    &visible,
+                    &[7..7 + visible_label.len()],
+                    None,
+                    width as usize,
+                ))
+                .alignment(Alignment::Left)
+                .render(expected.area, &mut expected);
+                let expected_cells = (0..12)
+                    .flat_map(|y| (0..width).map(move |x| (x, y)))
+                    .filter(|&(x, y)| expected[(x, y)].fg == Color::Blue)
+                    .map(|(x, y)| Rect::new(x + 3, y + 2, 1, 1))
+                    .collect::<Vec<_>>();
+                assert!(!expected_cells.is_empty());
+                assert_eq!(
+                    app.mouse_hit_map
+                        .urls
+                        .iter()
+                        .map(|hit| hit.area)
+                        .collect::<Vec<_>>(),
+                    expected_cells
+                );
+                assert!(
+                    app.mouse_hit_map
+                        .urls
+                        .iter()
+                        .all(|hit| hit.url == destination)
+                );
+            }
+        }
+    }
+
+    #[test]
     fn visual_wrapping_and_cached_height_agree_at_narrow_width() {
         use std::sync::Arc;
 
@@ -585,6 +1412,7 @@ mod layout_contract_tests {
         let lines = super::inline_content_lines(body, &[], None, width);
         let input = super::message_layout::LayoutInput {
             width,
+            incoming_urls: false,
             is_selected: false,
             has_quote: false,
             has_reactions: false,
@@ -619,7 +1447,7 @@ mod layout_contract_tests {
 pub use message_layout_integration::message_height;
 
 /// Probe the exact wrapped/bidi paragraph into an offscreen buffer. Marking one
-/// source URL as a mention changes only style, not the rendered cell positions.
+/// projected URL or labeled-link range as a mention changes only style, not geometry.
 /// The actual message is rendered unchanged; the probe's blue cells become hits.
 pub(super) fn record_url_hits(
     app: &mut App,
@@ -629,9 +1457,25 @@ pub(super) fn record_url_hits(
     area: Rect,
     alignment: Alignment,
 ) {
+    record_url_hits_with_policy(app, id, body, status, area, alignment, false);
+}
+
+fn record_url_hits_with_policy(
+    app: &mut App,
+    id: &wr::MessageId,
+    body: &str,
+    status: Option<StatusLabel>,
+    area: Rect,
+    alignment: Alignment,
+    incoming_urls: bool,
+) {
     if area.is_empty() || matches!(status, Some(StatusLabel::Deleted)) {
         return;
     }
+    let projection = crate::ui::markdown::Markdown::new(body, None)
+        .project_with_incoming_urls(body, incoming_urls);
+    let body = projection.text.as_str();
+    let mut targets = Vec::new();
     let mut search_from = 0;
     for url in crate::url::extract_openable_urls(body) {
         let Some(offset) = body[search_from..].find(&url) else {
@@ -639,10 +1483,28 @@ pub(super) fn record_url_hits(
         };
         let start = search_from + offset;
         search_from = start + url.len();
+        // A URL-looking label belongs to its explicit destination, not to the
+        // URL extractor. Bare URLs and URLs in literal/code text keep that path.
+        if projection.links.iter().any(|link| {
+            link.ranges
+                .iter()
+                .any(|range| range.start < search_from && range.end > start)
+        }) {
+            continue;
+        }
+        targets.push((vec![start..search_from], url));
+    }
+    targets.extend(
+        projection
+            .links
+            .into_iter()
+            .map(|link| (link.ranges, link.url)),
+    );
+    for (ranges, url) in targets {
         let mut probe = Buffer::empty(Rect::new(0, 0, area.width, area.height));
         Paragraph::new(inline_content_lines(
             body,
-            &[start..search_from],
+            &ranges,
             status,
             area.width as usize,
         ))
@@ -694,6 +1556,33 @@ fn render_message(
     media_render_plan: &mut MediaRenderPlan,
     render_image: bool,
     text_mode: MessageTextMode,
+) {
+    let window = crate::ui::native_link_preview::PaintWindow::direct(buf.area, buf.area);
+    render_message_with_window(
+        buf,
+        message,
+        is_selected,
+        author_group,
+        app,
+        area,
+        media_render_plan,
+        render_image,
+        text_mode,
+        window,
+    );
+}
+
+fn render_message_with_window(
+    buf: &mut Buffer,
+    message: &wr::Message,
+    is_selected: bool,
+    author_group: AuthorGroupContext,
+    app: &mut App,
+    area: Rect,
+    media_render_plan: &mut MediaRenderPlan,
+    render_image: bool,
+    text_mode: MessageTextMode,
+    native_window: crate::ui::native_link_preview::PaintWindow,
 ) {
     let is_pending = App::is_pending_message_id(&message.info.id);
     let alignment = match &message.message {
@@ -847,13 +1736,16 @@ fn render_message(
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
-            let lines = inline_content_lines_with_highlights(
+            let incoming_urls = text_mode.incoming_urls(message);
+            let lines = message_helpers::message_text_lines(
                 text,
                 &mention_ranges,
                 status,
                 content_area.width as usize,
                 &highlight_ranges,
+                incoming_urls,
             );
+            let body_height = lines.len().min(u16::MAX as usize) as u16;
             Paragraph::new(lines)
                 .style(if is_pending {
                     Style::default().dim()
@@ -862,7 +1754,31 @@ fn render_message(
                 })
                 .alignment(alignment)
                 .render(content_area, buf);
-            record_url_hits(app, &message.info.id, text, status, content_area, alignment);
+            record_url_hits_with_policy(
+                app,
+                &message.info.id,
+                text,
+                status,
+                content_area,
+                alignment,
+                incoming_urls,
+            );
+            let native_area = Rect::new(
+                content_area.x,
+                content_area.y.saturating_add(body_height),
+                content_area.width,
+                content_area.height.saturating_sub(body_height),
+            );
+            crate::ui::native_link_preview::render(
+                buf,
+                app,
+                message,
+                text_mode,
+                native_area,
+                native_window,
+                render_image,
+                media_render_plan,
+            );
         }
         wr::MessageContent::File(data) => {
             render_file(
@@ -941,7 +1857,12 @@ pub fn render_messages_with_plan(
     let optimistic_items = app.pending_messages_for_chat(&chat_jid);
     let notice_height = u16::from(banner.is_some());
     let pending_height = u16::from(pending > 0);
-    let optimistic_height = pending_tail_height(app, &optimistic_items, area.width as usize);
+    let optimistic_height = pending_tail_height(
+        app,
+        &optimistic_items,
+        area.width as usize,
+        MessageTextMode::Chat,
+    );
     let notice_area = Rect::new(area.x, area.y, area.width, notice_height);
     let list_area = Rect::new(
         area.x,
@@ -1033,7 +1954,12 @@ pub fn render_messages_with_plan(
     result
 }
 
-fn pending_tail_height(app: &mut App, items: &[wr::Message], width: usize) -> u16 {
+fn pending_tail_height(
+    app: &mut App,
+    items: &[wr::Message],
+    width: usize,
+    text_mode: MessageTextMode,
+) -> u16 {
     let groups = items
         .iter()
         .enumerate()
@@ -1045,8 +1971,14 @@ fn pending_tail_height(app: &mut App, items: &[wr::Message], width: usize) -> u1
         .iter()
         .enumerate()
         .map(|(index, message)| {
-            message_height(message, width, false, groups[index], app)
-                + spacing_after_message(index, &groups, None)
+            message_layout_integration::message_height_with_mode(
+                message,
+                width,
+                false,
+                groups[index],
+                app,
+                text_mode,
+            ) + spacing_after_message(index, &groups, None)
         })
         .sum::<usize>()
         .min(u16::MAX as usize) as u16
@@ -1074,8 +2006,14 @@ fn render_pending_tail(
         .iter()
         .enumerate()
         .map(|(index, message)| {
-            message_height(message, area.width as usize, false, groups[index], app)
-                + spacing_after_message(index, &groups, None)
+            message_layout_integration::message_height_with_mode(
+                message,
+                area.width as usize,
+                false,
+                groups[index],
+                app,
+                text_mode,
+            ) + spacing_after_message(index, &groups, None)
         })
         .collect::<Vec<_>>();
     let newest = items.len() - 1;
@@ -1139,7 +2077,9 @@ pub fn render_own_status_messages(
     area: Rect,
 ) {
     let pending = app.pending_own_status_messages();
-    let pending_height = pending_tail_height(app, &pending, area.width as usize).min(area.height);
+    let pending_height =
+        pending_tail_height(app, &pending, area.width as usize, MessageTextMode::Status)
+            .min(area.height);
     let list_area = Rect::new(
         area.x,
         area.y,
@@ -1258,12 +2198,14 @@ fn render_message_items(
     app.mouse_hit_map.message_list = Some(list_area);
     let width = list_area.width as isize;
     let selection_started = app.message_list_phase_started();
+    message_layout_integration::refresh_native_heights(app, text_mode);
     let (start_index, y) = message_list_reconciliation::reconcile(
         app,
         list_area,
         &items,
         &author_groups,
         unread_count,
+        text_mode,
     );
     app.finish_message_list_phase(
         crate::app::runtime_diagnostics::Phase::MessageSelectionReconciliation,

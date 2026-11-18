@@ -471,13 +471,14 @@ fn clicking_only_a_painted_url_opens_the_clicked_message_not_the_previous_select
         ui::navigation_areas(terminal.backend().buffer().area, app.pane_visibility).conversation;
     let painted = |needle: &str, terminal: &Terminal<TestBackend>| {
         let buffer = terminal.backend().buffer();
+        let width = needle.chars().count();
         (conversation.top()..conversation.bottom())
             .flat_map(|y| {
-                (conversation.left()..conversation.right().saturating_sub(needle.len() as u16))
+                (conversation.left()..conversation.right().saturating_sub(width as u16))
                     .map(move |x| (x, y))
             })
             .find(|&(x, y)| {
-                (0..needle.len())
+                (0..width)
                     .map(|dx| buffer[(x + dx as u16, y)].symbol())
                     .collect::<String>()
                     == needle
@@ -507,7 +508,7 @@ fn clicking_only_a_painted_url_opens_the_clicked_message_not_the_previous_select
 
     app.message_list_state.set_selected_message("older".into());
     draw(&mut app, &mut terminal);
-    let link = painted("https://clicked.example.test/path", &terminal);
+    let link = painted("clicked.example.test · path", &terminal);
     app.on_terminal_event(mouse(
         MouseEventKind::Down(MouseButton::Left),
         link.0 + 8,
@@ -996,7 +997,7 @@ fn a_clipped_url_opens_only_from_its_painted_cells_and_not_beneath_a_modal() {
         .iter()
         .enumerate()
         .find_map(|(row, line)| {
-            line.find("https://clip.test/x")
+            line.find("clip.test · x")
                 .map(|byte| (row, line[..byte].chars().count()))
         })
         .expect("URL must actually be painted in the clipped message");

@@ -63,6 +63,10 @@ pub mod message_opening;
 pub mod message_push_name_port;
 pub mod message_reactions;
 pub(crate) mod mouse_input;
+pub mod native_link_previews;
+#[cfg(test)]
+mod native_link_thumbnail_tests;
+pub(crate) mod native_link_thumbnails;
 pub mod navigation_conversation_dispatch;
 pub mod news;
 pub(crate) mod news_star;
@@ -228,6 +232,9 @@ pub struct App<'a> {
     pub notifier: Box<dyn Notifier>,
 
     pub messages: HashMap<wr::MessageId, wr::Message>,
+    pub(crate) native_link_previews:
+        HashMap<wr::MessageId, native_link_previews::NativeLinkPreviewRecord>,
+    pub(crate) native_link_thumbnails: native_link_thumbnails::NativeLinkThumbnails,
     pub message_actions: HashMap<wr::MessageId, Vec<MessageAction>>,
     local_action_sequence: u64,
     message_action_diagnostics: MessageActionDiagnostics,
@@ -566,7 +573,12 @@ impl App<'_> {
     }
 
     pub fn run(&mut self, phone: Option<String>) {
-        runtime_startup::run(self, phone);
+        self.try_run(phone)
+            .expect("Could not hydrate persisted chat history");
+    }
+
+    pub fn try_run(&mut self, phone: Option<String>) -> rusqlite::Result<()> {
+        runtime_startup::run(self, phone)
     }
 
     pub(crate) fn record_phase<T>(&mut self, phase: Phase, work: impl FnOnce(&mut Self) -> T) -> T {

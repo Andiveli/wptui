@@ -59,7 +59,12 @@ fn main() {
     app.enable_presence_diagnostics(presence_debug_enabled(
         std::env::var("WPTUI_PRESENCE_DEBUG").ok().as_deref(),
     ));
-    app.run(args.phone);
+    if let Err(error) = app.try_run(args.phone) {
+        eprintln!("wp-tui: could not hydrate persisted chat history: {error}");
+        app.db_handler.stop();
+        drop(app);
+        std::process::exit(1);
+    }
     let restart = app.take_restart_path();
     // Runtime shutdown restored the terminal and disconnected, never logged out.
     // Dropping App joins its owned workers before replacing this process image.

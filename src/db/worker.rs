@@ -21,7 +21,7 @@ struct QueueState {
 enum Command {
     Message(wr::Message),
     Chat(Chat),
-    ChatMessage(Chat, wr::Message),
+    ChatMessage(Chat, wr::Message, Option<wr::NativeLinkPreview>),
 }
 
 impl QueueHandle {
@@ -41,7 +41,16 @@ impl QueueHandle {
     }
 
     pub(super) fn queue_chat_message(&self, chat: Chat, message: wr::Message) {
-        self.enqueue(Command::ChatMessage(chat, message));
+        self.queue_chat_message_with_preview(chat, message, None);
+    }
+
+    pub(super) fn queue_chat_message_with_preview(
+        &self,
+        chat: Chat,
+        message: wr::Message,
+        preview: Option<wr::NativeLinkPreview>,
+    ) {
+        self.enqueue(Command::ChatMessage(chat, message, preview));
     }
 }
 
@@ -69,32 +78,40 @@ impl Worker {
                     let mut state = thread_queue.state.lock().unwrap();
                     std::mem::take(&mut state.commands)
                 };
-                let mut chats = Vec::new();
-                let mut messages = Vec::new();
-                let mut chat_messages = Vec::new();
-                for command in commands {
+                // Preserve enqueue order across command kinds. An action's
+                // message writeback must follow its original chat/message write:
+                // pending edit bodies are cleared once materialized, so replaying
+                // the original afterwards would restore stale text. Batch only
+                // adjacent commands of the same kind, never across another kind.
+                let mut commands = commands.into_iter().peekable();
+                while let Some(command) = commands.next() {
+                    let _write_lock = DATABASE_WRITE_LOCK.lock().unwrap();
                     match command {
-                        Command::Chat(chat) => chats.push(chat),
-                        Command::Message(message) => messages.push(message),
-                        Command::ChatMessage(chat, message) => {
-                            chat_messages.push((chat, message));
+                        Command::Chat(chat) => {
+                            let mut chats = vec![chat];
+                            while let Some(Command::Chat(chat)) =
+                                commands.next_if(|command| matches!(command, Command::Chat(_)))
+                            {
+                                chats.push(chat);
+                            }
+                            debug!("Saving {} new chats to the database", chats.len());
+                            chat_store::persist(&mut db, chats);
+                        }
+                        Command::Message(message) => {
+                            let mut messages = vec![message];
+                            while let Some(Command::Message(message)) =
+                                commands.next_if(|command| matches!(command, Command::Message(_)))
+                            {
+                                messages.push(message);
+                            }
+                            debug!("Saving {} new messages to the database", messages.len());
+                            message_store::persist(&mut db, messages);
+                        }
+                        Command::ChatMessage(chat, message, preview) => {
+                            debug!("Saving a new chat and message to the database");
+                            persist_chat_message_with_preview(&mut db, chat, message, preview);
                         }
                     }
-                }
-                if !chats.is_empty() {
-                    debug!("Saving {} new chats to the database", chats.len());
-                    let _write_lock = DATABASE_WRITE_LOCK.lock().unwrap();
-                    chat_store::persist(&mut db, chats);
-                }
-                if !messages.is_empty() {
-                    debug!("Saving {} new messages to the database", messages.len());
-                    let _write_lock = DATABASE_WRITE_LOCK.lock().unwrap();
-                    message_store::persist(&mut db, messages);
-                }
-                for (chat, message) in chat_messages {
-                    debug!("Saving a new chat and message to the database");
-                    let _write_lock = DATABASE_WRITE_LOCK.lock().unwrap();
-                    persist_chat_message(&mut db, chat, message);
                 }
                 let should_stop = {
                     let state = thread_queue.state.lock().unwrap();
@@ -137,12 +154,25 @@ impl Worker {
     }
 }
 
+#[cfg(test)]
 fn persist_chat_message(db: &mut rusqlite::Connection, chat: Chat, message: wr::Message) {
+    persist_chat_message_with_preview(db, chat, message, None);
+}
+
+fn persist_chat_message_with_preview(
+    db: &mut rusqlite::Connection,
+    chat: Chat,
+    message: wr::Message,
+    preview: Option<wr::NativeLinkPreview>,
+) {
     let tx = db
         .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .unwrap();
     chat_store::persist_in_transaction(&tx, vec![chat]);
-    message_store::persist_in_transaction(&tx, vec![message]);
+    message_store::persist_in_transaction(&tx, vec![message.clone()]);
+    if let Some(preview) = preview {
+        message_store::persist_native_link_preview(&tx, &message, preview);
+    }
     tx.commit().unwrap();
 }
 

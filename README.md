@@ -43,11 +43,79 @@ and yellow **Archived** label signal an unread mention or reply to your message
 in an archived group; ordinary archived chats and other group messages do not
 trigger it. Reading that group clears the alert.
 
+## Message formatting
+
+Messages and attachment captions render WhatsApp formatting locally: `*bold*`,
+`_italic_`, `~strikethrough~`, inline backticks, triple-backtick code, quotes,
+and lists. wptui also recognizes `**bold**`, `__bold__`, `~~strikethrough~~`,
+`# headings`, and `[label](https://example.com)` links. Headings and quotes also
+recognize markers after up to three leading ASCII spaces, preserving indentation
+in the display projection and original source. Labeled links show only an
+underlined label; clicking it opens the original URL. The active composer
+fragment reveals the link source for editing. Formatting never fetches content
+or opens a link automatically.
+
+Incoming and outgoing chat text display bare HTTP(S) URLs as the complete host
+(including subdomains and any port) plus the final nonempty path segment: for example,
+`https://github.com/Andiveli/wptui` becomes `github.com · wptui`, while
+`https://example.com/` becomes `example.com`. Query strings and fragments are
+omitted from the label, not the click destination; path segments are not decoded.
+Ambiguous or unsupported authorities remain raw. This helps you inspect the host,
+but is not phishing detection or a safety guarantee. No site or title is fetched.
+Explicit Markdown links retain the author's chosen label rather than a URL label.
+The composer, statuses, captions, reply summaries, system text, code, and literal
+image syntax keep their existing display.
+
+When WhatsApp supplies native preview metadata for an eligible incoming or outgoing
+chat link, bare or explicit Markdown, a compact preview below the body shows its
+title and description literally (not as Markdown). Only an embedded JPEG can supply
+the thumbnail; no website, external image URL, or thumbnail direct path is fetched.
+The host/path or chosen Markdown label and exact click destination remain unchanged.
+The card binds to the original source occurrence: a protected code/image occurrence
+cannot borrow eligibility from a later matching URL. Missing or invalid metadata
+keeps the normal link presentation. Optimistic desktop sends may lack metadata;
+synced phone-sent messages can carry it. wptui does not generate preview metadata.
+Thumbnail work is automatic only while its entire reserved image area is visible
+and not covered by a popup; selection and keyboard focus do not
+trigger loading. Loading or unusable images keep the same reserved geometry and
+leave the text and original link usable. The preview adds no clickable card action.
+
+Formatting changes only the local display. Sending, editing, copying, and searching
+still use the original text; other WhatsApp clients display the syntax they support.
+The composer previews the same formatting while you type. Markers reappear in
+the fragment containing the cursor, so you can edit them directly; outside that
+fragment they do not occupy columns. Drawing, wrapping, and arrow-key navigation
+share the source-to-display mapping, including Unicode and right-to-left text.
+
+Incomplete markers and unsupported Markdown remain literal. Code is displayed
+without interpreting formatting inside it. Terminal font support determines whether
+italic and strikethrough styles are visible.
+
 ## Data
 
 Your WhatsApp data — database, media, and session — lives in `~/.local/share/wptui/` on your
 machine. It is not uploaded anywhere; the client only exchanges data with the WhatsApp servers
 when it links or syncs, like any official client.
+
+Startup reads chats, contacts, messages, reactions, and native link-preview metadata
+as one SQLite snapshot before applying that history to the app. If hydration fails
+(for example, an exhausted SQLite lock wait), `wp-tui` prints
+`wp-tui: could not hydrate persisted chat history: <error>` and exits with status 1
+without connecting to WhatsApp or opening the terminal UI. It does not treat a
+failed read as empty or partially loaded history, retry it, or extend the existing
+SQLite busy timeout. This error alone does not identify which connection holds a lock.
+
+Incoming and outgoing chat text can retain WhatsApp-supplied link-preview metadata
+in a separate local database table; old messages without metadata load normally.
+Native metadata is optional and is displayed only for eligible plain or explicit
+Markdown chat links in either direction: no website, external image URL, or thumbnail
+direct path is fetched. Titles are
+limited to 2,048 UTF-8 bytes, descriptions to 8,192 bytes, and embedded thumbnails
+to 256 KiB; an oversized image is omitted without discarding valid text metadata.
+Unsafe or mismatched text metadata is ignored without changing the message or its
+click destination. Editing or deleting a message clears its preview metadata.
+Receive adjuncts and app-owned preview state are bounded (64 and 256 entries,
+respectively); valid persisted metadata remains associated with its message.
 
 Preferences live in your OS configuration directory (`~/.config/wptui/settings.conf` on Linux).
 An existing `settings.conf` in the data directory is copied there on first use if no config
@@ -560,6 +628,13 @@ removes the local row, but does not itself prove removal from every recipient's 
 | Reaction picker | Move / confirm | `j`/`k` or Up/Down arrows / `Enter` |
 | Media viewer | Previous / next | `h`/`l` or arrows |
 | Media viewer | Save image or video as a file | `s` opens folder picker; `j`/`k` or Up/Down selects, `h`/Left goes up, `l`/Right opens folder, `/` filters folders; `Enter` edits basename, `Enter` saves; `Esc` leaves search/editing before closing |
+
+In an editable Chats/Communities composer (including Vim Insert and message editing),
+terminal paste inserts the complete text block at the cursor, preserving line breaks without
+sending. Press `Enter` separately to submit. Bracketed paste is enabled only while that
+composer owns editable input; search and other screens keep their existing input behavior.
+If the terminal delivers `Ctrl+V` as a key instead, the existing clipboard text/file/image
+handling still applies.
 
 Save As starts in the app's current working directory. Browse folders in the viewer, then edit the
 separate proposed basename and confirm. The extension is displayed but fixed from the source

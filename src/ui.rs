@@ -4,7 +4,9 @@ pub(crate) mod contact_info;
 pub mod contact_list;
 mod contacts;
 pub(crate) mod layout;
+pub(crate) mod markdown;
 pub mod message_list;
+mod native_link_preview;
 mod navigation;
 mod news;
 mod phone_lookup_observation;
@@ -162,6 +164,61 @@ pub fn draw_with_plan(
     phone_lookup_observation::render(frame, app);
 }
 
+fn keybind_overlay_area(frame: Rect, width: u16, rows: usize) -> Rect {
+    let width = width.min(frame.width.saturating_sub(2));
+    let height = (rows as u16 + 2).min(frame.height.saturating_sub(2));
+    Rect::new(
+        frame.x + frame.width.saturating_sub(width) / 2,
+        frame.y + frame.height.saturating_sub(height) / 2,
+        width,
+        height,
+    )
+}
+
+/// Only actual painted overlays occlude native thumbnails, never keyboard focus.
+fn native_image_occluded(app: &App, frame: Rect, image: Rect) -> bool {
+    let overlaps = |area: Rect| !area.intersection(image).is_empty();
+    if app.phone_lookup_observation.is_some() && overlaps(centered_modal_layout(frame)) {
+        return true;
+    }
+    let keybind = if app.shortcut_popup {
+        Some(keybind_overlay_area(frame, 42, canonical_shortcuts().len()))
+    } else if let Some((rows, _)) = &app.reaction_picker {
+        Some(keybind_overlay_area(frame, 18, rows.len()))
+    } else if let Some((rows, _)) = &app.contextual_menu {
+        Some(keybind_overlay_area(frame, 46, rows.len()))
+    } else {
+        app.leader_menu
+            .as_ref()
+            .map(|(rows, _)| keybind_overlay_area(frame, 42, rows.len()))
+    };
+    if keybind.is_some_and(overlaps) {
+        return true;
+    }
+    if let Some(viewer) = &app.attachment_viewer {
+        if overlaps(viewer_preview_layout(frame, app.viewer_zoom).modal)
+            || viewer.save_as.is_some() && overlaps(centered_modal_layout(frame))
+        {
+            return true;
+        }
+    }
+    if (app.url_picker.is_some() || app.share_picker.is_some() || app.file_picker.is_some())
+        && overlaps(centered_modal_layout(frame))
+    {
+        return true;
+    }
+    if app.open_chat().is_some() && !app.composer_blocked() && app.composer.mention_picker_active()
+    {
+        let (_, body) = chat_filter_areas(frame, show_chat_filter_header(app));
+        let conversation = navigation_areas(body, app.pane_visibility).conversation;
+        let (chat, composer) = chat_content_areas(app, Block::bordered().inner(conversation));
+        if mention_picker_area(app, chat, composer).is_some_and(overlaps) {
+            return true;
+        }
+    }
+    false
+}
+
 fn render_keybind_overlays(frame: &mut Frame, app: &App) {
     if app.shortcut_popup {
         let entries = canonical_shortcuts();
@@ -169,14 +226,7 @@ fn render_keybind_overlays(frame: &mut Frame, app: &App) {
             .iter()
             .map(|(key, action)| Line::raw(format!("{key:<12} {action}")))
             .collect::<Vec<_>>();
-        let width = 42.min(frame.area().width.saturating_sub(2));
-        let height = (lines.len() as u16 + 2).min(frame.area().height.saturating_sub(2));
-        let area = Rect::new(
-            frame.area().x + frame.area().width.saturating_sub(width) / 2,
-            frame.area().y + frame.area().height.saturating_sub(height) / 2,
-            width,
-            height,
-        );
+        let area = keybind_overlay_area(frame.area(), 42, lines.len());
         frame.render_widget(Clear, area);
         frame.render_widget(
             Paragraph::new(lines).block(
@@ -193,14 +243,7 @@ fn render_keybind_overlays(frame: &mut Frame, app: &App) {
             .into_iter()
             .map(Line::raw)
             .collect::<Vec<_>>();
-        let width = 18.min(frame.area().width.saturating_sub(2));
-        let height = (lines.len() as u16 + 2).min(frame.area().height.saturating_sub(2));
-        let area = Rect::new(
-            frame.area().x + frame.area().width.saturating_sub(width) / 2,
-            frame.area().y + frame.area().height.saturating_sub(height) / 2,
-            width,
-            height,
-        );
+        let area = keybind_overlay_area(frame.area(), 18, lines.len());
         frame.render_widget(Clear, area);
         frame.render_widget(
             Paragraph::new(lines).block(
@@ -236,14 +279,7 @@ fn render_keybind_overlays(frame: &mut Frame, app: &App) {
                 )
             })
             .collect::<Vec<_>>();
-        let width = 46.min(frame.area().width.saturating_sub(2));
-        let height = (lines.len() as u16 + 2).min(frame.area().height.saturating_sub(2));
-        let area = Rect::new(
-            frame.area().x + frame.area().width.saturating_sub(width) / 2,
-            frame.area().y + frame.area().height.saturating_sub(height) / 2,
-            width,
-            height,
-        );
+        let area = keybind_overlay_area(frame.area(), 46, lines.len());
         frame.render_widget(Clear, area);
         frame.render_widget(
             Paragraph::new(lines).block(
@@ -277,14 +313,7 @@ fn render_keybind_overlays(frame: &mut Frame, app: &App) {
                 )
             })
             .collect::<Vec<_>>();
-        let width = 42.min(frame.area().width.saturating_sub(2));
-        let height = (lines.len() as u16 + 2).min(frame.area().height.saturating_sub(2));
-        let area = Rect::new(
-            frame.area().x + frame.area().width.saturating_sub(width) / 2,
-            frame.area().y + frame.area().height.saturating_sub(height) / 2,
-            width,
-            height,
-        );
+        let area = keybind_overlay_area(frame.area(), 42, lines.len());
         frame.render_widget(Clear, area);
         frame.render_widget(
             Paragraph::new(lines).block(
@@ -361,6 +390,41 @@ fn empty_chat_lines(update_notice: Option<&str>) -> Vec<Line<'static>> {
     }
 
     lines
+}
+
+/// Shared with native occlusion checks so mention-popup geometry is identical.
+fn chat_content_areas(app: &App, inner: Rect) -> (Rect, Rect) {
+    let composer_width = inner.width.saturating_sub(2);
+    let blocked = app.composer_blocked();
+    let layout = if blocked {
+        composer_visual_layout_with_direction(&[], composer_width, app.composer_direction)
+    } else {
+        app.composer
+            .visual_layout(app.composer_direction, composer_width)
+    };
+    let cursor = app
+        .composer
+        .visual_cursor(composer_width, app.composer_direction);
+    let rows = layout.row_count().max(cursor.0 + 1);
+    conversation_areas(
+        inner,
+        if blocked { 1 } else { rows },
+        if blocked {
+            0
+        } else {
+            usize::from(app.composer.quote.is_some())
+        },
+        if blocked {
+            0
+        } else {
+            app.composer.pending.len()
+                + crate::app::composer_preview::preview_rows(
+                    &app.composer.pending,
+                    composer_width,
+                    inner.height,
+                )
+        },
+    )
 }
 
 pub fn render_chats_with_plan(
@@ -465,42 +529,11 @@ pub fn render_chats_with_plan(
     let inner = outer_block.inner(area);
     frame.render_widget(outer_block, area);
 
-    let composer_width = inner.width.saturating_sub(2);
     let composer_blocked = app.composer_blocked();
-    let composer_layout = composer_visual_layout_with_direction(
-        if composer_blocked {
-            &[]
-        } else {
-            app.composer.input.lines()
-        },
-        composer_width,
-        app.composer_direction,
-    );
-    let composer_cursor = app
-        .composer
-        .visual_cursor(composer_width, app.composer_direction);
-    let composer_rows = composer_layout.row_count().max(composer_cursor.0 + 1);
-    let (chat_area, composer_area) = conversation_areas(
-        inner,
-        if composer_blocked { 1 } else { composer_rows },
-        if composer_blocked {
-            0
-        } else {
-            usize::from(app.composer.quote.is_some())
-        },
-        if composer_blocked {
-            0
-        } else {
-            app.composer.pending.len()
-                + crate::app::composer_preview::preview_rows(
-                    &app.composer.pending,
-                    composer_width,
-                    inner.height,
-                )
-        },
-    );
+    let (chat_area, composer_area) = chat_content_areas(app, inner);
 
     let mut history_area = chat_area;
+
     if let Some(search) = &app.conversation_search
         && app.open_chat.as_ref() == Some(&search.chat)
         && app.focus_pane == FocusPane::Conversation
@@ -720,11 +753,9 @@ pub(super) fn render_composer(
         }
 
         let composer_width = area.width.saturating_sub(2);
-        let composer_layout = composer_visual_layout_with_direction(
-            app.composer.input.lines(),
-            composer_width,
-            app.composer_direction,
-        );
+        let composer_layout = app
+            .composer
+            .visual_layout(app.composer_direction, composer_width);
         let composer_cursor = app
             .composer
             .visual_cursor(composer_width, app.composer_direction);
@@ -832,6 +863,40 @@ mod composer_focus_tests {
         actions::{ConversationMode, FocusPane, Section},
         test_support::TestApp,
     };
+
+    #[test]
+    fn composer_paints_live_styles_at_wide_and_narrow_terminal_sizes() {
+        use crate::app::actions::StatusCompositionState;
+        use ratatui::style::Modifier;
+        for (width, height) in [(80, 24), (140, 40), (180, 50)] {
+            let mut app = TestApp::new();
+            app.selected_section = Section::Status;
+            app.status_composition = StatusCompositionState::Authoring;
+            app.focus_pane = FocusPane::Conversation;
+            let source = "*one* **two** tail";
+            app.composer.insert_text(source);
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|frame| {
+                    render_composer(
+                        frame,
+                        &mut app,
+                        Rect::new(0, 0, width, 4),
+                        " Compose ",
+                        None,
+                        None,
+                    );
+                })
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            let row = (1..width - 1)
+                .map(|x| buffer[(x, 1)].symbol())
+                .collect::<String>();
+            assert!(row.starts_with("one two tail"), "{row}");
+            assert!(buffer[(1, 1)].modifier.contains(Modifier::BOLD));
+            assert_eq!(app.composer.text(), source);
+        }
+    }
 
     #[test]
     fn ordinary_chat_composer_preserves_its_focus_colors() {
@@ -1096,18 +1161,22 @@ mod update_notice_tests {
     }
 }
 
-fn render_mention_picker(frame: &mut Frame, app: &App, conversation: Rect, composer: Rect) {
+fn mention_picker_area(app: &App, conversation: Rect, composer: Rect) -> Option<Rect> {
     let labels = app.composer.mention_picker_labels();
     if labels.is_empty() {
-        return;
+        return None;
     }
     let widest = labels
         .iter()
         .map(|label| textwrap::core::display_width(format!("@{label}").as_str()))
         .max()
         .unwrap_or(0);
-    let Some(area) = composer_mention_picker_area(conversation, composer, labels.len(), widest)
-    else {
+    composer_mention_picker_area(conversation, composer, labels.len(), widest)
+}
+
+fn render_mention_picker(frame: &mut Frame, app: &App, conversation: Rect, composer: Rect) {
+    let labels = app.composer.mention_picker_labels();
+    let Some(area) = mention_picker_area(app, conversation, composer) else {
         return;
     };
     let visible_count = usize::from(area.height.saturating_sub(2))

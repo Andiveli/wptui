@@ -3,7 +3,9 @@ use whatsrust as wr;
 
 use crate::app::App;
 
-use super::{AuthorGroupContext, message_layout_integration, spacing_after_message};
+use super::{
+    AuthorGroupContext, MessageTextMode, message_layout_integration, spacing_after_message,
+};
 
 const SELECTION_PADDING: usize = 4;
 
@@ -13,6 +15,7 @@ pub(super) fn reconcile(
     items: &[wr::MessageId],
     author_groups: &[AuthorGroupContext],
     unread_count: usize,
+    text_mode: MessageTextMode,
 ) -> (usize, isize) {
     let selected = reconciled_index(
         app.message_list_state.selected,
@@ -79,6 +82,7 @@ pub(super) fn reconcile(
                         app.message_list_state.selected == Some(index),
                         author_groups[index],
                         app,
+                        text_mode,
                     ) as isize;
                     cursor -= spacing_after_message(
                         index,
@@ -105,6 +109,7 @@ pub(super) fn reconcile(
                                 app.message_list_state.selected == Some(index),
                                 author_groups[index],
                                 app,
+                                text_mode,
                             )
                             + spacing_after_message(
                                 index,
@@ -121,6 +126,7 @@ pub(super) fn reconcile(
             true,
             author_groups[selected],
             app,
+            text_mode,
         );
         let low = acc_height < app.message_list_state.offset + SELECTION_PADDING;
         let high = acc_height + selected_height

@@ -5,7 +5,7 @@ use whatsrust::{self as wr, FileKind};
 
 use super::message_helpers::{
     AuthorGroupContext, ForwardingLabel, StatusLabel, forwarding_indicator_lines,
-    inline_content_lines,
+    inline_content_lines, markdown_content_lines, message_text_lines,
 };
 
 pub const IMAGE_HEIGHT: usize = 12;
@@ -21,6 +21,7 @@ enum OwnedHeightContent {
     },
     Text {
         body: Arc<str>,
+        native: Option<crate::ui::native_link_preview::OwnedSummary>,
         forwarding: Option<ForwardingLabel>,
         status: Option<StatusLabel>,
     },
@@ -34,6 +35,12 @@ enum OwnedHeightContent {
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum HeightContent<'a> {
+    NativeText {
+        body: &'a str,
+        forwarding: Option<ForwardingLabel>,
+        status: Option<StatusLabel>,
+        native: crate::ui::native_link_preview::Summary<'a>,
+    },
     Informational {
         body: &'a str,
     },
@@ -61,6 +68,7 @@ pub(crate) enum HeightFileKind {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct LayoutInput<'a> {
     pub(crate) width: usize,
+    pub(crate) incoming_urls: bool,
     pub(crate) is_selected: bool,
     pub(crate) has_quote: bool,
     pub(crate) has_reactions: bool,
@@ -75,6 +83,7 @@ struct MessageHeightEntry {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct OwnedLayoutInput {
     width: usize,
+    incoming_urls: bool,
     is_selected: bool,
     has_quote: bool,
     has_reactions: bool,
@@ -85,6 +94,7 @@ impl<'a> From<&LayoutInput<'a>> for OwnedLayoutInput {
     fn from(input: &LayoutInput<'a>) -> Self {
         Self {
             width: input.width,
+            incoming_urls: input.incoming_urls,
             is_selected: input.is_selected,
             has_quote: input.has_quote,
             has_reactions: input.has_reactions,
@@ -99,6 +109,18 @@ impl<'a> From<&LayoutInput<'a>> for OwnedLayoutInput {
                     status,
                 } => OwnedHeightContent::Text {
                     body: body.into(),
+                    native: None,
+                    forwarding,
+                    status,
+                },
+                HeightContent::NativeText {
+                    body,
+                    forwarding,
+                    status,
+                    native,
+                } => OwnedHeightContent::Text {
+                    body: body.into(),
+                    native: Some(native.into()),
                     forwarding,
                     status,
                 },
@@ -122,6 +144,7 @@ impl<'a> From<&LayoutInput<'a>> for OwnedLayoutInput {
 impl OwnedLayoutInput {
     fn matches(&self, input: &LayoutInput<'_>) -> bool {
         self.width == input.width
+            && self.incoming_urls == input.incoming_urls
             && self.is_selected == input.is_selected
             && self.has_quote == input.has_quote
             && self.has_reactions == input.has_reactions
@@ -134,6 +157,7 @@ impl OwnedLayoutInput {
                 (
                     OwnedHeightContent::Text {
                         body,
+                        native: None,
                         forwarding,
                         status,
                     },
@@ -144,6 +168,25 @@ impl OwnedLayoutInput {
                     },
                 ) => {
                     body.as_ref() == other
+                        && *forwarding == other_forwarding
+                        && *status == other_status
+                }
+                (
+                    OwnedHeightContent::Text {
+                        body,
+                        native: Some(native),
+                        forwarding,
+                        status,
+                    },
+                    HeightContent::NativeText {
+                        body: other,
+                        native: other_native,
+                        forwarding: other_forwarding,
+                        status: other_status,
+                    },
+                ) => {
+                    body.as_ref() == other
+                        && native.matches(other_native)
                         && *forwarding == other_forwarding
                         && *status == other_status
                 }
@@ -199,6 +242,29 @@ impl MessageHeightCache {
 
     pub fn measurement_count(&self) -> u64 {
         self.measurements
+    }
+
+    pub(super) fn cached_ids(&self) -> Vec<wr::MessageId> {
+        self.entries.keys().cloned().collect()
+    }
+
+    pub(super) fn native_matches(
+        &self,
+        id: &wr::MessageId,
+        summary: Option<crate::ui::native_link_preview::Summary<'_>>,
+    ) -> bool {
+        let cached = self
+            .entries
+            .get(id)
+            .and_then(|entry| match &entry.input.content {
+                OwnedHeightContent::Text { native, .. } => native.as_ref(),
+                _ => None,
+            });
+        match (cached, summary) {
+            (Some(cached), Some(summary)) => cached.matches(summary),
+            (None, None) => true,
+            _ => false,
+        }
     }
 
     pub fn invalidate(&mut self, id: &wr::MessageId) {
@@ -280,9 +346,19 @@ pub(crate) fn height(
             body,
             status,
             forwarding,
+        }
+        | HeightContent::NativeText {
+            body,
+            status,
+            forwarding,
+            ..
         } => {
-            inline_content_lines(body, &[], *status, content_width).len()
+            message_text_lines(body, &[], *status, content_width, &[], input.incoming_urls).len()
                 + forwarding_indicator_lines(*forwarding, content_width)
+                + match input.content {
+                    HeightContent::NativeText { native, .. } => native.height(content_width),
+                    _ => 0,
+                }
         }
         HeightContent::File {
             kind,
@@ -293,7 +369,7 @@ pub(crate) fn height(
         } => {
             let caption_height = caption.as_ref().map_or_else(
                 || inline_content_lines("", &[], *status, content_width).len(),
-                |caption| inline_content_lines(caption, &[], *status, content_width).len(),
+                |caption| markdown_content_lines(caption, &[], *status, content_width, &[]).len(),
             );
             let file_height = match kind {
                 // Reserve media geometry independently of the asynchronous
@@ -334,6 +410,7 @@ mod tests {
     fn text(body: &str) -> LayoutInput<'_> {
         LayoutInput {
             width: 20,
+            incoming_urls: false,
             is_selected: false,
             has_quote: false,
             has_reactions: false,
@@ -344,6 +421,16 @@ mod tests {
                 status: None,
             },
         }
+    }
+
+    #[test]
+    fn markdown_message_height_measures_visible_text() {
+        let input = LayoutInput {
+            width: 5,
+            ..text("**hello**")
+        };
+        let mut cache = MessageHeightCache::default();
+        assert_eq!(height(&mut cache, &Arc::from("markdown"), &input), 2);
     }
 
     #[test]

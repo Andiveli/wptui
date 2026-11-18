@@ -22,6 +22,61 @@ pub(crate) struct TestApp {
     _dir: tempfile::TempDir,
 }
 
+/// Disposable native-preview state with no terminal-capability query.
+pub(crate) struct FixedPickerApp {
+    pub(crate) app: App<'static>,
+    _dir: tempfile::TempDir,
+}
+
+impl FixedPickerApp {
+    pub(crate) fn new() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let picker = ratatui_image::picker::Picker::halfblocks();
+        let protocol = picker.protocol_type();
+        let mut app = super::bootstrap::with_data_dir_and_picker_and_ports(
+            dir.path(),
+            dir.path(),
+            picker,
+            protocol,
+            Box::new(FixedClock::new(1_704_110_400)),
+            Box::new(RecordingNotifier::default()),
+        );
+        app.set_contact_source(Box::new(FakeContactSource::default()));
+        app.set_chat_settings_query(Box::new(FakeChatSettingsQuery::default()));
+        app.set_message_push_name(Box::new(FakeMessagePushNamePort::default()));
+        app.set_community_query(Box::new(FakeCommunityQuery::default()));
+        app.set_dm_resolver(Box::new(FakeDmResolver::default()));
+        app.set_avatar_query(Arc::new(FakeAvatarQuery::default()));
+        app.set_chat_read_sync(Box::new(RecordingChatReadSyncPort::default()));
+        app.set_chat_read_cursor(Box::new(FakeChatReadCursorPort::default()));
+        app.db_handler.init();
+        Self { app, _dir: dir }
+    }
+}
+
+impl std::ops::Deref for FixedPickerApp {
+    type Target = App<'static>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.app
+    }
+}
+
+impl std::ops::DerefMut for FixedPickerApp {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.app
+    }
+}
+
+impl Drop for FixedPickerApp {
+    fn drop(&mut self) {
+        self.app.shutdown_avatar_runtime();
+        self.app.shutdown_read_receipt_worker();
+        self.app.shutdown_read_sync_worker();
+        self.app.db_handler.stop();
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct FixedClock(pub(crate) Option<i64>);
 

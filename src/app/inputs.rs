@@ -64,6 +64,11 @@ impl App<'_> {
         if self.handle_phone_lookup_observation_input(&event) {
             return;
         }
+        if let Event::Paste(ref text) = event {
+            // A paste block is text, never a stream of keys that could submit.
+            self.handle_terminal_paste(text);
+            return;
+        }
         if let Event::Mouse(mouse) = event {
             self.on_mouse_event(mouse);
             return;
