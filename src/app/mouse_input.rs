@@ -94,6 +94,7 @@ impl App<'_> {
             || self.phone_lookup_observation.is_some()
             || self.leader_menu.is_some()
             || self.contextual_menu.is_some()
+            || self.theme_selector.is_some()
             || self.attachment_viewer.is_some()
             || self.reaction_picker.is_some()
             || self.message_menu.is_some()

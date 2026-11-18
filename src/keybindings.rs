@@ -149,6 +149,8 @@ pub fn canonical_shortcuts() -> Vec<(String, String)> {
         })
         .collect::<Vec<_>>();
     // The contextual menu owns the third key, not the global sequence parser.
+    // Keep Themes visible even when the popup clips its lower rows.
+    shortcuts.insert(0, ("Space+a+t".into(), "Choose a theme".into()));
     shortcuts.push(("Space+a+i".into(), "Contact information".into()));
     shortcuts.push((
         "Space+a+n".into(),
@@ -272,6 +274,16 @@ mod tests {
         assert_eq!(
             resolve_sequence(&[Key::c('i')]),
             SequenceResolution::Complete(AppAction::InsertMode)
+        );
+    }
+
+    #[test]
+    fn theme_selector_help_appears_before_clipped_rows() {
+        assert_eq!(
+            canonical_shortcuts()
+                .first()
+                .map(|(key, action)| (key.as_str(), action.as_str())),
+            Some(("Space+a+t", "Choose a theme"))
         );
     }
 

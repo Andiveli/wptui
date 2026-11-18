@@ -152,7 +152,11 @@ impl App<'_> {
             return;
         }
         self.contextual_menu = None;
-        self.dispatch_action(contextual_action_to_app_action(row.action_token));
+        if row.action_token == ContextualAction::Themes {
+            self.open_theme_selector();
+        } else {
+            self.dispatch_action(contextual_action_to_app_action(row.action_token));
+        }
     }
 }
 

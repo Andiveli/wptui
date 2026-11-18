@@ -49,6 +49,55 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+## Built-in theme palette reference
+
+The UI/base color values in `src/ui/theme.rs` were adapted from the following
+modules in the locally inspected `@shikijs/themes` 4.2.0 distribution. No syntax
+highlighting rules, editor theme files, or runtime dependency are bundled.
+
+| wptui setting | Reference module / displayed variant |
+|---|---|
+| `kanagawa` | `kanagawa-wave.mjs` / Kanagawa Wave |
+| `one-dark` | `one-dark-pro.mjs` / One Dark Pro |
+| `catppuccin` | `catppuccin-mocha.mjs` / Catppuccin Mocha |
+| `tokyo-night` | `tokyo-night.mjs` / Tokyo Night |
+| `gruvbox` | `gruvbox-dark-medium.mjs` / Gruvbox Dark Medium |
+
+Distribution source: https://github.com/shikijs/shiki/tree/main/packages/themes
+
+The inspected package's `LICENSE` is MIT and states:
+
+- Copyright (c) 2021 Pine Wu
+- Copyright (c) 2023 Anthony Fu <https://github.com/antfu>
+
+The MIT permission grant, inclusion condition and warranty disclaimer reproduced
+above also accompany this reference distribution. These distribution credits do
+not replace the following upstream palette-family credits. Primary sources
+consulted for attribution are:
+
+- Kanagawa: Copyright (c) 2021 Tommaso Laurenzi; MIT License.
+  <https://github.com/rebelot/kanagawa.nvim/blob/master/LICENSE>
+- One Dark Pro: Copyright (c) 2013-2022 Binaryify; The MIT License (MIT).
+  <https://github.com/Binaryify/OneDark-Pro/blob/master/LICENSE.txt>
+- Catppuccin: Copyright (c) 2021 Catppuccin; MIT License.
+  <https://github.com/catppuccin/catppuccin/blob/main/LICENSE>
+- Tokyo Night: Copyright (c) 2018-present Enkia; The MIT License (MIT).
+  <https://github.com/tokyo-night/tokyo-night-vscode-theme/blob/master/LICENSE.txt>
+- Gruvbox: author morhetz; the upstream README declares MIT/X11.
+  <https://github.com/morhetz/gruvbox/blob/master/README.md>
+  <https://github.com/morhetz/gruvbox/blob/master/colors/gruvbox.vim>
+  No copyright year is inferred from the inspected header.
+
+The MIT permission grant, inclusion condition and warranty disclaimer reproduced
+above are retained with these MIT-licensed palette references. These links
+identify upstream families, not a verified file-by-file history of Shiki's
+converted variants. Only color values are adapted; upstream editor or plugin
+implementation code is not included.
+
+wptui's semantic-role choices are adaptations: explicit opaque surfaces, brighter
+secondary/border colors and light selected text are chosen for terminal
+readability. Theme names identify the palette families, not endorsement.
+
 ## Other dependencies
 
 Remaining Go and Rust dependencies are consumed under their respective

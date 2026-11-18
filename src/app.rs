@@ -111,6 +111,7 @@ pub mod terminal_input_translation;
 pub mod terminal_session;
 #[cfg(test)]
 pub(crate) mod test_support;
+pub(crate) mod theme_selector;
 pub mod unread_messages;
 pub mod whatsapp_events;
 
@@ -292,6 +293,9 @@ pub struct App<'a> {
     pub composer: Composer<'a>,
     pub(crate) composer_previews: composer_preview::ComposerPreviews,
     pub(crate) composer_direction: ComposerDirection,
+    pub(crate) theme: crate::ui::theme::Theme,
+    pub(crate) theme_choice: theme_selector::ThemeChoice,
+    pub(crate) theme_selector: Option<usize>,
     pub(crate) mouse_capture_enabled: bool,
     pub(crate) notifications_enabled: bool,
     pub(crate) composer_viewport_width: u16,
