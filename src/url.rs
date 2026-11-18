@@ -1,4 +1,5 @@
 use std::io;
+use std::ops::Range;
 use std::process::{Command, Stdio};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -44,6 +45,15 @@ pub fn execute_url_launch(plan: &UrlLaunchPlan) -> io::Result<()> {
 }
 
 pub fn extract_openable_urls(text: &str) -> Vec<String> {
+    extract_openable_url_ranges(text)
+        .into_iter()
+        .map(|range| text[range].to_owned())
+        .collect()
+}
+
+// Capture accepted occurrences before discarding token boundaries or trimming
+// punctuation, so display consumers never relocate a URL to a rejected token.
+pub(crate) fn extract_openable_url_ranges(text: &str) -> Vec<Range<usize>> {
     let mut urls = Vec::new();
     let bytes = text.as_bytes();
     let mut index = 0;
@@ -62,7 +72,7 @@ pub fn extract_openable_urls(text: &str) -> Vec<String> {
             .map_or(text.len(), |length| start + length);
         let candidate = trim_url_punctuation(&text[start..end]);
         if is_openable_url(candidate) {
-            urls.push(candidate.to_owned());
+            urls.push(start..start + candidate.len());
         }
         index = end.max(start + 1);
     }
@@ -130,7 +140,58 @@ fn is_openable_url(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_openable_urls, url_launch_plan};
+    use super::{extract_openable_url_ranges, extract_openable_urls, url_launch_plan};
+
+    #[test]
+    fn extractor_strings_and_ranges_preserve_token_rules() {
+        for (rule, source, expected) in [
+            (
+                "rejected prefixed duplicates",
+                "xhttp://a _http://a :http://a /http://a @http://a http://a",
+                vec![(
+                    "xhttp://a _http://a :http://a /http://a @http://a ".len(),
+                    "http://a",
+                )],
+            ),
+            (
+                "balanced punctuation and trailing sentence punctuation",
+                "(https://example.test/a_(b)).",
+                vec![(1, "https://example.test/a_(b)")],
+            ),
+            (
+                "multibyte byte offset",
+                "阿丽 👩‍💻 http://a, tail",
+                vec![("阿丽 👩‍💻 ".len(), "http://a")],
+            ),
+            (
+                "valid duplicates remain ordered",
+                "http://a http://a",
+                vec![(0, "http://a"), ("http://a ".len(), "http://a")],
+            ),
+            (
+                "validation and case sensitivity",
+                "https:// http:///bad HTTP://a http://a",
+                vec![("https:// http:///bad HTTP://a ".len(), "http://a")],
+            ),
+        ] {
+            let expected_ranges = expected
+                .iter()
+                .map(|(start, url)| *start..*start + url.len())
+                .collect::<Vec<_>>();
+            let expected_urls = expected.iter().map(|(_, url)| *url).collect::<Vec<_>>();
+            let ranges = extract_openable_url_ranges(source);
+            assert_eq!(ranges, expected_ranges, "{rule}");
+            assert_eq!(extract_openable_urls(source), expected_urls, "{rule}");
+            assert_eq!(
+                ranges
+                    .into_iter()
+                    .map(|range| &source[range])
+                    .collect::<Vec<_>>(),
+                expected_urls,
+                "{rule}"
+            );
+        }
+    }
 
     #[test]
     fn preserves_balanced_parentheses_and_trims_sentence_punctuation() {

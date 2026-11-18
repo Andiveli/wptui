@@ -139,7 +139,7 @@ pub fn format_key(key: &Key) -> String {
 }
 
 pub fn canonical_shortcuts() -> Vec<(String, String)> {
-    default_bindings()
+    let mut shortcuts = default_bindings()
         .into_iter()
         .map(|(keys, action)| {
             (
@@ -147,7 +147,16 @@ pub fn canonical_shortcuts() -> Vec<(String, String)> {
                 format!("{action:?}"),
             )
         })
-        .collect()
+        .collect::<Vec<_>>();
+    // The contextual menu owns the third key, not the global sequence parser.
+    shortcuts.push(("Space+a+i".into(), "Contact information".into()));
+    shortcuts.push((
+        "Space+a+n".into(),
+        "Toggle notifications (saved immediately)".into(),
+    ));
+    // Append so compact popups do not lose a previously visible shortcut.
+    shortcuts.push(("Space+a+t".into(), "Choose a theme".into()));
+    shortcuts
 }
 
 pub fn resolve_sequence(keys: &[Key]) -> SequenceResolution {
@@ -251,6 +260,31 @@ mod tests {
         );
         assert_eq!(format_key(&Key::c('?')), "Shift+?");
         assert_eq!(format_key(&Key::c('A')), "A");
+    }
+
+    #[test]
+    fn contact_information_help_keeps_contextual_menu_prefix_ownership() {
+        assert!(
+            canonical_shortcuts().contains(&("Space+a+i".into(), "Contact information".into(),))
+        );
+        assert_eq!(
+            resolve_sequence(&[Key::c(' '), Key::c('a')]),
+            SequenceResolution::Complete(AppAction::OpenContextualActions)
+        );
+        assert_eq!(
+            resolve_sequence(&[Key::c('i')]),
+            SequenceResolution::Complete(AppAction::InsertMode)
+        );
+    }
+
+    #[test]
+    fn theme_selector_help_is_appended_after_existing_shortcuts() {
+        assert_eq!(
+            canonical_shortcuts()
+                .last()
+                .map(|(key, action)| (key.as_str(), action.as_str())),
+            Some(("Space+a+t", "Choose a theme"))
+        );
     }
 
     #[test]

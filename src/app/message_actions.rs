@@ -227,6 +227,7 @@ impl App<'_> {
                 self.invalidate_message_preview(target);
             }
             self.messages.insert(target.clone(), message);
+            self.prune_native_link_preview(target);
         }
         if projection.invalidate_message_height {
             self.message_height_cache.invalidate(target);
@@ -375,6 +376,7 @@ impl App<'_> {
             self.invalidate_message_preview(id);
         }
         self.messages.insert(id.clone(), message.clone());
+        self.prune_native_link_preview(id);
         self.message_height_cache.invalidate(id);
         if self
             .message_actions

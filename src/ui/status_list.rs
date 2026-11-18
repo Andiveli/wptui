@@ -60,11 +60,20 @@ pub fn status_viewport(selected: usize, offset: usize, height: u16, len: usize) 
 
 pub struct StatusList<'a> {
     items: &'a [StatusListItem],
+    theme: super::theme::Theme,
 }
 
 impl<'a> StatusList<'a> {
     pub fn new(items: &'a [StatusListItem]) -> Self {
-        Self { items }
+        Self {
+            items,
+            theme: super::theme::Theme::default(),
+        }
+    }
+
+    pub fn theme(mut self, theme: super::theme::Theme) -> Self {
+        self.theme = theme;
+        self
     }
 }
 
@@ -95,9 +104,12 @@ impl StatefulWidget for StatusList<'_> {
                 continue;
             }
             let base = if item_index == selected {
-                Style::default().fg(Color::Green).bg(Color::DarkGray)
+                self.theme
+                    .selection(Style::default().fg(Color::Green).bg(Color::DarkGray))
+            } else if item.unseen {
+                self.theme.unread_style(Style::default())
             } else {
-                Style::default()
+                self.theme.base()
             };
             let marker = if item.unseen {
                 UNSEEN_MARKER

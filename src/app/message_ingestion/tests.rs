@@ -101,6 +101,91 @@ fn notification_eligibility_and_ingestion_continuation_are_preserved() {
 }
 
 #[test]
+fn disabled_notifications_skip_delivery_and_lookup_without_losing_messages() {
+    for sound in ["system", "/sounds/alert.ogg", "invalid-relative.wav"] {
+        let contents = format!("notifications=disable\nnotification_sound={sound}\n");
+        let notifier = RecordingNotifier::default();
+        let settings = FakeChatSettingsQuery::default();
+        let mut app = TestApp::with_settings_and_ports(
+            Some(&contents),
+            FixedClock::new(1_000),
+            notifier.clone(),
+        );
+        let persisted = Arc::new(Mutex::new(Vec::new()));
+        app.chat_store_write = Box::new(RecordingChatStoreWritePort {
+            persisted: persisted.clone(),
+        });
+        app.set_chat_settings_query(Box::new(settings.clone()));
+        let chat = wr::JID::from("chat@g.us".to_owned());
+        assert!(app.handle_whatsapp_event(wr::Event::SyncProgress(42)));
+
+        for (id, timestamp) in [("backlog", 999), ("startup", 1_000), ("live", 1_001)] {
+            assert!(app.process_message(message(&chat, id, timestamp), false));
+        }
+        assert!(!app.process_message(message(&chat, "history", 998), true));
+
+        assert!(settings.jids.lock().unwrap().is_empty(), "{sound}");
+        assert!(notifier.notifications.lock().unwrap().is_empty(), "{sound}");
+        assert!(
+            notifier.sound_requests.lock().unwrap().is_empty(),
+            "{sound}"
+        );
+        assert_eq!(app.pending_new_messages(&chat), 3);
+        assert_eq!(app.chats[&chat].last_message_time, Some(1_001));
+        let persisted = persisted.lock().unwrap();
+        assert_eq!(persisted.len(), 4);
+        for (index, id) in ["backlog", "startup", "live", "history"].iter().enumerate() {
+            assert_eq!(persisted[index].1.info.id.as_ref(), *id);
+            assert!(matches!(
+                &app.messages[*id].message,
+                wr::MessageContent::Text(text) if text.as_ref() == *id
+            ));
+        }
+        assert_eq!(
+            std::fs::read_to_string(&app.preferences_path).unwrap(),
+            contents
+        );
+    }
+}
+
+#[test]
+fn enabled_and_default_notification_settings_preserve_startup_sound_policy() {
+    for contents in [
+        None,
+        Some("notifications=enable\n"),
+        Some("notifications=unsupported\n"),
+        Some("unrelated=disable\n"),
+    ] {
+        let notifier = RecordingNotifier::default();
+        let settings = FakeChatSettingsQuery::default();
+        let mut app =
+            TestApp::with_settings_and_ports(contents, FixedClock::new(1_000), notifier.clone());
+        app.set_chat_settings_query(Box::new(settings.clone()));
+        let chat = wr::JID::from("chat@g.us".to_owned());
+        app.contacts.insert(chat.clone(), "Saved Group".into());
+        assert!(app.handle_whatsapp_event(wr::Event::SyncProgress(42)));
+        for (id, timestamp) in [("backlog", 999), ("startup", 1_000), ("live", 1_001)] {
+            assert!(app.process_message(message(&chat, id, timestamp), false));
+        }
+        assert_eq!(settings.jids.lock().unwrap().len(), 3, "{contents:?}");
+        assert_eq!(
+            *notifier.notifications.lock().unwrap(),
+            vec![
+                ("Saved Group".to_owned(), "backlog".to_owned()),
+                ("Saved Group".to_owned(), "startup".to_owned()),
+                ("Saved Group".to_owned(), "live".to_owned()),
+            ],
+            "{contents:?}"
+        );
+        assert_eq!(
+            *notifier.sound_requests.lock().unwrap(),
+            vec![false, true, true]
+        );
+        assert_eq!(app.pending_new_messages(&chat), 3);
+    }
+}
+
+#[test]
 fn process_message_preserves_selected_chat_after_sorting() {
     let mut app = TestApp::new();
     let first = wr::JID::from("first@g.us".to_owned());

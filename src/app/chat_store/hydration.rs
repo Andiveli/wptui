@@ -9,13 +9,19 @@ use super::hydration_port::ChatStoreHydration;
 
 impl App<'_> {
     pub fn load_data_from_db(&mut self) {
+        self.try_load_data_from_db()
+            .expect("Could not hydrate persisted chat history");
+    }
+
+    pub fn try_load_data_from_db(&mut self) -> rusqlite::Result<()> {
         info!("Reading database");
+        let complete = self.chat_store_hydration.try_load_complete()?;
         let ChatStoreHydration {
             chats,
             contacts,
             messages,
             reactions,
-        } = self.chat_store_hydration.load();
+        } = complete.snapshot;
         for chat in chats {
             self.chats.insert(chat.jid.clone(), chat);
         }
@@ -63,6 +69,9 @@ impl App<'_> {
         for message in messages {
             self.add_message_without_sort(message);
         }
+        for record in complete.native_link_previews {
+            self.restore_native_link_preview(record);
+        }
         let chat_ids = self.chat_messages.keys().cloned().collect::<Vec<_>>();
         for chat_id in chat_ids {
             self.sort_chat_messages(chat_id);
@@ -79,6 +88,7 @@ impl App<'_> {
             self.messages.len()
         );
         self.invalidate_chat_list();
+        Ok(())
     }
 
     /// Display name for a JID (chat or sender). A LID is not a phone number.
@@ -106,6 +116,33 @@ impl App<'_> {
                 let pn = wr::JID::from(format!("{phone}@s.whatsapp.net"));
                 self.fresh_contact_name(&pn)
                     .filter(|name| !phone_like_name(name) && !raw_lid_name(name))
+            })
+    }
+
+    pub(crate) fn searchable_saved_contact_name(&self, jid: &wr::JID) -> Option<Arc<str>> {
+        if !jid.0.ends_with("@s.whatsapp.net") || self.chats.contains_key(jid) {
+            return None;
+        }
+        self.saved_display_name(jid)
+            .map(|name| canonical_contact_name(name))
+    }
+
+    /// A saved PN may also be represented by an existing LID conversation.
+    /// Prefer that conversation when its fresh saved alias has the same name.
+    pub(crate) fn has_chat_for_contact_alias(&self, jid: &wr::JID) -> bool {
+        let Some(name) = self.saved_display_name(jid) else {
+            return false;
+        };
+        self.chats
+            .keys()
+            .filter(|chat| chat.0.ends_with("@lid"))
+            .any(|chat| {
+                self.verified_phones
+                    .get(chat)
+                    .is_some_and(|phone| jid.0.as_ref() == format!("{phone}@s.whatsapp.net"))
+                    || self
+                        .saved_display_name(chat)
+                        .is_some_and(|alias| alias == name)
             })
     }
 

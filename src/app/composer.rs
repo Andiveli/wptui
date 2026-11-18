@@ -10,8 +10,7 @@ use crate::app::actions::ComposerAction;
 use crate::app::preferences::ComposerDirection;
 use crate::input_key::{Key, KeyCode};
 use crate::ui::layout::{
-    BoundaryAffinity, ComposerVisualLayout, HorizontalDirection,
-    composer_visual_layout_with_direction,
+    BoundaryAffinity, ComposerVisualLayout, HorizontalDirection, composer_markdown_layout,
 };
 #[derive(Clone, Debug)]
 pub struct PendingAttachment {
@@ -234,8 +233,17 @@ impl Composer<'_> {
         }
     }
 
-    fn visual_layout(&self, direction: ComposerDirection, width: u16) -> ComposerVisualLayout {
-        composer_visual_layout_with_direction(self.input.lines(), width, direction)
+    pub(crate) fn visual_layout(
+        &self,
+        direction: ComposerDirection,
+        width: u16,
+    ) -> ComposerVisualLayout {
+        composer_markdown_layout(
+            self.input.lines(),
+            width,
+            direction,
+            logical_cursor_position(self.input.cursor()),
+        )
     }
 
     pub(crate) fn visual_cursor(&self, width: u16, direction: ComposerDirection) -> (usize, usize) {

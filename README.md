@@ -31,8 +31,7 @@ https://github.com/user-attachments/assets/f08d20f9-6051-45e2-a1d2-b0a512242e9c
 - Contextual, Vim-inspired keybindings
 - Andiveli welcome mark in the chat panel before any conversation is opened
 
-The Chats list has **All**, **Unread**, **Groups**, and **Archived** views. All,
-Unread, and Groups exclude archived chats; Archived shows only archived chats.
+The Chats list has **All**, **Unread**, **Groups**, and **Archived** views. Search in **All** also finds saved contacts without chat history. To start a chat with an unsaved number, type `/` in the Chats list, enter `+` followed by 7–15 digits (country code included), and press `Enter`. The app checks whether the number is registered on WhatsApp before opening an empty conversation; it never sends a message automatically. All, Unread, and Groups exclude archived chats; Archived shows only archived chats.
 Filter badges count unread chats (each chat once), including manually marked chats,
 not individual messages. All, Unread, and Groups count unarchived chats; Archived
 counts archived chats. Zero counts are hidden.
@@ -44,16 +43,216 @@ and yellow **Archived** label signal an unread mention or reply to your message
 in an archived group; ordinary archived chats and other group messages do not
 trigger it. Reading that group clears the alert.
 
+## Message formatting
+
+Messages and attachment captions render WhatsApp formatting locally: `*bold*`,
+`_italic_`, `~strikethrough~`, inline backticks, triple-backtick code, quotes,
+and lists. wptui also recognizes `**bold**`, `__bold__`, `~~strikethrough~~`,
+`# headings`, and `[label](https://example.com)` links. Headings and quotes also
+recognize markers after up to three leading ASCII spaces, preserving indentation
+in the display projection and original source. Labeled links show only an
+underlined label; clicking it opens the original URL. The active composer
+fragment reveals the link source for editing. Formatting never fetches content
+or opens a link automatically.
+
+Incoming and outgoing chat text display bare HTTP(S) URLs as the complete host
+(including subdomains and any port) plus the final nonempty path segment: for example,
+`https://github.com/Andiveli/wptui` becomes `github.com · wptui`, while
+`https://example.com/` becomes `example.com`. Query strings and fragments are
+omitted from the label, not the click destination; path segments are not decoded.
+Ambiguous or unsupported authorities remain raw. This helps you inspect the host,
+but is not phishing detection or a safety guarantee. No site or title is fetched.
+Explicit Markdown links retain the author's chosen label rather than a URL label.
+The composer, statuses, captions, reply summaries, system text, code, and literal
+image syntax keep their existing display.
+
+When WhatsApp supplies native preview metadata for an eligible incoming or outgoing
+chat link, bare or explicit Markdown, a compact preview below the body shows its
+title and description literally (not as Markdown). Only an embedded JPEG can supply
+the thumbnail; no website, external image URL, or thumbnail direct path is fetched.
+The host/path or chosen Markdown label and exact click destination remain unchanged.
+The card binds to the original source occurrence: a protected code/image occurrence
+cannot borrow eligibility from a later matching URL. Missing or invalid metadata
+keeps the normal link presentation. Optimistic desktop sends may lack metadata;
+synced phone-sent messages can carry it. wptui does not generate preview metadata.
+Thumbnail work is automatic only while its entire reserved image area is visible
+and not covered by a popup; selection and keyboard focus do not
+trigger loading. Loading or unusable images keep the same reserved geometry and
+leave the text and original link usable. The preview adds no clickable card action.
+
+Formatting changes only the local display. Sending, editing, copying, and searching
+still use the original text; other WhatsApp clients display the syntax they support.
+The composer previews the same formatting while you type. Markers reappear in
+the fragment containing the cursor, so you can edit them directly; outside that
+fragment they do not occupy columns. Drawing, wrapping, and arrow-key navigation
+share the source-to-display mapping, including Unicode and right-to-left text.
+
+Incomplete markers and unsupported Markdown remain literal. Code is displayed
+without interpreting formatting inside it. Terminal font support determines whether
+italic and strikethrough styles are visible.
+
 ## Data
 
 Your WhatsApp data — database, media, and session — lives in `~/.local/share/wptui/` on your
 machine. It is not uploaded anywhere; the client only exchanges data with the WhatsApp servers
 when it links or syncs, like any official client.
 
+Startup reads chats, contacts, messages, reactions, and native link-preview metadata
+as one SQLite snapshot before applying that history to the app. If hydration fails
+(for example, an exhausted SQLite lock wait), `wp-tui` prints
+`wp-tui: could not hydrate persisted chat history: <error>` and exits with status 1
+without connecting to WhatsApp or opening the terminal UI. It does not treat a
+failed read as empty or partially loaded history, retry it, or extend the existing
+SQLite busy timeout. This error alone does not identify which connection holds a lock.
+
+Incoming and outgoing chat text can retain WhatsApp-supplied link-preview metadata
+in a separate local database table; old messages without metadata load normally.
+Native metadata is optional and is displayed only for eligible plain or explicit
+Markdown chat links in either direction: no website, external image URL, or thumbnail
+direct path is fetched. Titles are
+limited to 2,048 UTF-8 bytes, descriptions to 8,192 bytes, and embedded thumbnails
+to 256 KiB; an oversized image is omitted without discarding valid text metadata.
+Unsafe or mismatched text metadata is ignored without changing the message or its
+click destination. Editing or deleting a message clears its preview metadata.
+Receive adjuncts and app-owned preview state are bounded (64 and 256 entries,
+respectively); valid persisted metadata remains associated with its message.
+
 Preferences live in your OS configuration directory (`~/.config/wptui/settings.conf` on Linux).
 An existing `settings.conf` in the data directory is copied there on first use if no config
 file exists; the legacy file is left untouched. Set `composer_direction=rtl` or
 `composer_direction=auto` to choose the composer direction.
+
+### Built-in dark themes
+
+Press **Space → a → t** (Actions → Themes) to choose **Default**, **Kanagawa**,
+**One Dark**, **Catppuccin**, **Tokyo Night**, **Gruvbox**, or **Custom**.
+The current selection is highlighted. Move with **Up/Down** or **j/k**;
+**Enter** saves and applies immediately without restarting, and **Esc** cancels
+without changing settings or colors. A save failure is displayed and leaves the
+current colors unchanged. Selecting Default clears all earlier theme selections;
+other settings are preserved.
+
+Alternatively, add one line to `~/.config/wptui/settings.conf` on Linux (or your OS
+configuration directory) and restart:
+
+```ini
+theme=kanagawa
+```
+
+| Setting value | Variant |
+|---|---|
+| `kanagawa` | Kanagawa Wave |
+| `one-dark` | One Dark Pro |
+| `catppuccin` | Catppuccin Mocha |
+| `tokyo-night` | Tokyo Night |
+| `gruvbox` | Gruvbox Dark Medium |
+
+Names are case-sensitive; surrounding whitespace is ignored. Omit `theme`, leave
+it empty, or use an unknown name to retain the existing default appearance.
+If repeated, the first recognized theme wins, as with other parsed preferences.
+Theme loading does not rewrite your settings or change mouse, composer,
+notification, or custom preferences.
+
+Named themes paint an explicit dark canvas and selection fill, so contact names,
+previews, timestamps, unread indicators and attention markers do not depend on
+your terminal's background or ANSI palette. The same text, secondary, accent,
+selection, unread, attention and border roles are used across navigation,
+contacts, communities, Status, News and the conversation/composer chrome.
+Existing message formatting and media colors are not remapped. Custom palettes
+are supported through the JSON file below; there is no transparency toggle.
+
+Secondary text and borders use brighter base-palette roles rather than low-contrast
+editor comments or separators: Kanagawa's status foreground, One Dark's status
+foreground, Catppuccin's ANSI white, Tokyo Night's bright white, and Gruvbox's ANSI
+white. Selection uses each variant's opaque list surface (Gruvbox's focus surface)
+with light text. Unread/attention use the palette's bright green/yellow roles
+(Catppuccin uses its regular pastel green/yellow). These adaptations keep small
+terminal text readable; rendered contact regression tests require at least 4.5:1
+contrast on the explicit surfaces. Palette provenance is recorded in
+[Third-Party Notices](THIRD_PARTY_NOTICES.md#built-in-theme-palette-reference).
+
+### Custom themes
+
+To use your own colors:
+
+1. Create `theme.json` beside your active `settings.conf`
+   (`~/.config/wptui/theme.json` on Linux).
+2. Choose **Custom** using **Space → a → t**, then **Enter** to save and apply.
+   Selecting Custom again reads the current JSON file without restarting.
+
+You can also set `theme=custom` in `settings.conf`, replacing earlier recognized
+`theme` entries, and restart. Manual settings-file edits require a restart;
+JSON edits require a restart or selecting Custom again. There is no file watcher
+or in-TUI color editor, and the selector never rewrites `theme.json`.
+
+For example:
+
+```json
+{
+  "base": "kanagawa",
+  "colors": {
+    "text": "#DCD7BA",
+    "accent": "#aB12Ef",
+    "surface": "#1F1F28"
+  }
+}
+```
+
+The schema is a JSON object with only these optional fields:
+
+| Field | Accepted value | When omitted |
+|---|---|---|
+| `base` | One of `kanagawa`, `one-dark`, `catppuccin`, `tokyo-night`, `gruvbox` (case-sensitive) | `kanagawa` |
+| `colors` | An object mapping the roles below to color strings; `{}` is allowed | No overrides |
+
+The ten allowed color roles are `text`, `muted`, `accent`, `selection`,
+`selected_text`, `unread`, `attention`, `border`, `surface`, and `error`.
+`selection` is the selected-row fill; `selected_text` is its foreground;
+`surface` is the opaque canvas. Unspecified roles inherit the base palette, so
+`{}` is a complete valid theme using Kanagawa unchanged.
+
+Every color must be exactly `#RRGGBB`, with six hexadecimal digits; upper,
+lower, and mixed case are accepted. Short hex, alpha channels, color names,
+transparency, and surrounding whitespace inside the string are not accepted.
+Contrast is your choice: custom colors are not automatically adjusted or rejected
+for low contrast. Custom themes keep the same explicit opaque canvas as named
+ones, using the resolved `surface` color.
+
+Malformed JSON, unknown fields or roles, an invalid base, wrong value types
+(including `null`), or any invalid color reject the **whole file**. Missing or
+unreadable files likewise use the legacy default appearance, not the base palette;
+no partial overrides are applied. The first recognized theme setting still wins:
+`theme=custom` remains selected even when its file falls back, rather than trying
+later duplicate settings.
+
+The file is read only when `custom` is selected. Lookup follows the resolved
+`settings.conf` location: after legacy settings migration, the active configuration
+directory wins, and a `theme.json` left in the data directory is not migrated or
+used. Startup theme loading only reads files: it does not create, rewrite, or
+repair either file or alter other preferences. Applying a selection in the TUI
+updates only theme entries in `settings.conf`, removing duplicates. Paths,
+includes, plugins, and executable code are not supported in the schema.
+
+### Desktop notifications
+
+Press `Space`, then `a`, then `n` to toggle all WPTUI desktop notifications and their audio.
+The contextual menu shows the current `Notifications: On` / `Notifications: Off` state;
+changes apply immediately and are saved to the same settings file. No chat selection is needed.
+If saving fails, an error is shown and the current state is kept.
+
+Alternatively, to disable them manually, add this to `settings.conf`:
+
+```ini
+notifications=disable
+```
+
+Use `notifications=enable` to enable them explicitly. Notifications are enabled by default
+when the setting is missing, invalid, or unreadable. Manual file edits are loaded at startup;
+restart WPTUI after editing the file (the menu toggle needs no restart). Disabling notifications
+does not change message reception, persistence, synchronization, or unread counts. The existing
+`notification_sound` option selects the sound only when notifications are enabled.
+
+### Notification sounds
 
 Eligible desktop notifications play the bundled `assets/sounds/attention.wav` by default,
 even when the notification server does not support sound hints. To use your OS/theme sound
@@ -67,6 +266,8 @@ notices, but request neither bundled/custom audio nor a system sound hint. Messa
 startup second onward remain audible, even while synchronization progress is visible. If the
 startup clock is unavailable, audio remains enabled for eligible notices. Muted chats, open
 chats and explicit sync traffic remain silent.
+
+### Mouse capture
 
 Mouse capture is enabled by default during the pointer-support preview. Add `mouse=disable` to
 that config file and restart to restore terminal-native selection, or use
@@ -260,6 +461,94 @@ When running through Cargo, separate application arguments with `--`:
 cargo run -- --phone +1234567890
 ```
 
+### Number lookup notices
+
+When a number check finishes unsuccessfully, it leaves the search open without
+opening a conversation or sending a message. Its result notice appears as plain text;
+local input validation and unrelated notices retain their existing formatting:
+
+| Notice | Meaning / next step |
+|---|---|
+| `Number is not on WhatsApp` | WhatsApp reported that the requested number is not registered. |
+| `Number check timed out` | The check exceeded its deadline; retry the search. |
+| `WhatsApp returned no number result` | No result was returned; retry the search. |
+| `WhatsApp returned a mismatched number result` | A registered reply matched the query but had empty or unexpected identities that did not confirm the requested number; no recipient is opened. Retry the search. |
+| `WhatsApp returned only a LID without a phone number` | A registered reply matched the query with a LID and no associated phone number, without confirming the requested number; no recipient is opened. |
+| `WhatsApp returned a different phone number` | A registered reply matched the query and contained a phone-number identity, but neither identity confirmed the requested number exactly or through the narrow Mexico/Argentina equivalences below; no recipient is opened. |
+| `WhatsApp returned a mismatched query result` | Nonempty replies contained no matching query; no recipient is opened. Retry the search. |
+| `Could not check number` | The request failed; retry the search. |
+| `Could not verify number` | The result could not be safely verified; no recipient is opened. |
+| `WhatsApp is not connected` | Reconnect WhatsApp, then retry the search. |
+| `Use + followed by 7-15 digits` | Correct the international number format, then retry. |
+
+A failed, timed-out, empty, or mismatched check does **not** mean the number is
+unregistered. These notices use fixed categories, without including the entered
+number, recipient identity, or raw error details; number lookup adds no diagnostic logging.
+The LID-only and different-phone-number categories describe response shape only:
+they do not prove legitimate number normalization or permit opening another recipient.
+Opening a conversation requires a registered response whose query matches the entered
+number (with or without its leading `+`) and whose phone-number identity confirms it.
+Exact matches take precedence across both returned identity fields. Otherwise, only
+these two country-number equivalences are accepted, in either direction:
+
+- Mexico: `52` + exactly 10 digits ↔ `521` + the same 10 digits.
+- Argentina: `54` + exactly 10 digits ↔ `549` + the same 10 digits.
+
+All other digit differences remain rejected, including different national suffixes,
+wrong lengths, and unsupported countries. This is not domestic-number parsing: it
+does not strip Argentina's domestic `15` or leading zero, or guess area codes.
+For both exact and equivalent matches, only `s.whatsapp.net` and WhatsApp's legacy
+`c.us` user namespace are allowed, with the same integrator after device metadata
+is removed. An accepted equivalent lookup opens the **server-confirmed** spelling,
+not the originally entered spelling, as a non-device `s.whatsapp.net` PN identity.
+A LID alone never authorizes opening a conversation. No extra lookup is made and
+no message is sent automatically.
+
+### Temporary local number-response inspection
+
+For the matched, registered response that failed the phone-identity comparison,
+this preview opens a **local-only, read-only window**. It shows the requested
+number, response `Query` and `IsIn`, and the `PhoneNumber` and `JID` fields. Each
+identity has a quoted string representation plus labeled `User`, `Server`,
+`RawAgent`, `Device` and `Integrator` components, so formatting and field order
+can be inspected without guessing.
+
+Use `j`/`k` or up/down arrows to scroll vertically, `h`/`l` or left/right arrows
+to scroll horizontally, `Home` to reset the view, and `Esc` to close and release
+its in-memory observation. Other input is captured by the window: `Enter` does
+not open a conversation or send a message. Values are length-bounded and controls
+are escaped as visible ASCII rather than interpreted by the terminal.
+
+Actual values are retained only in volatile memory for this display, with redacted
+Debug output. They are not added to notices, logs, files, the chat store, or the
+clipboard. No additional lookup is made; inspection never relaxes the recipient
+confirmation rules above.
+**Do not share the displayed numbers, JIDs, screenshots, or full response text.**
+Report only whether you see a formatting difference or different digits.
+
+If the local snapshot is unavailable or exceeds its limits, the existing six-boolean
+comparison remains as a fallback, for example:
+
+```text
+Lookup comparison PN(d/n/i)=0/1/1 JID(d/n/i)=0/0/1
+```
+
+`PN` compares the response's associated phone-number field; `JID` compares its
+other identity field. Each triple contains independent booleans (`1` yes, `0` no):
+
+- `d`: the field's user digits exactly equal the entered phone-number digits.
+- `n`: its domain is an allowed phone-number domain (`s.whatsapp.net` or `c.us`).
+- `i`: its `Integrator` equals the requested identity's integrator (zero).
+
+These are comparisons, not field values or proof of a valid recipient. An absent
+field can still have `i=1` because its default integrator is zero. No number, JID,
+raw response, or diagnostic log is emitted or persisted by the boolean fallback.
+Only the existing lookup action makes a request; the preview adds no background
+queries, sends no message, and does not relax the recipient confirmation rules
+above. The comparison remains a rejected lookup and cannot open a conversation. Share only
+the comparison line, not the number, screenshot, or recipient identifiers.
+This temporary observation is not a fix for the reported new-number failure.
+
 ### Diagnostics
 
 To trace edited/deleted message processing, run with:
@@ -352,6 +641,21 @@ bridge result still needs real WhatsApp validation; tests do not prove service s
 Keybindings are contextual. Press `Esc` to close the active menu, picker, search, viewer, reply,
 or editor state.
 
+The contact information pane keeps the conversation visible and shows a large profile photo,
+phone number (when known), and shared groups from the local known-group catalog. Membership
+is queried in the background; loading, unavailable, and empty results are shown separately.
+If some group queries fail, available matches remain visible with “Some groups unavailable”,
+including when no matches are found in the successful queries. An incomplete scan is never
+shown as “No known shared groups”; if every query fails, the pane shows “Shared groups unavailable”.
+This is not an account-wide group census. Unknown LID identities are never treated as phone
+numbers. Contacts without a profile photo use the illustrated default portrait; real photos
+still take precedence. Group and community artwork is unchanged.
+
+At 180 columns the contact pane occupies 46 columns. Narrow terminals temporarily hide the
+section rail and chat list before reducing conversation space; very small terminals show
+contact details alone. `Esc` restores the normal layout without changing the draft. Composer
+and picker input retain priority; `i` returns to composing, and `Space a i` focuses details again.
+
 ### Global and navigation
 
 | Action | Key |
@@ -359,11 +663,14 @@ or editor state.
 | Quit | `Ctrl+Q` |
 | Toggle section rail | `Space`, then `1` |
 | Toggle chat list | `Space`, then `2` |
+| Toggle notifications and audio (saved immediately) | `Space`, then `a`, then `n` |
+| Contact information (selected contact or open direct conversation) | `Space`, then `a`, then `i` |
+| Scroll contact details / close contact pane | `j` / `k`, then `Esc` to close |
 | Focus previous / next pane | `h` / `l` or `←` / `→` |
 | Select previous / next item | `k` / `j` or `↑` / `↓` |
 | Jump to first / last item | `g g` / `G` |
 | Move half a page | `Ctrl+U` / `Ctrl+D` |
-| Search chats | `/` |
+| Search chats or start a conversation | `/` in the Chats list (All filter); type a name or `+` followed by 7–15 digits, then press `Enter` |
 | Cycle chat filters (All, Unread, Groups, Archived) | `Tab` in the Chats list |
 | Selected chat: mark read / unread | `Space`, then `a`, then `m` in the contact list |
 
@@ -456,6 +763,13 @@ removes the local row, but does not itself prove removal from every recipient's 
 | Reaction picker | Move / confirm | `j`/`k` or Up/Down arrows / `Enter` |
 | Media viewer | Previous / next | `h`/`l` or arrows |
 | Media viewer | Save image or video as a file | `s` opens folder picker; `j`/`k` or Up/Down selects, `h`/Left goes up, `l`/Right opens folder, `/` filters folders; `Enter` edits basename, `Enter` saves; `Esc` leaves search/editing before closing |
+
+In an editable Chats/Communities composer (including Vim Insert and message editing),
+terminal paste inserts the complete text block at the cursor, preserving line breaks without
+sending. Press `Enter` separately to submit. Bracketed paste is enabled only while that
+composer owns editable input; search and other screens keep their existing input behavior.
+If the terminal delivers `Ctrl+V` as a key instead, the existing clipboard text/file/image
+handling still applies.
 
 Save As starts in the app's current working directory. Browse folders in the viewer, then edit the
 separate proposed basename and confirm. The extension is displayed but fixed from the source

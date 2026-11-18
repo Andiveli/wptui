@@ -69,7 +69,15 @@ pub fn evaluate_availability(
     if implementation == ImplementationStatus::Planned {
         return ActionAvailability::planned();
     }
-    if action == Some(ContextualAction::Quit) {
+    if matches!(
+        action,
+        Some(
+            ContextualAction::Quit
+                | ContextualAction::ContactInfo
+                | ContextualAction::ToggleNotifications
+                | ContextualAction::Themes
+        )
+    ) {
         return ActionAvailability::enabled();
     }
     if action.is_some()
@@ -144,6 +152,7 @@ pub enum ContextualAction {
     CreateStatus,
     MarkRead,
     ViewContact,
+    ContactInfo,
     Pin,
     Mute,
     Hide,
@@ -159,6 +168,8 @@ pub enum ContextualAction {
     Open,
     ViewAttachment,
     GoToReference,
+    ToggleNotifications,
+    Themes,
     Quit,
 }
 
@@ -181,7 +192,7 @@ pub enum ContextualScope {
     Global,
 }
 
-pub const CONTEXTUAL_ACTION_METADATA: [ContextualActionMetadata; 24] = [
+pub const CONTEXTUAL_ACTION_METADATA: [ContextualActionMetadata; 28] = [
     m(
         ContextualAction::Starred,
         "Starred",
@@ -222,6 +233,20 @@ pub const CONTEXTUAL_ACTION_METADATA: [ContextualActionMetadata; 24] = [
         "Create status",
         'c',
         ContextualScope::StatusChatList,
+        ImplementationStatus::Implemented,
+    ),
+    m(
+        ContextualAction::ContactInfo,
+        "Contact information",
+        'i',
+        ContextualScope::ChatList,
+        ImplementationStatus::Implemented,
+    ),
+    m(
+        ContextualAction::ContactInfo,
+        "Contact information",
+        'i',
+        ContextualScope::Conversation,
         ImplementationStatus::Implemented,
     ),
     m(
@@ -344,9 +369,23 @@ pub const CONTEXTUAL_ACTION_METADATA: [ContextualActionMetadata; 24] = [
         ImplementationStatus::Implemented,
     ),
     m(
+        ContextualAction::ToggleNotifications,
+        "Notifications: On",
+        'n',
+        ContextualScope::Global,
+        ImplementationStatus::Implemented,
+    ),
+    m(
         ContextualAction::Quit,
         "Quit",
         'q',
+        ContextualScope::Global,
+        ImplementationStatus::Implemented,
+    ),
+    m(
+        ContextualAction::Themes,
+        "Themes",
+        't',
         ContextualScope::Global,
         ImplementationStatus::Implemented,
     ),

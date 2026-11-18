@@ -12,7 +12,7 @@ use crate::app::{App, FileMeta, Metadata};
 
 use super::MessageTextMode;
 use super::message_formatting::MediaStatus;
-use super::message_helpers::{StatusLabel, inline_content_lines};
+use super::message_helpers::{StatusLabel, markdown_content_lines};
 
 pub fn preview_height(kind: &FileKind) -> usize {
     match kind {
@@ -67,8 +67,12 @@ fn caption_lines(
 ) -> Vec<Line<'static>> {
     let caption = caption.unwrap_or_default();
     match text_mode {
-        MessageTextMode::Chat => inline_content_lines(caption, mention_ranges, status, width),
-        MessageTextMode::Status => inline_content_lines(caption, mention_ranges, status, width),
+        MessageTextMode::Chat => {
+            markdown_content_lines(caption, mention_ranges, status, width, &[])
+        }
+        MessageTextMode::Status => {
+            markdown_content_lines(caption, mention_ranges, status, width, &[])
+        }
     }
 }
 

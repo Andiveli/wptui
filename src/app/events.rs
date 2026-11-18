@@ -274,6 +274,7 @@ pub(crate) enum MediaRenderEffect {
     DownloadFile(wr::MessageId, wr::FileId),
     LoadFilePreview(wr::MessageId),
     LoadViewerPreview(ViewerPreviewKey),
+    LoadNativeLinkThumbnail(crate::app::native_link_thumbnails::ThumbnailKey),
 }
 
 #[derive(Default)]
@@ -313,6 +314,15 @@ impl MediaRenderPlan {
     }
 }
 
+/// Owned runtime payloads; callers cannot forge an admission ticket.
+#[derive(Debug)]
+pub struct NativeLinkThumbnailRequest(pub(crate) crate::app::native_link_thumbnails::ThumbnailKey);
+
+pub struct NativeLinkThumbnailResult {
+    pub(crate) ticket: crate::app::native_link_thumbnails::ThumbnailTicket,
+    pub(crate) protocol: Option<StatefulProtocol>,
+}
+
 pub enum AppEvent {
     UpdateAvailable(String),
     NewsLoaded(crate::updater::news::NewsHistory),
@@ -324,6 +334,11 @@ pub enum AppEvent {
     NewsUpdateFinished {
         target: crate::updater::news_update::UpdateTarget,
         result: Result<PathBuf, String>,
+    },
+    PhoneLookupFinished {
+        generation: u64,
+        phone: String,
+        result: Result<Option<wr::JID>, wr::PhoneLookupError>,
     },
     OutboundSendSucceeded {
         local_send_id: u64,
@@ -360,9 +375,12 @@ pub enum AppEvent {
     ),
     LoadViewerPreview(ViewerPreviewKey),
     SetViewerPreview(ViewerPreviewKey, Option<StatefulProtocol>),
+    LoadNativeLinkThumbnail(NativeLinkThumbnailRequest),
+    SetNativeLinkThumbnail(NativeLinkThumbnailResult),
     SetComposerPreviews(Vec<(u64, Option<StatefulProtocol>)>),
     SetFileState(wr::MessageId, FileMeta),
     SetAudioDuration(wr::MessageId, Arc<str>, Option<u64>),
+    ContactInfoLoaded(super::contact_info::ContactInfoResult),
     ContactAvatar(AvatarResult),
     ContactAvatarRefreshed {
         generation: u64,
@@ -373,9 +391,11 @@ pub enum AppEvent {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AppEventFamily {
     Updater,
+    PhoneLookup,
     Send,
     ReadReceipt,
     MediaViewer,
+    /// Contact presentation results: avatar protocols and contact details.
     Avatar,
 }
 
@@ -386,6 +406,7 @@ impl AppEvent {
             | Self::NewsLoaded(_)
             | Self::NewsStarFinished { .. }
             | Self::NewsUpdateFinished { .. } => AppEventFamily::Updater,
+            Self::PhoneLookupFinished { .. } => AppEventFamily::PhoneLookup,
             Self::OutboundSendSucceeded { .. }
             | Self::OutboundSendFailed { .. }
             | Self::StatusSendSucceeded
@@ -404,10 +425,14 @@ impl AppEvent {
             | Self::SetStickerPreview(_, _, _)
             | Self::LoadViewerPreview(_)
             | Self::SetViewerPreview(_, _)
+            | Self::LoadNativeLinkThumbnail(_)
+            | Self::SetNativeLinkThumbnail(_)
             | Self::SetComposerPreviews(_)
             | Self::SetFileState(_, _)
             | Self::SetAudioDuration(_, _, _) => AppEventFamily::MediaViewer,
-            Self::ContactAvatar(_) | Self::ContactAvatarRefreshed { .. } => AppEventFamily::Avatar,
+            Self::ContactInfoLoaded(_)
+            | Self::ContactAvatar(_)
+            | Self::ContactAvatarRefreshed { .. } => AppEventFamily::Avatar,
         }
     }
 }
@@ -450,6 +475,20 @@ impl fmt::Debug for AppEvent {
             AppEvent::UpdateAvailable(version) => {
                 f.debug_tuple("UpdateAvailable").field(version).finish()
             }
+            AppEvent::PhoneLookupFinished {
+                generation, result, ..
+            } => f
+                .debug_struct("PhoneLookupFinished")
+                .field("generation", generation)
+                .field(
+                    "result",
+                    &match result {
+                        Ok(Some(_)) => "registered",
+                        Ok(None) => "not registered",
+                        Err(_) => "error",
+                    },
+                )
+                .finish(),
             AppEvent::OutboundSendSucceeded {
                 local_send_id,
                 message,
@@ -527,6 +566,8 @@ impl fmt::Debug for AppEvent {
                 .field(key)
                 .field(&protocol.is_some())
                 .finish(),
+            AppEvent::LoadNativeLinkThumbnail(_) => f.write_str("LoadNativeLinkThumbnail"),
+            AppEvent::SetNativeLinkThumbnail(_) => f.write_str("SetNativeLinkThumbnail"),
             AppEvent::SetComposerPreviews(results) => f
                 .debug_tuple("SetComposerPreviews")
                 .field(&results.len())
@@ -542,6 +583,9 @@ impl fmt::Debug for AppEvent {
                 .field("path", path)
                 .field("duration_secs", duration)
                 .finish(),
+            AppEvent::ContactInfoLoaded(result) => {
+                f.debug_tuple("ContactInfoLoaded").field(result).finish()
+            }
             AppEvent::ContactAvatar(result) => f
                 .debug_tuple("ContactAvatar")
                 .field(&result.generation())
@@ -567,6 +611,15 @@ mod tests {
         assert_eq!(
             AppEvent::UpdateAvailable("1.2.3".to_owned()).family(),
             AppEventFamily::Updater
+        );
+        assert_eq!(
+            AppEvent::PhoneLookupFinished {
+                generation: 1,
+                phone: "+15551234567".into(),
+                result: Ok(None),
+            }
+            .family(),
+            AppEventFamily::PhoneLookup
         );
         assert_eq!(
             AppEvent::OutboundSendFailed { local_send_id: 1 }.family(),

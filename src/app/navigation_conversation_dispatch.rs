@@ -137,9 +137,15 @@ impl App<'_> {
                         self.open_community_detail(root);
                     }
                 } else {
-                    let opened = self.get_selected_chat().is_some();
-                    self.open_selected_chat();
-                    if opened {
+                    let selected = self.get_selected_chat();
+                    if let Some(jid) = selected.as_ref() {
+                        if !self.chats.contains_key(jid) {
+                            self.open_chat_by_jid(jid.clone());
+                        } else {
+                            self.open_selected_chat();
+                        }
+                    }
+                    if selected.is_some() {
                         self.focus_pane = FocusPane::Conversation;
                         if self.message_count() > 0 {
                             self.message_list_state.select(Some(0));
@@ -162,8 +168,10 @@ impl App<'_> {
             | AppAction::ToggleChatList
             | AppAction::FocusPane(_)
             | AppAction::OpenContextualActions
+            | AppAction::OpenContactInfo
             | AppAction::ToggleShortcutPopup
             | AppAction::ToggleComposerDirection
+            | AppAction::ToggleNotifications
             | AppAction::PlannedLeaderAction(_)
             | AppAction::ViewMessage
             | AppAction::DownloadMessage
@@ -239,6 +247,16 @@ mod tests {
         app.dispatch_action(AppAction::InsertMode);
 
         assert_eq!(app.conversation_mode, ConversationMode::ComposerEditing);
+    }
+
+    #[test]
+    fn contact_info_is_returned_to_its_dispatcher() {
+        let mut app = TestApp::new();
+
+        assert_eq!(
+            app.dispatch_navigation_conversation_action(AppAction::OpenContactInfo),
+            Err(AppAction::OpenContactInfo)
+        );
     }
 
     #[test]

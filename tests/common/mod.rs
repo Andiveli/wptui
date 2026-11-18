@@ -35,11 +35,32 @@ impl TestApp {
 
     /// Loads real settings from an isolated test directory before bootstrap.
     pub fn with_settings(settings: &str) -> Self {
+        Self::with_config_files(settings, None)
+    }
+
+    /// Writes an optional sibling theme before the ordinary settings bootstrap.
+    pub fn with_config_files(settings: &str, theme_json: Option<&str>) -> Self {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("settings.conf"), settings).unwrap();
+        if let Some(contents) = theme_json {
+            std::fs::write(dir.path().join("theme.json"), contents).unwrap();
+        }
         let app: App<'static> = App::with_data_dir(dir.path(), dir.path());
         app.db_handler.init();
         Self { app, _dir: dir }
+    }
+
+    /// Exposes only this fixture's settings path, never the user's config.
+    pub fn settings_path(&self) -> std::path::PathBuf {
+        self._dir.path().join("settings.conf")
+    }
+
+    /// A directory at the settings path rejects writes even when run as root.
+    pub fn with_unwritable_settings() -> Self {
+        let app = Self::new();
+        std::fs::create_dir(app.settings_path()).unwrap();
+        std::fs::write(app.settings_path().join("sentinel"), "keep\n").unwrap();
+        app
     }
 
     /// Builds an app whose `db_handler` targets the already-initialized

@@ -66,6 +66,16 @@ impl App<'_> {
         let mut rows = contextual_menu_rows(self.contextual_context());
         if let Some(row) = rows
             .iter_mut()
+            .find(|row| row.action_token == ContextualAction::ToggleNotifications)
+        {
+            row.display_label = if self.notifications_enabled {
+                "Notifications: On"
+            } else {
+                "Notifications: Off"
+            };
+        }
+        if let Some(row) = rows
+            .iter_mut()
             .find(|row| row.action_token == ContextualAction::MarkRead)
         {
             let chat = self.selected_read_toggle_chat();
@@ -86,6 +96,14 @@ impl App<'_> {
                 crate::app::contextual_actions::RowStyle::Disabled
             };
             row.reason = chat.is_none().then_some("chat required");
+        }
+        if self.contact_info_target().is_none() {
+            for row in &mut rows {
+                if row.action_token == ContextualAction::ContactInfo {
+                    row.row_style = super::contextual_actions::RowStyle::Disabled;
+                    row.reason = Some("select a contact conversation");
+                }
+            }
         }
         self.contextual_menu = Some((rows, 0));
     }
@@ -112,6 +130,10 @@ impl App<'_> {
             }
             return;
         }
+        if row.action_token == ContextualAction::ContactInfo && self.contact_info_target().is_none()
+        {
+            return;
+        }
         let context = self.contextual_context();
         let available = evaluate_availability(
             crate::app::contextual_actions::CONTEXTUAL_ACTION_METADATA
@@ -130,12 +152,17 @@ impl App<'_> {
             return;
         }
         self.contextual_menu = None;
-        self.dispatch_action(contextual_action_to_app_action(row.action_token));
+        if row.action_token == ContextualAction::Themes {
+            self.open_theme_selector();
+        } else {
+            self.dispatch_action(contextual_action_to_app_action(row.action_token));
+        }
     }
 }
 
 fn contextual_action_to_app_action(action: ContextualAction) -> AppAction {
     match action {
+        ContextualAction::ContactInfo => AppAction::OpenContactInfo,
         ContextualAction::Copy => AppAction::CopyMessage,
         ContextualAction::React => AppAction::ReactMessage,
         ContextualAction::Reply => AppAction::ReplyMessage,
@@ -147,6 +174,7 @@ fn contextual_action_to_app_action(action: ContextualAction) -> AppAction {
         ContextualAction::DeleteForEveryone => AppAction::DeleteMessage,
         ContextualAction::Attach => AppAction::AttachFile,
         ContextualAction::CreateStatus => AppAction::StartStatusComposition,
+        ContextualAction::ToggleNotifications => AppAction::ToggleNotifications,
         ContextualAction::Quit => AppAction::Quit,
         _ => AppAction::PlannedLeaderAction(
             crate::app::contextual_actions::CONTEXTUAL_ACTION_METADATA
@@ -837,6 +865,34 @@ mod tests {
             })
         );
         assert!(!crate::ui::contact_list::ContactListItem::from_chat(&app, &chat).unread);
+    }
+
+    #[test]
+    fn empty_chat_menu_preserves_read_toggle_and_contact_info_guards() {
+        let mut app = TestApp::new();
+        app.focus_pane = FocusPane::ChatList;
+        app.selected_section = Section::Chats;
+        app.open_contextual_actions();
+
+        for action in [ContextualAction::MarkRead, ContextualAction::ContactInfo] {
+            let index = app
+                .contextual_menu
+                .as_ref()
+                .unwrap()
+                .0
+                .iter()
+                .position(|row| row.action_token == action)
+                .unwrap();
+            assert_eq!(
+                app.contextual_menu.as_ref().unwrap().0[index].row_style,
+                RowStyle::Disabled
+            );
+            app.contextual_menu.as_mut().unwrap().1 = index;
+            app.activate_contextual_action();
+            assert!(app.contextual_menu.is_some());
+            assert!(app.contact_info.is_none());
+            assert!(app.chats.is_empty());
+        }
     }
 
     #[test]

@@ -35,6 +35,7 @@ impl App<'_> {
             AppAction::OpenContextualActions => self.open_contextual_actions(),
             AppAction::ToggleShortcutPopup => self.shortcut_popup = !self.shortcut_popup,
             AppAction::ToggleComposerDirection => self.toggle_composer_direction(),
+            AppAction::ToggleNotifications => self.toggle_notifications(),
             AppAction::PlannedLeaderAction(label) => {
                 self.unavailable(&format!("{label}: not implemented"))
             }

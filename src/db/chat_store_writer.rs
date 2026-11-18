@@ -19,6 +19,15 @@ impl ChatStoreWritePort for SqliteChatStoreWriter {
         self.queue.queue_chat_message(command.chat, command.message);
     }
 
+    fn persist_with_native_preview(
+        &self,
+        command: PersistChatMessage,
+        preview: Option<whatsrust::NativeLinkPreview>,
+    ) {
+        self.queue
+            .queue_chat_message_with_preview(command.chat, command.message, preview);
+    }
+
     fn persist_chat(&self, command: PersistChat) {
         self.queue.queue_chat(command.chat);
     }
