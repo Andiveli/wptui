@@ -57,7 +57,9 @@ fn repository_row(app: &mut App, width: u16) -> Vec<Line<'static>> {
         "[s: Star Andiveli/wptui]"
     };
     let hide = "[d: Hide]";
-    let base = Style::default().fg(Color::Black).bg(NEWS_COLOR);
+    let base = app
+        .theme
+        .selection(Style::default().fg(Color::Black).bg(NEWS_COLOR));
     let primary = base.add_modifier(Modifier::BOLD);
     let action_style = if pending {
         base
@@ -106,6 +108,7 @@ pub(super) fn rail_title(inner_width: u16) -> &'static str {
 }
 
 pub(super) fn render(frame: &mut Frame, app: &mut App, list_area: Option<Rect>, body_area: Rect) {
+    let news_color = app.theme.muted(NEWS_COLOR);
     if let Some(area) = list_area {
         let [installed_area, releases_area] = Layout::vertical([
             Constraint::Length(8.min(area.height / 2)),
@@ -118,10 +121,11 @@ pub(super) fn render(frame: &mut Frame, app: &mut App, list_area: Option<Rect>, 
                 app.news.installed.version, app.news.installed.body
             ))
             .wrap(Wrap { trim: false })
+            .style(app.theme.base())
             .block(
                 Block::bordered()
                     .title("Installed notes")
-                    .border_style(Style::default().fg(NEWS_COLOR)),
+                    .border_style(Style::default().fg(news_color)),
             ),
             installed_area,
         );
@@ -141,18 +145,18 @@ pub(super) fn render(frame: &mut Frame, app: &mut App, list_area: Option<Rect>, 
         let mut state = ListState::default().with_selected(Some(app.news.selected));
         frame.render_stateful_widget(
             List::new(items)
+                .style(app.theme.base())
                 .block(Block::bordered().title("Stable releases").border_style(
                     Style::default().fg(if app.focus_pane == FocusPane::ChatList {
-                        Color::Green
+                        app.theme.accent(Color::Green)
                     } else {
-                        NEWS_COLOR
+                        news_color
                     }),
                 ))
                 .highlight_symbol("> ")
                 .highlight_style(
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(NEWS_COLOR)
+                    app.theme
+                        .selection(Style::default().fg(Color::Black).bg(NEWS_COLOR))
                         .add_modifier(Modifier::BOLD),
                 ),
             releases_area,
@@ -258,7 +262,7 @@ pub(super) fn render(frame: &mut Frame, app: &mut App, list_area: Option<Rect>, 
     }
     frame.render_widget(Paragraph::new(repository_lines), repository_area);
     frame.render_widget(
-        status_widget.style(Style::default().fg(NEWS_COLOR)),
+        status_widget.style(app.theme.base().fg(news_color)),
         status_area,
     );
     let note = app.news.selected_note();
@@ -280,14 +284,17 @@ pub(super) fn render(frame: &mut Frame, app: &mut App, list_area: Option<Rect>, 
         .skip(app.news.scroll)
         .take(inner.height as usize)
         .collect::<Vec<_>>();
-    frame.render_widget(
-        Paragraph::new(visible).block(Block::bordered().title(title).border_style(
+    let block = Block::bordered()
+        .title(title)
+        .border_style(
             Style::default().fg(if app.focus_pane == FocusPane::Conversation {
-                Color::Green
+                app.theme.accent(Color::Green)
             } else {
-                NEWS_COLOR
+                news_color
             }),
-        )),
+        );
+    frame.render_widget(
+        Paragraph::new(visible).style(app.theme.base()).block(block),
         note_area,
     );
     app.mouse_hit_map.news_body = Some(inner);

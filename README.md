@@ -122,6 +122,119 @@ An existing `settings.conf` in the data directory is copied there on first use i
 file exists; the legacy file is left untouched. Set `composer_direction=rtl` or
 `composer_direction=auto` to choose the composer direction.
 
+### Built-in dark themes
+
+Press **Space → a → t** (Actions → Themes) to choose **Default**, **Kanagawa**,
+**One Dark**, **Catppuccin**, **Tokyo Night**, **Gruvbox**, or **Custom**.
+The current selection is highlighted. Move with **Up/Down** or **j/k**;
+**Enter** saves and applies immediately without restarting, and **Esc** cancels
+without changing settings or colors. A save failure is displayed and leaves the
+current colors unchanged. Selecting Default clears all earlier theme selections;
+other settings are preserved.
+
+Alternatively, add one line to `~/.config/wptui/settings.conf` on Linux (or your OS
+configuration directory) and restart:
+
+```ini
+theme=kanagawa
+```
+
+| Setting value | Variant |
+|---|---|
+| `kanagawa` | Kanagawa Wave |
+| `one-dark` | One Dark Pro |
+| `catppuccin` | Catppuccin Mocha |
+| `tokyo-night` | Tokyo Night |
+| `gruvbox` | Gruvbox Dark Medium |
+
+Names are case-sensitive; surrounding whitespace is ignored. Omit `theme`, leave
+it empty, or use an unknown name to retain the existing default appearance.
+If repeated, the first recognized theme wins, as with other parsed preferences.
+Theme loading does not rewrite your settings or change mouse, composer,
+notification, or custom preferences.
+
+Named themes paint an explicit dark canvas and selection fill, so contact names,
+previews, timestamps, unread indicators and attention markers do not depend on
+your terminal's background or ANSI palette. The same text, secondary, accent,
+selection, unread, attention and border roles are used across navigation,
+contacts, communities, Status, News and the conversation/composer chrome.
+Existing message formatting and media colors are not remapped. Custom palettes
+are supported through the JSON file below; there is no transparency toggle.
+
+Secondary text and borders use brighter base-palette roles rather than low-contrast
+editor comments or separators: Kanagawa's status foreground, One Dark's status
+foreground, Catppuccin's ANSI white, Tokyo Night's bright white, and Gruvbox's ANSI
+white. Selection uses each variant's opaque list surface (Gruvbox's focus surface)
+with light text. Unread/attention use the palette's bright green/yellow roles
+(Catppuccin uses its regular pastel green/yellow). These adaptations keep small
+terminal text readable; rendered contact regression tests require at least 4.5:1
+contrast on the explicit surfaces. Palette provenance is recorded in
+[Third-Party Notices](THIRD_PARTY_NOTICES.md#built-in-theme-palette-reference).
+
+### Custom themes
+
+To use your own colors:
+
+1. Create `theme.json` beside your active `settings.conf`
+   (`~/.config/wptui/theme.json` on Linux).
+2. Choose **Custom** using **Space → a → t**, then **Enter** to save and apply.
+   Selecting Custom again reads the current JSON file without restarting.
+
+You can also set `theme=custom` in `settings.conf`, replacing earlier recognized
+`theme` entries, and restart. Manual settings-file edits require a restart;
+JSON edits require a restart or selecting Custom again. There is no file watcher
+or in-TUI color editor, and the selector never rewrites `theme.json`.
+
+For example:
+
+```json
+{
+  "base": "kanagawa",
+  "colors": {
+    "text": "#DCD7BA",
+    "accent": "#aB12Ef",
+    "surface": "#1F1F28"
+  }
+}
+```
+
+The schema is a JSON object with only these optional fields:
+
+| Field | Accepted value | When omitted |
+|---|---|---|
+| `base` | One of `kanagawa`, `one-dark`, `catppuccin`, `tokyo-night`, `gruvbox` (case-sensitive) | `kanagawa` |
+| `colors` | An object mapping the roles below to color strings; `{}` is allowed | No overrides |
+
+The ten allowed color roles are `text`, `muted`, `accent`, `selection`,
+`selected_text`, `unread`, `attention`, `border`, `surface`, and `error`.
+`selection` is the selected-row fill; `selected_text` is its foreground;
+`surface` is the opaque canvas. Unspecified roles inherit the base palette, so
+`{}` is a complete valid theme using Kanagawa unchanged.
+
+Every color must be exactly `#RRGGBB`, with six hexadecimal digits; upper,
+lower, and mixed case are accepted. Short hex, alpha channels, color names,
+transparency, and surrounding whitespace inside the string are not accepted.
+Contrast is your choice: custom colors are not automatically adjusted or rejected
+for low contrast. Custom themes keep the same explicit opaque canvas as named
+ones, using the resolved `surface` color.
+
+Malformed JSON, unknown fields or roles, an invalid base, wrong value types
+(including `null`), or any invalid color reject the **whole file**. Missing or
+unreadable files likewise use the legacy default appearance, not the base palette;
+no partial overrides are applied. The first recognized theme setting still wins:
+`theme=custom` remains selected even when its file falls back, rather than trying
+later duplicate settings.
+
+The file is read only when `custom` is selected. Lookup follows the resolved
+`settings.conf` location: after legacy settings migration, the active configuration
+directory wins, and a `theme.json` left in the data directory is not migrated or
+used. Startup theme loading only reads files: it does not create, rewrite, or
+repair either file or alter other preferences. Applying a selection in the TUI
+updates only theme entries in `settings.conf`, removing duplicates. Paths,
+includes, plugins, and executable code are not supported in the schema.
+
+### Desktop notifications
+
 Press `Space`, then `a`, then `n` to toggle all WPTUI desktop notifications and their audio.
 The contextual menu shows the current `Notifications: On` / `Notifications: Off` state;
 changes apply immediately and are saved to the same settings file. No chat selection is needed.
@@ -136,8 +249,10 @@ notifications=disable
 Use `notifications=enable` to enable them explicitly. Notifications are enabled by default
 when the setting is missing, invalid, or unreadable. Manual file edits are loaded at startup;
 restart WPTUI after editing the file (the menu toggle needs no restart). Disabling notifications
-does not change message reception, persistence, synchronization, or unread counts. The existing `notification_sound` option
-selects the sound only when notifications are enabled.
+does not change message reception, persistence, synchronization, or unread counts. The existing
+`notification_sound` option selects the sound only when notifications are enabled.
+
+### Notification sounds
 
 Eligible desktop notifications play the bundled `assets/sounds/attention.wav` by default,
 even when the notification server does not support sound hints. To use your OS/theme sound
@@ -151,6 +266,8 @@ notices, but request neither bundled/custom audio nor a system sound hint. Messa
 startup second onward remain audible, even while synchronization progress is visible. If the
 startup clock is unavailable, audio remains enabled for eligible notices. Muted chats, open
 chats and explicit sync traffic remain silent.
+
+### Mouse capture
 
 Mouse capture is enabled by default during the pointer-support preview. Add `mouse=disable` to
 that config file and restart to restore terminal-native selection, or use

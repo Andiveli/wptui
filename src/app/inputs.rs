@@ -66,7 +66,9 @@ impl App<'_> {
         }
         if let Event::Paste(ref text) = event {
             // A paste block is text, never a stream of keys that could submit.
-            self.handle_terminal_paste(text);
+            if self.theme_selector.is_none() {
+                self.handle_terminal_paste(text);
+            }
             return;
         }
         if let Event::Mouse(mouse) = event {
@@ -84,7 +86,9 @@ impl App<'_> {
                 return;
             }
 
-            if self.handle_composer_input(key.clone()) {
+            if self.theme_selector.is_some() {
+                self.handle_theme_selector_key(&key);
+            } else if self.handle_composer_input(key.clone()) {
             } else if self.selected_section != Section::News
                 && self.file_picker.is_none()
                 && self.attachment_viewer.is_none()
@@ -813,10 +817,35 @@ mod tests {
         assert!(app.leader_menu.is_none());
     }
 
-    #[test]
-    fn space_a_opens_contextual_menu_in_section_rail_with_only_disabled_children() {
+    fn assert_only_global_actions_enabled(app: &TestApp, character: char) {
         use crate::app::contextual_actions::{ContextualAction, RowStyle};
 
+        let rows = &app.contextual_menu.as_ref().unwrap().0;
+        let global_actions = [
+            ContextualAction::Quit,
+            ContextualAction::ToggleNotifications,
+            ContextualAction::Themes,
+        ];
+        for action in global_actions {
+            assert_eq!(
+                rows.iter()
+                    .find(|row| row.action_token == action)
+                    .unwrap()
+                    .row_style,
+                RowStyle::Enabled,
+                "character: {character:?}, action: {action:?}"
+            );
+        }
+        assert!(
+            rows.iter()
+                .filter(|row| !global_actions.contains(&row.action_token))
+                .all(|row| row.row_style == RowStyle::Disabled),
+            "character: {character:?}"
+        );
+    }
+
+    #[test]
+    fn space_a_opens_contextual_menu_in_section_rail_with_only_global_actions_enabled() {
         for character in ['A', 'a'] {
             let mut app = TestApp::new();
             app.focus_pane = FocusPane::SectionRail;
@@ -829,36 +858,12 @@ mod tests {
                 KeyModifiers::SHIFT,
             )));
             assert!(app.contextual_menu.is_some(), "character: {character:?}");
-            let rows = &app.contextual_menu.as_ref().unwrap().0;
-            for action in [
-                ContextualAction::Quit,
-                ContextualAction::ToggleNotifications,
-            ] {
-                assert_eq!(
-                    rows.iter()
-                        .find(|row| row.action_token == action)
-                        .unwrap()
-                        .row_style,
-                    RowStyle::Enabled,
-                    "character: {character:?}, action: {action:?}"
-                );
-            }
-            assert!(
-                rows.iter()
-                    .filter(|row| !matches!(
-                        row.action_token,
-                        ContextualAction::Quit | ContextualAction::ToggleNotifications
-                    ))
-                    .all(|row| row.row_style == RowStyle::Disabled),
-                "character: {character:?}"
-            );
+            assert_only_global_actions_enabled(&app, character);
         }
     }
 
     #[test]
-    fn space_a_opens_contextual_menu_in_chat_list_with_only_disabled_children() {
-        use crate::app::contextual_actions::{ContextualAction, RowStyle};
-
+    fn space_a_opens_contextual_menu_in_chat_list_with_only_global_actions_enabled() {
         for character in ['A', 'a'] {
             let mut app = TestApp::new();
             app.focus_pane = FocusPane::ChatList;
@@ -871,29 +876,7 @@ mod tests {
                 KeyModifiers::SHIFT,
             )));
             assert!(app.contextual_menu.is_some(), "character: {character:?}");
-            let rows = &app.contextual_menu.as_ref().unwrap().0;
-            for action in [
-                ContextualAction::Quit,
-                ContextualAction::ToggleNotifications,
-            ] {
-                assert_eq!(
-                    rows.iter()
-                        .find(|row| row.action_token == action)
-                        .unwrap()
-                        .row_style,
-                    RowStyle::Enabled,
-                    "character: {character:?}, action: {action:?}"
-                );
-            }
-            assert!(
-                rows.iter()
-                    .filter(|row| !matches!(
-                        row.action_token,
-                        ContextualAction::Quit | ContextualAction::ToggleNotifications
-                    ))
-                    .all(|row| row.row_style == RowStyle::Disabled),
-                "character: {character:?}"
-            );
+            assert_only_global_actions_enabled(&app, character);
         }
     }
 

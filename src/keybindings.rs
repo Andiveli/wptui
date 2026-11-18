@@ -154,6 +154,8 @@ pub fn canonical_shortcuts() -> Vec<(String, String)> {
         "Space+a+n".into(),
         "Toggle notifications (saved immediately)".into(),
     ));
+    // Append so compact popups do not lose a previously visible shortcut.
+    shortcuts.push(("Space+a+t".into(), "Choose a theme".into()));
     shortcuts
 }
 
@@ -272,6 +274,16 @@ mod tests {
         assert_eq!(
             resolve_sequence(&[Key::c('i')]),
             SequenceResolution::Complete(AppAction::InsertMode)
+        );
+    }
+
+    #[test]
+    fn theme_selector_help_is_appended_after_existing_shortcuts() {
+        assert_eq!(
+            canonical_shortcuts()
+                .last()
+                .map(|(key, action)| (key.as_str(), action.as_str())),
+            Some(("Space+a+t", "Choose a theme"))
         );
     }
 

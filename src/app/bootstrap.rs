@@ -109,6 +109,7 @@ fn with_dirs_and_picker_and_ports(
     let notifier = notifier_from_settings(&preferences_path);
     let startup_unix_seconds = clock.unix_seconds();
     let composer_direction = preferences::load_composer_direction(&preferences_path);
+    let theme = preferences::load_theme(&preferences_path);
     let mouse_capture_enabled = preferences::load_mouse_capture_enabled(&preferences_path);
     let notifications_enabled = preferences::load_notifications_enabled(&preferences_path);
 
@@ -202,6 +203,9 @@ fn with_dirs_and_picker_and_ports(
         composer: Composer::default(),
         composer_previews: Default::default(),
         composer_direction,
+        theme,
+        theme_choice: preferences::load_theme_choice(&preferences_path),
+        theme_selector: None,
         mouse_capture_enabled,
         notifications_enabled,
         composer_viewport_width: 80,
