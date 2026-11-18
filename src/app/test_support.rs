@@ -605,6 +605,10 @@ impl TestApp {
         test_app
     }
 
+    pub(crate) fn install_chat_settings_query(&mut self, query: Box<dyn ChatSettingsQueryPort>) {
+        self.app.set_chat_settings_query(query);
+    }
+
     pub(crate) fn set_archived_chat_settings(
         &mut self,
         archived: impl IntoIterator<Item = wr::JID>,
@@ -684,7 +688,22 @@ impl TestApp {
         C: Clock + 'static,
         N: Notifier + 'static,
     {
+        Self::with_settings_and_ports(None, clock, notifier)
+    }
+
+    pub(crate) fn with_settings_and_ports<C, N>(
+        settings: Option<&str>,
+        clock: C,
+        notifier: N,
+    ) -> Self
+    where
+        C: Clock + 'static,
+        N: Notifier + 'static,
+    {
         let dir = tempfile::tempdir().unwrap();
+        if let Some(settings) = settings {
+            std::fs::write(dir.path().join("settings.conf"), settings).unwrap();
+        }
         let mut app = App::with_data_dir_and_ports(
             dir.path(),
             dir.path(),

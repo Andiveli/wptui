@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 const SETTINGS_FILE_NAME: &str = "settings.conf";
 const COMPOSER_DIRECTION_KEY: &str = "composer_direction";
 const MOUSE_KEY: &str = "mouse";
+const NOTIFICATIONS_KEY: &str = "notifications";
 const NOTIFICATION_SOUND_KEY: &str = "notification_sound";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -146,19 +147,53 @@ pub(crate) fn load_mouse_capture_enabled(path: &Path) -> bool {
         .unwrap_or(true)
 }
 
+pub(crate) fn load_notifications_enabled(path: &Path) -> bool {
+    let Ok(contents) = fs::read_to_string(path) else {
+        return true;
+    };
+
+    contents
+        .lines()
+        .find_map(|line| {
+            let (key, value) = line.split_once('=')?;
+            if key.trim() != NOTIFICATIONS_KEY {
+                return None;
+            }
+            match value.trim() {
+                "enable" => Some(true),
+                "disable" => Some(false),
+                _ => None,
+            }
+        })
+        .unwrap_or(true)
+}
+
 pub(crate) fn save_composer_direction(path: &Path, direction: ComposerDirection) -> io::Result<()> {
+    save_setting(
+        path,
+        COMPOSER_DIRECTION_KEY,
+        match direction {
+            ComposerDirection::Auto => "auto",
+            ComposerDirection::Rtl => "rtl",
+        },
+    )
+}
+
+pub(crate) fn save_notifications_enabled(path: &Path, enabled: bool) -> io::Result<()> {
+    save_setting(
+        path,
+        NOTIFICATIONS_KEY,
+        if enabled { "enable" } else { "disable" },
+    )
+}
+
+fn save_setting(path: &Path, setting_key: &str, value: &str) -> io::Result<()> {
     let contents = match fs::read_to_string(path) {
         Ok(contents) => contents,
         Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
         Err(error) => return Err(error),
     };
-    let setting = format!(
-        "{COMPOSER_DIRECTION_KEY}={}",
-        match direction {
-            ComposerDirection::Auto => "auto",
-            ComposerDirection::Rtl => "rtl",
-        }
-    );
+    let setting = format!("{setting_key}={value}");
     let mut updated = String::with_capacity(contents.len() + setting.len() + 1);
     let mut replaced = false;
     for line in contents.split_inclusive('\n') {
@@ -166,7 +201,7 @@ pub(crate) fn save_composer_direction(path: &Path, direction: ComposerDirection)
         if !replaced
             && body
                 .split_once('=')
-                .is_some_and(|(key, _)| key.trim() == COMPOSER_DIRECTION_KEY)
+                .is_some_and(|(key, _)| key.trim() == setting_key)
         {
             updated.push_str(&setting);
             if line.ends_with('\n') {

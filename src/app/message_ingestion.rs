@@ -147,7 +147,7 @@ impl App<'_> {
     }
 
     fn should_notify(&self, message: &wr::Message) -> bool {
-        notification_eligibility(message, self.open_chat.as_ref())
+        self.notifications_enabled && notification_eligibility(message, self.open_chat.as_ref())
     }
 }
 

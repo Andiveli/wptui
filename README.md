@@ -122,6 +122,23 @@ An existing `settings.conf` in the data directory is copied there on first use i
 file exists; the legacy file is left untouched. Set `composer_direction=rtl` or
 `composer_direction=auto` to choose the composer direction.
 
+Press `Space`, then `a`, then `n` to toggle all WPTUI desktop notifications and their audio.
+The contextual menu shows the current `Notifications: On` / `Notifications: Off` state;
+changes apply immediately and are saved to the same settings file. No chat selection is needed.
+If saving fails, an error is shown and the current state is kept.
+
+Alternatively, to disable them manually, add this to `settings.conf`:
+
+```ini
+notifications=disable
+```
+
+Use `notifications=enable` to enable them explicitly. Notifications are enabled by default
+when the setting is missing, invalid, or unreadable. Manual file edits are loaded at startup;
+restart WPTUI after editing the file (the menu toggle needs no restart). Disabling notifications
+does not change message reception, persistence, synchronization, or unread counts. The existing `notification_sound` option
+selects the sound only when notifications are enabled.
+
 Eligible desktop notifications play the bundled `assets/sounds/attention.wav` by default,
 even when the notification server does not support sound hints. To use your OS/theme sound
 instead, set `notification_sound=system` in `settings.conf` (this requests a system sound hint;
@@ -529,6 +546,7 @@ and picker input retain priority; `i` returns to composing, and `Space a i` focu
 | Quit | `Ctrl+Q` |
 | Toggle section rail | `Space`, then `1` |
 | Toggle chat list | `Space`, then `2` |
+| Toggle notifications and audio (saved immediately) | `Space`, then `a`, then `n` |
 | Contact information (selected contact or open direct conversation) | `Space`, then `a`, then `i` |
 | Scroll contact details / close contact pane | `j` / `k`, then `Esc` to close |
 | Focus previous / next pane | `h` / `l` or `←` / `→` |

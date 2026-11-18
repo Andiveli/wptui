@@ -171,6 +171,7 @@ impl App<'_> {
             | AppAction::OpenContactInfo
             | AppAction::ToggleShortcutPopup
             | AppAction::ToggleComposerDirection
+            | AppAction::ToggleNotifications
             | AppAction::PlannedLeaderAction(_)
             | AppAction::ViewMessage
             | AppAction::DownloadMessage

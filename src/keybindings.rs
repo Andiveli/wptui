@@ -150,6 +150,10 @@ pub fn canonical_shortcuts() -> Vec<(String, String)> {
         .collect::<Vec<_>>();
     // The contextual menu owns the third key, not the global sequence parser.
     shortcuts.push(("Space+a+i".into(), "Contact information".into()));
+    shortcuts.push((
+        "Space+a+n".into(),
+        "Toggle notifications (saved immediately)".into(),
+    ));
     shortcuts
 }
 
