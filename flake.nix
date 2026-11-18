@@ -45,7 +45,7 @@
               cp libgo.a $out/lib/
             '';
 
-            vendorHash = "sha256-y9y0KJoiwvwPoFGMf9RRrQDl6sSJmkWqyGaxHTEBX8E=";
+            vendorHash = "sha256-LNRQhLo/5WpENXaGCleZ1ETd54NCQYEMioetzpjBZOw=";
           };
 
           default = pkgs.rustPlatform.buildRustPackage (finalAttrs: {
