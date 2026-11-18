@@ -1,5 +1,9 @@
-use ratatui::crossterm::event::{
-    Event, KeyCode as TerminalKeyCode, KeyEvent, KeyModifiers as TerminalKeyModifiers,
+use ratatui::{
+    Terminal,
+    backend::TestBackend,
+    crossterm::event::{
+        Event, KeyCode as TerminalKeyCode, KeyEvent, KeyModifiers as TerminalKeyModifiers,
+    },
 };
 use whatsrust::JID;
 use wp_tui::app::actions::{
@@ -150,6 +154,73 @@ fn canonical_leader_display_and_uppercase_alias_are_preserved() {
             SequenceResolution::Complete(AppAction::OpenContextualActions)
         );
     }
+}
+
+fn assert_modal_row_at_height(app: &mut TestApp, title: &str, expected: &str, height: u16) {
+    // A tall frame is a positive control: the same modal must paint the real row.
+    for height in [60, height] {
+        let mut terminal = Terminal::new(TestBackend::new(100, height)).unwrap();
+        terminal
+            .draw(|frame| {
+                wp_tui::ui::draw_with_plan(
+                    frame,
+                    app,
+                    &mut Default::default(),
+                    &mut Default::default(),
+                );
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let rows = (0..height)
+            .map(|y| (0..100).map(|x| buffer[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>();
+        assert!(
+            rows.iter().any(|row| row.contains(title)),
+            "{title} did not open at 100x{height}"
+        );
+        assert!(
+            rows.iter().any(|row| row.contains(expected)),
+            "{title} at 100x{height} must show {expected:?}"
+        );
+    }
+}
+
+#[test]
+fn keyboard_shortcuts_keeps_half_page_up_visible_at_30_rows() {
+    let mut app = TestApp::new();
+    app.dispatch_action(AppAction::ToggleShortcutPopup);
+    assert_modal_row_at_height(
+        &mut app,
+        "Keyboard shortcuts",
+        "Ctrl+u       HalfPageUp",
+        30,
+    );
+}
+
+#[test]
+fn keyboard_shortcuts_keeps_notification_toggle_visible_at_44_rows() {
+    let mut app = TestApp::new();
+    app.dispatch_action(AppAction::ToggleShortcutPopup);
+    // The legacy popup already truncates the explanatory suffix horizontally.
+    assert_modal_row_at_height(
+        &mut app,
+        "Keyboard shortcuts",
+        "Space+a+n    Toggle notifications",
+        44,
+    );
+}
+
+#[test]
+fn conversation_actions_keeps_quit_visible_at_19_rows() {
+    let mut app = TestApp::new();
+    app.focus_pane = FocusPane::Conversation;
+    for character in [' ', 'a'] {
+        app.on_terminal_event(Event::Key(KeyEvent::new(
+            TerminalKeyCode::Char(character),
+            TerminalKeyModifiers::NONE,
+        )));
+    }
+    assert_modal_row_at_height(&mut app, "Actions", "q  Quit", 19);
 }
 
 #[test]
