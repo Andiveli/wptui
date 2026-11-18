@@ -172,7 +172,11 @@ fn assert_modal_row_at_height(app: &mut TestApp, title: &str, expected: &str, he
             .unwrap();
         let buffer = terminal.backend().buffer();
         let rows = (0..height)
-            .map(|y| (0..100).map(|x| buffer[(x, y)].symbol()).collect::<String>())
+            .map(|y| {
+                (0..100)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
             .collect::<Vec<_>>();
         assert!(
             rows.iter().any(|row| row.contains(title)),

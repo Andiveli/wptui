@@ -260,10 +260,22 @@ mod theme_overlay_tests {
         assert!(top_edge.contains("Themes"));
         let image_beneath_picker = Rect::new(24, 10, 1, 1);
         let image_beside_picker = Rect::new(23, 10, 1, 1);
-        assert!(native_image_occluded(&app, buffer.area, image_beneath_picker));
-        assert!(!native_image_occluded(&app, buffer.area, image_beside_picker));
+        assert!(native_image_occluded(
+            &app,
+            buffer.area,
+            image_beneath_picker
+        ));
+        assert!(!native_image_occluded(
+            &app,
+            buffer.area,
+            image_beside_picker
+        ));
         app.on_terminal_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
-        assert!(!native_image_occluded(&app, buffer.area, image_beneath_picker));
+        assert!(!native_image_occluded(
+            &app,
+            buffer.area,
+            image_beneath_picker
+        ));
     }
 }
 
@@ -356,8 +368,11 @@ fn render_keybind_overlays(frame: &mut Frame, app: &App) {
         let area = keybind_overlay_area(frame.area(), 46, lines.len());
         frame.render_widget(Clear, area);
         frame.render_widget(
-            Paragraph::new(lines)
-                .block(Block::bordered().title("Actions").style(app.theme.overlay())),
+            Paragraph::new(lines).block(
+                Block::bordered()
+                    .title("Actions")
+                    .style(app.theme.overlay()),
+            ),
             area,
         );
     } else if let Some((rows, selected)) = &app.leader_menu {

@@ -149,13 +149,13 @@ pub fn canonical_shortcuts() -> Vec<(String, String)> {
         })
         .collect::<Vec<_>>();
     // The contextual menu owns the third key, not the global sequence parser.
-    // Keep Themes visible even when the popup clips its lower rows.
-    shortcuts.insert(0, ("Space+a+t".into(), "Choose a theme".into()));
     shortcuts.push(("Space+a+i".into(), "Contact information".into()));
     shortcuts.push((
         "Space+a+n".into(),
         "Toggle notifications (saved immediately)".into(),
     ));
+    // Append so compact popups do not lose a previously visible shortcut.
+    shortcuts.push(("Space+a+t".into(), "Choose a theme".into()));
     shortcuts
 }
 
@@ -278,10 +278,10 @@ mod tests {
     }
 
     #[test]
-    fn theme_selector_help_appears_before_clipped_rows() {
+    fn theme_selector_help_is_appended_after_existing_shortcuts() {
         assert_eq!(
             canonical_shortcuts()
-                .first()
+                .last()
                 .map(|(key, action)| (key.as_str(), action.as_str())),
             Some(("Space+a+t", "Choose a theme"))
         );
