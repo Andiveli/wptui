@@ -19,6 +19,7 @@ pub mod chat_read_sync_port;
 pub mod chat_search_input;
 pub mod chat_settings_query_port;
 pub mod chat_store;
+mod chat_typing;
 pub mod community_bridge;
 pub mod community_hierarchy;
 pub mod community_query_port;
@@ -286,6 +287,7 @@ pub struct App<'a> {
 
     pub history_sync_percent: Option<u8>,
     pub selected_presence: SelectedPresence,
+    chat_typing: chat_typing::ChatTyping,
     pub(crate) presence_subscription: Box<dyn PresenceSubscriptionPort>,
     pub(crate) raw_presence_diagnostics: Box<dyn RawPresenceDiagnosticsPort>,
     presence_diagnostics: PresenceDiagnostics,
