@@ -16,11 +16,11 @@
 ## Make it yours
 
 - Open `Space → a → t` to apply Kanagawa, One Dark, Catppuccin, Tokyo Night, or Gruvbox without restarting. Use `theme.json` for a custom palette, or choose Default to keep the terminal's usual appearance.
-- Configure notification sounds or toggle notifications and audio with `Space → a → n`.
+- Configure notification sounds in `settings.conf`. Toggle notifications and audio with `Space → a → n`.
 - Open contact details alongside the chat to see the profile photo, phone number when known, and known shared groups. Search finds saved contacts without chat history, and a verified international number can open a conversation without sending a message.
 
 ## News, upgrades, and fixes
 
 - **News wptui** keeps the installed version's notes available offline and shows notes for newer stable releases when online. Where supported, you can choose an update and restart on your terms; restarting is deferred while drafts or pending sends need attention.
-- Unread counters count chats rather than messages. The contact menu can mark a chat read or unread locally. **Known limitation:** do not rely on the corresponding state syncing to the WhatsApp phone app ([#517](https://github.com/Andiveli/wptui/issues/517)).
+- The Chats filter badges count unread chats rather than messages. The contact menu can mark a chat read or unread locally. **Known limitation:** do not rely on the corresponding state syncing to the WhatsApp phone app ([#517](https://github.com/Andiveli/wptui/issues/517)).
 - Preferences use the system configuration directory; an existing settings file is preserved during migration. This release also improves startup error reporting for SQLite and updates dependencies and Nix packaging.
