@@ -45,7 +45,7 @@
               cp libgo.a $out/lib/
             '';
 
-            vendorHash = "sha256-y9y0KJoiwvwPoFGMf9RRrQDl6sSJmkWqyGaxHTEBX8E=";
+            vendorHash = "sha256-jggrkZtUxZeLXW1H41cCmQQHFR5ItNO3tFxEVjqS8gc=";
           };
 
           default = pkgs.rustPlatform.buildRustPackage (finalAttrs: {
@@ -66,6 +66,7 @@
               chafa
               glib
               alsa-lib
+              sqlite
               wayland
               mpv
             ];
