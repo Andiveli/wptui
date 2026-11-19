@@ -61,7 +61,9 @@ impl ChatTyping {
 impl App<'_> {
     pub(super) fn handle_chat_typing(&mut self, chat: JID, sender: JID, composing: bool) -> bool {
         let active = self.open_chat.as_ref() == Some(&chat);
-        self.chat_typing.update(chat, sender, composing, Instant::now()) && active
+        self.chat_typing
+            .update(chat, sender, composing, Instant::now())
+            && active
     }
 
     pub(crate) fn chat_typing_label(&self, chat: &JID) -> Option<(String, usize)> {

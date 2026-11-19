@@ -60,5 +60,9 @@ fn incoming_typing_is_visible_only_in_its_conversation_and_tracks_each_sender() 
     assert!(has_label(&mut app, "Bob is typing…"));
     assert!(app.handle_whatsapp_event(event(&group, &bob, false)));
     assert!(!has_label(&mut app, "typing"));
-    assert!(app.chat_messages.values().all(|messages| messages.is_empty()));
+    assert!(
+        app.chat_messages
+            .values()
+            .all(|messages| messages.is_empty())
+    );
 }
