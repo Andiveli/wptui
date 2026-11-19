@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 )
@@ -15,8 +17,37 @@ func TestIncomingChatPresenceIsRouted(t *testing.T) {
 		t.Fatal(err)
 	}
 	body, ok := extractFunctionBody(string(source), "func dispatchEventFamily(")
-	if !ok || !strings.Contains(body, "case *events.ChatPresence:\n\t\tdispatchChatTyping(evt)") {
+	if !ok || !strings.Contains(body, "case *events.ChatPresence:\n\t\tdispatchChatTyping(evt, client)") {
 		t.Fatal("incoming ChatPresence is not routed to the composing handler")
+	}
+}
+
+func TestDirectChatTypingUsesSameConversationForLIDAndPhone(t *testing.T) {
+	pn := types.NewJID("123", types.DefaultUserServer)
+	lid := types.NewJID("456", types.HiddenUserServer)
+	client := &whatsmeow.Client{Store: &store.Device{LIDs: participantIdentityLIDStore{
+		pnByLID: map[types.JID]types.JID{lid: pn},
+	}}}
+	for _, tc := range []struct {
+		name      string
+		jid       types.JID
+		state     types.ChatPresence
+		composing bool
+	}{
+		{"composing from LID", lid, types.ChatPresenceComposing, true},
+		{"pause from phone", pn, types.ChatPresencePaused, false},
+		{"pause from LID", lid, types.ChatPresencePaused, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := chatTypingFromPresence(client, &events.ChatPresence{
+				MessageSource: types.MessageSource{Chat: tc.jid, Sender: tc.jid},
+				State:         tc.state,
+			})
+			want := chatTypingEvent{pn.String(), pn.String(), tc.composing}
+			if !ok || got != want {
+				t.Fatalf("got (%+v, %t), want (%+v, true)", got, ok, want)
+			}
+		})
 	}
 }
 
@@ -46,7 +77,7 @@ func TestChatTypingFromPresence(t *testing.T) {
 				State:         tc.state,
 				Media:         tc.media,
 			}
-			got, ok := chatTypingFromPresence(event)
+			got, ok := chatTypingFromPresence(nil, event)
 			if ok != tc.ok || got != tc.want {
 				t.Fatalf("got (%+v, %t), want (%+v, %t)", got, ok, tc.want, tc.ok)
 			}

@@ -20,7 +20,7 @@ func dispatchEventFamily(rawEvt any, client *whatsmeow.Client, dispatchViewOnce 
 	case *events.Presence:
 		dispatchPresenceFamily(evt, client)
 	case *events.ChatPresence:
-		dispatchChatTyping(evt)
+		dispatchChatTyping(evt, client)
 	case *events.MarkChatAsRead:
 		dispatchReadFamily(evt)
 	case *events.AppStateSyncComplete:

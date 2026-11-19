@@ -19,6 +19,7 @@ import "C"
 import (
 	"unsafe"
 
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 )
@@ -28,7 +29,7 @@ type chatTypingEvent struct {
 	composing    bool
 }
 
-func chatTypingFromPresence(event *events.ChatPresence) (chatTypingEvent, bool) {
+func chatTypingFromPresence(client *whatsmeow.Client, event *events.ChatPresence) (chatTypingEvent, bool) {
 	if event.IsFromMe || event.Chat.IsEmpty() || event.Sender.IsEmpty() {
 		return chatTypingEvent{}, false
 	}
@@ -42,15 +43,24 @@ func chatTypingFromPresence(event *events.ChatPresence) (chatTypingEvent, bool) 
 	default:
 		return chatTypingEvent{}, false
 	}
+	chat := event.Chat.ToNonAD().String()
+	sender := event.Sender.ToNonAD().String()
+	if event.Chat.Server != types.GroupServer {
+		// Match the direct conversation key used for incoming messages.
+		if client != nil && client.Store != nil && client.Store.LIDs != nil {
+			chat = GetChatId(client, &event.Chat, &event.Sender)
+		}
+		sender = chat
+	}
 	return chatTypingEvent{
-		chat:      event.Chat.ToNonAD().String(),
-		sender:    event.Sender.ToNonAD().String(),
+		chat:      chat,
+		sender:    sender,
 		composing: event.State == types.ChatPresenceComposing && event.Media == types.ChatPresenceMediaText,
 	}, true
 }
 
-func dispatchChatTyping(event *events.ChatPresence) {
-	typing, ok := chatTypingFromPresence(event)
+func dispatchChatTyping(event *events.ChatPresence, client *whatsmeow.Client) {
+	typing, ok := chatTypingFromPresence(client, event)
 	if !ok || eventHandler.callback == nil {
 		return
 	}
