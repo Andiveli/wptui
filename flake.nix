@@ -66,6 +66,7 @@
               chafa
               glib
               alsa-lib
+              sqlite
               wayland
               mpv
             ];
