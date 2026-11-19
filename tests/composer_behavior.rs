@@ -1,13 +1,20 @@
+use std::{sync::mpsc, time::Duration};
+
 use ratatui::crossterm::event::{
     Event, KeyCode as TerminalKeyCode, KeyEvent, KeyModifiers as TerminalKeyModifiers,
 };
-use ratatui::{Terminal, backend::TestBackend, layout::Rect};
+use ratatui::{
+    Terminal,
+    backend::TestBackend,
+    layout::{Position, Rect},
+};
 use wp_tui::app::actions::{
     AppAction, ComposerAction, ConversationMode, FocusPane, Section, VimComposerMode,
 };
 use wp_tui::app::composer::Composer;
 use wp_tui::app::events::MediaRenderPlan;
 use wp_tui::app::inputs::composer_action_for_editing_key;
+use wp_tui::app::optimistic_text_send::{TextSendPort, TextSendRequest, Worker};
 use wp_tui::app::read_receipts::VisibilityPlan;
 use wp_tui::input_key::{Key, KeyCode, KeyModifiers};
 use wp_tui::ui::{composer_mention_picker_area, conversation_areas, render_chats_with_plan};
@@ -51,6 +58,76 @@ fn a_normal_space_remains_composer_input() {
     composer.apply(composer_action_for_editing_key(&Key::c(' ')));
 
     assert_eq!(composer.text(), " ");
+}
+
+#[test]
+fn plain_tab_preserves_four_column_stops_in_the_draft_and_outgoing_text() {
+    struct RecordingSendPort(mpsc::Sender<TextSendRequest>);
+
+    impl TextSendPort for RecordingSendPort {
+        fn send(
+            &mut self,
+            request: &TextSendRequest,
+        ) -> Result<(), whatsrust::OutboundSendFailure> {
+            self.0.send(request.clone()).unwrap();
+            Ok(())
+        }
+    }
+
+    let key = |code| Event::Key(KeyEvent::new(code, TerminalKeyModifiers::NONE));
+    let area = Rect::new(0, 0, 80, 20);
+    let (_, composer_area) = conversation_areas(Rect::new(1, 1, 78, 18), 1, 0, 0);
+    let tab_stop = Position::new(composer_area.x + 1 + 4, composer_area.y + 1);
+
+    for (pasted, expected) in [
+        ("abc", "abc x"),
+        ("界", "界  x"),
+        ("ｶﾞ", "ｶﾞ   x"),
+        ("ﾊﾟ", "ﾊﾟ   x"),
+    ] {
+        let mut app = TestApp::new();
+        let (app_tx, _app_rx) = mpsc::channel();
+        let (sent_tx, sent_rx) = mpsc::channel();
+        app.optimistic_text_send_worker = Worker::new(app_tx, Box::new(RecordingSendPort(sent_tx)));
+        let chat = whatsrust::JID("alice@s.whatsapp.net".into());
+        app.open_chat_by_jid(chat.clone());
+        app.focus_pane = FocusPane::Conversation;
+        app.dispatch_action(AppAction::InsertMode);
+
+        app.on_terminal_event(Event::Paste(pasted.into()));
+        app.on_terminal_event(key(TerminalKeyCode::Tab));
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_chats_with_plan(
+                    frame,
+                    &mut app,
+                    &mut MediaRenderPlan::default(),
+                    &mut VisibilityPlan::default(),
+                    area,
+                );
+            })
+            .unwrap();
+        let caret = terminal.backend().cursor_position();
+        app.on_terminal_event(key(TerminalKeyCode::Char('x')));
+        let draft = app.composer.text();
+        app.on_terminal_event(key(TerminalKeyCode::Enter));
+
+        let sent = sent_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap_or_else(|error| panic!("{pasted:?}: expected an outgoing message: {error}"));
+        let whatsrust::MessageContent::Text(text) = sent.content else {
+            panic!("{pasted:?}: expected a text message");
+        };
+        assert_eq!(
+            (draft.as_str(), text.as_ref()),
+            (expected, expected),
+            "{pasted:?}: draft and outgoing text"
+        );
+        assert_eq!(caret, tab_stop, "{pasted:?}: rendered caret after Tab");
+        assert_eq!(sent.chat, chat, "{pasted:?}: outgoing recipient");
+        assert_eq!(app.composer.text(), "", "{pasted:?}: submitted draft");
+    }
 }
 
 #[test]
