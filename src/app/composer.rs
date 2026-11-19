@@ -8,7 +8,7 @@ use whatsrust as wr;
 
 use crate::app::actions::ComposerAction;
 use crate::app::preferences::ComposerDirection;
-use crate::input_key::{Key, KeyCode};
+use crate::input_key::{Key, KeyCode, KeyModifiers};
 use crate::ui::layout::{
     BoundaryAffinity, ComposerVisualLayout, HorizontalDirection, composer_markdown_layout,
 };
@@ -225,12 +225,42 @@ impl Composer<'_> {
             }
             KeyCode::Backspace => self.delete_previous_grapheme(),
             _ => {
-                self.input
-                    .input(crate::app::composer_input_mapping::textarea_input(key));
+                let tab_length = usize::from(self.input.tab_length());
+                if key.code == KeyCode::Tab
+                    && key.modifiers == KeyModifiers::NONE
+                    && tab_length > 0
+                    && !self.input.hard_tab_indent()
+                {
+                    self.insert_soft_tab(tab_length);
+                } else {
+                    self.input
+                        .input(crate::app::composer_input_mapping::textarea_input(key));
+                }
                 self.caret_affinity = None;
                 self.preferred_visual_column = None;
             }
         }
+    }
+
+    fn insert_soft_tab(&mut self, tab_length: usize) {
+        // Insertion replaces a selection at its start, regardless of cursor direction.
+        let (row, column) = self.input.selection_range().map_or_else(
+            || logical_cursor_position(self.input.cursor()),
+            |(start, _)| start,
+        );
+        let line = &self.input.lines()[row];
+        let end = line
+            .char_indices()
+            .nth(column)
+            .map_or(line.len(), |(index, _)| index);
+        // Preserve the old per-character width: ESC itself is zero-width, but
+        // it must not cause textwrap to skip the following literal draft text.
+        let prefix_width: usize = line[..end]
+            .split('\x1b')
+            .map(textwrap::core::display_width)
+            .sum();
+        self.input
+            .insert_str(" ".repeat(tab_length - prefix_width % tab_length));
     }
 
     pub(crate) fn visual_layout(

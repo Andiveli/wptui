@@ -65,7 +65,10 @@ fn plain_tab_preserves_four_column_stops_in_the_draft_and_outgoing_text() {
     struct RecordingSendPort(mpsc::Sender<TextSendRequest>);
 
     impl TextSendPort for RecordingSendPort {
-        fn send(&mut self, request: &TextSendRequest) -> Result<(), whatsrust::OutboundSendFailure> {
+        fn send(
+            &mut self,
+            request: &TextSendRequest,
+        ) -> Result<(), whatsrust::OutboundSendFailure> {
             self.0.send(request.clone()).unwrap();
             Ok(())
         }
