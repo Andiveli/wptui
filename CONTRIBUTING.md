@@ -98,8 +98,8 @@ Before building or tagging:
 - [ ] Replace `assets/release-notes.md` with those final notes **before building**;
   News wptui embeds this file at compile time for the installed version.
 - [ ] Review the bundled-notes assertion in `src/updater/news_tests.rs`
-  (`installed_notes_are_bundled_and_honest`): its current expectation is the
-  v0.3.0 missing-notes message. Update it to verify the new release's actual notes.
+  (`installed_notes_are_bundled_and_honest`). Keep the heading aligned with the
+  package version and update the tested highlight for the new release.
 - [ ] Confirm that the package version in `Cargo.toml` and the intended release
   tag agree, and that CI checks and the release build pass for the exact candidate.
 

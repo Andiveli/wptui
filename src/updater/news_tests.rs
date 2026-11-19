@@ -41,11 +41,17 @@ const RELEASE: &str = r#"[{"tag_name":"v0.4.0","name":"Fourth","body":"Changes",
 #[test]
 fn installed_notes_are_bundled_and_honest() {
     let note = installed_note();
-    assert_eq!(note.version.to_string(), env!("CARGO_PKG_VERSION"));
+    let version = env!("CARGO_PKG_VERSION");
+    assert_eq!(note.version.to_string(), version);
     assert_eq!(
         note.body,
-        "Release notes were not provided for this version."
+        include_str!("../../assets/release-notes.md").trim()
     );
+    assert_eq!(
+        note.body.lines().next(),
+        Some(format!("# What's new in wptui {version}").as_str())
+    );
+    assert!(note.body.contains("See who's typing."));
 }
 
 #[test]
