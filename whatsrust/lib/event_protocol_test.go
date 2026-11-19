@@ -30,6 +30,7 @@ func TestEventTypeConstantsAreOwnedByEventProtocol(t *testing.T) {
 		"EventTypeMarkChatAsRead",
 		"EventTypeArchiveChanged",
 		"EventTypeContactAliasesUpdated",
+		"EventTypeChatTyping",
 	} {
 		if !strings.Contains(string(protocolSource), constant) {
 			t.Fatalf("event_protocol.go must own %s", constant)
@@ -54,6 +55,7 @@ func TestEventTypeValuesRemainStable(t *testing.T) {
 		{"mark chat as read", EventTypeMarkChatAsRead, 9},
 		{"archive changed", EventTypeArchiveChanged, 10},
 		{"contact aliases updated", EventTypeContactAliasesUpdated, 11},
+		{"chat typing", EventTypeChatTyping, 12},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.got != tt.want {

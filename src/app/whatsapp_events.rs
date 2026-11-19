@@ -91,6 +91,11 @@ pub(crate) fn handle(app: &mut App<'_>, event: wr::Event) -> bool {
             app.apply_reaction(&target_message_id, participant, text);
             true
         }
+        wr::Event::ChatTyping {
+            chat,
+            sender,
+            composing,
+        } => app.handle_chat_typing(chat, sender, composing),
         wr::Event::ContactAliasesUpdated => {
             app.refresh_contact_aliases();
             true

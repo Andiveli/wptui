@@ -13,4 +13,5 @@ const (
 	EventTypeMarkChatAsRead        = 9
 	EventTypeArchiveChanged        = 10
 	EventTypeContactAliasesUpdated = 11
+	EventTypeChatTyping            = 12
 )

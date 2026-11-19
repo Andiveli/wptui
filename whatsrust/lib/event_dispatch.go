@@ -19,6 +19,8 @@ func dispatchEventFamily(rawEvt any, client *whatsmeow.Client, dispatchViewOnce 
 		lifecycleState.stopSavedAliasLookupFor(client)
 	case *events.Presence:
 		dispatchPresenceFamily(evt, client)
+	case *events.ChatPresence:
+		dispatchChatTyping(evt, client)
 	case *events.MarkChatAsRead:
 		dispatchReadFamily(evt)
 	case *events.AppStateSyncComplete:

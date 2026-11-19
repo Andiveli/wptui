@@ -153,6 +153,11 @@ pub enum Event {
     },
     Connected,
     ContactAliasesUpdated,
+    ChatTyping {
+        chat: JID,
+        sender: JID,
+        composing: bool,
+    },
     MessageAction {
         action_id: Arc<str>,
         target_message_id: MessageId,

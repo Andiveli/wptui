@@ -1,8 +1,9 @@
 use std::ffi::CStr;
 
 use crate::abi::{
-    C_SetEventHandler, CChatEvent, CEvent, CLogoutResultEvent, CMarkChatAsReadEvent,
-    CMessageActionEvent, CReactionEvent, CReceipt, EventType, LogoutStatus, ReceiptKind,
+    C_SetEventHandler, CChatEvent, CChatTypingEvent, CEvent, CLogoutResultEvent,
+    CMarkChatAsReadEvent, CMessageActionEvent, CReactionEvent, CReceipt, EventType, LogoutStatus,
+    ReceiptKind,
 };
 use crate::callbacks::CallbackTranslator;
 use crate::{Event, JID, MessageActionKind};
@@ -47,6 +48,14 @@ impl CallbackTranslator<*const CEvent> for Event {
             },
             EventType::Connected => Event::Connected,
             EventType::ContactAliasesUpdated => Event::ContactAliasesUpdated,
+            EventType::ChatTyping => {
+                let typing = unsafe { &*(event.data as *const CChatTypingEvent) };
+                Event::ChatTyping {
+                    chat: (&typing.chat).into(),
+                    sender: (&typing.sender).into(),
+                    composing: typing.composing,
+                }
+            }
             EventType::MessageAction => unsafe {
                 message_action_event_from_ffi(&*(event.data as *const CMessageActionEvent))
             },
@@ -136,6 +145,28 @@ setup_handler!(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chat_typing_copies_chat_and_sender_from_callback_payload() {
+        let chat = std::ffi::CString::new("123@g.us").unwrap();
+        let sender = std::ffi::CString::new("456@lid").unwrap();
+        let payload = CChatTypingEvent {
+            chat: chat.as_ptr(),
+            sender: sender.as_ptr(),
+            composing: true,
+        };
+        let raw = CEvent {
+            event_type: EventType::ChatTyping as u8,
+            data: (&raw const payload).cast(),
+        };
+        let event = unsafe { Event::to_rust(&raw) };
+        drop((chat, sender));
+        assert!(matches!(
+            event,
+            Event::ChatTyping { chat, sender, composing: true }
+                if chat.0.as_ref() == "123@g.us" && sender.0.as_ref() == "456@lid"
+        ));
+    }
 
     #[test]
     fn payloadless_archive_refresh_translates_from_ffi() {

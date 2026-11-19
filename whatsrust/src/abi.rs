@@ -207,6 +207,13 @@ pub(super) struct CEvent {
 }
 
 #[repr(C)]
+pub(super) struct CChatTypingEvent {
+    pub(super) chat: CJID,
+    pub(super) sender: CJID,
+    pub(super) composing: bool,
+}
+
+#[repr(C)]
 pub(super) struct CReactionEvent {
     pub(super) chat: CJID,
     pub(super) target_message_id: *const c_char,
@@ -271,6 +278,7 @@ pub(super) enum EventType {
     MarkChatAsRead = 9,
     ArchiveChanged = 10,
     ContactAliasesUpdated = 11,
+    ChatTyping = 12,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, FromRepr)]

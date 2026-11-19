@@ -23,6 +23,7 @@ https://github.com/user-attachments/assets/f08d20f9-6051-45e2-a1d2-b0a512242e9c
 - Browse and search chats from the terminal
 - Send, reply to, edit, delete, copy, and react to messages
 - Inspect reactions and quoted messages
+- See who is typing in the open conversation, including multiple people in a group
 - Paste text, images, and files from the clipboard
 - Send attachments with captions
 - Download and preview media, or open it in an external player

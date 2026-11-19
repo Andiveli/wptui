@@ -250,6 +250,7 @@ impl RuntimeDiagnostics {
                 | whatsrust::Event::Connected
                 | whatsrust::Event::ContactAliasesUpdated
                 | whatsrust::Event::SyncProgress(_) => 6,
+                whatsrust::Event::ChatTyping { .. } => 4,
                 whatsrust::Event::Receipt { .. } => 5,
                 whatsrust::Event::Chat { .. }
                 | whatsrust::Event::Reaction { .. }

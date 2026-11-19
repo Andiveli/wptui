@@ -177,6 +177,7 @@ fn with_dirs_and_picker_and_ports(
         metadata: HashMap::new(),
         history_sync_percent: None,
         selected_presence: SelectedPresence::default(),
+        chat_typing: Default::default(),
         presence_subscription: Box::new(
             crate::presence_subscription::WhatsRustPresenceSubscription,
         ),

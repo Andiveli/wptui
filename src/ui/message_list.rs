@@ -1842,6 +1842,24 @@ pub fn render_messages_with_plan(
         return Some(());
     }
     let assembly_started = app.message_list_phase_started();
+    let mut area = area;
+    if area.height > 1
+        && let Some((label, count)) = app.chat_typing_label(&chat_jid)
+    {
+        area.height -= 1;
+        let row = Rect::new(area.x, area.bottom(), area.width, 1);
+        let mut line = Line::from(label);
+        if line.width() > usize::from(row.width) {
+            line = Line::from(if count == 1 {
+                "Typing…".to_owned()
+            } else {
+                format!("{count} typing…")
+            });
+        }
+        Paragraph::new(line)
+            .style(Style::default().fg(app.theme.muted(Color::DarkGray)))
+            .render(row, frame.buffer_mut());
+    }
 
     let unread_count = app.unread_boundary(&chat_jid).map_or(0, |(count, _)| count);
     let banner = app.unread_boundary(&chat_jid).map(|(count, since)| {

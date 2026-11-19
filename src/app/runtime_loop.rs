@@ -258,14 +258,18 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
 
     loop {
         let now = app.now();
-        let sticker_timeout = app
-            .sticker_deadline()
-            .map(|deadline| deadline.saturating_duration_since(std::time::Instant::now()));
-        let timeout = match (app.selected_presence.redraw_after(now), sticker_timeout) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (Some(a), None) | (None, Some(a)) => Some(a),
-            (None, None) => None,
-        };
+        let monotonic_now = std::time::Instant::now();
+        let timeout = [
+            app.selected_presence.redraw_after(now),
+            app.sticker_deadline()
+                .map(|deadline| deadline.saturating_duration_since(monotonic_now)),
+            app.chat_typing
+                .deadline()
+                .map(|deadline| deadline.saturating_duration_since(monotonic_now)),
+        ]
+        .into_iter()
+        .flatten()
+        .min();
         let msg = match timeout {
             Some(timeout) => match app.rx.recv_timeout(timeout) {
                 Ok(input) => Ok(input),
@@ -339,8 +343,10 @@ pub(crate) fn run(app: &mut App<'_>, mut download_worker: DownloadWorker) {
         }
         app.schedule_contact_info(&mut media_jobs);
 
-        let sticker_changed = app.advance_visible_stickers(std::time::Instant::now());
-        if should_draw || sticker_changed {
+        let now = std::time::Instant::now();
+        let sticker_changed = app.advance_visible_stickers(now);
+        let typing_changed = app.chat_typing.expire(app.open_chat.as_ref(), now);
+        if should_draw || sticker_changed || typing_changed {
             app.runtime_diagnostics.record_should_draw();
             let started = app.runtime_diagnostics.draw_started();
             let mut media_render_plan = MediaRenderPlan::default();
