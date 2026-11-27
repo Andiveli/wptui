@@ -37,20 +37,35 @@ impl App<'_> {
         ) {
             return self.unavailable("Media is not downloaded");
         }
-        let opener =
-            match crate::media::document_opener_from_environment(Path::new(file.path.as_ref())) {
-                Ok(opener) => opener,
-                Err(_) => {
-                    return self.unavailable(
-                        "Set WPTUI_PDF_VIEWER or WPTUI_DOCUMENT_VIEWER to one executable name",
-                    );
-                }
-            };
-        match crate::media::plan_media_launch(
-            Some(&self.media_path),
-            Some(&opener),
-            Some(Path::new(file.path.as_ref())),
+        let path = Path::new(file.path.as_ref());
+        if let Some(result) = crate::media::launch_zip_attachment(
+            &self.media_path,
+            path,
+            self.launch_executor.as_mut(),
         ) {
+            match result {
+                Ok(()) => {
+                    self.action_notice = Some(crate::app::actions::ActionNotice::Unavailable(
+                        "System archive opener started".into(),
+                    ));
+                }
+                Err(error) => {
+                    self.unavailable(&format!(
+                        "Could not open ZIP with the system handler: {error}"
+                    ));
+                }
+            }
+            return;
+        }
+        let opener = match crate::media::document_opener_from_environment(path) {
+            Ok(opener) => opener,
+            Err(_) => {
+                return self.unavailable(
+                    "Set WPTUI_PDF_VIEWER or WPTUI_DOCUMENT_VIEWER to one executable name",
+                );
+            }
+        };
+        match crate::media::plan_media_launch(Some(&self.media_path), Some(&opener), Some(path)) {
             Ok(Some(plan)) => {
                 match crate::media::execute_launch(&plan, self.launch_executor.as_mut()) {
                     Ok(()) => {
