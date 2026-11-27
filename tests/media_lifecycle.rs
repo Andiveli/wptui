@@ -241,6 +241,141 @@ fn app_injected_launch_executor_handles_viewer_media_and_document_opening() {
     }));
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn app_opens_zip_with_the_system_handler_and_keeps_a_private_copy_for_handoff() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let environment = EnvironmentGuard::set(&[
+        ("WPTUI_PDF_VIEWER", "wptui-pdf-test"),
+        ("WPTUI_DOCUMENT_VIEWER", "wptui-doc-test"),
+    ]);
+    let root = tempdir().unwrap();
+    let launches = Arc::new(Mutex::new(Vec::new()));
+    let mut app = TestApp::new();
+    app.media_path = root.path().to_path_buf();
+    app.launch_executor = Box::new(SharedRecordingExecutor(launches.clone()));
+    let source = root.path().join("received.ZIP");
+    let zip = b"PK\x05\x06\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
+    let mut zip_notice = None;
+    for (id, name, bytes) in [
+        ("zip", "received.ZIP", zip.as_slice()),
+        ("pdf", "report.PDF", b"pdf".as_slice()),
+        ("doc", "report.odt", b"doc".as_slice()),
+    ] {
+        fs::write(root.path().join(name), bytes).unwrap();
+        app.messages
+            .insert(id.into(), media_message(id, FileKind::Document, name));
+        app.metadata.insert(
+            id.into(),
+            wp_tui::app::Metadata::File(wp_tui::app::FileMeta::Downloaded),
+        );
+        app.message_list_state.set_selected_message(id.into());
+        app.dispatch_action(AppAction::OpenMessage);
+        if id == "zip" {
+            zip_notice = app.action_notice.take();
+        }
+    }
+    drop(environment);
+
+    let calls = launches.lock().unwrap();
+    assert_eq!(calls.len(), 3);
+    let expected = if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    assert_eq!(calls[0].0, Path::new(expected));
+    let [staged] = calls[0].1.as_slice() else {
+        panic!("expected one archive argument, got {:?}", calls[0].1);
+    };
+    assert!(staged.is_absolute());
+    assert_eq!(staged.extension().and_then(|ext| ext.to_str()), Some("zip"));
+    assert_ne!(staged, &source);
+
+    // The desktop handler may read the copy after OpenMessage has returned
+    // and independently of whatever is now found at the download path.
+    fs::rename(&source, source.with_extension("old")).unwrap();
+    fs::write(&source, b"replacement").unwrap();
+    let contents = fs::read(staged).unwrap();
+    let mode = fs::metadata(staged).unwrap().permissions().mode();
+    fs::remove_file(staged).unwrap();
+    assert_eq!(contents, zip);
+    assert_eq!(mode & 0o077, 0);
+    assert_eq!(
+        zip_notice,
+        Some(ActionNotice::Unavailable(
+            "System archive opener started".into()
+        ))
+    );
+
+    for (call, expected) in [(&calls[1], "wptui-pdf-test"), (&calls[2], "wptui-doc-test")] {
+        assert_eq!(call.0, Path::new(expected));
+        assert_eq!(call.1.len(), 1);
+        assert!(call.1[0].starts_with(FD_PATH_PREFIX));
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn app_zip_open_rejects_an_escaping_source_and_removes_the_copy_on_spawn_error() {
+    use std::os::unix::fs::symlink;
+
+    struct FailingExecutor(Arc<Mutex<Vec<PathBuf>>>);
+    impl LaunchExecutor for FailingExecutor {
+        fn spawn(&mut self, _: &Path, arguments: &[PathBuf]) -> std::io::Result<()> {
+            self.0.lock().unwrap().extend_from_slice(arguments);
+            Err(std::io::Error::other("test spawn error"))
+        }
+    }
+
+    let root = tempdir().unwrap();
+    let outside = tempdir().unwrap();
+    let source = outside.path().join("outside.zip");
+    fs::write(&source, b"outside").unwrap();
+    symlink(&source, root.path().join("escape.zip")).unwrap();
+    fs::write(root.path().join("valid.zip"), b"contained").unwrap();
+    let arguments = Arc::new(Mutex::new(Vec::new()));
+    let mut app = TestApp::new();
+    app.media_path = root.path().into();
+    app.launch_executor = Box::new(FailingExecutor(arguments.clone()));
+    for (id, path) in [("escape", "escape.zip"), ("valid", "valid.zip")] {
+        app.messages
+            .insert(id.into(), media_message(id, FileKind::Document, path));
+        app.metadata.insert(
+            id.into(),
+            wp_tui::app::Metadata::File(wp_tui::app::FileMeta::Downloaded),
+        );
+    }
+
+    app.message_list_state.set_selected_message("escape".into());
+    app.dispatch_action(AppAction::OpenMessage);
+    assert!(arguments.lock().unwrap().is_empty());
+    assert!(matches!(
+        app.action_notice.take(),
+        Some(ActionNotice::Unavailable(message))
+            if message.starts_with("Could not open ZIP with the system handler: Archive is unavailable:")
+    ));
+
+    app.message_list_state.set_selected_message("valid".into());
+    app.dispatch_action(AppAction::OpenMessage);
+    assert_eq!(
+        app.action_notice,
+        Some(ActionNotice::Unavailable(
+            "Could not open ZIP with the system handler: test spawn error".into()
+        ))
+    );
+    let arguments = arguments.lock().unwrap();
+    let [staged] = arguments.as_slice() else {
+        panic!("expected one staged path, got {arguments:?}");
+    };
+    assert!(!staged.try_exists().unwrap());
+    assert_eq!(
+        fs::read(root.path().join("valid.zip")).unwrap(),
+        b"contained"
+    );
+}
+
 #[test]
 fn media_failure_from_the_terminal_event_path_produces_a_visible_notice() {
     let root = tempdir().unwrap();

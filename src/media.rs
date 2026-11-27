@@ -225,6 +225,57 @@ pub fn document_opener_from_environment(path: &Path) -> Result<PathBuf, MediaLau
     )
 }
 
+/// Send ZIP attachments to the desktop instead of the document viewer on
+/// systems where we can stage them from a securely opened media file.
+pub(crate) fn launch_zip_attachment(
+    media_root: &Path,
+    relative_path: &Path,
+    executor: &mut (impl LaunchExecutor + ?Sized),
+) -> Option<io::Result<()>> {
+    if !relative_path
+        .extension()
+        .and_then(OsStr::to_str)
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("zip"))
+    {
+        return None;
+    }
+    let opener = match std::env::consts::OS {
+        "linux" => "xdg-open",
+        "macos" => "open",
+        _ => return None,
+    };
+    Some(launch_staged_zip(
+        media_root,
+        relative_path,
+        Path::new(opener),
+        executor,
+    ))
+}
+
+fn launch_staged_zip(
+    media_root: &Path,
+    relative_path: &Path,
+    opener: &Path,
+    executor: &mut (impl LaunchExecutor + ?Sized),
+) -> io::Result<()> {
+    let mut source = MediaRoot::new(media_root)
+        .and_then(|root| root.open_media_file(relative_path))
+        .map_err(|error| io::Error::other(format!("Archive is unavailable: {error:?}")))?;
+    let temp_dir = fs::canonicalize(std::env::temp_dir())?;
+    let mut staged = tempfile::Builder::new()
+        .prefix("wptui-archive-")
+        .suffix(".zip")
+        .tempfile_in(temp_dir)?;
+    io::copy(&mut source, staged.as_file_mut())?;
+    executor.spawn(opener, &[staged.path().to_path_buf()])?;
+
+    // The desktop handler may run independently of the opener and read the
+    // file later, even after wptui exits. Leave the private file to system
+    // temporary-directory cleanup; failed copies or spawns still remove it.
+    staged.disable_cleanup(true);
+    Ok(())
+}
+
 #[derive(Debug)]
 pub struct MediaRoot {
     path: PathBuf,
