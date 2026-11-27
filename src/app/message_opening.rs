@@ -37,10 +37,10 @@ impl App<'_> {
         ) {
             return self.unavailable("Media is not downloaded");
         }
-        let path = Path::new(file.path.as_ref());
+        let path = Path::new(file.path.as_ref()).to_path_buf();
         if let Some(result) = crate::media::launch_zip_attachment(
             &self.media_path,
-            path,
+            &path,
             self.launch_executor.as_mut(),
         ) {
             match result {
@@ -57,7 +57,7 @@ impl App<'_> {
             }
             return;
         }
-        let opener = match crate::media::document_opener_from_environment(path) {
+        let opener = match crate::media::document_opener_from_environment(&path) {
             Ok(opener) => opener,
             Err(_) => {
                 return self.unavailable(
@@ -65,7 +65,7 @@ impl App<'_> {
                 );
             }
         };
-        match crate::media::plan_media_launch(Some(&self.media_path), Some(&opener), Some(path)) {
+        match crate::media::plan_media_launch(Some(&self.media_path), Some(&opener), Some(&path)) {
             Ok(Some(plan)) => {
                 match crate::media::execute_launch(&plan, self.launch_executor.as_mut()) {
                     Ok(()) => {
