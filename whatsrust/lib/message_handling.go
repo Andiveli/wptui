@@ -19,6 +19,10 @@ func HandleViewOnceUnavailableMessage(info types.MessageInfo, isSync bool) {
 }
 
 func HandleMessage(info types.MessageInfo, msg *waE2E.Message, isSync bool) {
+	// History can contain system entries without a message body.
+	if isSync && msg == nil {
+		return
+	}
 	info = normalizeMessageInfo(info)
 
 	if dispatchMessageEvent(info, msg) {
