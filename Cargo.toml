@@ -30,7 +30,7 @@ strum = { version = "0.28", features = ["derive"] }
 ratatui-textarea = "0.9.1"
 tui-logger = "0.18.1"
 qr2term = "0.3.3"
-rfd = "0.17.2"
+rfd = "0.18.0"
 open = "5.3.3"
 tempfile = "3.26.0"
 directories = "6.0.0"
