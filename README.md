@@ -772,9 +772,10 @@ composer owns editable input; search and other screens keep their existing input
 If the terminal delivers `Ctrl+V` as a key instead, the existing clipboard text/file/image
 handling still applies.
 
-Press `o` on a downloaded ZIP attachment to open it with the system's default archive handler
-(`xdg-open` on Linux, `open` on macOS). The handler receives a private temporary copy, kept
-in the system temporary directory for the handoff. PDF and other document viewers are unchanged.
+For a downloaded ZIP attachment with no link in its caption, press `o` to open it with the
+system's default archive handler (`xdg-open` on Linux, `open` on macOS). The handler receives a
+private copy that remains in the system temporary directory after handoff, until system cleanup.
+Links, PDF files, and other documents keep their existing open behavior.
 
 Save As starts in the app's current working directory. Browse folders in the viewer, then edit the
 separate proposed basename and confirm. The extension is displayed but fixed from the source
