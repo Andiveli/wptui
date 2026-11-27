@@ -23,14 +23,14 @@ unicode-segmentation = "1.12"
 unicode-bidi = "0.3.18"
 chrono = "0.4.43"
 image = "0.25.9"
-rusqlite = { version = "0.41.1", features = ["bundled"] }
+rusqlite = { version = "0.43.0", features = ["bundled"] }
 ratatui = "0.30.0"
 ratatui-image = "=11.1.0"
 strum = { version = "0.28", features = ["derive"] }
 ratatui-textarea = "0.9.1"
 tui-logger = "0.18.1"
 qr2term = "0.3.3"
-rfd = "0.17.2"
+rfd = "0.18.0"
 open = "5.3.3"
 tempfile = "3.26.0"
 directories = "6.0.0"
