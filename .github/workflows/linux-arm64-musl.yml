@@ -1,0 +1,28 @@
+name: Linux ARM64 musl
+
+on: workflow_call
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Build, test, and package on Alpine
+        run: |
+          docker buildx build --platform linux/arm64 \
+            --file .github/docker/linux-arm64-musl.Dockerfile \
+            --output type=local,dest=arm64-musl-dist .
+
+      - name: Upload ARM64 musl archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: wptui-aarch64-unknown-linux-musl.tar.gz
+          path: arm64-musl-dist/wptui-aarch64-unknown-linux-musl.tar.gz
+          if-no-files-found: error
+          retention-days: 14

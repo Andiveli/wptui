@@ -57,3 +57,25 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           files: ${{ matrix.asset }}
+
+  build-linux-arm64-musl:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/linux-arm64-musl.yml
+
+  attach-linux-arm64-musl:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build-linux-arm64-musl
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: wptui-aarch64-unknown-linux-musl.tar.gz
+
+      - name: Attach ARM64 musl archive to release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: wptui-aarch64-unknown-linux-musl.tar.gz
+          fail_on_unmatched_files: true

@@ -88,3 +88,7 @@ jobs:
           path: wptui-linux-x86_64.tar.gz
           if-no-files-found: error
           retention-days: 14
+
+  build-linux-arm64-musl:
+    if: startsWith(github.ref, 'refs/heads/preview/linux-arm64')
+    uses: ./.github/workflows/linux-arm64-musl.yml
