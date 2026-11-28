@@ -112,8 +112,19 @@ pub fn target_asset_name_for(arch: &str, os: &str) -> Option<&'static str> {
     }
 }
 
+fn target_asset_name_for_libc(arch: &str, os: &str, _target_env: &str) -> Option<&'static str> {
+    target_asset_name_for(arch, os)
+}
+
 fn target_asset_name() -> Option<&'static str> {
-    target_asset_name_for(std::env::consts::ARCH, std::env::consts::OS)
+    let target_env = if cfg!(target_env = "musl") {
+        "musl"
+    } else if cfg!(target_env = "gnu") {
+        "gnu"
+    } else {
+        ""
+    };
+    target_asset_name_for_libc(std::env::consts::ARCH, std::env::consts::OS, target_env)
 }
 
 fn valid_digest(value: Option<&str>) -> Option<&str> {
@@ -208,5 +219,28 @@ mod tests {
             Some("wptui-aarch64-apple-darwin.tar.gz")
         );
         assert_eq!(target_asset_name_for("aarch64", "linux"), None);
+    }
+
+    #[test]
+    fn target_assets_match_libc_aware_platforms() {
+        let linux_x86_64 = Some("wptui-x86_64-unknown-linux-gnu.tar.gz");
+        let macos_aarch64 = Some("wptui-aarch64-apple-darwin.tar.gz");
+        let linux_aarch64_musl = Some("wptui-aarch64-unknown-linux-musl.tar.gz");
+        for (arch, os, target_env, expected) in [
+            ("x86_64", "linux", "gnu", linux_x86_64),
+            ("x86_64", "linux", "musl", linux_x86_64),
+            ("aarch64", "macos", "", macos_aarch64),
+            ("aarch64", "linux", "gnu", None),
+            ("aarch64", "linux", "", None),
+            ("arm", "linux", "musl", None),
+            ("aarch64", "freebsd", "musl", None),
+            ("aarch64", "linux", "musl", linux_aarch64_musl),
+        ] {
+            assert_eq!(
+                target_asset_name_for_libc(arch, os, target_env),
+                expected,
+                "target {arch}/{os}/{target_env}"
+            );
+        }
     }
 }
